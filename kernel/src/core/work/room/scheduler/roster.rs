@@ -44,7 +44,7 @@ pub(crate) fn publish<T>(commit: impl FnOnce() -> (Arc<Task>, T)) -> Result<(Arc
         return Err(());
     }
     #[cfg(debug_assertions)]
-    let _commit = crate::core::memory::allocator::NoAllocation::enter();
+    let _commit = crate::core::memory::flat::allocator::NoAllocation::enter();
     let (task, value) = commit();
     let id = task.ident.id;
     let previous = roster.insert(id, TaskWeak::stored(Arc::downgrade(&task), Origin::Roster));

@@ -34,7 +34,7 @@ use std::vec::Vec;
 
 use crate::machine;
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::{block, bump, frame, hybrid, spare, statistics};
+use crate::memory::flat::allocator::{block, bump, frame, hybrid, spare, statistics};
 
 /// 页大小（内核 `memory::PAGE_SIZE` 的宿主镜像）。
 pub const PAGE: usize = PAGE_SIZE;

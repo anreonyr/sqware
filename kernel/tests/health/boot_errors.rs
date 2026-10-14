@@ -32,7 +32,7 @@ impl Write for Buffer {
 pub fn accept() {
     let mut output = Buffer::new();
     {
-        let _guard = crate::core::memory::allocator::NoAllocation::enter();
+        let _guard = crate::core::memory::flat::allocator::NoAllocation::enter();
         BootError::Allocator(erra::Error::new(
             "initializing allocator",
             InitError::OutOfMemory,
@@ -55,7 +55,7 @@ pub fn accept() {
     };
     let mut output = Buffer::new();
     {
-        let _guard = crate::core::memory::allocator::NoAllocation::enter();
+        let _guard = crate::core::memory::flat::allocator::NoAllocation::enter();
         error.print(&mut output);
     }
     assert_eq!(

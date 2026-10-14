@@ -3,10 +3,10 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::TaskId;
 
-use crate::core::memory::manager::MapError;
-use crate::core::memory::manager::addr::PhysAddr;
+use crate::core::memory::address::PhysAddr;
 #[cfg(debug_assertions)]
-use crate::core::memory::manager::addr::VirtAddr;
+use crate::core::memory::address::VirtAddr;
+use crate::core::memory::nest::NestError;
 use crate::core::work::unit::team::Team;
 use crate::machine::sync::SpinLock;
 
@@ -17,12 +17,12 @@ mod memory;
 static NEXT: AtomicUsize = AtomicUsize::new(1);
 
 /// 下一个任务号：到 `isize::MAX` 就不再发新号（既有回绕口径）。
-pub(crate) fn next_id() -> Result<TaskId, MapError> {
+pub(crate) fn next_id() -> Result<TaskId, NestError> {
     let id = NEXT
         .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
             (id < isize::MAX as usize).then_some(id + 1)
         })
-        .map_err(|_| MapError::OutOfMemory)?;
+        .map_err(|_| NestError::OutOfMemory)?;
     Ok(TaskId::new(id))
 }
 
@@ -55,7 +55,7 @@ impl TaskIdent {
         }
     }
 
-    pub(crate) fn retire(&self) -> Result<(), MapError> {
+    pub(crate) fn retire(&self) -> Result<(), NestError> {
         self.memory.lock().retire()
     }
 }

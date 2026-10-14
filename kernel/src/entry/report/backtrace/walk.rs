@@ -1,6 +1,6 @@
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::SpaceKind;
-use crate::core::memory::manager::addr::VirtAddr;
+use crate::core::memory::address::VirtAddr;
+use crate::core::memory::nest::SpaceKind;
 
 use super::{Backtrace, Frame, StackReader};
 

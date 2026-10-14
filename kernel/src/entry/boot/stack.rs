@@ -2,7 +2,10 @@ use alloc::vec::Vec;
 use riscv::register::satp;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::{Frame, MapError, entry::PteFlags};
+use crate::core::memory::address::VirtAddr;
+use crate::core::memory::flat::Frame;
+use crate::core::memory::nest::table::PteFlags;
+use crate::core::memory::nest::{Access, NestError};
 use crate::core::work::room::deadline;
 use crate::core::work::unit::team::kernel;
 use crate::machine::board;
@@ -14,7 +17,7 @@ use crate::machine::switcher::context::TrapContext;
 use crate::machine::switcher::stack::{self, TRAP_STACK_CANARY, trap_stack_base, trap_stack_edge};
 use crate::machine::switcher::trampoline::check_fits_page;
 
-pub(super) fn init() -> Result<(), MapError> {
+pub(super) fn init() -> Result<(), NestError> {
     let segments = hart::hart_count();
     assert!(segments > 0, "no harts");
     assert_eq!(
@@ -28,17 +31,18 @@ pub(super) fn init() -> Result<(), MapError> {
     let need = segments
         .checked_mul(pages_per_hart)
         .and_then(|pages| pages.checked_mul(PAGE_SIZE))
-        .ok_or(MapError::OutOfMemory)?;
+        .ok_or(NestError::OutOfMemory)?;
     if board::info().free.size < need {
-        return Err(MapError::OutOfMemory);
+        return Err(NestError::OutOfMemory);
     }
 
     let mut boot_stacks = Vec::new();
     boot_stacks
         .try_reserve_exact(segments)
-        .map_err(|_| MapError::OutOfMemory)?;
+        .map_err(|_| NestError::OutOfMemory)?;
     let space = &kernel().expect("kernel team not initialized").space;
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
+    let attrs = flags & (PteFlags::U | PteFlags::G | PteFlags::A | PteFlags::D);
     for h in 0..segments {
         let boot = crate::tag!(TrapStack, Frame::allocate()?);
         boot_stacks.push(boot);
@@ -46,14 +50,14 @@ pub(super) fn init() -> Result<(), MapError> {
         let mut frames = Vec::new();
         frames
             .try_reserve_exact(body_pages)
-            .map_err(|_| MapError::OutOfMemory)?;
+            .map_err(|_| NestError::OutOfMemory)?;
         for _ in 0..body_pages {
             frames.push(crate::tag!(TrapStack, Frame::allocate()?));
         }
         let body_va = trap_stack_base(HartId::new(h));
         space
             .memory
-            .map_boot_frames(body_va, frames, flags, flags)?;
+            .map_boot_frames(body_va, frames, Access::from_pte(flags), attrs)?;
         unsafe {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);
         }
@@ -70,9 +74,8 @@ pub(super) fn init() -> Result<(), MapError> {
         let frame = unsafe { &mut *(pa.as_usize() as *mut TrapContext) };
         frame.kernel_satp = ksatp;
         frame.kernel_sp = trap_stack_edge(h);
-        frame.trap_handler = crate::core::memory::manager::addr::VirtAddr::from_raw(
-            crate::entry::trap::trap_handler as *const () as usize,
-        );
+        frame.trap_handler =
+            VirtAddr::from_raw(crate::entry::trap::trap_handler as *const () as usize);
         frame.trap_stack_corrupt = TRAP_STACK_CANARY;
         frame.user_pa = pa;
         frame.user_satp = ksatp;

@@ -1,4 +1,4 @@
-use crate::core::memory::manager::addr::VirtAddr;
+use crate::core::memory::address::VirtAddr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FrameKind {

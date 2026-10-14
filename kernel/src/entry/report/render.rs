@@ -2,7 +2,7 @@ use ::core::fmt::Write;
 
 use alloc::{format, string::String, vec, vec::Vec};
 
-use crate::core::memory::manager::addr::VirtAddr;
+use crate::core::memory::address::VirtAddr;
 use crate::entry::report::report::{Paragraph, Report};
 
 use super::backtrace::{Backtrace, FrameKind};

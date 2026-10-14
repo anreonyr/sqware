@@ -39,7 +39,7 @@ pub(crate) fn barrier() -> (usize, usize) {
 
 /// 本核到达停机屏障，不再返回：交还 ASID，等其余核到齐，由最后一核收尾并复位。
 pub(super) fn halt() -> ! {
-    crate::core::memory::manager::asid::vacate();
+    crate::core::memory::nest::identity::vacate();
     HALT_ARRIVED.fetch_add(1, Ordering::AcqRel);
     if !HALTING.swap(true, Ordering::AcqRel) {
         scheduler::idle::yell();

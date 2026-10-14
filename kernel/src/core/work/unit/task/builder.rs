@@ -6,10 +6,11 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::core::memory::manager::{Frame, MapError, Memory, RegionId};
+use crate::core::memory::address::{PhysAddr, VirtAddr};
+use crate::core::memory::flat::Frame;
+use crate::core::memory::nest::{Access, NestError, RegionId};
 use crate::core::work::unit::life::Life;
-use crate::core::work::unit::space::Space;
+use crate::core::work::unit::space::{Memory, Space};
 use crate::core::work::unit::team::{Team, kernel};
 use crate::machine::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
 use crate::machine::switcher::context::TrapContext;
@@ -44,7 +45,7 @@ fn invalidation_checkpoint(_stage: usize, _memory: &Memory) {
         .compare_exchange(_stage, 0, Ordering::Relaxed, Ordering::Relaxed)
         .is_ok()
     {
-        crate::core::memory::manager::asid::fail_next_shootdown(_memory.asid());
+        crate::core::memory::nest::identity::fail_next_shootdown(_memory.asid());
     }
 }
 
@@ -58,13 +59,13 @@ pub(crate) fn fail_rollback_fence() {
 }
 
 #[inline]
-fn preparation_checkpoint(_stage: usize) -> Result<(), MapError> {
+fn preparation_checkpoint(_stage: usize) -> Result<(), NestError> {
     #[cfg(debug_assertions)]
     if FAIL_PREPARATION
         .compare_exchange(_stage, 0, Ordering::Relaxed, Ordering::Relaxed)
         .is_ok()
     {
-        return Err(MapError::OutOfMemory);
+        return Err(NestError::OutOfMemory);
     }
     Ok(())
 }
@@ -126,20 +127,20 @@ impl TaskBuilder {
         self
     }
 
-    pub fn hold(self) -> Result<Arc<Task>, MapError> {
+    pub fn hold(self) -> Result<Arc<Task>, NestError> {
         if !self.team.ready() {
-            return Err(MapError::WidenDenied);
+            return Err(NestError::WidenDenied);
         }
         self.prepare()?.publish(|| {})
     }
 
-    pub(crate) fn prepare(self) -> Result<PreparedTask, MapError> {
+    pub(crate) fn prepare(self) -> Result<PreparedTask, NestError> {
         let stack_size = self
             .stack
             .max(1)
             .checked_next_multiple_of(PAGE_SIZE)
             .filter(|size| size.checked_add(crate::machine::layout::TASK_STACK_GUARD).is_some())
-            .ok_or(MapError::NoRegion)?;
+            .ok_or(NestError::NoRegion)?;
         let id = next_id()?;
 
         let mut memory = TaskMemory {
@@ -162,31 +163,26 @@ impl TaskBuilder {
         let mut frames = Vec::new();
         if frames.try_reserve_exact(stack_size / PAGE_SIZE).is_err() {
             self.team.space.memory.release_reservation(body)?;
-            return Err(MapError::OutOfMemory);
+            return Err(NestError::OutOfMemory);
         }
         for _ in 0..stack_size / PAGE_SIZE {
             match Frame::allocate() {
                 Ok(frame) => frames.push(frame),
                 Err(error) => {
                     self.team.space.memory.release_reservation(body)?;
-                    return Err(error);
+                    return Err(NestError::from(error));
                 }
             }
         }
-        let rw =
-            crate::core::memory::manager::entry::PteFlags::R
-                | crate::core::memory::manager::entry::PteFlags::W;
-        let active = rw
-            | crate::core::memory::manager::entry::PteFlags::A
-            | crate::core::memory::manager::entry::PteFlags::D;
+        let rw = Access::READ | Access::WRITE;
         invalidation_checkpoint(1, &self.team.space.memory);
-        memory.stack = Some(self.team.space.memory.map_frames(body, frames, rw, active)?);
+        memory.stack = Some(self.team.space.memory.map_frames(body, frames, rw, rw)?);
         preparation_checkpoint(1)?;
 
         let mut frame_pages = Vec::new();
         frame_pages
             .try_reserve_exact(1)
-            .map_err(|_| MapError::OutOfMemory)?;
+            .map_err(|_| NestError::OutOfMemory)?;
         let frame = Frame::allocate()?;
         let frame_pa = PhysAddr::from_raw(frame.physical_address());
         frame_pages.push(frame);
@@ -197,7 +193,7 @@ impl TaskBuilder {
             reservation,
             frame_pages,
             rw,
-            active - crate::core::memory::manager::entry::PteFlags::U,
+            rw,
         )?);
         preparation_checkpoint(2)?;
 
@@ -231,7 +227,7 @@ impl TaskBuilder {
             );
         }
 
-        let alloc = crate::core::memory::allocator::hybrid::allocator();
+        let alloc = crate::core::memory::flat::allocator::hybrid::allocator();
         let ident: Arc<TaskIdent> = unsafe {
             let ident = crate::tag!(
                 Task,
@@ -247,22 +243,22 @@ impl TaskBuilder {
                     alloc,
                 )
             )
-            .map_err(|_| MapError::OutOfMemory)?;
+            .map_err(|_| NestError::OutOfMemory)?;
             let (ptr, _alloc) = Arc::into_raw_with_allocator(ident);
             Arc::from_raw(ptr)
         };
         #[cfg(debug_assertions)]
         if FAIL_ROLLBACK_FENCE.swap(false, Ordering::Relaxed) {
-            crate::core::memory::manager::asid::fail_next_shootdown(self.team.space.memory.asid());
+            crate::core::memory::nest::identity::fail_next_shootdown(self.team.space.memory.asid());
         }
         preparation_checkpoint(3)?;
-        let life = Life::try_new().map_err(|_| MapError::OutOfMemory)?;
+        let life = Life::try_new().map_err(|_| NestError::OutOfMemory)?;
         preparation_checkpoint(4)?;
         let state = Arc::try_new(SpinLock::new_level(Level::UnitState, TaskState::held()))
-            .map_err(|_| MapError::OutOfMemory)?;
+            .map_err(|_| NestError::OutOfMemory)?;
         let slot: Arc<MaybeUninit<Task>> = unsafe {
             let slot = crate::tag!(Task, Arc::<Task, _>::try_new_uninit_in(alloc))
-                .map_err(|_| MapError::OutOfMemory)?;
+                .map_err(|_| NestError::OutOfMemory)?;
             let (ptr, _) = Arc::into_raw_with_allocator(slot);
             Arc::from_raw(ptr)
         };

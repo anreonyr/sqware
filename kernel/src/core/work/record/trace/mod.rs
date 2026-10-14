@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::alloc::{Allocator, Layout};
 
-use crate::core::memory::allocator::spare;
+use crate::core::memory::flat::allocator::spare;
 use crate::machine::hart;
 use crate::machine::sync::OnceLock;
 

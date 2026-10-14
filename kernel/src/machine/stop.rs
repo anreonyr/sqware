@@ -12,7 +12,7 @@ pub(crate) fn hush() {
 }
 
 fn hunker() -> ! {
-    crate::core::memory::manager::asid::vacate();
+    crate::core::memory::nest::identity::vacate();
     unsafe { ::core::arch::asm!("csrci sstatus, 2") };
     let _ = sbi::HsmCall::new(fid::Hsm::Stop).call();
     loop {

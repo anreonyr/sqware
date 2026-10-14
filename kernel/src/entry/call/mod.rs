@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 
 use env::{DebugCall, EnvCall};
 
-use crate::core::memory::manager::addr::VirtAddr as KVirt;
+use crate::core::memory::address::VirtAddr as KVirt;
 use crate::core::work::record::trace::{self, EnvEvent, EventKind};
 use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::core::work::unit::space::Space;

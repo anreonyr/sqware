@@ -4,13 +4,15 @@ use alloc::sync::Arc;
 use env::{ControlCall, DebugCall, EnvCall, MemoryCall, ProgramKind, RoomCall, UnitCall, VirtAddr};
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::{addr::VirtAddr as KVirt, entry::PteFlags, mode};
+use crate::core::memory::address::{PageCount, PageOffset, VirtAddr as KVirt};
+use crate::core::memory::nest::table::PteFlags;
+use crate::core::memory::nest::{Access, RegionId};
+use crate::machine::mode;
 use crate::entry::report::backtrace::StackReader;
 use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::entry::call as envcall;
 use crate::core::work::mail::{Mail, hole, pole};
 use crate::core::work::pend::{self, Need, Permission};
-use crate::core::memory::manager::RegionId;
 use crate::core::work::unit::space::SpaceBuilder;
 use crate::core::work::unit::task::Task;
 use crate::core::work::unit::team::{Team, TeamBuilder};
@@ -384,12 +386,24 @@ pub fn memory() {
         (fixed + PAGE_SIZE, false),
         (fixed + 2 * PAGE_SIZE, true),
     ] {
-        let map = user.team.space.memory.backend().find(KVirt::wrap(page)).unwrap();
+        let map = user
+            .team
+            .space
+            .memory
+            .backend()
+            .probe(KVirt::wrap(page))
+            .unwrap();
         user.team
             .space
             .memory
             .backend()
-            .materialize(&map, KVirt::wrap(page), PAGE_SIZE)
+            .materialize_active(
+                map.range(
+                    PageOffset::new((page - map.initial_start().as_usize()) / PAGE_SIZE),
+                    PageCount::new(1).unwrap(),
+                )
+                .unwrap(),
+            )
             .unwrap();
         assert_eq!(
             user.team
@@ -558,15 +572,16 @@ pub fn capability() {
     .expect("pie allocation");
     let token = pie.token();
     user.task.pend.pies.lock().push(pie);
-    let original = user.team.space.memory.backend().find(KVirt::wrap(source)).unwrap();
-    user.task.pend.creations.claim(&original).unwrap().commit();
-    pole.commit_source();
-    let flags = user
+    let original = user
         .team
         .space
         .memory
-        .pte_policy(PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D);
-    let (at, size) = pole::open(&pole, token, &user.team.space, flags).unwrap();
+        .backend()
+        .probe(KVirt::wrap(source))
+        .unwrap();
+    user.task.pend.creations.claim(&original).unwrap().commit();
+    pole.commit_source();
+    let (at, size) = pole::open(&pole, token, &user.team.space, Access::READ).unwrap();
     for call in [
         MemoryCall::Deallocate {
             addr: VirtAddr::new(at),

@@ -6,9 +6,9 @@ use ::core::ptr::NonNull;
 use alloc::vec::Vec;
 
 use crate::machine::hart;
-use crate::core::memory::allocator::spare;
-use crate::core::memory::allocator::spare::DUMP_BUDGET;
-use crate::core::memory::allocator::statistics;
+use crate::core::memory::flat::allocator::spare;
+use crate::core::memory::flat::allocator::spare::DUMP_BUDGET;
+use crate::core::memory::flat::allocator::statistics;
 use crate::core::work::record::trace;
 
 pub fn accept() {

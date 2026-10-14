@@ -12,9 +12,9 @@ impl Life {
         Arc::new(Life)
     }
 
-    pub(crate) fn try_new() -> Result<Arc<Life>, crate::core::memory::manager::MapError> {
+    pub(crate) fn try_new() -> Result<Arc<Life>, crate::core::memory::nest::NestError> {
         Arc::try_new_in(Life, alloc::alloc::Global)
-            .map_err(|_| crate::core::memory::manager::MapError::OutOfMemory)
+            .map_err(|_| crate::core::memory::nest::NestError::OutOfMemory)
     }
 
     pub(crate) fn live(w: &Weak<Life>) -> bool {

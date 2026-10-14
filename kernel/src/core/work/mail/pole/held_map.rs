@@ -1,18 +1,17 @@
 use alloc::sync::{Arc, Weak};
 
-use crate::core::memory::manager::entry::PteFlags;
-use crate::core::memory::manager::{Map, Mapping, Reservation};
+use crate::core::memory::nest::{Access, View};
 use crate::core::work::grant::Grant;
-use crate::core::work::unit::space::Space;
+use crate::core::work::unit::space::{Mapping, Space};
 use env::{Permission, PieToken, TeamId};
 
 use super::relation::Relation;
 
 pub(super) struct HeldMap {
-    pub(super) map: Arc<Map>,
+    pub(super) view: Arc<View>,
     pub(super) token: Option<PieToken>,
     pub(super) grant: Option<Arc<Grant>>,
-    pub(super) placement: Option<(Weak<Space>, Reservation)>,
+    pub(super) placement: Option<Weak<Space>>,
     pub(super) relation: Relation,
 }
 
@@ -20,7 +19,7 @@ impl HeldMap {
     pub(super) fn placed_in(&self, space: &Arc<Space>) -> bool {
         self.placement
             .as_ref()
-            .is_some_and(|(weak, _)| weak.ptr_eq(&Arc::downgrade(space)))
+            .is_some_and(|weak| weak.ptr_eq(&Arc::downgrade(space)))
     }
 
     pub(super) fn placed_by(&self, token: PieToken) -> bool {
@@ -39,10 +38,8 @@ impl HeldMap {
         self.placement.is_some()
             && !self.keeper()
             && self.live()
-            && self.map.ranges().map_or(true, |ranges| {
-                ranges
-                    .iter()
-                    .any(|range| range.current.contains(PteFlags::W))
+            && self.view.active().map_or(true, |ranges| {
+                ranges.iter().any(|range| range.current.contains(Access::WRITE))
             })
     }
 
@@ -65,17 +62,17 @@ impl HeldMap {
         relation: Relation,
     ) -> Self {
         Self {
-            map: mapping.map,
+            view: mapping.view().clone(),
             token,
             grant,
-            placement: Some((Arc::downgrade(space), mapping.reservation)),
+            placement: Some(Arc::downgrade(space)),
             relation,
         }
     }
 
-    pub(super) fn authority(map: Arc<Map>, token: PieToken, grant: Arc<Grant>) -> Self {
+    pub(super) fn authority(view: Arc<View>, token: PieToken, grant: Arc<Grant>) -> Self {
         Self {
-            map,
+            view,
             token: Some(token),
             grant: Some(grant),
             placement: None,
@@ -108,7 +105,7 @@ impl HeldMap {
     }
 
     pub(super) fn live(&self) -> bool {
-        self.map.is_live()
+        self.view.is_live()
     }
 
     pub(super) fn holds(&self, token: PieToken) -> bool {

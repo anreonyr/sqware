@@ -24,9 +24,14 @@ pub use crate::core::work::mail::hole::tests as hole;
 pub use crate::core::work::room::conductor::tests::acceptance as scheduler;
 
 pub mod backtrace;
+pub mod depend;
+pub mod flat;
 pub mod frame;
 pub mod hart;
+pub mod large_pages;
 pub mod manager_api;
+pub mod nest;
+pub mod nest_failure;
 pub mod pagetable;
 pub mod permit;
 pub mod pole;
@@ -35,12 +40,11 @@ pub mod spare;
 pub mod stress;
 pub mod syscall;
 pub mod task;
-pub mod tree;
-pub mod tree_failure;
 
 pub fn run() {
     #[cfg(debug_assertions)]
     {
+        depend::accept();
         spare::accept();
         pagetable::pagetable();
         stress::accept();

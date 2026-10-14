@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::core::memory::manager::FaultKind;
+use crate::core::memory::nest::FaultKind;
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]

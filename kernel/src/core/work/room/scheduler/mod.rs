@@ -10,7 +10,7 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::core::memory::manager::MapError;
+use crate::core::memory::nest::NestError;
 use crate::core::work::room::conductor::Conductor;
 use crate::core::work::room::counter::Counter;
 use crate::core::work::room::messenger;
@@ -30,11 +30,11 @@ static KICKS: Counter = Counter::new();
 static FALLBACK: Counter = Counter::new();
 
 /// 装好全局表：每核一张空槽，并把本核的槽挂进 `PerHart`。
-pub(crate) fn init() -> Result<(), MapError> {
+pub(crate) fn init() -> Result<(), NestError> {
     let n = hart::hart_count();
     assert!(n > 0, "no harts");
     let mut sched =
-        Box::<[Conductor]>::try_new_uninit_slice(n).map_err(|_| MapError::OutOfMemory)?;
+        Box::<[Conductor]>::try_new_uninit_slice(n).map_err(|_| NestError::OutOfMemory)?;
     for (h, slot) in sched.iter_mut().enumerate() {
         slot.write(Conductor::new(HartId::new(h)));
     }

@@ -3,7 +3,7 @@ use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{scause, sepc, sie, sip, stval};
 
 use crate::machine::hart::{self, HartId};
-use crate::core::memory::manager::asid::{self, Asid};
+use crate::core::memory::nest::identity::{self as asid, Asid};
 use crate::putln;
 use crate::core::work::room::deadline;
 use crate::core::work::record::trace::{self, EventKind, MemoryEvent, RoomEvent};

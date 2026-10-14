@@ -42,14 +42,14 @@ impl HoleMeta {
         Self::try_new(owner).expect("hole allocation failed")
     }
 
-    pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::core::memory::manager::MapError> {
+    pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
         Self::try_new_with_limits(owner, HoleLimits::default())
     }
 
     pub(crate) fn try_new_with_limits(
         owner: TaskId,
         limits: HoleLimits,
-    ) -> Result<Arc<Self>, crate::core::memory::manager::MapError> {
+    ) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
         let life = Life::try_new()?;
         Arc::try_new(Self {
             id: super::next_id(),
@@ -60,7 +60,7 @@ impl HoleMeta {
             alarmed: AtomicBool::new(false),
             stuck: AtomicBool::new(false),
         })
-        .map_err(|_| crate::core::memory::manager::MapError::OutOfMemory)
+        .map_err(|_| crate::core::memory::nest::NestError::OutOfMemory)
     }
 
     pub(crate) fn life(&self) -> Weak<Life> {

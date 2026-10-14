@@ -4,6 +4,7 @@ pub(crate) mod console;
 pub(crate) mod hart;
 pub(crate) mod image;
 pub(crate) mod layout;
+pub(crate) mod mode;
 pub(crate) mod switcher;
 pub(crate) mod sync;
 pub(crate) mod stop;

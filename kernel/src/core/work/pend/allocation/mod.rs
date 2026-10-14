@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
 
-use crate::core::memory::manager::Map;
+use crate::core::memory::nest::View;
 use crate::machine::sync::SpinLock;
 
 mod creation;
@@ -33,7 +33,7 @@ impl CreationRegistry {
         let creation = Arc::try_new(Creation::new())
         .map_err(|_| env::PieFail::OoM)?;
         let node = Box::try_new(Node {
-            map: Weak::new(),
+            view: Weak::new(),
             creation,
             next: None,
         })
@@ -44,10 +44,10 @@ impl CreationRegistry {
         })
     }
 
-    pub(crate) fn claim(&self, map: &Arc<Map>) -> Result<CreationLease<'_>, env::PieFail> {
+    pub(crate) fn claim(&self, view: &Arc<View>) -> Result<CreationLease<'_>, env::PieFail> {
         let nodes = self.nodes.lock();
         let node = chain(nodes.as_deref())
-            .find(|node| node.matches(map))
+            .find(|node| node.matches(view))
             .ok_or(env::PieFail::Denied)?;
         node.creation.claim()?;
         Ok(CreationLease {
@@ -58,13 +58,13 @@ impl CreationRegistry {
 
     pub(crate) fn locate(
         &self,
-        start: crate::core::memory::manager::addr::VirtAddr,
+        start: crate::core::memory::address::VirtAddr,
         size: usize,
-    ) -> Option<Arc<Map>> {
+    ) -> Option<Arc<View>> {
         let nodes = self.nodes.lock();
         chain(nodes.as_deref()).find_map(|node| {
-            let map = node.map.upgrade()?;
-            (map.initial_range() == (start, size)).then_some(map)
+            let view = node.view.upgrade()?;
+            (view.initial_range() == (start, size)).then_some(view)
         })
     }
 
@@ -89,13 +89,13 @@ impl CreationRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::memory::manager::Map;
+    use crate::core::memory::nest::View;
 
     #[test]
     fn creation_is_single_use_and_bound_to_one_map() {
         let registry = CreationRegistry::new();
-        let root = Arc::new(Map);
-        let derived = Arc::new(Map);
+        let root = Arc::new(View);
+        let derived = Arc::new(View);
         registry.prepare().unwrap().commit(&root);
         registry.prepare().unwrap().commit(&root);
 
@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn failed_claim_rolls_the_creation_right_back() {
         let registry = CreationRegistry::new();
-        let root = Arc::new(Map);
+        let root = Arc::new(View);
         registry.prepare().unwrap().commit(&root);
         {
             let _lease = registry.claim(&root).unwrap();
@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn committed_lease_cannot_restore_consumed_creation() {
         let registry = CreationRegistry::new();
-        let root = Arc::new(Map);
+        let root = Arc::new(View);
         registry.prepare().unwrap().commit(&root);
         let lease = registry.claim(&root).unwrap();
         let creation = lease.creation.clone();

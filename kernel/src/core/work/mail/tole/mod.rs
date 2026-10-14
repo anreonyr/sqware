@@ -34,7 +34,7 @@ impl ToleMeta {
         Self::try_new(owner).expect("tole allocation failed")
     }
 
-    pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::core::memory::manager::MapError> {
+    pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
         Arc::try_new(Self {
             state: SpinLock::new_level(Level::L3, Liveness::Live),
             id: super::next_id(),
@@ -43,7 +43,7 @@ impl ToleMeta {
             owner,
             cursor: AtomicUsize::new(0),
         })
-        .map_err(|_| crate::core::memory::manager::MapError::OutOfMemory)
+        .map_err(|_| crate::core::memory::nest::NestError::OutOfMemory)
     }
 
     pub(crate) fn life(&self) -> Weak<Life> {

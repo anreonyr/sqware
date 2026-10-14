@@ -10,9 +10,9 @@ pub fn acceptance() {
     space
         .memory
         .attach_region(
-            crate::core::memory::manager::RegionId::Normal,
+            crate::core::memory::nest::RegionId::Normal,
             0x4000_0000,
-            crate::core::memory::manager::mode::upper().as_usize(),
+            crate::machine::mode::upper().as_usize(),
         )
         .unwrap();
     let team = TeamBuilder::new(space).spawn().unwrap();

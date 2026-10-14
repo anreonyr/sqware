@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 
-use crate::core::memory::manager::Map;
+use crate::core::memory::nest::View;
 
 use super::{CreationRegistry, Node, chain};
 
@@ -11,11 +11,11 @@ pub(crate) struct PreparedAllocation<'a> {
 }
 
 impl PreparedAllocation<'_> {
-    pub(crate) fn commit(self, map: &Arc<Map>) {
+    pub(crate) fn commit(self, view: &Arc<View>) {
         let mut node = self.node;
-        node.map = Arc::downgrade(map);
+        node.view = Arc::downgrade(view);
         let mut head = self.registry.nodes.lock();
-        if chain(head.as_deref()).any(|node| node.matches(map)) {
+        if chain(head.as_deref()).any(|node| node.matches(view)) {
             return;
         }
         node.next = head.take();

@@ -22,7 +22,7 @@ pub(super) fn put(
     let n = len.min(DBCN_MAX);
     let mut text = [0u8; DBCN_MAX];
     let space = &ident.team.space;
-    if !crate::core::memory::manager::Memory::user_range(buf, len) || !space.memory.copy_in(&mut text[..n], buf)
+    if !crate::core::work::unit::space::Memory::user_range(buf, len) || !space.memory.copy_in(&mut text[..n], buf)
     {
         ret_err(frame, DebugFail::Denied);
         return;

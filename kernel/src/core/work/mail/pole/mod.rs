@@ -8,12 +8,12 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::{Map, MapError, addr::PhysAddr, entry::PteFlags};
-use crate::core::memory::manager::{Mapping, RegionId};
+use crate::core::memory::address::{PageCount, PageOffset, PhysAddr};
+use crate::core::memory::nest::{Access, NestError, RegionId, View};
 use crate::core::work::grant::Grant;
 use crate::core::work::room::messenger::{self, Handoff, WakeKey};
 use crate::core::work::unit::life::Life;
-use crate::core::work::unit::space::Space;
+use crate::core::work::unit::space::{Mapping, Space};
 use crate::machine::sync::{Level, SpinLock};
 use env::{Bit, MailFail, Permission, PieFail, PieToken, TaskId, TeamId};
 
@@ -60,15 +60,11 @@ impl PoleMeta {
         mapping: Mapping,
         owner: TaskId,
     ) -> Result<Arc<Self>, PieFail> {
-        let (start, size) = mapping.map.initial_range();
-        if size == 0
-            || start != mapping.reservation.start()
-            || size != mapping.reservation.size()
-            || mapping.map.frame_count() != size / PAGE_SIZE
-        {
+        let (start, size) = mapping.view().initial_range();
+        if size == 0 || mapping.view().frame_count() != size / PAGE_SIZE {
             return Err(PieFail::Denied);
         }
-        let ranges = mapping.map.ranges().map_err(pie_map_error)?;
+        let ranges = mapping.view().active().map_err(pie_map_error)?;
         let mut covered = 0;
         for range in ranges {
             if start.as_usize().checked_add(covered) != Some(range.start.as_usize()) {
@@ -88,16 +84,10 @@ impl PoleMeta {
             .memory
             .allocate_high(RegionId::Resource, size)
             .map_err(pie_map_error)?;
-        let rw = PteFlags::R | PteFlags::W;
+        let rw = Access::READ | Access::WRITE;
         let keeper = kernel
             .memory
-            .derive(
-                reservation,
-                &mapping.map,
-                0,
-                rw,
-                rw | PteFlags::A | PteFlags::D,
-            )
+            .derive_into(reservation, mapping.view(), 0, rw, rw)
             .map_err(pie_map_error)?;
         meta.add(mapping, space, None, None, Relation::Input);
         meta.add(keeper, &kernel, None, None, Relation::Keeper);
@@ -123,22 +113,22 @@ impl PoleMeta {
         *self.ring.lock() & bit.mask() != 0
     }
 
-    pub(crate) fn canonical_map(&self) -> Option<Arc<Map>> {
+    pub(crate) fn canonical_view(&self) -> Option<Arc<View>> {
         let maps = self.maps.lock();
         maps.iter()
             .filter(|entry| entry.keeper())
             .chain(maps.iter().filter(|entry| entry.placement.is_some()))
             .find(|entry| entry.live())
-            .map(|entry| entry.map.clone())
+            .map(|entry| entry.view.clone())
     }
 
     pub(crate) fn owned(&self) -> bool {
-        self.canonical_map()
-            .is_some_and(|map| map.frame_count() == self.size / PAGE_SIZE)
+        self.canonical_view()
+            .is_some_and(|view| view.frame_count() == self.size / PAGE_SIZE)
     }
 
     pub(crate) fn register_grant(&self, token: PieToken, grant: Arc<Grant>) -> Result<(), PieFail> {
-        let source = self.canonical_map().ok_or(PieFail::Dead)?;
+        let source = self.canonical_view().ok_or(PieFail::Dead)?;
         let mut maps = self.maps.lock();
         maps.try_reserve(1).map_err(|_| PieFail::OoM)?;
         if let Some(input) = maps
@@ -187,11 +177,11 @@ impl PoleMeta {
             .map_or(0, TeamId::get)
     }
 
-    pub(crate) fn opened(&self, map: &Arc<Map>) -> bool {
+    pub(crate) fn opened(&self, view: &Arc<View>) -> bool {
         self.maps
             .lock()
             .iter()
-            .any(|entry| entry.opened() && Arc::ptr_eq(&entry.map, map) && entry.live())
+            .any(|entry| entry.opened() && Arc::ptr_eq(&entry.view, view) && entry.live())
     }
 
     pub(crate) fn mapped(&self) -> bool {
@@ -272,14 +262,11 @@ impl PoleMeta {
                     None => return Ok(()),
                 }
             };
-            if let Some((weak, reservation)) = entry.placement.take() {
+            if let Some(weak) = entry.placement.take() {
                 if let Some(space) = weak.upgrade() {
-                    let mapping = Mapping {
-                        map: entry.map.clone(),
-                        reservation,
-                    };
+                    let mapping = Mapping::new(entry.view.clone());
                     if let Err(error) = space.memory.unmap(&mapping) {
-                        entry.placement = Some((weak, mapping.reservation));
+                        entry.placement = Some(weak);
                         self.maps.lock().push(entry);
                         return Err(pie_map_error(error));
                     }
@@ -298,22 +285,19 @@ impl PoleMeta {
                     None => return,
                 }
             };
-            if let Some((weak, reservation)) = entry.placement {
+            if let Some(weak) = entry.placement {
                 if let Some(space) = weak.upgrade() {
-                    let _ = space.memory.dispose(Mapping {
-                        map: entry.map,
-                        reservation,
-                    });
+                    let _ = space.memory.dispose(Mapping::new(entry.view));
                 }
             }
         }
     }
 }
 
-fn pie_map_error(error: MapError) -> PieFail {
+fn pie_map_error(error: NestError) -> PieFail {
     match error {
-        MapError::OutOfMemory => PieFail::OoM,
-        MapError::Shootdown => PieFail::Busy,
+        NestError::OutOfMemory => PieFail::OoM,
+        NestError::Shootdown => PieFail::Busy,
         _ => PieFail::Denied,
     }
 }
@@ -326,12 +310,9 @@ impl Drop for PoleMeta {
             if entry.input() && !self.committed.load(Ordering::Acquire) {
                 continue;
             }
-            if let Some((weak, reservation)) = entry.placement {
+            if let Some(weak) = entry.placement {
                 if let Some(space) = weak.upgrade() {
-                    let _ = space.memory.dispose(Mapping {
-                        map: entry.map,
-                        reservation,
-                    });
+                    let _ = space.memory.dispose(Mapping::new(entry.view));
                 }
             }
         }
@@ -342,7 +323,7 @@ pub(crate) fn open(
     meta: &Arc<PoleMeta>,
     token: PieToken,
     space: &Arc<Space>,
-    flags: PteFlags,
+    access: Access,
 ) -> Result<(usize, usize), PieFail> {
     let _operation = PoleOperation::acquire(meta).ok_or(PieFail::Busy)?;
     if !meta.alive() {
@@ -354,7 +335,7 @@ pub(crate) fn open(
     let grant = meta.grant(token).ok_or(PieFail::Denied)?;
     let permission = grant.permission().ok_or(PieFail::Dead)?;
     if !permission.contains(Permission::FETCH)
-        || flags.contains(PteFlags::W) && !permission.contains(Permission::STORE)
+        || access.contains(Access::WRITE) && !permission.contains(Permission::STORE)
     {
         return Err(PieFail::Denied);
     }
@@ -364,37 +345,30 @@ pub(crate) fn open(
             .find(|entry| {
                 entry.holds(token) && entry.opened() && entry.placed_in(space) && entry.live()
             })
-            .map(|entry| entry.map.clone())
+            .map(|entry| entry.view.clone())
     };
-    if let Some(map) = reusable {
-        for range in map.ranges().map_err(pie_map_error)? {
-            let rwx = PteFlags::R | PteFlags::W | PteFlags::X;
-            if (range.ceiling & rwx).bits() != (flags & rwx).bits() {
+    if let Some(view) = reusable {
+        for range in view.active().map_err(pie_map_error)? {
+            if range.ceiling != access {
                 space
                     .memory
-                    .narrow_record(&map, range.start, range.size.get(), flags)
+                    .narrow_record(&view, range.start, range.size.get(), access)
                     .map_err(pie_map_error)?;
             }
         }
-        return Ok((map.initial_range().0.as_usize(), meta.size));
+        return Ok((view.initial_range().0.as_usize(), meta.size));
     }
     meta.reserve_record()?;
-    let source = meta.canonical_map().ok_or(PieFail::Dead)?;
+    let source = meta.canonical_view().ok_or(PieFail::Dead)?;
     let reservation = space
         .memory
         .allocate_low(RegionId::Normal, meta.size)
         .map_err(pie_map_error)?;
     let mapping = space
         .memory
-        .derive(
-            reservation,
-            &source,
-            0,
-            flags,
-            flags | PteFlags::A | PteFlags::D,
-        )
+        .derive_into(reservation, &source, 0, access, access)
         .map_err(pie_map_error)?;
-    let address = mapping.reservation.start().as_usize();
+    let address = mapping.address().as_usize();
     if !meta.alive() || grant.permission().is_none() {
         let _ = space.memory.dispose(mapping);
         return Err(PieFail::Dead);
@@ -414,7 +388,7 @@ pub(crate) fn shut(meta: &Arc<PoleMeta>, token: PieToken) -> Result<(), PieFail>
 pub(crate) fn narrow(
     meta: &Arc<PoleMeta>,
     token: PieToken,
-    flags: PteFlags,
+    access: Access,
 ) -> Result<(), PieFail> {
     if !meta.alive() {
         return Err(PieFail::Dead);
@@ -424,19 +398,23 @@ pub(crate) fn narrow(
         let maps = meta.maps.lock();
         targets.try_reserve(maps.len()).map_err(|_| PieFail::OoM)?;
         for entry in maps.iter().filter(|entry| entry.placed_by(token)) {
-            if let Some(tree) = entry.map.tree() {
+            if let Some(nest) = entry.view.owner() {
                 targets.push((
-                    tree,
-                    entry.map.clone(),
-                    entry.map.ranges().map_err(pie_map_error)?,
+                    nest,
+                    entry.view.clone(),
+                    entry.view.active().map_err(pie_map_error)?,
                 ));
             }
         }
     }
-    for (tree, map, ranges) in targets {
+    for (nest, view, ranges) in targets {
         for range in ranges {
-            tree.narrow(&map, range.start, range.size.get(), flags)
+            let offset = (range.start.as_usize() - view.initial_start().as_usize()) / PAGE_SIZE;
+            let count = PageCount::new(range.size.get() / PAGE_SIZE).ok_or(PieFail::NotAligned)?;
+            let selection = view
+                .range(PageOffset::new(offset), count)
                 .map_err(pie_map_error)?;
+            nest.narrow(selection, access).map_err(pie_map_error)?;
         }
     }
     Ok(())
@@ -460,13 +438,13 @@ pub(crate) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<PoleM
         .memory
         .allocate_high(RegionId::Resource, hi - lo)
         .map_err(pie_map_error)?;
-    let rw = PteFlags::R | PteFlags::W;
+    let rw = Access::READ | Access::WRITE;
     let mapping = unsafe {
         kernel.memory.map_borrowed(
             reservation,
             PhysAddr::from_raw(lo),
             rw,
-            rw | PteFlags::A | PteFlags::D,
+            rw,
         )
     }
     .map_err(pie_map_error)?;

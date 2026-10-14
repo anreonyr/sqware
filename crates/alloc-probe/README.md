@@ -4,7 +4,7 @@
 关机审计里一块内存还在册；那道审计已按用户裁决整体删除）。
 本 crate 是**测试侧**的同一刀：
 
-* 把内核**逐字未改**的分配器源码 `include!` 进来 —— `kernel/src/core/memory/allocator/`
+* 把内核**逐字未改**的分配器源码 `include!` 进来 —— `kernel/src/core/memory/flat/allocator/`
   的 `bump/mod.rs` / `frame/mod.rs` / `block/mod.rs` / `hybrid.rs` / `spare/mod.rs`；
 * 平台垫片把内核依赖顶掉：核身份 `machine::hart`、机器事实 `machine::board`、锁 `machine::sync`、
   页大小与分配器 `core::memory`、环尺寸 `core::work::record::trace`（路径与内核同形，全是宿主版），
@@ -12,7 +12,7 @@
 * 内核对象的生命周期不在场 ⇒ 任何失败都只能归因于分配器。
 
 > 垫片是**垫片**：内核改了 `statistics` 的**写侧**签名，这里就得跟着改（`lib.rs` 的
-> `memory::allocator::statistics`，内核那份现在在 `core/memory/allocator/statistics/mod.rs`）。
+> `memory::flat::allocator::statistics`，内核那份现在在 `core/memory/flat/allocator/statistics/mod.rs`）。
 > `include!` 进来的源码一个字都不改 —— 那是本 crate 全部结论的前提。
 
 ---

@@ -1,7 +1,7 @@
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::core::memory::address::{PhysAddr, VirtAddr};
 #[cfg(debug_assertions)]
-use crate::core::memory::manager::mode;
+use crate::machine::mode;
 
 pub const IMAGE_BASE: VirtAddr = VirtAddr::wrap(0x1_0000);
 

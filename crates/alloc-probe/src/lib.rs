@@ -279,140 +279,142 @@ pub mod core {
 pub mod memory {
     pub const PAGE_SIZE: usize = 0x1000;
 
-    pub mod allocator {
-        // 内核源码**逐字未改**地编进来（`include!` 的路径相对本文件 ⇒ 三级上到仓库根）。
-        // 用 `include!` 而不是 `#[path]`：后者对嵌套模块按"模块目录"解析，层级会绕。
-        // 内核那几份源码用 `#[path = "<文件>.rs"]` 声明子模块（`inner.rs` 等）；
-        // 该 `#[path]` 相对**被 include 的文件**（`<模块>/mod.rs`），于是与内核编译时的拼法一致。
-        pub mod link {
-            include!("../../../kernel/src/core/memory/allocator/link.rs");
-        }
-        pub(crate) use link::Link;
-        pub mod bump {
-            include!("../../../kernel/src/core/memory/allocator/bump/mod.rs");
-        }
-        pub mod frame {
-            include!("../../../kernel/src/core/memory/allocator/frame/mod.rs");
-        }
-        pub mod block {
-            include!("../../../kernel/src/core/memory/allocator/block/mod.rs");
-        }
-        /// 分流器（≤ 2 KiB 走 block、否则走 frame）。宿主上**不需要 init**：
-        /// 它只是一个 `static` 路由器（`HYBRID_ALLOCATOR` 是 `const fn new()`），
-        /// 两端的块/帧由 `harness` 装台。
-        pub mod hybrid {
-            include!("../../../kernel/src/core/memory/allocator/hybrid.rs");
-        }
-        /// 后备仓（崩溃路径专用仓：有序合并 free-list，一次取定、此后只在区内拉还）。
-        /// 装台时它从混合分配器整块取一段仓区（`ring_bytes(harts) + HEADER + DUMP_BUDGET`），
-        /// 故它是**台面的一部分**：容量读数与判据都看得见它。
-        pub mod spare {
-            include!("../../../kernel/src/core/memory/allocator/spare/mod.rs");
-        }
+    pub mod flat {
+        pub mod allocator {
+            // 内核源码**逐字未改**地编进来（`include!` 的路径相对本文件 ⇒ 三级上到仓库根）。
+            // 用 `include!` 而不是 `#[path]`：后者对嵌套模块按"模块目录"解析，层级会绕。
+            // 内核那几份源码用 `#[path = "<文件>.rs"]` 声明子模块（`inner.rs` 等）；
+            // 该 `#[path]` 相对**被 include 的文件**（`<模块>/mod.rs`），于是与内核编译时的拼法一致。
+            pub mod link {
+                include!("../../../kernel/src/core/memory/flat/allocator/link.rs");
+            }
+            pub(crate) use link::Link;
+            pub mod bump {
+                include!("../../../kernel/src/core/memory/flat/allocator/bump/mod.rs");
+            }
+            pub mod frame {
+                include!("../../../kernel/src/core/memory/flat/allocator/frame/mod.rs");
+            }
+            pub mod block {
+                include!("../../../kernel/src/core/memory/flat/allocator/block/mod.rs");
+            }
+            /// 分流器（≤ 2 KiB 走 block、否则走 frame）。宿主上**不需要 init**：
+            /// 它只是一个 `static` 路由器（`HYBRID_ALLOCATOR` 是 `const fn new()`），
+            /// 两端的块/帧由 `harness` 装台。
+            pub mod hybrid {
+                include!("../../../kernel/src/core/memory/flat/allocator/hybrid.rs");
+            }
+            /// 后备仓（崩溃路径专用仓：有序合并 free-list，一次取定、此后只在区内拉还）。
+            /// 装台时它从混合分配器整块取一段仓区（`ring_bytes(harts) + HEADER + DUMP_BUDGET`），
+            /// 故它是**台面的一部分**：容量读数与判据都看得见它。
+            pub mod spare {
+                include!("../../../kernel/src/core/memory/flat/allocator/spare/mod.rs");
+            }
 
-        /// 统计出口的宿主版：**只是计数**，不参与分配器正确性判据。
-        ///
-        /// 与内核 `statistics/mod.rs` 的**写侧**同名同形（内核那份的读侧是 health 用例的判据
-        /// 输入；宿主侧那批判据由影子账自己算 ⇒ 这里只留写侧）。内核源码改了写侧签名，
-        /// 这里必须跟着改 —— 它是 shim，不是内核的一部分（`include!` 进来的源码**逐字未改**）。
-        ///
-        /// # 两条刻意的"不镜像"（都要交代，否则读数是假的）
-        ///
-        /// ① **类目表不建**：内核 debug 档的 `install_frame_kinds` /
-        ///    `install_block_kinds` 会分配逐帧、逐页的类目表（那是回到内核的那套
-        ///    标注账）。宿主 shim 里它们是**空壳** —— 本 crate 的判据不看类目（`tag!` 在宿主上
-        ///    恒等），而且"一个事实只有一份账"：在宿主上再实现一遍表尺寸，必然与内核漂移。
-        ///    **代价**：本 crate 的宿主**用量**读数不含内核 debug 档那份类目表
-        ///    （要看它得在内核侧量，见 README「已知边界」）。
-        /// ② **读侧不镜像**：`frame_occupied` / `block_occupied` / `kinds` 那些读数在宿主上
-        ///    没有读者（判据走影子账），留着只会变成第二套口径。
-        pub mod statistics {
-            use std::sync::atomic::{AtomicUsize, Ordering};
-
-            // 写侧计数：只用来证明"分配器的热路径确实走到了"，不参与任何判据。
-            pub static FRAME_TAKE: AtomicUsize = AtomicUsize::new(0);
-            pub static FRAME_GIVE: AtomicUsize = AtomicUsize::new(0);
-            pub static BLOCK_TAKE: AtomicUsize = AtomicUsize::new(0);
-            pub static BLOCK_GIVE: AtomicUsize = AtomicUsize::new(0);
-            pub static POOL_TAKE: AtomicUsize = AtomicUsize::new(0);
-            pub static POOL_GIVE: AtomicUsize = AtomicUsize::new(0);
-            pub static SPARE_TAKE: AtomicUsize = AtomicUsize::new(0);
-            pub static SPARE_GIVE: AtomicUsize = AtomicUsize::new(0);
-            pub static SPARE_TOTAL: AtomicUsize = AtomicUsize::new(0);
-
-            /// 内核那份在这里装配 `STATS` 单例；宿主侧没有单例（全是原子计数）。
-            pub fn init() {}
-
-            /// 见模块头注①：宿主上**不建**逐帧类目表。
+            /// 统计出口的宿主版：**只是计数**，不参与分配器正确性判据。
             ///
-            /// # Errors
+            /// 与内核 `statistics/mod.rs` 的**写侧**同名同形（内核那份的读侧是 health 用例的判据
+            /// 输入；宿主侧那批判据由影子账自己算 ⇒ 这里只留写侧）。内核源码改了写侧签名，
+            /// 这里必须跟着改 —— 它是 shim，不是内核的一部分（`include!` 进来的源码**逐字未改**）。
             ///
-            /// 恒 `Ok`（内核那份在表分配失败时返 `OutOfMemory`）。
-            pub fn install_frame_kinds(_frames: usize) -> Result<(), super::InitError> {
-                Ok(())
+            /// # 两条刻意的"不镜像"（都要交代，否则读数是假的）
+            ///
+            /// ① **类目表不建**：内核 debug 档的 `install_frame_kinds` /
+            ///    `install_block_kinds` 会分配逐帧、逐页的类目表（那是回到内核的那套
+            ///    标注账）。宿主 shim 里它们是**空壳** —— 本 crate 的判据不看类目（`tag!` 在宿主上
+            ///    恒等），而且"一个事实只有一份账"：在宿主上再实现一遍表尺寸，必然与内核漂移。
+            ///    **代价**：本 crate 的宿主**用量**读数不含内核 debug 档那份类目表
+            ///    （要看它得在内核侧量，见 README「已知边界」）。
+            /// ② **读侧不镜像**：`frame_occupied` / `block_occupied` / `kinds` 那些读数在宿主上
+            ///    没有读者（判据走影子账），留着只会变成第二套口径。
+            pub mod statistics {
+                use std::sync::atomic::{AtomicUsize, Ordering};
+
+                // 写侧计数：只用来证明"分配器的热路径确实走到了"，不参与任何判据。
+                pub static FRAME_TAKE: AtomicUsize = AtomicUsize::new(0);
+                pub static FRAME_GIVE: AtomicUsize = AtomicUsize::new(0);
+                pub static BLOCK_TAKE: AtomicUsize = AtomicUsize::new(0);
+                pub static BLOCK_GIVE: AtomicUsize = AtomicUsize::new(0);
+                pub static POOL_TAKE: AtomicUsize = AtomicUsize::new(0);
+                pub static POOL_GIVE: AtomicUsize = AtomicUsize::new(0);
+                pub static SPARE_TAKE: AtomicUsize = AtomicUsize::new(0);
+                pub static SPARE_GIVE: AtomicUsize = AtomicUsize::new(0);
+                pub static SPARE_TOTAL: AtomicUsize = AtomicUsize::new(0);
+
+                /// 内核那份在这里装配 `STATS` 单例；宿主侧没有单例（全是原子计数）。
+                pub fn init() {}
+
+                /// 见模块头注①：宿主上**不建**逐帧类目表。
+                ///
+                /// # Errors
+                ///
+                /// 恒 `Ok`（内核那份在表分配失败时返 `OutOfMemory`）。
+                pub fn install_frame_kinds(_frames: usize) -> Result<(), super::InitError> {
+                    Ok(())
+                }
+
+                /// 见模块头注①：宿主上**不建**逐页类目表。
+                ///
+                /// # Errors
+                ///
+                /// 恒 `Ok`（同上）。
+                pub fn install_block_kinds(_base: usize, _len: usize) -> Result<(), super::InitError> {
+                    Ok(())
+                }
+
+                pub fn record_frame_take(_index: usize, _power: usize) {
+                    FRAME_TAKE.fetch_add(1, Ordering::Relaxed);
+                }
+                pub fn record_frame_give(_index: usize) {
+                    FRAME_GIVE.fetch_add(1, Ordering::Relaxed);
+                }
+                pub fn record_block_take(_addr: usize, _power: usize) {
+                    BLOCK_TAKE.fetch_add(1, Ordering::Relaxed);
+                }
+                pub fn record_block_give(_addr: usize, _power: usize) {
+                    BLOCK_GIVE.fetch_add(1, Ordering::Relaxed);
+                }
+                pub fn record_pool_take() {
+                    POOL_TAKE.fetch_add(1, Ordering::Relaxed);
+                }
+                pub fn record_pool_give() {
+                    POOL_GIVE.fetch_add(1, Ordering::Relaxed);
+                }
+                pub fn record_spare_take(_bytes: usize) {
+                    SPARE_TAKE.fetch_add(1, Ordering::Relaxed);
+                }
+                pub fn record_spare_give(_bytes: usize) {
+                    SPARE_GIVE.fetch_add(1, Ordering::Relaxed);
+                }
+                pub fn record_spare_total(total: usize) {
+                    SPARE_TOTAL.store(total, Ordering::Relaxed);
+                }
             }
 
-            /// 见模块头注①：宿主上**不建**逐页类目表。
+            /// 内核 `flat/allocator/mod.rs` 的热路径门（那一份在 debug 档下问"此刻是不是正在发表提交里"
+            /// —— 提交里不许分配、也不许击落页表）。`frame` / `block` / `hybrid` / `spare` 的
+            /// `allocate` / `deallocate` 都过这道门。
             ///
-            /// # Errors
-            ///
-            /// 恒 `Ok`（同上）。
-            pub fn install_block_kinds(_base: usize, _len: usize) -> Result<(), super::InitError> {
-                Ok(())
+            /// 宿主上**恒放行**：门的两端都不在场 —— 守卫（`NoAllocation`）与它那张 `FORBIDDEN` 表
+            /// 住在 `manager`（不在 `include!` 进来的源码里），本 crate 也不造发表提交。
+            /// 装一个空门只会假装判过（同 `statistics::install_*_kinds` 那条"不镜像"）。
+            #[inline]
+            pub(crate) fn assert_allocation_allowed() {}
+
+            /// 分配器初始化错误（与内核 `flat/allocator/mod.rs` 同名同义；内核那份用
+            /// `fack::Error` 派生，宿主这份手写，免得为一个 derive 多拉一个依赖）。
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub enum InitError {
+                NoFreeMemory,
+                OutOfMemory,
+                NoFreeFrames,
+                NoHarts,
+                AlreadyInitialized,
             }
 
-            pub fn record_frame_take(_index: usize, _power: usize) {
-                FRAME_TAKE.fetch_add(1, Ordering::Relaxed);
-            }
-            pub fn record_frame_give(_index: usize) {
-                FRAME_GIVE.fetch_add(1, Ordering::Relaxed);
-            }
-            pub fn record_block_take(_addr: usize, _power: usize) {
-                BLOCK_TAKE.fetch_add(1, Ordering::Relaxed);
-            }
-            pub fn record_block_give(_addr: usize, _power: usize) {
-                BLOCK_GIVE.fetch_add(1, Ordering::Relaxed);
-            }
-            pub fn record_pool_take() {
-                POOL_TAKE.fetch_add(1, Ordering::Relaxed);
-            }
-            pub fn record_pool_give() {
-                POOL_GIVE.fetch_add(1, Ordering::Relaxed);
-            }
-            pub fn record_spare_take(_bytes: usize) {
-                SPARE_TAKE.fetch_add(1, Ordering::Relaxed);
-            }
-            pub fn record_spare_give(_bytes: usize) {
-                SPARE_GIVE.fetch_add(1, Ordering::Relaxed);
-            }
-            pub fn record_spare_total(total: usize) {
-                SPARE_TOTAL.store(total, Ordering::Relaxed);
-            }
+            /// 与内核同名同形：`erra::Result`（带调用点上下文的 `Result`）。
+            pub type InitResult<T> = erra::Result<T, InitError>;
         }
-
-        /// 内核 `allocator/mod.rs` 的热路径门（那一份在 debug 档下问"此刻是不是正在发表提交里"
-        /// —— 提交里不许分配、也不许击落页表）。`frame` / `block` / `hybrid` / `spare` 的
-        /// `allocate` / `deallocate` 都过这道门。
-        ///
-        /// 宿主上**恒放行**：门的两端都不在场 —— 守卫（`NoAllocation`）与它那张 `FORBIDDEN` 表
-        /// 住在 `manager`（不在 `include!` 进来的源码里），本 crate 也不造发表提交。
-        /// 装一个空门只会假装判过（同 `statistics::install_*_kinds` 那条"不镜像"）。
-        #[inline]
-        pub(crate) fn assert_allocation_allowed() {}
-
-        /// 分配器初始化错误（与内核 `allocator/mod.rs` 同名同义；内核那份用
-        /// `fack::Error` 派生，宿主这份手写，免得为一个 derive 多拉一个依赖）。
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        pub enum InitError {
-            NoFreeMemory,
-            OutOfMemory,
-            NoFreeFrames,
-            NoHarts,
-            AlreadyInitialized,
-        }
-
-        /// 与内核同名同形：`erra::Result`（带调用点上下文的 `Result`）。
-        pub type InitResult<T> = erra::Result<T, InitError>;
     }
 }
 

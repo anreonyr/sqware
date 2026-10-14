@@ -1,13 +1,12 @@
 use alloc::vec::Vec;
 
-use crate::core::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::core::memory::manager::entry::PteFlags;
-use crate::core::memory::manager::mode;
-use crate::core::memory::manager::MapError;
-use crate::core::memory::manager::table::TableNode;
+use crate::core::memory::address::{PhysAddr, VirtAddr};
+use crate::core::memory::nest::NestError;
+use crate::core::memory::nest::table::{PteFlags, TableNode};
 use crate::core::memory::{PAGE_SHIFT, PAGE_SIZE};
+use crate::machine::mode;
 
-pub(crate) fn large_pages_accept() {
+pub(crate) fn accept() {
     const MEGA: usize = 1 << 21;
     const GIGA: usize = 1 << 30;
     let va = VirtAddr::wrap(GIGA);
@@ -35,11 +34,11 @@ pub(crate) fn large_pages_accept() {
     }
     assert_eq!(
         root.prepare_range_geometry(va + PAGE_SIZE, pa, PAGE_SIZE, geo),
-        Err(MapError::AlreadyMapped)
+        Err(NestError::AlreadyMapped)
     );
     let count = root.count();
     {
-        let guard = crate::core::memory::allocator::NoAllocation::enter();
+        let guard = crate::core::memory::flat::allocator::NoAllocation::enter();
         root.protect_permissions_geometry(va, GIGA, ro, geo)
             .expect("whole gigapage protect");
         root.protect_permissions_geometry(va, GIGA, PteFlags::R | PteFlags::W, geo)
@@ -55,14 +54,14 @@ pub(crate) fn large_pages_accept() {
         &mut || {
             allocations += 1;
             if allocations == 2 {
-                Err(MapError::OutOfMemory)
+                Err(NestError::OutOfMemory)
             } else {
                 TableNode::leaf()
             }
         },
         geo,
     );
-    assert_eq!(result, Err(MapError::OutOfMemory));
+    assert_eq!(result, Err(NestError::OutOfMemory));
     assert_eq!(allocations, 2);
     assert_eq!(root.count(), count + 1);
     for offset in [0, MEGA, MEGA + PAGE_SIZE, GIGA - PAGE_SIZE] {
@@ -103,7 +102,7 @@ pub(crate) fn large_pages_accept() {
     root.map_range_prepared_geometry(point, pa + MEGA + PAGE_SIZE, PAGE_SIZE, rw, geo);
     let mut retired = Vec::new();
     root.reserve_retired_tables(&mut retired).unwrap();
-    let guard = crate::core::memory::allocator::NoAllocation::enter();
+    let guard = crate::core::memory::flat::allocator::NoAllocation::enter();
     root.prepare_geometry(va, GIGA, geo)
         .expect("whole gigapage removal");
     root.unmap_keep_tables_geometry(va, GIGA, geo)

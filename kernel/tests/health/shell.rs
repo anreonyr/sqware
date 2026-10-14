@@ -2,11 +2,11 @@
 
 use alloc::sync::Arc;
 
-use crate::core::memory::allocator::statistics;
-use crate::core::memory::manager::mode;
+use crate::core::memory::flat::allocator::statistics;
+use crate::machine::mode;
 use crate::core::work::room::scheduler::roster::prune_dead;
 use crate::core::work::unit::copies::Origin;
-use crate::core::memory::manager::RegionId;
+use crate::core::memory::nest::RegionId;
 use crate::core::work::unit::space::SpaceBuilder;
 use crate::core::work::unit::task::TaskWeak;
 use crate::core::work::unit::team::TeamBuilder;

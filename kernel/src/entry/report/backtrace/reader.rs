@@ -1,8 +1,8 @@
 use alloc::sync::Arc;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::core::memory::manager::entry::PteFlags;
+use crate::core::memory::address::{PhysAddr, VirtAddr};
+use crate::core::memory::nest::table::{PteFlags, TableNode};
 use crate::core::work::unit::space::Space;
 
 #[derive(Clone)]
@@ -36,7 +36,7 @@ impl StackReader {
             return Some(base);
         }
         let edge = crate::machine::board::dram_edge().unwrap_or(0x9000_0000);
-        let (base, flags) = crate::core::memory::manager::table::TableNode::walk_raw(
+        let (base, flags) = TableNode::walk_raw(
             self.root,
             VirtAddr::from_raw(page),
             |pa| (0x8000_0000..edge).contains(&pa.as_usize()),

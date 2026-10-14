@@ -55,6 +55,8 @@ pub use bare::BareLock;
 pub use depend::DepInitError;
 pub use depend::Level;
 pub(crate) use depend::reserve as reserve_depend;
+#[cfg(debug_assertions)]
+pub(crate) use depend::{armed, held_len};
 pub use once::OnceLock;
 pub use reentrant::RelLock;
 pub use rw::RwLock;

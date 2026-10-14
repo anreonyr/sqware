@@ -1,6 +1,6 @@
 use env::{Bit, MailCondition, PieKind, TaskId, TeamId};
 
-use crate::core::memory::manager::asid::Asid;
+use crate::core::memory::nest::Asid;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WakeKey {

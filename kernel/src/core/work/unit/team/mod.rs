@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use env::{TaskId, TeamId, UnitFail};
 
-use crate::core::memory::manager::MapError;
+use crate::core::memory::nest::NestError;
 use crate::core::work::commit;
 use crate::core::work::room::scheduler;
 use crate::core::work::unit::life::TeamLife;
@@ -124,8 +124,20 @@ impl Team {
         self.state.lock().staged_len()
     }
 
-    pub(crate) fn reserve_staging(&self, extra: usize) -> Result<(), MapError> {
-        self.state.lock().reserve_staging(extra)
+    /// 为暂存表留出容量。
+    ///
+    /// 扩容要向分配器取块，而状态锁是 `UnitState`（锁序里在分配器之后）：
+    /// 所以把表摘下来在锁外扩容，再整表换回去；锁内只换表，不碰分配器。
+    pub(crate) fn reserve_staging(&self, extra: usize) -> Result<(), NestError> {
+        let mut staged = self.state.lock().take_staging();
+        if staged.try_reserve(extra).is_err() {
+            let shell = self.state.lock().swap_staging(staged);
+            drop(shell);
+            return Err(NestError::OutOfMemory);
+        }
+        let shell = self.state.lock().swap_staging(staged);
+        drop(shell);
+        Ok(())
     }
 
     pub(crate) fn push_staging(&self, item: Staging) {
@@ -148,18 +160,27 @@ impl Team {
         self.state.lock().take_staging()
     }
 
-    fn restore_staging(&self, items: Vec<Staging>) {
-        self.state.lock().restore_staging(items);
+    /// 把租约摘走的暂存项还回团队。
+    ///
+    /// 合并与扩容同样在锁外做：锁内只换表。
+    fn restore_staging(&self, mut items: Vec<Staging>) {
+        let mut current = self.state.lock().take_staging();
+        if !current.is_empty() {
+            current.extend(items);
+            items = current;
+        }
+        let shell = self.state.lock().swap_staging(items);
+        drop(shell);
     }
 
     pub(crate) fn operation(&self) -> Option<SpinLockGuard<'_, ()>> {
         self.operation.try_lock()
     }
 
-    pub(crate) fn cancel_staging(&self) -> Result<(), MapError> {
+    pub(crate) fn cancel_staging(&self) -> Result<(), NestError> {
         let mut staged = StagingLease::hold(self);
         while let Some(item) = staged.items.last() {
-            let (start, size) = item.map.initial_range();
+            let (start, size) = item.view.initial_range();
             self.space.memory.unmap_range(start, size)?;
             item.meta.detach_staging(item.token, self.id);
             let owner = item.meta.owner();
@@ -201,24 +222,26 @@ impl Team {
 
     /// 新任务的收据：从这棵树往上数，每个有主（`owner != 0`）的节点都算一条，
     /// 按家长号合并；深度超限或撞上已关的节点即拒绝。
-    pub(crate) fn receipts(&self) -> Result<Vec<Receipt>, MapError> {
+    pub(crate) fn receipts(&self) -> Result<Vec<Receipt>, NestError> {
         let mut receipts: Vec<Receipt> = Vec::new();
         let mut node = Some(&*self.life);
         let mut depth = 0;
         while let Some(here) = node {
             depth += 1;
             if depth > MAX_DEPTH || here.closed() {
-                return Err(MapError::NoRegion);
+                return Err(NestError::NoRegion);
             }
             if here.owner.get() != 0 {
                 if let Some(r) = receipts.iter_mut().find(|r| r.owner == here.owner) {
-                    r.roots.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
+                    r.roots.try_reserve(1).map_err(|_| NestError::OutOfMemory)?;
                     r.roots.push(here.id);
                 } else {
                     let mut roots = Vec::new();
-                    roots.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
+                    roots.try_reserve(1).map_err(|_| NestError::OutOfMemory)?;
                     roots.push(here.id);
-                    receipts.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
+                    receipts
+                        .try_reserve(1)
+                        .map_err(|_| NestError::OutOfMemory)?;
                     receipts.push(Receipt {
                         owner: here.owner,
                         roots,

@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 
 use env::TaskId;
 
-use crate::core::memory::manager::{MapError, SpaceKind};
+use crate::core::memory::nest::{NestError, SpaceKind};
 use crate::core::work::unit::space::{Space, SpaceBuilder};
 use crate::core::work::unit::task::TaskWeak;
 
@@ -37,7 +37,7 @@ impl TeamBuilder {
     }
 
     /// 按 `kind` 起一个空间（非内核的会带跳板），再以 `sire` 落一座构造中的团队。
-    pub(crate) fn build(kind: SpaceKind, sire: TaskWeak) -> Result<Arc<Team>, MapError> {
+    pub(crate) fn build(kind: SpaceKind, sire: TaskWeak) -> Result<Arc<Team>, NestError> {
         let space = match kind {
             SpaceKind::Supervisor => SpaceBuilder::supervisor(),
             SpaceKind::User => SpaceBuilder::user(),
@@ -46,10 +46,10 @@ impl TeamBuilder {
         TeamBuilder::new(space).sire(sire).constructing().spawn()
     }
 
-    pub fn spawn(self) -> Result<Arc<Team>, MapError> {
+    pub fn spawn(self) -> Result<Arc<Team>, NestError> {
         let parent = self.sire.upgrade().map(|t| t.ident.team.life.clone());
         let owner = self.sire.upgrade().map_or(TaskId::new(0), |t| t.ident.id);
-        let space = Arc::try_new(self.space).map_err(|_| MapError::OutOfMemory)?;
+        let space = Arc::try_new(self.space).map_err(|_| NestError::OutOfMemory)?;
         let team = make_team(space, self.sire, parent, owner, self.constructing)?;
         if let Some(sire) = team.sire.upgrade() {
             if sire.adopt(team.clone()).is_err() {
@@ -61,9 +61,9 @@ impl TeamBuilder {
                         .retain(|node| !Arc::ptr_eq(node, &team.life));
                 }
                 return Err(if sire.dead() {
-                    MapError::NoRegion
+                    NestError::NoRegion
                 } else {
-                    MapError::OutOfMemory
+                    NestError::OutOfMemory
                 });
             }
         }

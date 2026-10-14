@@ -1,9 +1,11 @@
 use alloc::sync::{Arc, Weak};
 
-use crate::core::memory::manager::{Memory, SpaceKind};
+use crate::core::memory::nest::SpaceKind;
 use crate::core::work::unit::life::Life;
 
-/// 一个团队的地址空间：内存状态（`Memory`）加一条生命周期线。
+use super::memory::Memory;
+
+/// 一个团队的地址空间：线外内存面（`Memory`）加一条生命周期线。
 pub struct Space {
     pub(crate) memory: Memory,
     pub(super) life: Arc<Life>,

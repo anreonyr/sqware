@@ -66,7 +66,7 @@ extern "C" fn info(info: &PanicInfo) -> ! {
     let root_ok = unsafe { (crate::machine::image::root_stack_base() as *const usize).read_volatile() }
         == crate::machine::image::ROOT_STACK_CANARY;
 
-    crate::core::memory::allocator::portal::switch(crate::core::memory::allocator::portal::Backend::Spare);
+    crate::core::memory::flat::allocator::portal::switch(crate::core::memory::flat::allocator::portal::Backend::Spare);
 
     let mut report = Report::default();
     {

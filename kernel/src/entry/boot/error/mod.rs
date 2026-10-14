@@ -2,8 +2,9 @@ use ::core::fmt::{self, Write};
 
 use crate::machine::console::Sink;
 use crate::machine::hart::HartId;
-use crate::core::memory::allocator::InitError;
-use crate::core::memory::manager::{MapError, mode::SatpError};
+use crate::core::memory::flat::allocator::InitError;
+use crate::core::memory::nest::NestError;
+use crate::machine::mode::SatpError;
 use crate::machine::board::MachineError;
 use crate::machine::clock::ClockError;
 use crate::entry::report::halt;
@@ -25,11 +26,11 @@ pub enum BootError {
     },
     Allocator(erra::Error<InitError>),
     PagingMode(SatpError),
-    KernelSpace(erra::Error<MapError>),
+    KernelSpace(erra::Error<NestError>),
     Clock(ClockError),
     Trace(TraceInitError),
-    Scheduler(MapError),
-    TrapStacks(MapError),
+    Scheduler(NestError),
+    TrapStacks(NestError),
     #[cfg(debug_assertions)]
     Dependencies(crate::machine::sync::DepInitError),
     MissingImage,
@@ -39,13 +40,13 @@ pub enum BootError {
     },
     Mapping {
         operation: MapOperation,
-        source: MapError,
+        source: NestError,
     },
     Resources {
         operation: ResourceOperation,
         source: env::PieFail,
     },
-    Bootstrap(MapError),
+    Bootstrap(NestError),
     BootstrapRelease {
         task: env::TaskId,
         source: env::UnitFail,

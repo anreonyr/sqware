@@ -5,9 +5,9 @@ use ::core::alloc::Layout;
 use env::MemoryFail;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::Access;
-use crate::core::memory::manager::MapError;
-use crate::core::memory::manager::addr::VirtAddr;
+use crate::core::memory::address::VirtAddr;
+use crate::core::memory::nest::Access;
+use crate::core::memory::nest::NestError;
 use crate::core::work::unit::space::SpaceBuilder;
 
 fn layout(size: usize, align: usize) -> Layout {
@@ -50,14 +50,23 @@ pub fn placement() {
         first.address().as_usize() + first.size()
     );
     let lowest = first.address();
-    space.memory.unmap(&first).expect("manager_api: return first");
+    space
+        .memory
+        .unmap(&first)
+        .expect("manager_api: return first");
     let reused = space
         .memory
         .allocate(request, Access::READ | Access::WRITE, None)
         .expect("manager_api: lowest gap reuse");
     assert_eq!(reused.address(), lowest);
-    space.memory.unmap(&second).expect("manager_api: return second");
-    space.memory.unmap(&reused).expect("manager_api: return reused");
+    space
+        .memory
+        .unmap(&second)
+        .expect("manager_api: return second");
+    space
+        .memory
+        .unmap(&reused)
+        .expect("manager_api: return reused");
 
     let probe = space
         .memory
@@ -126,7 +135,7 @@ pub fn receipt() {
         .memory
         .allocate(request, Access::READ | Access::WRITE, None)
         .expect("manager_api: peer allocate");
-    assert_eq!(space.memory.unmap(&stray), Err(MapError::NoRegion));
+    assert_eq!(space.memory.unmap(&stray), Err(NestError::NoRegion));
     assert_eq!(other.memory.unmap(&stray), Ok(()));
 
     let at = held.address();
@@ -137,7 +146,7 @@ pub fn receipt() {
         .expect("manager_api: reuse after discard");
     space.memory.unmap(&again).expect("manager_api: release");
 
-    crate::core::memory::manager::memory::fail_cleanup_prepare();
+    crate::core::memory::nest::fail_cleanup_prepare();
     assert!(matches!(
         space
             .memory

@@ -1,7 +1,7 @@
 use ::core::arch::global_asm;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::asid::{self, Asid};
+use crate::core::memory::nest::identity::{self as asid, Asid};
 use crate::machine::layout::TRAMPOLINE;
 use crate::machine::switcher::context::TrapContext;
 

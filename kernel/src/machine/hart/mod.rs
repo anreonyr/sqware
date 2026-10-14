@@ -7,7 +7,7 @@ pub(crate) use per_hart::{lease_load, lease_store, request_instruction_sync};
 
 use ::core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::core::memory::manager::addr::VirtAddr;
+use crate::core::memory::address::VirtAddr;
 use crate::machine::board;
 use crate::machine::layout::MAX_HART_SLOTS;
 

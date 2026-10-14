@@ -3,9 +3,11 @@ use alloc::vec::Vec;
 
 use env::UnitFail;
 
-use crate::core::memory::manager::{MapError, Memory, addr::VirtAddr as KVirt};
+use crate::core::memory::address::VirtAddr as KVirt;
+use crate::core::memory::nest::NestError;
 use crate::core::work::mail::pole::PoleOperation;
 use crate::core::work::pend::{self, Permission};
+use crate::core::work::unit::space::Memory;
 use crate::core::work::unit::task::Task;
 
 use super::Team;
@@ -22,8 +24,8 @@ pub(crate) fn spawn(
     words: Vec<usize>,
     stack: usize,
 ) -> Result<Arc<Task>, UnitFail> {
-    fn map_err(error: MapError) -> UnitFail {
-        if error == MapError::OutOfMemory {
+    fn map_err(error: NestError) -> UnitFail {
+        if error == NestError::OutOfMemory {
             UnitFail::OoM
         } else {
             UnitFail::Denied

@@ -159,9 +159,9 @@ pub fn order() {
     space
         .memory
         .attach_region(
-            crate::core::memory::manager::RegionId::Normal,
+            crate::core::memory::nest::RegionId::Normal,
             USER_BASE,
-            crate::core::memory::manager::mode::upper().as_usize(),
+            crate::machine::mode::upper().as_usize(),
         )
         .unwrap();
     let team = TeamBuilder::new(space).spawn().expect("order: spawn team");
@@ -274,9 +274,9 @@ pub fn badge() {
     space
         .memory
         .attach_region(
-            crate::core::memory::manager::RegionId::Normal,
+            crate::core::memory::nest::RegionId::Normal,
             USER_BASE,
-            crate::core::memory::manager::mode::upper().as_usize(),
+            crate::machine::mode::upper().as_usize(),
         )
         .unwrap();
     let team = TeamBuilder::new(space).spawn().expect("badge: spawn team");
@@ -335,9 +335,9 @@ pub fn references() {
     space
         .memory
         .attach_region(
-            crate::core::memory::manager::RegionId::Normal,
+            crate::core::memory::nest::RegionId::Normal,
             0x4000_0000,
-            crate::core::memory::manager::mode::upper().as_usize(),
+            crate::machine::mode::upper().as_usize(),
         )
         .unwrap();
     let team = TeamBuilder::new(space).spawn().unwrap();
@@ -407,13 +407,12 @@ pub fn references() {
         .space
         .memory
         .allocate_low(
-            crate::core::memory::manager::RegionId::Normal,
+            crate::core::memory::nest::RegionId::Normal,
             crate::core::memory::PAGE_SIZE,
         )
         .unwrap();
-    let frame = crate::core::memory::manager::Frame::allocate().unwrap();
-    let rw =
-        crate::core::memory::manager::entry::PteFlags::R | crate::core::memory::manager::entry::PteFlags::W;
+    let frame = crate::core::memory::flat::Frame::allocate().unwrap();
+    let rw = crate::core::memory::nest::Access::READ | crate::core::memory::nest::Access::WRITE;
     let mapping = caller
         .ident
         .team

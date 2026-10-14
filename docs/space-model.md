@@ -1,69 +1,143 @@
-# Frame、Tree、Memory、Space 与 Pole
+# Frame、Nest、View、Memory 与 Pole
 
 本记录描述 CPU 页表与内存资源的所有权和清理合同。IOMMU/设备页表没有实现。
 
 ## 资源关系
 
 ```text
-Space ──值── Memory ──Arc── Tree ──私有区间索引──Arc── Map ──Arc── Frame
-                                                     │
-                                                     └──Weak── 所属 Tree
+Space ──值── Memory ──Arc── Nest ──全局占用──Arc── View ──Arc── Frame
+                              │                   │
+                              ├──私有关系索引       ├──Weak── 所属 Nest
+                              │                   │
+                              ├──身份与同步退休     ├──强持── FlatRange ──Arc── Flat ──Arc── Frame
+                              │                   │
+                              └──Installed表页     └──活动区间、已发布记录与 U/G/A/D 属性
 
-Pole ──单一 HeldMap 集合──Arc── 实际 Map（及授权、打开位置与关系）
-Mapping ──Map Arc + VA Reservation
-Memory ──Tree + VA allocator + 失败清理队列 + kind
+Pole ──单一 HeldMap 集合──Arc── 实际 View（及授权、打开位置与关系）
+Mapping ──Arc<View>（兼容名）
+Memory ──Arc<Nest>（外层薄组合）
 Space ──Memory + 等待生命期
 Task ──Space 中的栈映射、陷阱帧映射和 guard 预留
 Team ──共享 Space 与构造/成员状态
 ```
 
-`Frame` 用分配器提供的 `Box<UnsafeCell<[u8; PAGE_SIZE]>>` 持有一页物理内存。它的 `Arc` 是帧共享和释放的所有权依据。`BorrowedRegion` 表示调用者保证仍被保留的物理区间，创建它是 `unsafe` 操作；其元数据 `Arc` 不接管底层物理存储的所有权。
+`Frame` 与 `BorrowedRegion` 属于 `core/memory/flat`。前者用分配器提供的
+`Box<UnsafeCell<[u8; PAGE_SIZE]>>` 持有一页物理内存，其 `Arc` 是帧共享和释放的
+所有权依据；后者表示调用者保证仍被保留的物理区间，创建它是 `unsafe` 操作，其元数据
+`Arc` 不接管底层物理存储的所有权。`Flat` 是线性逻辑页来源与唯一物化权威：`Managed`
+的页槽按需物化、只增不减，同一逻辑页只有一个结果；`Borrowed` 的存储不分配、不清零、
+不归还 RAM 分配器。`FlatRange` 是强持同一 `Flat` 的校验范围，子范围按相对偏移合成，
+不复制数据；`Pages` 是某个范围的完整物化结果，PA 只从它的可信内核边界枚举。
 
-`Tree` 持有 ASID、页表几何规则和根页表状态。它创建、查询、拆分、保护和移除 `Map`。`kernel/src/core/memory/manager` 不引用 `work`；任务、团队与 Pole 的组合留在工作层。`Map` 仅保存所属 `Tree` 的 `Weak`、初始 VA 范围和映射状态；状态保存仍存活的子范围、所持 Frame、借用区间与 lazy 标记。Map 自身没有 AVL 左右链、高度、最大区间或回收链字段。区间查找用的 `IndexNode` 和 shootdown 期间保留的 Map/Frame/页表页都属于 Tree 内部状态，没有 `work::unit::space::Index` 外观层。
+`Nest` 持有一个地址空间的全部 CPU 状态：ASID 身份、页表几何规则与根页表、一份全局
+VA 占用、关系索引，以及待失效与退休资源。`core/memory/nest` 不引用 `work`；任务、
+团队与 Pole 的组合留在工作层。`View` 仅保存所属 `Nest` 的 `Weak`、真实 `Reservation`、
+初始 VA 范围、整段共有的架构属性（U/G/A/D）与关系状态；状态保存仍存活的活动区间、
+强持的 `FlatRange` 来源与已发布页的 `Frame`。来源是 `View` 稳定状态的一部分，不是可
+重建的收据：同一 `View` 重复查询取得同一 `Flat`，派生关系继承来源并合成偏移。物化归
+`Flat`，PTE 是发布状态的真值，发布记录承担强持与双向核验；两者不是两套物化权威。
+`View` 自身没有 AVL 左右链、高度、最大区间或回收链字段。占用表的窗口只决定
+`Lowest` / `Highest` 的动态选址范围，`Exact` 与它们共用同一份全局重叠检查，跨窗口的
+固定跨度（高镜像、跳板、hart frame、trap stack）按同一份起点/终点算术登记。区间查找用的
+`IndexNode` 和 shootdown 期间保留的 View/Frame/页表页都属于 Nest 内部状态，没有
+`work::unit::space::Index` 外观层。
 
-`Memory` 组合 `Arc<Tree>`、VA 分配器、延迟清理链和地址空间 kind；`Space` 以值持有 Memory 和等待生命期，不增加 `Arc<Memory>` 分配点，也不转发整套内存操作。清理链头是 `SpinLock<Option<Box<CleanupNode>>>`，没有单字段队列包装。普通区间在构造时接入；`attach_region` 配置已有边界，镜像装载后的 `advance_region` 单调抬高分配下界。内核 Memory 的 `RegionId::Resource` 范围为 `[mode.lower() + DRAM.base + DRAM.size, TRAP_STACK_BASE)`，内核 keeper 和 device 大区映射从此区域选址；`RegionId::Kernel` 限于 64 MiB 的 frame-context 窗口。Memory 执行地址范围、U 位和 supervisor 策略检查；目标团队选择、授权、构造租约及通知仍在工作层。`backend()` 仅在 debug 构建中供白盒核验使用，生产调用不借出 Tree。
+`Memory` 是外层薄组合：只持 `Arc<Nest>`，不另存 kind、VA 存储或清理队列，也不转发
+整套内存操作。它不引入 `Arc<Memory>` 分配点。清理链头在 `NestState` 里，形状是
+`SpinLock<Option<Box<CleanupNode>>>`，没有单字段队列包装；节点在发布前按 generation
+预留下来，只用于“已经消费但还没收尾”的关系。普通区间在构造时接入；
+`attach_region` 配置已有边界，镜像装载后的 `advance_region` 单调抬高分配下界。
+内核 Nest 的 `RegionId::Resource` 范围为
+`[mode.lower() + DRAM.base + DRAM.size, TRAP_STACK_BASE)`，内核 keeper 和 device 大区
+映射从此区域选址；`RegionId::Kernel` 限于 64 MiB 的 frame-context 窗口；没有动态窗口的
+启动固定跨度记在 `RegionId::Static` 下。Nest 执行地址范围、U 位和 supervisor 策略检查；
+目标团队选择、授权、构造租约及通知仍在工作层。`backend()` 仅在 debug 构建中供白盒核验
+使用，生产调用不借出 Nest。
 
-`Reservation` 持有 Tree 弱身份、区域、起点、长度和 allocator 生成的 reservation id。Map 与该预留组成 `Mapping`。Memory 的选址、映射、派生与回收操作协调 VA 预留和 Map 生命周期，通过 reservation id 防止过期或错误的预留释放当前区间。凭证保留稳定的 Map 身份，不在索引移除后仅按可复用的地址重建身份。
+`Reservation` 持有 Nest 弱身份、区域、起点、长度和占用表生成的 generation。`View` 与
+该预留组成一段已落地的关系。选址、挂载、改权、撤销与回收操作协调 VA 占用和 `View`
+生命周期，通过 generation 防止过期或错误的预留释放当前区间。凭证保留稳定的 `View`
+身份，不在索引移除后仅按可复用的地址重建身份。
 
-Task 的 `TaskMemory` 持有栈和陷阱帧的 Mapping 及 guard Reservation。显式退休通过 `Memory::unmap` 完成；`TaskMemory::drop` 把尚存的 Mapping 交给 `Memory::dispose`，由 Memory 持有清理责任。借用回收失败后调用方仍持有凭证；接管回收失败后 Memory 保留清理记录，两者不可混成一律消费。`TaskIdent` 缓存陷阱帧的 `PhysAddr`，调度和陷阱路径直接读它；同一帧的内核 `VirtAddr` 只给健康面核验该页不在用户可访问的范围内。Team 持有共享 Space；任务发布与 Pole 私有映射交付仍由 Team 的构造状态控制。
+Task 的 `TaskMemory` 持有栈和陷阱帧的 Mapping（即 `Arc<View>`）及 guard Reservation。
+显式退休通过 `Memory::unmap` 完成；`TaskMemory::drop` 把尚存的 Mapping 交给
+`Memory::dispose`，由 Nest 持有清理责任。借用回收失败后调用方仍持有凭证；接管回收失败后
+Nest 保留清理记录，两者不可混成一律消费。`TaskIdent` 缓存陷阱帧的 `PhysAddr`，调度和
+陷阱路径直接读它；同一帧的内核 `VirtAddr` 只给健康面核验该页不在用户可访问的范围内。
+Team 持有共享 Space；任务发布与 Pole 私有映射交付仍由 Team 的构造状态控制。
+
 
 ## 普通内存使用面
 
-申请和视图使用标准 `Layout`、逻辑 `Access` 和可选的指定地址，返回 Mapping 凭证。凭证公开地址与长度，内部映射身份和预留 generation 不向普通调用方暴露；它不提供可在当前地址空间直接解引用的指针。页表、ASID、PTE 位与回收记录由 Memory 管理。
+申请和视图使用标准 `Layout`、逻辑 `Access` 和可选的指定地址，返回 Mapping 凭证。凭证公开地址与长度，内部关系身份和预留 generation 不向普通调用方暴露；它不提供可在当前地址空间直接解引用的指针。页表、ASID、PTE 位与回收记录由 Nest 管理。
 
 - `allocate` 申请已物化存储，初始权限由 Access 给出，权限上限为 R/W/X。物理帧保持既有的清零分配。
 - `allocate_lazy` 保留地址与权限范围，按既有缺页或派生路径物化；它仍可能在元数据或清理节点分配时以 OOM 失败。
 - `view` 从已有凭证建立共享存储的另一段地址映射，是可失败操作，不由 Clone 隐式分配。
 - 三条 Layout 入口都在内部取整大小并满足首地址对齐；请求大小不必由使用者按页取整，超对齐不会新增大页机制。
-- `protect_range` 先检查完整覆盖与权限上限，再按既有顺序逐段修改。当前权限可在上限内调整，上限本身只能收窄。
+- `protect_range` 先检查完整覆盖与权限上限，再按既有顺序逐段 `set_access`。当前权限可在上限内调整，上限本身只能收窄。
 
 旧 wire 字节入口与 Layout 入口共用实现，保留不能表示为 Layout 的合法机器字尺寸及原失败码。Allocate 仍是 eager；无来源的 Mmap 仍是 lazy。Mmap 拒绝 W+X，Mprotect 仍允许 R/W/X 同时存在，不将两者的授权规则混成一条。
 
-缺页入口只采集地址、PC 与错误种类，调用 `Memory::resolve_fault`；重试、权限核验和单页物化在 manager 内完成。普通读取和复制不隐式物化。启动静态映射、上下文 satp 和物理地址查询通过 crate 内的具体可信操作接入，不提供通用页表后门。IOMMU、设备页表、grow/shrink 和新的返回寄存器协议均不在此接口范围内。
+缺页入口只采集地址、PC 与错误种类，调用 `Nest::resolve_fault`；重试、权限核验和单页物化在
+Nest 内完成：一页先进 `Flat` 物化，再在本次关系上发布。普通读取和复制不隐式物化。
+启动静态映射、上下文 satp 和物理地址查询通过 crate 内的具体可信操作接入，不提供通用页表
+后门。IOMMU、设备页表、grow/shrink 和新的返回寄存器协议均不在此接口范围内。
+
+关系操作只有 `reserve` / `attach` / `set_access` / `detach`，以及 Nest 自身的 `close` /
+`retry_invalidation`。`attach` 在给定活动形状内只发布当前可用的页：`Managed` 已物化的页
+发布、未物化的留给缺页，`Borrowed` 的活动页全部发布；旧 `Allocate` 先物化再登记，返回前
+PTE 齐全，旧匿名 `Mmap` 不预物化。`set_access` 只在上限内改当前逻辑权限，`narrow` 另外
+收窄上限，两者都不动架构属性。普通挂载与 crate 内的活动形状挂载共用一个私有安装/提交：
+可失败的元数据、几何与清理载荷都先备齐，提交阶段不再失败。
 
 ## Pole 与授权
 
-Pole 的唯一映射记录集合是 `Vec<HeldMap>`。每项关联实际 `Arc<Map>`、可选 token/`Arc<Grant>`、可选的 `Weak<Space> + Reservation` 放置位置，以及 Input、Keeper、Authority、Open、View 或 Staged 关系。创建 Pole 时从完整、已物化的现有 Mapping 建立输入映射，并在内核 Tree 中派生 keeper 映射；打开时从仍存活的规范来源派生目标 Space 的 Map。Pole 不持有裸 Frame，也不维护单独的 `source_map` 字段。来源通过集合中的 live Keeper 或 live placement 选择。
+Pole 的唯一映射记录集合是 `Vec<HeldMap>`。每项关联实际 `Arc<View>`、可选 token/`Arc<Grant>`、可选的 `Weak<Space>` 放置位置，以及 Input、Keeper、Authority、Open、View 或 Staged 关系。创建 Pole 时从完整、已物化的现有 Mapping 建立输入映射，并在内核 Nest 中派生 keeper 关系；打开时从仍存活的规范来源派生目标 Space 的关系。Pole 不持有裸 Frame，不维护单独的 `source_map` 字段，也不在放置项里另存 reservations（占用在 `View` 里）。来源通过集合中的 live Keeper 或 live placement 选择。
 
 `Grant` 原子保存权限位；Pie 与快照共享同一个 Grant。权限收窄用原子比较交换，失效将其清零；快照不会延长已失效授权。Pole 的操作 lease 序列化创建、打开、撤销和交付；同一时刻已有 lease 时相关操作以 Busy 失败。
 
-ONLY 根资源的创建权通过 `CreationRegistry` 一次性交付。注册项以 `Weak<Map>` 关联候选映射，查询与 claim 使用 `Arc::ptr_eq` 的实际 Map 身份；registry 不用可复用的 VA 或 ASID 数值代替身份。准备阶段先分配节点，映射发布后再提交登记。claim lease 在构造失败时恢复可用，成功提交后消费该权利并移除登记项。
+ONLY 根资源的创建权通过 `CreationRegistry` 一次性交付。注册项以 `Weak<View>` 关联候选关系，查询与 claim 使用 `Arc::ptr_eq` 的实际关系身份；registry 不用可复用的 VA 或 ASID 数值代替身份。准备阶段先分配节点，关系发布后再提交登记。claim lease 在构造失败时恢复可用，成功提交后消费该权利并移除登记项。
 
 ## 失效、锁序与错误
 
-Tree 修改页表后先完成本地及远端 TLB 失效，完成后才丢弃延迟保留的 Frame、TableNode 和 Map。每个 reservation generation 在 PTE 发布前由 `VaAllocator` 预留一个 `Box<CleanupNode>`，因此 `Memory::dispose` 接管已发布映射时不需要再分配清理队列节点。Tree 在准备 unmap 时仍可能因 OOM 返回错误；Memory 会把未完成的 cleanup node 放回链头，不丢失清理责任。失效状态为 `Clean / Dirty / Fencing / Failed`：进行中让并发操作等待；失败保留资源，重试进入 Fencing，成功后才清空记录并在锁外释放。关闭状态为 `Open / Closing / Closed`，只在失效完成后落为 Closed。永久失效失败时资源继续保留，不能宣称已经回收。`Memory::unmap` 先完成已有待失效操作，再检查 Map；空 Map 可幂等成功，并只回收传入 reservation 的旧 generation，不能释放后来占用相同 VA 的新 generation。销毁普通 Tree 时先撤掉其映射，完成 shootdown 后才回收 ASID；内核 Tree 返回 `Pinned` 并保留进程期根页表。Map 的弱 Tree 关联让树关闭或销毁后的旧 Map 无法操作新 Tree。
+`Nest` 修改页表后先完成本地及远端 TLB 失效，完成后才丢弃延迟保留的 Frame、TableNode 和
+`View`。每个 reservation generation 在 PTE 发布前由占用表预留一个 `Box<CleanupNode>`，
+因此 `Memory::dispose` 接管已发布映射时不需要再分配清理队列节点。Nest 在准备撤销时仍可能
+因 OOM 返回错误，未完成的 cleanup node 留在链头，不丢失清理责任。失效状态为
+`Clean / Dirty / Fencing / Failed`：进行中让并发操作等待；失败保留资源，重试进入 Fencing，
+成功后才清空记录并在锁外释放。关闭状态为 `Open / Closing / Closed`，只在失效完成后落为
+Closed。永久失效失败时资源继续保留，不能宣称已经回收。已发布的挂载/撤销在同步失败时保留
+必要的 Frame / 表页 / View / 来源、退休票与“VA 禁复用”，沿用原身份重试；改权的同步失败
+只保留实际已改的权限与活动关系，不进入 Closing。`Memory::unmap` 先结算已有待失效操作，
+再按活动库存逐段撤下；没有活动区间时可幂等交还占用，并只回收传入 reservation 的旧
+generation，不能释放后来占用相同 VA 的新 generation。销毁普通 Nest 时先撤掉其关系，
+完成 shootdown 后才回收 ASID；内核 Nest 返回 `Pinned` 并保留进程期根页表。`View` 的弱
+Nest 关联让树关闭或销毁后的旧 `View` 无法操作新 Nest。
 
-`machine::sync::Level` 的递增顺序为 `Unit < Scheduler < Space < Tree < Map < TeamTasks < L3 < Roster < Asid < Frame < Block < Tally < Spare < UnitState`。新增锁必须按严格递增次序取得；debug 构建会检测递归获取、倒序和跟踪容量越界。锁与其守卫分别定义，守卫作为锁的子模块访问私有字段。持锁集长度由 `Vec::len()` 给出，不另存一份计数；8 个槽是初始容量，不是不可扩展的上限。
+`machine::sync::Level` 的递增顺序为
+`Unit < Scheduler < Space < Nest < View < Flat < TeamTasks < L3 < Roster < Asid < Frame < Block < Tally < Spare < UnitState`。
+全局 VA 占用取 `Level::Space`，在页表/关系锁之前；`Flat` 是页面来源槽的锁，位于 `View`
+之后、`Frame` 之前：`View` 在自己的锁下取到物化页并发布 PTE，`Flat` 从不回调 `Nest` /
+`View` / `Pole`。索引锁内不回取低级地址锁，退休资源在锁释放后才 drop。新增锁必须按严格
+递增次序取得；debug 构建会检测递归获取、倒序和跟踪容量越界。锁与其守卫分别定义，守卫
+作为锁的子模块访问私有字段。持锁集长度由 `Vec::len()` 给出，不另存一份计数；8 个槽是初始
+容量，不是不可扩展的上限。
 
-ASID shootdown 总是刷新本 hart。远端 kernel shootdown 依据 `ONLINE` 原子位图，用户 Tree shootdown 依据各 hart 当前 ASID lease。次级 hart 在启动入口发布 online 位（Release），shootdown 侧用 Acquire 读取；切换地址空间时 ASID lease 也以 Release 写、Acquire 读。这样 kernel 映射修改会覆盖已 online 的 hart，即使其当前 lease 不是该 kernel ASID。
+ASID shootdown 总是刷新本 hart。远端 kernel shootdown 依据 `ONLINE` 原子位图，用户地址空间 shootdown 依据各 hart 当前 ASID lease。次级 hart 在启动入口发布 online 位（Release），shootdown 侧用 Acquire 读取；切换地址空间时 ASID lease 也以 Release 写、Acquire 读。这样 kernel 映射修改会覆盖已 online 的 hart，即使其当前 lease 不是该 kernel ASID。
 
-保留的 `MapError` 覆盖物理内存不足、未对齐、已映射/未映射、无所属区域、权限上限不可加宽、DRAM 布局重叠、shootdown 失败和内核 Tree pinned。普通接口保留既有失败码映射，shootdown 未完成对应 Busy，不丢弃映射资源或重用 reservation。
+保留的 `NestError`（旧名 `MapError`，变体与线上码未变）覆盖物理内存不足、未对齐、
+已映射/未映射、无所属区域、权限上限不可加宽、DRAM 布局重叠、shootdown 失败和内核
+Nest pinned。物理来源自己的失败码是 `flat::FlatError`（不足、未对齐、越界），不依赖 wire；
+它只在 `NestError` 处折成地址空间失败码（`OutOfRange` 折为 `NoRegion`）。`Flat` 不认识
+线上编码；`From<NestError> for MemoryFail` 属于外层组合，不放在纯域错误文件里。普通接口
+保留既有失败码映射，shootdown 未完成对应 Busy，不丢弃映射资源或重用 reservation。
 
 ## 既有 wire 接口
 
 `UnsealArgs::Pole` 携带 `{ addr, size, shared }`，wire 参数为五个机器字，Pole variant 编码为 `[1, addr, size, shared, 0]`。Pole 创建要求指定一段已有、完整的映射。
 
-`MemoryCall::Mmap` 使用 `pole: PieToken`，wire 槽位保持不变。Memory 接口与内部类型归位不改变这些既有编码、错误码或诊断 schema；`Frame`、`Tree`、`Map`、`Space`、`Mapping` 与 `Reservation` 的 Rust 实现接口不是用户 wire ABI。
+`MemoryCall::Mmap` 使用 `pole: PieToken`，wire 槽位保持不变。Memory 接口与内部类型归位不改变这些既有编码、错误码或诊断 schema；`Frame`、`Nest`、`View`、`Space`、`Mapping` 与 `Reservation` 的 Rust 实现接口不是用户 wire ABI。
 
 ## 先前页表迁移的字段计数
 
@@ -74,7 +148,7 @@ ASID shootdown 总是刷新本 hart。远端 kernel shootdown 依据 `ONLINE` �
 | 全部 `kernel/src` | 125 个 / 400 字段 | 135 个 / 429 字段 | +10 个 / +29 字段 |
 | `memory/manager` 与 `work/unit/space` | 20 个 / 65 字段 | 22 个 / 74 字段 | +2 个 / +9 字段 |
 
-字段迁移不代表字段净减少。表中计数包含真实新增状态、旧职责归位后的字段和仍保留的缓存；不能把职责迁移或删掉旧封装称为字段净节省。当前真实新增状态包括 reservation generation 身份、Map 子范围/lazy 与失效保留状态、Space cleanup 记录、allocator 中按 generation 预分配的 cleanup 节点，以及 Pole 的实际映射/授权关系。旧 Map 上的 AVL 索引与回收链字段已从 Map 移走，由 Tree 内部索引和 shootdown 延迟保留结构承担；旧 `Backing`/`Permit` 混合记录和重复 VA/物理地址包装已删除或由真实 `Frame`、`Map`、`Reservation` 关系取代。Task 陷阱帧物理/虚拟地址仍是供快路径使用的真实缓存。故字段总数如实净增 +29（manager+space 净增 +9），结构职责仍已归位，不能据此声称净减字段。
+字段迁移不代表字段净减少。表中计数包含真实新增状态、旧职责归位后的字段和仍保留的缓存；不能把职责迁移或删掉旧封装称为字段净节省。当前真实新增状态包括 reservation generation 身份、Map 子范围/lazy 与失效保留状态、Space cleanup 记录、allocator 中按 generation 预分配的 cleanup 节点，以及 Pole 的实际映射/授权关系。旧 Map 上的 AVL 索引与回收链字段已从 Map 移走，由 Tree 内部索引和 shootdown 延迟保留结构承担；旧 `Backing`/`Permit` 混合记录和重复 VA/物理地址包装已删除或由真实 `Frame`、`Map`、`Reservation` 关系取代。Task 陷阱帧物理/虚拟地址仍是供快路径使用的真实缓存。故字段总数如实净增 +29（manager+space 净增 +9），结构职责仍已归位，不能据此声称净减字段。表中 `Tree` / `Map` / `manager` 是该次测量当时的名字；PR 2 把它们归位为 `Nest` / `View` / `nest`（见下一节）。
 
 ## 先前 CPU 页表迁移验收
 
@@ -92,7 +166,7 @@ ASID shootdown 总是刷新本 hart。远端 kernel shootdown 依据 `ONLINE` �
 
 生产顶层为 `core / machine / entry`，不保留旧顶层兼容模块：
 
-- `core/memory`：分配器、页表、映射、ASID 与失效后的资源回收。
+- `core/memory`：公共坐标（`address`）、物理来源与分配器（`flat`）、CPU 地址空间的全部状态（`nest`：身份、页表、全局占用、关系、失效与回收）。
 - `core/work`：运行实体、通信、授权、调度、等待和记录。
 - `machine`：机器信息、每核执行信息、时钟、上下文、同步和处理器停机机制。
 - `entry`：启动装配、异常与调用接入、资源交付、报告和测试接入。
@@ -101,7 +175,7 @@ ASID shootdown 总是刷新本 hart。远端 kernel shootdown 依据 `ONLINE` �
 
 | 契约 | 核心或机器事实 | 接入与组合 |
 | --- | --- | --- |
-| 翻译与上下文 | `Tree::satp` 编码；`machine/switcher` 安装寄存器 | Task 选择空间与 SPP；启动、探测、恢复保留写入时机 |
+| 翻译与上下文 | `Nest::satp` 编码；`machine/switcher` 安装寄存器 | Task 选择空间与 SPP；启动、探测、恢复保留写入时机 |
 | 定时 | room 保存期限队列、选择预算；machine 编程硬件定时器 | 中断入口领取到期票据并唤醒 |
 | 初始资源 | machine 提供设备树视图；room 持有中断通信对象 | entry 创建、登记、冻结和交付能力 |
 | 记录与报告 | `core/work/record` 保存 Trace 与退出账 | `entry/report` 格式化、导出、报告与测试判决 |
@@ -116,11 +190,12 @@ Trace 的环与可选 sink 使用同一次发布。OOM 不发布环，也不留�
 `machine/image` 仅定义链接器边界及启动栈；共享虚拟地址窗口仍在 `machine/layout`。
 两者不全量再导出同名事实。地址类型保留在 memory。
 
-内核内用例位于 `kernel/tests/health`。白盒用例通过受控路径保持原逻辑子模块身份，
-没有为迁移测试公开生产字段；登记仍由 `kernel/tests/embedded.rs` 完成。
+内核内用例位于 `kernel/tests/health`。白盒用例通过受控路径（`Memory::backend()`）取得裸
+`Nest`，没有为迁移测试公开生产字段；登记仍由 `kernel/tests/embedded.rs` 完成。
 Pend 与 Trace 的宿主套件通过 `#[path]` 编译生产实现，运行时必须显式指定宿主 target。
-`crates/alloc-probe` 被 workspace 排除，但直接 include 生产分配器，须从该 crate 目录
-单独验证，让其 CFLAGS 与串行测试配置生效。
+`kernel/tests/frame-runs` 同样按 `include!` 夹入生产的活动区间与帧分段三份源文件，
+只补叶子依赖，不镜像分段算法。`crates/alloc-probe` 被 workspace 排除，但直接 include
+生产分配器，须从该 crate 目录单独验证，让其 CFLAGS 与串行测试配置生效。
 
 ### 顶层迁移验收记录
 
@@ -149,6 +224,9 @@ workspace `--all-targets` 会把 stream 的宿主 std 测试编译到裸机目�
 - alloc-probe 从其自身目录验证：all-targets 宿主检查、默认 6 项、plain 10 项、多线程入口 4 项通过。
 - Layout 用例覆盖字节取整、零大小、指定地址、超对齐、最低空档复用、错误 owner、失败回收与共享视图；eager、lazy、view 三条路径都实际核对超对齐。
 - 普通内存调用入口不包含 PTE、物理帧、页大小或地址桶的组装；生产 Memory backend 借用为 0。
+
+（以下归位描述中的 `manager` / `Tree` / `Map` / `VaAllocator` / `MapError` 是该批次当时的名字；
+PR 2 后来把它们归位为 `nest` / `Nest` / `View` / 占用表 / `NestError`，见「PR 2 归位验收」。）
 
 manager 的 37 个具名类型和 sync 的 18 个具名类型已各自独立定义，关联或对偶不作为同文件豁免。`Memory` 的子模块保存凭证、回收记录及 `VaAllocator`；后者的子模块保存地址区域与预约槽。`TableNode` 定义在 `table/mod.rs`，其物理 `PageTable` 保存在 `table/page.rs`。`MapError` 属于 manager 共同词汇，不从 table 借出；本地 TLB 刷新与跨核指令同步由 ASID 机制实现，module 入口只声明与导出。Tree 与 Map 仅向 crate 内提供机制接口，普通使用面保持 Memory、Layout、Access 与 Mapping。类型数量和字段归组不冒充持久状态净减。其他内核对象仍按下述边界单独验收。
 
@@ -221,3 +299,84 @@ Map 身份、Task 的上下文缓存与失败清理责任仍然存在。
 - env ABI 13 项、capability 16 项通过；env 的既有 unused Wire import 警告未处理。
 - alloc-probe 从其自身目录运行 all-targets 宿主检查、默认 6 项、plain 10 项和多核 4 项通过。
 - `system-fault` 未通过，基线对照如上；未做 semihosting 外层 JSONL/fs 的整机导出验收。
+
+### PR 2 归位验收
+
+本轮把 CPU 地址空间从旧 `manager` / `Tree` / `Map` 归位为 `core/memory/nest` 的
+`Nest` / `View`，并给出四个关系原语与自己的同步退休。实际源码布局：
+
+```text
+core/memory/nest/
+  mod.rs                Nest：身份、根页表、占用、关系索引、失效与退休
+  state.rs              NestState：待失效、退休资源、待结算的占用票
+  error.rs              NestError（纯域；From<FlatError> 在此，MemoryFail 折在外层）
+  address/              Placement / PlacementAt / RegionId / Occupancy / Window / Slot
+  identity/             Asid、shootdown、本地刷新与回收
+  table/                TableNode / PageTable / PageTableEntry / PteFlags
+  synchronize/          Invalidation / ClosePhase
+  index/                关系索引（AVL 根 + 节点）
+  view/                 View / ActiveRange / ViewRange（Whole 标记与 Pages 坐标）/
+                        Access / 帧分段
+  reservation.rs        Reservation（带 generation）
+  cleanup.rs            清理链上的一环：一笔已消费、待收尾的关系
+core/work/unit/space/memory.rs
+                        Memory：只持 Arc<Nest> 的外层薄组合
+core/work/unit/space/mapping.rs
+                        Mapping：线外兼容名，只持 Arc<View>；核心不认识它
+kernel/tests/health/nest.rs / nest_failure.rs / depend.rs
+                        原语、失效失败与锁序自检用例
+```
+
+- `Nest` 提供 `reserve` / `attach` / `set_access` / `detach` 与自身 `close` /
+  `retry_invalidation`；改权、撤销和物化 / 发布组合收 `ViewRange`（`Whole` 是操作时解析的标记，
+  `Pages` 是创建时定下的页坐标，选到已结算的页就失败，不静默过滤）。
+  `detach` 逐段走“退休该段占用 → 撤 PTE → 同步 → 只回收这一段”，失败时票与
+  退休资源都留着、VA 禁复用，沿用同一身份重试才结算；部分撤下成功就只交还那一段。
+  普通挂载与活动形状挂载共用一个私有安装/提交，备齐可失败项之后才写 PTE。
+  撤销也先准备全部可失败项，再在地址 → Nest → View 的递增临界区内
+  开票并提交 PTE / 活动 / 索引 / 退休责任；锁外完成远端同步。
+  准备失败时原 live 占用与 PTE 不变，没有无人接管的票，也不提前 reclaim。
+  没有 `PreparedView` / `ViewRecord` / `Handle`，也没有可伪造的 PA + Frame 投影输入：
+  内部形状入口只接真实 occupancy、`FlatRange` 和明确的活动区间。
+- 占用表一份全局有序表：`Lowest` / `Highest` 共用窗口选址，`Exact` 支持窗外真实跨度，
+  三者共用同一份重叠检查；端点按最后一个字节（含）预测，因此
+  `TRAMPOLINE = 0xffff_ffff_ffff_f000`、长度 4096、最后字节 `usize::MAX` 的跨度
+  可登记/切分/退休/回收，也不用 `[0, max)` 固定桶。`Static` 只是地址记账政策：
+  它没有动态窗口，跨度只按 `Exact` 登记，`Occupancy::attach` 不给它建窗。
+- 物化只有一条原语：`FlatRange::materialize`。`Nest::publish` 只发布已物化 / 借用的
+  页；缺页与派生编排走组合入口（`Flat` 物化一页或源活动片段，再回到本关系发布），
+  它不充当第二套物化权威。PTE 真值在页表，发布记录只负责强持与双向核验。
+- 权限拆成逻辑 `Access`（RWX）与整段架构属性（U/G/A/D）：`set_access` / `narrow`
+  不改属性；改权同步失败保留已改的权限与活动关系，只有关才进 Closing。
+- 启动布局：低 identity 已在 `Normal` 内整体登记，按段 `split` 后逐个挂载；
+  `advance_region` 只抬高选址下界；高镜像、跳板、hart frame、trap stack 按 `Exact`
+  登记真实占用（`RegionId::Static`）；用户 Nest 的跳板随该 Nest 回收。
+
+本轮实际命令与结果（全部在本工作区重跑；无专项多 hart 并发与完整分配器元数据 OOM 注入）：
+
+- workspace debug/release、`kernel --all-targets` debug/release、semihosting 两档编译通过；
+  已处理的警告为 0。
+- **锁序检测本轮才真正启用**：`init_depend` 从启动路径移到公共 `init`
+  （分配器就绪之后、被验证调用之前），并新增 `depend::armed` 自检用例；
+  启用后冒出的两处真实次序问题按原位修掉（跨关系审计不套着关系锁比较快照；
+  团队暂存表的扩容 / 合并 / 释放全部移到状态锁外），没有关检测、没有吞 panic、
+  没有拿无级别的锁绕开。
+- `nu scripts/qtest.nu --package kernel`：48 项健康用例通过（含新增的锁序自检）；
+  无 initrd 的 `scene` 哨兵单独失败（预期），命令退出 101。`--scene accept` 1 项通过。
+- Pend 宿主 35 项、Trace 默认/semihosting 各 2 项、frame-runs 9 项、console-line 5 项通过。
+- env 宿主 2+4+3+4 项、resource capability 16 项通过。
+- alloc-probe 从其自身目录：all-targets 宿主检查、默认 6 项、plain 10 项、多核 4 项通过。
+- `git diff --check` 通过；`cargo fmt --all -- --check` 的 Diff 块由 173 降到 154
+  （只格式化了本轮新建/重写的文件，未全树重排）。
+- 新增/改写的健康用例覆盖：登记不动页表、guard 切分占用、顶页 Exact 与跨窗口全局重叠、
+  已撤选择/关闭空间拒新关系、改权同步失败保持活动、内核 Nest `Pinned`、大叶分裂、
+  非连续帧按页翻译、缺页逐页发布、跨 Nest 同源物理别名与逐侧撤销、空洞派生不重发布、
+  发布失败回滚责任、失效失败后 VA 禁复用与原身份重试。旧的净零与“最后一份来源释放才回收”
+  断言未放宽。
+  另有中间 Pages / Whole 的撤销准备失败注入：原活动与 PTE 不变、
+  retry 不释放 live VA、原选择可正常再次撤销且最后回到净零；
+  物化选择拒绝关闭页、Whole 只处理活动片段不重装洞页。
+
+未随本轮闭环（保持原状）：`system-fault` 的 Loader 超时按上文仍未验收；
+`--scene product` 未在本轮重跑（本轮只跑了任务要求的 `accept`）；
+semihosting 外层 JSONL/fs 仍未做整机导出验收。

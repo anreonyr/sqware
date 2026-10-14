@@ -4,12 +4,21 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::Frame;
-use crate::core::memory::manager::addr::{PhysAddr, VirtAddr};
-use crate::core::memory::manager::entry::PteFlags;
-use crate::core::memory::manager::RegionId;
+use crate::core::memory::flat::Frame;
+use crate::core::memory::address::{PageCount, PageOffset, PhysAddr, VirtAddr};
+use crate::core::memory::nest::table::PteFlags;
+use crate::core::memory::nest::{Access, NestError, RegionId, View, ViewRange};
 use crate::core::work::unit::space::SpaceBuilder;
 
+/// 一段页对齐窗口在某个关系上的身份选择。
+fn select(view: &Arc<View>, start: VirtAddr, size: usize) -> ViewRange {
+    let offset = (start.as_usize() - view.initial_start().as_usize()) / PAGE_SIZE;
+    view.range(
+        PageOffset::new(offset),
+        PageCount::new(size / PAGE_SIZE).expect("pagetable: page count"),
+    )
+    .expect("pagetable: selection")
+}
 pub fn pagetable() {
     const BASE: usize = 0x4000_0000;
     const SIZE: usize = 4 * 1024 * 1024;
@@ -18,10 +27,10 @@ pub fn pagetable() {
     let space = SpaceBuilder::user()
         .build()
         .expect("[health] pagetable: build space");
-    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
+    let flags = Access::READ | Access::WRITE;
     let base_count = space.memory.backend().table_count();
-    let held_before = crate::core::memory::allocator::statistics::frame_occupied()
-        - crate::core::memory::allocator::statistics::block_occupied();
+    let held_before = crate::core::memory::flat::allocator::statistics::frame_occupied()
+        - crate::core::memory::flat::allocator::statistics::block_occupied();
 
     for round in 0..ROUNDS {
         let mut frames: Vec<Arc<Frame>> = Vec::new();
@@ -39,7 +48,7 @@ pub fn pagetable() {
             .memory
             .map_frames(reservation, frames, flags, flags)
             .expect("[health] pagetable: map frames");
-        assert_eq!(mapping.map.frame_count(), SIZE / PAGE_SIZE);
+        assert_eq!(mapping.view().frame_count(), SIZE / PAGE_SIZE);
         crate::expect!(
             space.memory.backend().table_count() > base_count,
             "round {round}: map allocated no page-table nodes"
@@ -63,20 +72,20 @@ pub fn pagetable() {
         space.memory.backend().audit();
     }
 
-    let held_after = crate::core::memory::allocator::statistics::frame_occupied()
-        - crate::core::memory::allocator::statistics::block_occupied();
+    let held_after = crate::core::memory::flat::allocator::statistics::frame_occupied()
+        - crate::core::memory::flat::allocator::statistics::block_occupied();
     crate::expect!(
         held_before == held_after,
         "net frames leaked: {held_before} → {held_after}（逐类 {}）",
-        crate::core::memory::allocator::statistics::kinds()
+        crate::core::memory::flat::allocator::statistics::kinds()
     );
     drop(space);
 }
 
 pub fn kernel_layout() {
     use crate::machine::layout::{IMAGE_BASE, TRAMPOLINE};
-    use crate::core::memory::manager::mode;
-    use crate::core::memory::manager::RegionId;
+    use crate::machine::mode;
+    use crate::core::memory::nest::RegionId;
 
     unsafe extern "C" {
         static _kernel_base: u8;
@@ -131,11 +140,11 @@ pub fn kernel_layout() {
     for hart in 0..crate::machine::hart::hart_count() {
         let id = crate::machine::hart::HartId::new(hart);
         let guard = crate::machine::layout::TRAP_STACK_BASE + hart * crate::machine::layout::TRAP_STACK_SLOT_SIZE;
-        assert!(space.memory.backend().find(guard).is_none());
+        assert!(space.memory.backend().probe(guard).is_none());
         assert!(space.memory.backend().translate(guard).is_none());
         let base = crate::machine::switcher::stack::trap_stack_base(id);
         let (physical, flags) = space.memory.backend().translate(base).expect("trap stack body mapping");
-        let map = space.memory.backend().find(base).expect("trap stack body Map");
+        let map = space.memory.backend().probe(base).expect("trap stack body View");
         assert_eq!(
             map.frames_in(base, PAGE_SIZE).expect("trap stack frame")[0]
                 .1
@@ -198,8 +207,8 @@ pub fn kernel_layout() {
 
 pub fn space_reservation_layout() {
     use crate::machine::layout::TASK_STACK_GUARD;
-    use crate::core::memory::manager::mode;
-    use crate::core::memory::manager::RegionId;
+    use crate::machine::mode;
+    use crate::core::memory::nest::RegionId;
 
     const BASE: usize = 0x4000_0000;
     let edge = mode::upper().as_usize();
@@ -231,8 +240,8 @@ pub fn space_reservation_layout() {
         .map_frames(
             heap_reservation,
             heap_frames,
-            PteFlags::R | PteFlags::W,
-            PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
+            Access::READ | Access::WRITE,
+            Access::READ | Access::WRITE,
         )
         .expect("heap mapping");
 
@@ -254,30 +263,27 @@ pub fn space_reservation_layout() {
             .map_frames(
                 body,
                 frames,
-                PteFlags::R | PteFlags::W,
-                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
+                Access::READ | Access::WRITE,
+                Access::READ | Access::WRITE,
             )
             .expect("stack mapping");
         (guard, mapping)
     };
     let (first_guard, first) = claim_stack(&space);
     let (second_guard, second) = claim_stack(&space);
+    assert_eq!(first.address().as_usize() + first.size(), edge);
     assert_eq!(
-        first.reservation.start().as_usize() + first.reservation.size(),
-        edge
-    );
-    assert_eq!(
-        second.reservation.start() + second.reservation.size(),
+        second.address() + second.size(),
         first_guard.start()
     );
-    assert!(space.memory.backend().find(first_guard.start()).is_none());
+    assert!(space.memory.backend().probe(first_guard.start()).is_none());
     assert!(space.memory.backend().translate(first_guard.start()).is_none());
     for mapping in [&first, &second] {
-        for offset in (0..mapping.reservation.size()).step_by(PAGE_SIZE) {
+        for offset in (0..mapping.size()).step_by(PAGE_SIZE) {
             let (_, flags) = space
                 .memory
                 .backend()
-                .translate(mapping.reservation.start() + offset)
+                .translate(mapping.address() + offset)
                 .expect("stack body");
             assert!(flags.contains(PteFlags::U | PteFlags::R | PteFlags::W));
             assert!(!flags.contains(PteFlags::X));
@@ -357,7 +363,7 @@ pub fn space_reservation_layout() {
 }
 
 pub fn image_dynamic_region() {
-    use crate::core::memory::manager::RegionId;
+    use crate::core::memory::nest::RegionId;
 
     #[repr(C, align(4096))]
     struct Image([u8; 2 * PAGE_SIZE]);
@@ -397,8 +403,8 @@ pub fn image_dynamic_region() {
         .space
         .memory
         .backend()
-        .find(VirtAddr::from_raw(0x17000))
-        .expect("lazy BSS map");
+        .probe(VirtAddr::from_raw(0x17000))
+        .expect("lazy BSS view");
     assert!(
         team.space
             .memory
@@ -419,18 +425,18 @@ pub fn image_dynamic_region() {
     team.space
         .memory
         .backend()
-        .unmap(&lazy, VirtAddr::from_raw(0x17000), PAGE_SIZE)
+        .detach(select(&lazy, VirtAddr::from_raw(0x17000), PAGE_SIZE))
         .expect("unmap lazy image page");
     let image = team
         .space
         .memory
         .backend()
-        .find(VirtAddr::from_raw(0x10000))
-        .expect("borrowed image map");
+        .probe(VirtAddr::from_raw(0x10000))
+        .expect("borrowed image view");
     team.space
         .memory
         .backend()
-        .unmap(&image, VirtAddr::from_raw(0x10000), PAGE_SIZE)
+        .detach(select(&image, VirtAddr::from_raw(0x10000), PAGE_SIZE))
         .expect("unmap borrowed image page");
     assert!(
         team.space
@@ -456,7 +462,7 @@ pub fn interval_index() {
     const COUNT: usize = 64;
     const STRIDE: usize = 16 * PAGE_SIZE;
     let space = SpaceBuilder::user().build().expect("interval space");
-    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
+    let flags = Access::READ | Access::WRITE;
     let tables = space.memory.backend().table_count();
     let mut maps = Vec::new();
     let mut replacements = Vec::new();
@@ -473,26 +479,32 @@ pub fn interval_index() {
                 .expect("indexed lazy region"),
         );
     }
-    let ordered = space.memory.backend().ranges().expect("ordered interval ranges");
+    let ordered = space
+        .memory
+        .backend()
+        .active_ranges()
+        .expect("ordered interval ranges");
     assert!(
         ordered
             .windows(2)
             .all(|pair| pair[0].1.start < pair[1].1.start)
     );
-    assert_eq!(space.memory.backend().map_count(), COUNT + 1);
+    assert_eq!(space.memory.backend().view_count(), COUNT + 1);
     for i in 0..COUNT {
         let va = VirtAddr::wrap(BASE + i * STRIDE);
         let mapping = &maps[COUNT - i - 1];
-        let read_only = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::U;
         space
             .memory
             .backend()
-            .protect(&mapping.map, va + 2 * PAGE_SIZE, 2 * PAGE_SIZE, read_only)
+            .set_access(
+                select(mapping.view(), va + 2 * PAGE_SIZE, 2 * PAGE_SIZE),
+                Access::READ,
+            )
             .expect("split permissions");
         space
             .memory
             .backend()
-            .materialize(&mapping.map, va + 2 * PAGE_SIZE, PAGE_SIZE)
+            .materialize_active(select(mapping.view(), va + 2 * PAGE_SIZE, PAGE_SIZE))
             .expect("protected fault");
         let (_, pte) = space
             .memory
@@ -503,7 +515,7 @@ pub fn interval_index() {
         space
             .memory
             .backend()
-            .materialize(&mapping.map, va + 4 * PAGE_SIZE, PAGE_SIZE)
+            .materialize_active(select(mapping.view(), va + 4 * PAGE_SIZE, PAGE_SIZE))
             .expect("writable fault");
         assert!(
             space
@@ -532,20 +544,20 @@ pub fn interval_index() {
                 .unwrap()
         );
         assert!(Arc::ptr_eq(
-            &mapping.map,
+            mapping.view(),
             &space
                 .memory
                 .backend()
-                .find(va + PAGE_SIZE)
-                .expect("left split retains Map")
+                .probe(va + PAGE_SIZE)
+                .expect("left split retains the View")
         ));
         assert!(Arc::ptr_eq(
-            &mapping.map,
+            mapping.view(),
             &space
                 .memory
                 .backend()
-                .find(va + 5 * PAGE_SIZE)
-                .expect("right split retains Map")
+                .probe(va + 5 * PAGE_SIZE)
+                .expect("right split retains the View")
         ));
         let fill = space
             .memory
@@ -555,7 +567,7 @@ pub fn interval_index() {
             .memory
             .map_lazy(fill, flags, flags)
             .expect("fill mapping hole");
-        assert!(!Arc::ptr_eq(&mapping.map, &replacement.map));
+        assert!(!Arc::ptr_eq(mapping.view(), replacement.view()));
         replacements.push(replacement);
         space.memory.backend().audit();
     }
@@ -567,7 +579,7 @@ pub fn interval_index() {
     let one_frame = alloc::vec![Frame::allocate().expect("failure probe frame")];
     assert!(matches!(
         space.memory.map_frames(failed_reservation, one_frame, flags, flags),
-        Err(crate::core::memory::manager::MapError::NotAligned)
+        Err(NestError::NotAligned)
     ));
     assert!(!space.memory.backend().overlaps(failed, 2 * PAGE_SIZE).unwrap());
     let reusable = space
@@ -592,22 +604,24 @@ pub fn interval_index() {
     let trampoline = space
         .memory
         .backend()
-        .find(crate::machine::layout::TRAMPOLINE)
-        .expect("seeded trampoline map");
+        .probe(crate::machine::layout::TRAMPOLINE)
+        .expect("seeded trampoline view");
     space
         .memory
         .backend()
-        .protect(
-            &trampoline,
-            crate::machine::layout::TRAMPOLINE,
-            PAGE_SIZE,
-            PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::G,
+        .set_access(
+            select(&trampoline, crate::machine::layout::TRAMPOLINE, PAGE_SIZE),
+            Access::READ,
         )
         .expect("top page protection");
     space
         .memory
         .backend()
-        .unmap(&trampoline, crate::machine::layout::TRAMPOLINE, PAGE_SIZE)
+        .detach(select(
+            &trampoline,
+            crate::machine::layout::TRAMPOLINE,
+            PAGE_SIZE,
+        ))
         .expect("top page unmap");
     assert!(space.memory.backend().translate(crate::machine::layout::TRAMPOLINE).is_none());
     assert_eq!(space.memory.backend().table_count(), 1);
@@ -615,9 +629,8 @@ pub fn interval_index() {
 }
 
 pub fn large_pages() {
-    use crate::core::memory::manager::BorrowedRegion;
-    use crate::core::memory::manager::table;
-    table::large_pages_accept();
+    use crate::core::memory::flat::BorrowedRegion;
+    super::large_pages::accept();
     const MEGA: usize = 1 << 21;
     let va = VirtAddr::wrap(0x4000_0000);
     let ram = crate::machine::board::info().dram;
@@ -625,17 +638,27 @@ pub fn large_pages() {
     assert!(pa.as_usize() + 2 * MEGA <= ram.base + ram.size);
     assert!(pa.as_usize().is_multiple_of(MEGA));
     let space = SpaceBuilder::user().build().expect("large page space");
-    let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D | PteFlags::U;
+    let flags = Access::READ | Access::WRITE;
     let before = space.memory.backend().table_count();
     let region = unsafe { BorrowedRegion::new(pa, 2 * MEGA) }.expect("reserved DRAM interval");
+    let reservation = space
+        .memory
+        .reserve(RegionId::Normal, va, 2 * MEGA)
+        .expect("large page reservation");
     let map = space
         .memory
-        .backend()
-        .map_borrowed(va, region, 0, 2 * MEGA, flags, flags)
+        .attach_static(
+            reservation,
+            region,
+            0,
+            2 * MEGA,
+            flags,
+            PteFlags::A | PteFlags::D | PteFlags::U,
+        )
         .expect("large borrowed maps");
     assert_eq!(
         space.memory.backend().table_count(),
-        before + crate::core::memory::manager::mode::levels() - 2
+        before + crate::machine::mode::levels() - 2
     );
     for offset in [0, 13, PAGE_SIZE + 17, MEGA + 91, 2 * MEGA - 1] {
         assert_eq!(space.memory.backend().translate(va + offset).unwrap().0, pa + offset);
@@ -643,7 +666,10 @@ pub fn large_pages() {
     space
         .memory
         .backend()
-        .protect(&map, va + PAGE_SIZE, PAGE_SIZE, flags - PteFlags::W)
+        .set_access(
+            select(map.view(), va + PAGE_SIZE, PAGE_SIZE),
+            Access::READ,
+        )
         .expect("large space protect");
     assert!(
         !space
@@ -666,7 +692,11 @@ pub fn large_pages() {
     space
         .memory
         .backend()
-        .unmap(&map, va + MEGA + PAGE_SIZE, PAGE_SIZE)
+        .detach(select(
+            map.view(),
+            va + MEGA + PAGE_SIZE,
+            PAGE_SIZE,
+        ))
         .expect("large space hole");
     assert!(space.memory.backend().translate(va + MEGA + PAGE_SIZE).is_none());
     assert_eq!(
@@ -674,11 +704,11 @@ pub fn large_pages() {
         pa + MEGA + 2 * PAGE_SIZE
     );
     space.memory.backend().audit();
-    for range in map.ranges().expect("large map ranges") {
+    for range in map.view().active().expect("large view ranges") {
         space
             .memory
             .backend()
-            .unmap(&map, range.start, range.size.get())
+            .detach(select(map.view(), range.start, range.size.get()))
             .expect("large space removal");
     }
     assert_eq!(space.memory.backend().table_count(), before);

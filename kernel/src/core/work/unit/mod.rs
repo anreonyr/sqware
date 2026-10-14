@@ -7,6 +7,6 @@ pub(crate) mod tally;
 pub(crate) mod task;
 pub(crate) mod team;
 
-use crate::core::memory::manager::MapError;
+use crate::core::memory::nest::NestError;
 
-pub type MapResult<T> = erra::Result<T, MapError>;
+pub type NestResult<T> = erra::Result<T, NestError>;

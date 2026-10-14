@@ -1,7 +1,8 @@
-use crate::core::memory::manager::{MapError, Memory, SpaceKind};
+use crate::core::memory::nest::{NestError, SpaceKind};
 use crate::core::work::unit::life::Life;
 use crate::core::work::unit::team;
 
+use super::memory::Memory;
 use super::space::Space;
 
 /// 建一个空间。
@@ -32,7 +33,7 @@ impl SpaceBuilder {
         }
     }
 
-    pub fn build(self) -> Result<Space, MapError> {
+    pub fn build(self) -> Result<Space, NestError> {
         let memory = Memory::new(self.kind, self.kernel)?;
         let space = Space {
             memory,

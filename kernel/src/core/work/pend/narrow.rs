@@ -18,7 +18,7 @@ fn reduce_locked(
     token: env::PieToken,
     subset: Permission,
 ) -> Result<(), PieFail> {
-    use crate::core::memory::manager::entry::PteFlags;
+    use crate::core::memory::nest::Access;
     let pie = super::locate(task, token).ok_or(PieFail::Denied)?;
     if !pie.alive() {
         return Err(PieFail::Dead);
@@ -30,11 +30,11 @@ fn reduce_locked(
         if !subset.contains(Permission::FETCH) {
             return Err(PieFail::Denied);
         }
-        let flags = PteFlags::R
+        let access = Access::READ
             | if subset.contains(Permission::STORE) {
-                PteFlags::W
+                Access::WRITE
             } else {
-                PteFlags::empty()
+                Access::empty()
             };
         let meta = &p;
         let _operation = PoleOperation::acquire(meta).ok_or(PieFail::Busy)?;
@@ -51,7 +51,7 @@ fn reduce_locked(
             Some(target) => Some(target.operation().ok_or(PieFail::Busy)?),
             None => None,
         };
-        crate::core::work::mail::pole::narrow(meta, token, flags)?;
+        crate::core::work::mail::pole::narrow(meta, token, access)?;
         let _pend = task.pend.lock();
         let _commit = crate::core::work::commit();
         let mut pies = task.pend.pies.lock();

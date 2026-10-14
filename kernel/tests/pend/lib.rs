@@ -42,21 +42,26 @@ mod lock {
     }
 }
 mod memory {
-    pub mod manager {
-        pub struct Map;
-        impl Map {
-            pub fn initial_range(&self) -> (addr::VirtAddr, usize) { (addr::VirtAddr::wrap(0), 4096) }
-        }
-        pub mod addr {
-            #[derive(Clone, Copy, PartialEq, Eq)]
-            pub struct VirtAddr(usize);
-            impl VirtAddr { pub const fn wrap(value: usize) -> Self { Self(value) } }
-        }
-        pub mod entry {
-            bitflags::bitflags! {
-                #[derive(Clone, Copy)]
-                pub struct PteFlags: usize { const R = 1; const W = 2; }
+    pub mod address {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub struct VirtAddr(usize);
+        impl VirtAddr {
+            pub const fn wrap(value: usize) -> Self {
+                Self(value)
             }
+        }
+    }
+
+    pub mod nest {
+        pub struct View;
+        impl View {
+            pub fn initial_range(&self) -> (crate::core::memory::address::VirtAddr, usize) {
+                (crate::core::memory::address::VirtAddr::wrap(0), 4096)
+            }
+        }
+        bitflags::bitflags! {
+            #[derive(Clone, Copy)]
+            pub struct Access: usize { const READ = 1; const WRITE = 2; const EXECUTE = 4; }
         }
     }
 }
@@ -310,7 +315,7 @@ mod work {
             pub fn narrow(
                 _: &PoleMeta,
                 _: env::PieToken,
-                _: crate::core::memory::manager::entry::PteFlags,
+                _: crate::core::memory::nest::Access,
             ) -> Result<(), env::PieFail> {
                 Ok(())
             }

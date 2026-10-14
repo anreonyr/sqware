@@ -6,7 +6,7 @@ use ::core::ptr::NonNull;
 use alloc::vec::Vec;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::allocator::hybrid;
+use crate::core::memory::flat::allocator::hybrid;
 
 const SIZES: [usize; 7] = [16, 64, 128, 256, 512, 1024, 2048];
 const STEPS: usize = 64;
@@ -31,7 +31,7 @@ pub fn accept() {
         }
     }
     drop(warm);
-    let kinds_before = crate::core::memory::allocator::statistics::kinds();
+    let kinds_before = crate::core::memory::flat::allocator::statistics::kinds();
 
     for i in 0..STEPS {
         let l = Layout::from_size_align(SIZES[i % SIZES.len()], 8).unwrap();
@@ -106,7 +106,7 @@ pub fn accept() {
     drop(held);
     drop(fheld);
 
-    let kinds_after = crate::core::memory::allocator::statistics::kinds();
+    let kinds_after = crate::core::memory::flat::allocator::statistics::kinds();
     for (k, n) in kinds_after.nonzero() {
         crate::expect!(
             n == kinds_before.get(k),

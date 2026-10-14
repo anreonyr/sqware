@@ -19,7 +19,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: ControlCall, ident: &Arc<T
                 return;
             };
             if !ident.team.space.memory.validate_write(buf, len)
-                || !crate::core::memory::manager::Memory::user_range(sp, backtrace::SPAN)
+                || !crate::core::work::unit::space::Memory::user_range(sp, backtrace::SPAN)
             {
                 ret_err(frame, ControlFail::Denied);
                 return;

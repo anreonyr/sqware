@@ -3,31 +3,30 @@ use alloc::vec::Vec;
 
 use env::{UnitCall, UnitFail, UnitTarget};
 
-use crate::core::memory::manager::MapError;
-use crate::core::memory::manager::addr::VirtAddr as KVirt;
+use crate::core::memory::nest::{NestError, SpaceKind};
+use crate::core::memory::address::VirtAddr as KVirt;
 use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::core::work::room::messenger::{self, Handoff};
 use crate::core::work::room::scheduler::roster::muster;
 use crate::core::work::unit::copies::Origin;
 use crate::core::work::unit::join::JoinWait;
 use crate::core::work::unit::life::TaskLife;
-use crate::core::memory::manager::{Memory, SpaceKind};
-use crate::core::work::unit::space::Space;
+use crate::core::work::unit::space::{Memory, Space};
 use crate::core::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskWeak};
 
 use super::outcome::Outcome;
 
-fn map_err(e: MapError) -> UnitFail {
+fn map_err(e: NestError) -> UnitFail {
     match e {
-        MapError::OutOfMemory => UnitFail::OoM,
-        MapError::NotAligned
-        | MapError::AlreadyMapped
-        | MapError::NotMapped
-        | MapError::NoRegion
-        | MapError::WidenDenied
-        | MapError::DramOverlap
-        | MapError::Shootdown
-        | MapError::Pinned => UnitFail::Denied,
+        NestError::OutOfMemory => UnitFail::OoM,
+        NestError::NotAligned
+        | NestError::AlreadyMapped
+        | NestError::NotMapped
+        | NestError::NoRegion
+        | NestError::WidenDenied
+        | NestError::DramOverlap
+        | NestError::Shootdown
+        | NestError::Pinned => UnitFail::Denied,
     }
 }
 

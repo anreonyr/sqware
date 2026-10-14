@@ -16,8 +16,8 @@ use riscv::register::satp;
 use crate::machine::hart::{self, HartId};
 use crate::machine::image::{ROOT_STACK_CANARY, root_stack_base};
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::MapError;
-use crate::core::memory::manager::mode;
+use crate::core::memory::nest::{Access, NestError, RegionId, identity};
+use crate::machine::mode;
 use crate::machine::board;
 use crate::core::work::record::trace;
 use crate::machine::switcher::context::TrapContext;
@@ -47,8 +47,10 @@ pub fn start() -> Result<(), BootError> {
     scheduler::init().map_err(BootError::Scheduler)?;
     register_runtime_hooks();
 
+    // 锁序检测已经在 `init` 里启用（那里在分配器就绪后、被验证调用之前）；
+    // 这里不再重复初始化，重复调用会以 AlreadyInit 报错。
     #[cfg(debug_assertions)]
-    crate::machine::sync::init_depend(hart::hart_count()).map_err(BootError::Dependencies)?;
+    crate::entry::check::depend::accept();
 
     #[cfg(debug_assertions)]
     crate::entry::check::run();
@@ -94,7 +96,7 @@ fn register_runtime_hooks() {
     const SHUTDOWN_HOOKS: &[fn()] = &[
         crate::entry::report::shutdown::report,
         crate::core::work::room::scheduler::rip,
-        crate::core::memory::allocator::block::flush,
+        crate::core::memory::flat::allocator::block::flush,
         crate::entry::report::shutdown::verdict,
     ];
     halt::hook(SHUTDOWN_HOOKS, crate::entry::report::shutdown::waiting);
@@ -121,7 +123,7 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
     let view_reservation = team
         .space
         .memory
-        .allocate_low(crate::core::memory::manager::RegionId::Normal, view_size)
+        .allocate_low(RegionId::Normal, view_size)
         .map_err(|source| BootError::Mapping {
             operation: MapOperation::ImageView,
             source,
@@ -129,16 +131,16 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
     let view_mapping = unsafe {
         team.space.memory.map_borrowed(
             view_reservation,
-            crate::core::memory::manager::addr::PhysAddr::from_raw(region.base),
-            read_only(),
-            read_only(),
+            crate::core::memory::address::PhysAddr::from_raw(region.base),
+            Access::READ,
+            Access::READ,
         )
     }
     .map_err(|source| BootError::Mapping {
         operation: MapOperation::ImageView,
         source,
     })?;
-    let view = view_mapping.reservation.start();
+    let view = view_mapping.address();
 
     let mut registry = crate::entry::boot::resources::Registry::default();
     crate::entry::boot::devices::register(&mut registry).map_err(|source| BootError::Resources {
@@ -170,7 +172,7 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
     let ledger_reservation = team
         .space
         .memory
-        .allocate_low(crate::core::memory::manager::RegionId::Normal, ledger_bytes)
+        .allocate_low(RegionId::Normal, ledger_bytes)
         .map_err(|source| BootError::Mapping {
             operation: MapOperation::LedgerView,
             source,
@@ -178,16 +180,16 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
     let ledger_mapping = unsafe {
         team.space.memory.map_borrowed(
             ledger_reservation,
-            crate::core::memory::manager::addr::PhysAddr::from_raw(ledger_pa),
-            read_only(),
-            read_only(),
+            crate::core::memory::address::PhysAddr::from_raw(ledger_pa),
+            Access::READ,
+            Access::READ,
         )
     }
     .map_err(|source| BootError::Mapping {
         operation: MapOperation::LedgerView,
         source,
     })?;
-    let ledger = ledger_mapping.reservation.start();
+    let ledger = ledger_mapping.address();
 
     let mut args = [0usize; env::ledger::args::LEN];
     args[env::ledger::args::VIEW] = view.as_usize();
@@ -197,7 +199,7 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
     let mut words = alloc::vec::Vec::new();
     words
         .try_reserve_exact(args.len())
-        .map_err(|_| BootError::Bootstrap(MapError::OutOfMemory))?;
+        .map_err(|_| BootError::Bootstrap(NestError::OutOfMemory))?;
     words.extend_from_slice(&args);
     let bootstrap = team
         .task()
@@ -232,11 +234,6 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
         .audit();
 
     Ok(Some(bootstrap))
-}
-
-fn read_only() -> crate::core::memory::manager::entry::PteFlags {
-    use crate::core::memory::manager::entry::PteFlags;
-    PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D
 }
 
 fn boot_harts() -> Result<(), BootError> {
@@ -282,7 +279,7 @@ pub(crate) extern "C" fn boot_main() -> ! {
         ::core::arch::asm!("sfence.vma", "fence.i");
     }
     arm_hart();
-    crate::core::memory::manager::asid::occupy(crate::core::memory::manager::asid::Asid::kernel());
+    identity::occupy(crate::core::memory::nest::Asid::kernel());
     trace::note(trace::EventKind::Boot(trace::BootEvent::Done {
         hart: me.get(),
     }));

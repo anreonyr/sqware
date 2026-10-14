@@ -2,8 +2,6 @@ use alloc::vec::Vec;
 
 use env::UnitFail;
 
-use crate::core::memory::manager::MapError;
-
 use super::Staging;
 use super::TeamPhase;
 use super::TeamStage;
@@ -74,12 +72,6 @@ impl TeamState {
         self.staged.len()
     }
 
-    pub(crate) fn reserve_staging(&mut self, extra: usize) -> Result<(), MapError> {
-        self.staged
-            .try_reserve(extra)
-            .map_err(|_| MapError::OutOfMemory)
-    }
-
     pub(crate) fn push_staging(&mut self, item: Staging) {
         self.staged.push(item);
     }
@@ -98,13 +90,13 @@ impl TeamState {
         }
     }
 
+    /// 摘走整表（连容量）：状态里留一块 0 容量的空壳，丢它不碰分配器。
     pub(crate) fn take_staging(&mut self) -> Vec<Staging> {
         core::mem::take(&mut self.staged)
     }
 
-    pub(crate) fn restore_staging(&mut self, items: Vec<Staging>) {
-        if !items.is_empty() {
-            self.staged.extend(items);
-        }
+    /// 整表换进去，旧表交回调用方在锁外丢；锁内不搬元素也不释放内存。
+    pub(crate) fn swap_staging(&mut self, items: Vec<Staging>) -> Vec<Staging> {
+        core::mem::replace(&mut self.staged, items)
     }
 }

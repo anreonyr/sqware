@@ -5,9 +5,20 @@ use ::core::alloc::Layout;
 use ::core::cell::Cell;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::{Access, SpaceKind, addr::VirtAddr};
+use crate::core::memory::nest::{Access, SpaceKind, View, ViewRange};
+use crate::core::memory::address::{PageCount, PageOffset, VirtAddr};
 use crate::core::work::unit::space::{Space, SpaceBuilder};
 use crate::entry::report::backtrace::{Backtrace, DEPTH, StackReader, WalkConfig};
+
+/// 一段页对齐窗口在某个关系上的身份选择。
+fn select(view: &Arc<View>, start: VirtAddr, size: usize) -> ViewRange {
+    let offset = (start.as_usize() - view.initial_start().as_usize()) / PAGE_SIZE;
+    view.range(
+        PageOffset::new(offset),
+        PageCount::new(size / PAGE_SIZE).expect("backtrace: page count"),
+    )
+    .expect("backtrace: selection")
+}
 
 fn word(space: &Space, address: usize, value: usize) {
     assert!(space.memory.copy_out(&value.to_le_bytes(), address));
@@ -80,9 +91,15 @@ pub fn walk() {
     let from = base + PAGE_SIZE - 8;
     word(&space, from, 0x1000);
     word(&space, base + 2 * PAGE_SIZE, 0x2000);
-    space.memory.backend().unmap(
-        &mapping.map, VirtAddr::wrap(base + PAGE_SIZE), PAGE_SIZE,
-    ).unwrap();
+    space
+        .memory
+        .backend()
+        .detach(select(
+            mapping.view(),
+            VirtAddr::wrap(base + PAGE_SIZE),
+            PAGE_SIZE,
+        ))
+        .unwrap();
     let mut reader = StackReader::user(space.clone());
     let mut cfg = WalkConfig {
         world: SpaceKind::User,

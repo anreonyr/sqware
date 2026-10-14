@@ -1,7 +1,7 @@
 use ::core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::addr::VirtAddr;
+use crate::core::memory::address::VirtAddr;
 use crate::machine::layout::{HART_FRAME_BASE, MAX_HART_SLOTS};
 
 use super::{HartId, hart_count, hart_id};
@@ -22,7 +22,7 @@ impl PerHart {
             id,
             frame: VirtAddr::wrap(HART_FRAME_BASE.as_usize() + id * PAGE_SIZE),
             scheduler: AtomicPtr::new(::core::ptr::null_mut()),
-            lease: AtomicUsize::new(crate::core::memory::manager::asid::vacant()),
+            lease: AtomicUsize::new(crate::core::memory::nest::identity::vacant()),
             instruction_sync: AtomicUsize::new(1),
             _pad: [0; 3],
         }

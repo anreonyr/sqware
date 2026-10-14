@@ -2,9 +2,9 @@ use alloc::sync::Arc;
 
 use env::{MemoryCall, MemoryFail};
 
-use crate::core::memory::manager::Access;
-use crate::core::memory::manager::Memory;
-use crate::core::memory::manager::addr::VirtAddr as KVirt;
+use crate::core::memory::address::VirtAddr as KVirt;
+use crate::core::memory::nest::Access;
+use crate::core::work::unit::space::Memory;
 use crate::core::work::mail::pole::PoleOperation;
 use crate::core::work::unit::task::TaskIdent;
 use crate::machine::switcher::context::TrapContext;
@@ -75,7 +75,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             let access = Access::READ | Access::WRITE;
             let mapping = space.memory.allocate_bytes(raw_size, access, None)?;
             let address = mapping.address().as_usize();
-            prepared.commit(&mapping.map);
+            prepared.commit(mapping.view());
             Ok(address)
         }
         MemoryCall::Deallocate { addr, .. } => {
@@ -83,12 +83,12 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 return Err(MemoryFail::Denied);
             }
             let caller = caller.as_ref().ok_or(MemoryFail::Denied)?;
-            let map = caller
+            let view = caller
                 .pend
                 .creations
                 .locate(KVirt::wrap(addr.get()), size)
                 .ok_or(MemoryFail::Denied)?;
-            let creation = caller.pend.creations.claim(&map).map_err(|error| {
+            let creation = caller.pend.creations.claim(&view).map_err(|error| {
                 if error == env::PieFail::Busy {
                     MemoryFail::Busy
                 } else {
@@ -96,7 +96,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 }
             })?;
             space.memory.retry_invalidation()?;
-            if map.is_live() {
+            if view.is_live() {
                 space.memory.unmap_range(KVirt::wrap(addr.get()), size)?;
             }
             creation.commit();
@@ -183,10 +183,18 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             };
             let mapping = match &source {
                 Some((_, meta)) => {
-                    let canonical = meta.canonical_map().ok_or(MemoryFail::Denied)?;
+                    let canonical = meta.canonical_view().ok_or(MemoryFail::Denied)?;
                     space
                         .memory
-                        .view_record(&canonical, offset, size, limit, access, at)?
+                        .view_record(
+                            &canonical,
+                            offset,
+                            size,
+                            crate::core::memory::PAGE_SIZE,
+                            limit,
+                            access,
+                            at,
+                        )?
                 }
                 None => space.memory.allocate_lazy_bytes(size, limit, access, at)?,
             };
@@ -202,14 +210,14 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 }
             }
             if access.contains(Access::EXECUTE) {
-                if let Err(error) = crate::core::memory::manager::asid::sync_instructions() {
+                if let Err(error) = crate::core::memory::nest::identity::sync_instructions() {
                     let _ = space.memory.dispose(mapping);
                     return Err(error.into());
                 }
             }
             if let Some((pie, meta)) = &source {
                 if private {
-                    let staged_map = mapping.map.clone();
+                    let staged = mapping.view().clone();
                     if let Err(mapping) =
                         meta.record(pie.token(), space, mapping, Some(target.id), false)
                     {
@@ -219,7 +227,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                     target.push_staging(crate::core::work::unit::team::Staging {
                         token: pie.token(),
                         meta: meta.clone(),
-                        map: staged_map,
+                        view: staged,
                     });
                     pend::notify(ident.id, pole);
                 } else if team_id.get() == 0 {
@@ -236,12 +244,12 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 let maps = space.memory.mappings_in(KVirt::wrap(addr.get()), size)?;
                 if let Some(caller) = &caller {
                     let pies = caller.pend.pies.lock();
-                    if maps.iter().any(|map| {
+                    if maps.iter().any(|view| {
                         pies.iter().any(|pie| {
                             pie.snapshot()
                                 .mail()
                                 .pole()
-                                .is_some_and(|meta| meta.opened(map))
+                                .is_some_and(|meta| meta.opened(view))
                         })
                     }) {
                         return Err(MemoryFail::Denied);
@@ -249,7 +257,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 }
             }
             let staged = target
-                .find_staging(|item| item.map.initial_range() == (KVirt::wrap(addr.get()), size));
+                .find_staging(|item| item.view.initial_range() == (KVirt::wrap(addr.get()), size));
             if let Some(index) = staged {
                 let entry = target.staged_at(index).ok_or(MemoryFail::Denied)?;
                 let (meta, token) = (entry.meta.clone(), entry.token);
@@ -262,7 +270,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             }
             if target
                 .find_staging(|item| {
-                    let (start, len) = item.map.initial_range();
+                    let (start, len) = item.view.initial_range();
                     addr.get() < start.as_usize() + len
                         && start.as_usize() < addr.get().saturating_add(size)
                 })

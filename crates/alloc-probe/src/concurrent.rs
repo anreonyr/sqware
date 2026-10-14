@@ -34,7 +34,7 @@ use std::vec::Vec;
 
 use crate::harness::{self, Backend, Op, Report, Violation, Want};
 use crate::machine;
-use crate::memory::allocator::{block, statistics};
+use crate::memory::flat::allocator::{block, statistics};
 
 /// 登记表容量：一趟并发里最多同时在册的块数。
 ///

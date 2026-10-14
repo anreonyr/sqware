@@ -8,7 +8,7 @@ use alloc::sync::Arc;
 
 use env::{TaskId, TeamId};
 
-use crate::core::memory::manager::addr::PhysAddr;
+use crate::core::memory::address::PhysAddr;
 use crate::core::work::unit::task::TaskIdent;
 
 use super::conductor;

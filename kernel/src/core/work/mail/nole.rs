@@ -24,7 +24,7 @@ impl NoleMeta {
         Self::try_new(owner).expect("nole allocation failed")
     }
 
-    pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::core::memory::manager::MapError> {
+    pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
         let life = Life::try_new()?;
         Arc::try_new(Self {
             state: SpinLock::new_level(Level::L3, Liveness::Live),
@@ -33,7 +33,7 @@ impl NoleMeta {
             ring: SpinLock::new_level(Level::L3, false),
             owner,
         })
-        .map_err(|_| crate::core::memory::manager::MapError::OutOfMemory)
+        .map_err(|_| crate::core::memory::nest::NestError::OutOfMemory)
     }
 
     pub(crate) fn life(&self) -> Weak<Life> {

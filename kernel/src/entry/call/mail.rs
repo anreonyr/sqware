@@ -4,14 +4,13 @@ use env::{Bit, MailCall, MailCondition, MailFail, Oversize, PieToken, PullOutcom
 
 use riscv::register::sie;
 
-use crate::core::memory::manager::entry::PteFlags;
+use crate::core::memory::nest::Access;
 use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::core::work::mail;
 use crate::core::work::pend::{self, Need, PieSnapshot};
 use crate::core::work::room::messenger::Handoff;
 use crate::core::work::room::conductor::current;
-use crate::core::memory::manager::Memory;
-use crate::core::work::unit::space::Space;
+use crate::core::work::unit::space::{Memory, Space};
 
 use super::outcome::{answer, ret_err, Outcome};
 use super::pie::usable;
@@ -57,7 +56,7 @@ fn push(
         .unwrap_or(TaskId::new(0));
     let r = with_pie(token, Need::Store, |pie| {
         let hole = pie.mail().hole().ok_or(MailFail::Denied)?;
-        if len == 0 || !ident.team.space.memory.validate_access(msg, len, PteFlags::R) {
+        if len == 0 || !ident.team.space.memory.validate_access(msg, len, Access::READ) {
             return Err(MailFail::Denied);
         }
         let reservation = mail::hole::reserve_len(&hole, len)?;
@@ -88,7 +87,7 @@ fn pull(
     }
     let r = with_pie(token, Need::Fetch, |pie| {
         let hole = pie.mail().hole().ok_or(MailFail::Denied)?;
-        if !ident.team.space.memory.validate_access(buf, max, PteFlags::W) {
+        if !ident.team.space.memory.validate_access(buf, max, Access::WRITE) {
             return Err(MailFail::Denied);
         }
         hand_over(&hole, &ident.team.space, buf, max, oversize)
@@ -122,7 +121,7 @@ fn hand_over(
         reading.finish();
         return Ok(PullOutcome::Discarded { len, sender: from });
     }
-    if len > max || !space.memory.validate_access(buf, len, PteFlags::W) {
+    if len > max || !space.memory.validate_access(buf, len, Access::WRITE) {
         mail::hole::note_back(len, max);
         return Err(MailFail::Denied);
     }

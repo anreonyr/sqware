@@ -8,7 +8,6 @@ use alloc::vec::Vec;
 use super::OnceLock;
 use crate::machine::hart;
 
-mod level;
 #[cfg(debug_assertions)]
 mod error;
 #[cfg(debug_assertions)]
@@ -17,6 +16,7 @@ mod held;
 mod held_cell;
 #[cfg(debug_assertions)]
 mod held_set;
+mod level;
 
 pub use level::Level;
 
@@ -30,8 +30,8 @@ use held_set::HeldSet;
 
 #[cfg(debug_assertions)]
 pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
-    crate::core::memory::allocator::portal::switch(
-        crate::core::memory::allocator::portal::Backend::Spare,
+    crate::core::memory::flat::allocator::portal::switch(
+        crate::core::memory::flat::allocator::portal::Backend::Spare,
     );
     let held = held().expect("depend: report outside collected set");
     let mut msg = format!("[depend] {what}: {lock:#x} ({lock:#x})",);
@@ -106,6 +106,18 @@ fn held() -> Option<&'static mut HeldSet> {
         let this = &pool[h.get()];
         unsafe { &mut *this.0.get() }
     })
+}
+
+/// 锁序检测是否已经启用；未启用时每一次 check 都是空转（`NoHeld`）。
+#[cfg(debug_assertions)]
+pub(crate) fn armed() -> bool {
+    POOL.get().is_some()
+}
+
+/// 当前 hart 持有的锁个数；未启用时为 0。
+#[cfg(debug_assertions)]
+pub(crate) fn held_len() -> usize {
+    held().map_or(0, |held| held.len())
 }
 
 #[cfg(debug_assertions)]

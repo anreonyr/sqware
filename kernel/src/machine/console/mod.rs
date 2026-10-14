@@ -2,7 +2,7 @@ use ::core::fmt;
 
 use sbi::{DbcnCall, ecall::SArgs, fid::Dbcn};
 
-use crate::core::memory::manager::addr::VirtAddr;
+use crate::core::memory::address::VirtAddr;
 
 mod line;
 mod logger;

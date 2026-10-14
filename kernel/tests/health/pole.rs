@@ -1,9 +1,11 @@
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::{Frame, addr::VirtAddr, asid, entry::PteFlags, table::TABLE_LIVE};
+use crate::core::memory::address::VirtAddr;
+use crate::core::memory::flat::Frame;
+use crate::core::memory::nest::table::{PteFlags, TABLE_LIVE};
+use crate::core::memory::nest::{Access, RegionId, identity};
 use crate::entry::call::pie::{create_pole, fail_pole_at};
 use crate::core::work::mail::pole;
 use crate::core::work::pend::{self, Permission};
-use crate::core::memory::manager::RegionId;
 use crate::core::work::unit::{
     space::SpaceBuilder,
     team::TeamBuilder,
@@ -20,7 +22,7 @@ pub fn lifecycle() {
         .spawn()
         .unwrap();
     let recipient = peer.task().hold().unwrap();
-    let rw = PteFlags::R | PteFlags::W;
+    let rw = Access::READ | Access::WRITE;
     let reservation = team
         .space
         .memory
@@ -32,16 +34,11 @@ pub fn lifecycle() {
     let input = team
         .space
         .memory
-        .map_frames(
-            reservation,
-            vec![frame],
-            rw | PteFlags::X,
-            rw | PteFlags::A | PteFlags::D,
-        )
+        .map_frames(reservation, vec![frame], rw | Access::EXECUTE, rw)
         .unwrap();
-    prepared.commit(&input.map);
-    let start = input.reservation.start();
-    let original = input.map.ranges().unwrap()[0].current.bits();
+    prepared.commit(input.view());
+    let start = input.address();
+    let original = input.view().active().unwrap()[0].current.bits();
     let kernel = crate::core::work::unit::team::kernel().unwrap().space.clone();
     let tables = TABLE_LIVE.load(::core::sync::atomic::Ordering::Relaxed);
     for stage in 1..=3 {
@@ -52,17 +49,17 @@ pub fn lifecycle() {
         );
         assert!(caller.pend.pies.lock().is_empty());
         assert!(Arc::ptr_eq(
-            &team.space.memory.backend().find(start).unwrap(),
-            &input.map
+            &team.space.memory.backend().probe(start).unwrap(),
+            input.view()
         ));
-        assert_eq!(input.map.ranges().unwrap()[0].current.bits(), original);
-        let _lease = caller.pend.creations.claim(&input.map).unwrap();
+        assert_eq!(input.view().active().unwrap()[0].current.bits(), original);
+        let _lease = caller.pend.creations.claim(input.view()).unwrap();
         assert_eq!(
             TABLE_LIVE.load(::core::sync::atomic::Ordering::Relaxed),
             tables
         );
     }
-    asid::fail_next_shootdown(kernel.memory.backend().asid());
+    identity::fail_next_shootdown(kernel.memory.asid());
     assert_eq!(
         create_pole(&caller, start, PAGE_SIZE, true),
         Err(env::PieFail::Busy)
@@ -73,7 +70,7 @@ pub fn lifecycle() {
         TABLE_LIVE.load(::core::sync::atomic::Ordering::Relaxed),
         tables
     );
-    assert_eq!(input.map.ranges().unwrap()[0].current.bits(), original);
+    assert_eq!(input.view().active().unwrap()[0].current.bits(), original);
     let token = create_pole(&caller, start, PAGE_SIZE, true).unwrap();
     assert_eq!(
         create_pole(&caller, start, PAGE_SIZE, true),
@@ -84,7 +81,7 @@ pub fn lifecycle() {
     let first = pole::open(&meta, token, &team.space, rw).unwrap();
     assert_eq!(pole::open(&meta, token, &team.space, rw).unwrap(), first);
     assert_eq!(first.0, start.as_usize());
-    assert!(meta.opened(&input.map));
+    assert!(meta.opened(input.view()));
     let child = env::PieToken::mint(
         pend::accord(
             &caller,
@@ -96,10 +93,20 @@ pub fn lifecycle() {
         .unwrap(),
     );
     let (shared, _) = pole::open(&meta, child, &peer.space, rw).unwrap();
-    let peer_map = peer.space.memory.backend().find(VirtAddr::wrap(shared)).unwrap();
+    let peer_map = peer
+        .space
+        .memory
+        .backend()
+        .probe(VirtAddr::wrap(shared))
+        .unwrap();
     assert!(meta.opened(&peer_map));
     assert_eq!(
-        peer.space.memory.backend().translate(VirtAddr::wrap(shared)).unwrap().0,
+        peer.space
+            .memory
+            .backend()
+            .translate(VirtAddr::wrap(shared))
+            .unwrap()
+            .0,
         team.space.memory.backend().translate(start).unwrap().0
     );
     assert_eq!(
@@ -127,7 +134,7 @@ pub fn lifecycle() {
     pole::shut(&meta, token).unwrap();
     assert!(weak.upgrade().is_some());
     assert!(team.space.memory.backend().translate(start).is_none());
-    let (reopened, _) = pole::open(&meta, token, &team.space, PteFlags::R).unwrap();
+    let (reopened, _) = pole::open(&meta, token, &team.space, Access::READ).unwrap();
     assert!(team.space.memory.validate_read(reopened, PAGE_SIZE));
     assert!(!team.space.memory.validate_write(reopened, PAGE_SIZE));
     assert_eq!(
@@ -138,7 +145,18 @@ pub fn lifecycle() {
     assert!(!snapshot.alive());
     drop(snapshot);
     drop(meta);
-    assert!(weak.upgrade().is_none());
+    drop(input);
+    // peer_map 记录仍持有来源，CPU 翻译已经撤销。
+    assert!(
+        weak.upgrade().is_some(),
+        "flat: the open peer map still holds the source"
+    );
+    drop(peer_map);
+    // 最后一份来源持有消失后，帧回到分配器。
+    assert!(
+        weak.upgrade().is_none(),
+        "flat: the last source reference releases the page"
+    );
     assert!(peer.release_held(&recipient));
     drop(recipient);
     drop(peer);

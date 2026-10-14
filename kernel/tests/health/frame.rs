@@ -5,10 +5,21 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::{Frame, MapError, addr::VirtAddr, asid, entry::PteFlags};
-use crate::core::memory::manager::RegionId;
+use crate::core::memory::address::{PageCount, PageOffset, VirtAddr};
+use crate::core::memory::flat::Frame;
+use crate::core::memory::nest::{Access, NestError, RegionId, View, ViewRange, identity};
 use crate::core::work::grant::Grant;
 use crate::core::work::unit::space::SpaceBuilder;
+
+/// 一段页对齐窗口在某个关系上的身份选择。
+fn select(view: &Arc<View>, start: VirtAddr, size: usize) -> ViewRange {
+    let offset = (start.as_usize() - view.initial_start().as_usize()) / PAGE_SIZE;
+    view.range(
+        PageOffset::new(offset),
+        PageCount::new(size / PAGE_SIZE).expect("frame: page count"),
+    )
+    .expect("frame: selection")
+}
 
 pub fn sharing() {
     const BASE: usize = 0x4000_0000;
@@ -23,7 +34,7 @@ pub fn sharing() {
         .map(|frame| frame.physical_address())
         .collect();
     let lifetimes: Vec<_> = frames.iter().map(Arc::downgrade).collect();
-    let flags = PteFlags::R | PteFlags::A | PteFlags::D;
+    let flags = Access::READ;
     let first = a
         .memory
         .map_frames(
@@ -31,7 +42,7 @@ pub fn sharing() {
                 .reserve(RegionId::Normal, VirtAddr::wrap(BASE), 3 * PAGE_SIZE)
                 .unwrap(),
             frames.clone(),
-            PteFlags::R,
+            Access::READ,
             flags,
         )
         .unwrap();
@@ -42,30 +53,43 @@ pub fn sharing() {
                 .reserve(RegionId::Normal, VirtAddr::wrap(BASE), 3 * PAGE_SIZE)
                 .unwrap(),
             frames,
-            PteFlags::R,
+            Access::READ,
             flags,
         )
         .unwrap();
     for (index, physical) in addresses.iter().enumerate() {
         let at = VirtAddr::wrap(BASE + index * PAGE_SIZE);
-        assert_eq!(a.memory.backend().translate(at).unwrap().0.as_usize(), *physical);
-        assert_eq!(b.memory.backend().translate(at).unwrap().0.as_usize(), *physical);
+        assert_eq!(
+            a.memory.backend().translate(at).unwrap().0.as_usize(),
+            *physical
+        );
+        assert_eq!(
+            b.memory.backend().translate(at).unwrap().0.as_usize(),
+            *physical
+        );
     }
     assert_eq!(
-        a.memory.backend().protect(
-            &first.map,
-            VirtAddr::wrap(BASE),
-            3 * PAGE_SIZE,
-            PteFlags::R | PteFlags::W
-        ),
-        Err(MapError::WidenDenied)
+        a.memory
+            .backend()
+            .set_access(select(first.view(), VirtAddr::wrap(BASE), 3 * PAGE_SIZE), Access::READ | Access::WRITE),
+        Err(NestError::WidenDenied)
     );
     a.memory
         .backend()
-        .unmap(&first.map, VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE)
+        .detach(select(first.view(), VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE))
         .unwrap();
-    assert!(a.memory.backend().translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_none());
-    assert!(b.memory.backend().translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_some());
+    assert!(
+        a.memory
+            .backend()
+            .translate(VirtAddr::wrap(BASE + PAGE_SIZE))
+            .is_none()
+    );
+    assert!(
+        b.memory
+            .backend()
+            .translate(VirtAddr::wrap(BASE + PAGE_SIZE))
+            .is_some()
+    );
     assert_eq!(
         a.memory
             .backend()
@@ -76,37 +100,34 @@ pub fn sharing() {
         addresses[2]
     );
     assert_eq!(
-        a.memory.backend().protect(
-            &first.map,
-            VirtAddr::wrap(BASE + 2 * PAGE_SIZE),
-            PAGE_SIZE,
-            PteFlags::R | PteFlags::W
+        a.memory.backend().set_access(
+            select(first.view(), VirtAddr::wrap(BASE + 2 * PAGE_SIZE), PAGE_SIZE),
+            Access::READ | Access::WRITE
         ),
-        Err(MapError::WidenDenied)
+        Err(NestError::WidenDenied)
     );
     a.memory
         .backend()
-        .protect(
-            &first.map,
-            VirtAddr::wrap(BASE + 2 * PAGE_SIZE),
-            PAGE_SIZE,
-            PteFlags::R,
+        .set_access(
+            select(first.view(), VirtAddr::wrap(BASE + 2 * PAGE_SIZE), PAGE_SIZE),
+            Access::READ,
         )
         .unwrap();
     b.memory
         .backend()
-        .unmap(&second.map, VirtAddr::wrap(BASE), PAGE_SIZE)
+        .detach(select(second.view(), VirtAddr::wrap(BASE), PAGE_SIZE))
         .unwrap();
     assert!(Arc::ptr_eq(
-        &a.memory.backend().find(VirtAddr::wrap(BASE)).unwrap(),
-        &first.map
+        &a.memory.backend().probe(VirtAddr::wrap(BASE)).unwrap(),
+        first.view()
     ));
     a.memory.backend().audit();
     b.memory.backend().audit();
+    drop(first);
+    drop(second);
     drop(a);
-    assert!(lifetimes[0].upgrade().is_none());
-    assert!(lifetimes[1].upgrade().is_some());
-    assert!(lifetimes[2].upgrade().is_some());
+    // 来源级保留：撤销 PTE 不释放页；a 与 b 各自的 Flat 来源都强持这三帧。
+    assert!(lifetimes.iter().all(|frame| frame.upgrade().is_some()));
     drop(b);
     assert!(lifetimes.iter().all(|frame| frame.upgrade().is_none()));
 
@@ -126,8 +147,8 @@ pub fn sharing() {
                     .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
                     .unwrap(),
                 vec![frame],
-                PteFlags::R | PteFlags::W,
-                PteFlags::R | PteFlags::W,
+                Access::READ | Access::WRITE,
+                Access::READ | Access::WRITE,
             )
             .unwrap();
     }
@@ -179,13 +200,16 @@ pub fn retirement() {
                 .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
                 .unwrap(),
             vec![frame],
-            PteFlags::R | PteFlags::W,
-            PteFlags::R | PteFlags::W,
+            Access::READ | Access::WRITE,
+            Access::READ | Access::WRITE,
         )
         .unwrap();
-    let stale = space.memory.mapping_at(VirtAddr::wrap(BASE), PAGE_SIZE).unwrap();
-    asid::fail_next_shootdown(space.memory.backend().asid());
-    assert_eq!(space.memory.unmap(&mapping), Err(MapError::Shootdown));
+    let stale = space
+        .memory
+        .mapping_at(VirtAddr::wrap(BASE), PAGE_SIZE)
+        .unwrap();
+    identity::fail_next_shootdown(space.memory.asid());
+    assert_eq!(space.memory.unmap(&mapping), Err(NestError::Shootdown));
     assert!(weak.upgrade().is_some());
     assert!(
         space
@@ -194,7 +218,8 @@ pub fn retirement() {
             .is_err()
     );
     space.memory.unmap(&mapping).unwrap();
-    assert!(weak.upgrade().is_none());
+    // 撤销 PTE 不释放页：该 Frame 仍由关系的 Flat 来源强持。
+    assert!(weak.upgrade().is_some());
     let replacement = space
         .memory
         .map_lazy(
@@ -202,14 +227,14 @@ pub fn retirement() {
                 .memory
                 .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
                 .unwrap(),
-            PteFlags::R,
-            PteFlags::R,
+            Access::READ,
+            Access::READ,
         )
         .unwrap();
     space.memory.unmap(&stale).unwrap();
     assert!(Arc::ptr_eq(
-        &space.memory.backend().find(VirtAddr::wrap(BASE)).unwrap(),
-        &replacement.map
+        &space.memory.backend().probe(VirtAddr::wrap(BASE)).unwrap(),
+        replacement.view()
     ));
     space.memory.unmap(&replacement).unwrap();
 
@@ -219,10 +244,12 @@ pub fn retirement() {
         .unwrap();
     let frame = Frame::allocate().unwrap();
     let failed = Arc::downgrade(&frame);
-    crate::core::memory::manager::memory::fail_cleanup_prepare();
+    crate::core::memory::nest::fail_cleanup_prepare();
     assert!(matches!(
-        space.memory.map_frames(reservation, vec![frame], PteFlags::R, PteFlags::R),
-        Err(MapError::OutOfMemory)
+        space
+            .memory
+            .map_frames(reservation, vec![frame], Access::READ, Access::READ),
+        Err(NestError::OutOfMemory)
     ));
     assert!(failed.upgrade().is_none());
     let reservation = space
@@ -263,4 +290,12 @@ pub fn retirement() {
     space.memory.release_reservation(reused).unwrap();
     space.memory.release_reservation(middle).unwrap();
     space.memory.release_reservation(suffix).unwrap();
+
+    // 来源级保留：最后一份关系 / 来源持有消失后才回收该页。
+    assert!(weak.upgrade().is_some());
+    drop(mapping);
+    drop(replacement);
+    drop(stale);
+    drop(space);
+    assert!(weak.upgrade().is_none());
 }

@@ -5,7 +5,7 @@ use env::{
     VirtAddr,
 };
 
-use crate::core::memory::manager::entry::PteFlags;
+use crate::core::memory::nest::Access;
 use crate::machine::switcher::context::TrapContext;
 use crate::core::work::mail::{self, Mail, pole::PoleOperation};
 use crate::core::work::pend::{self, Need, Permission, PieSnapshot, clear_heir};
@@ -15,16 +15,15 @@ use crate::core::work::unit::task::TaskIdent;
 
 use super::outcome::{answer, answer_pair};
 
-fn subset_to_pte(subset: Permission) -> Result<PteFlags, PieFail> {
+fn subset_to_access(subset: Permission) -> Result<Access, PieFail> {
     if !subset.contains(Permission::FETCH) {
         return Err(PieFail::Denied);
     }
-    let mut f = PteFlags::V | PteFlags::A | PteFlags::D;
-    f |= PteFlags::R;
+    let mut access = Access::READ;
     if subset.contains(Permission::STORE) {
-        f |= PteFlags::W;
+        access |= Access::WRITE;
     }
-    Ok(f)
+    Ok(access)
 }
 
 pub(crate) fn dispatch(
@@ -146,7 +145,7 @@ fn pole_checkpoint(_stage: usize) -> Result<(), PieFail> {
 
 pub(crate) fn create_pole(
     task: &Arc<crate::core::work::unit::task::Task>,
-    addr: crate::core::memory::manager::addr::VirtAddr,
+    addr: crate::core::memory::address::VirtAddr,
     size: usize,
     shared: bool,
 ) -> Result<PieToken, PieFail> {
@@ -155,7 +154,7 @@ pub(crate) fn create_pole(
         .memory
         .mapping_at(addr, size)
         .map_err(|_| PieFail::Denied)?;
-    let creation = task.pend.creations.claim(&mapping.map)?;
+    let creation = task.pend.creations.claim(mapping.view())?;
     pole_checkpoint(1)?;
     let meta = mail::pole::PoleMeta::from_mapping(&task_space, mapping, task.ident.id)?;
     pole_checkpoint(2)?;
@@ -179,7 +178,7 @@ fn unseal_pole(frame: &mut TrapContext, addr: VirtAddr, size: usize, shared: boo
         .and_then(|task| {
             create_pole(
                 &task,
-                crate::core::memory::manager::addr::VirtAddr::wrap(addr.get()),
+                crate::core::memory::address::VirtAddr::wrap(addr.get()),
                 size,
                 shared,
             )
@@ -197,13 +196,8 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) {
         let pie = looked?;
         usable(&pie)?;
         let p = pie.mail().pole().ok_or(PieFail::Denied)?;
-        let flags = subset_to_pte(pie.permission())?;
-        mail::pole::open(
-            &p,
-            token,
-            &ident.team.space,
-            ident.team.space.memory.pte_policy(flags),
-        )
+        let access = subset_to_access(pie.permission())?;
+        mail::pole::open(&p, token, &ident.team.space, access)
     })();
     answer_pair(frame, r);
 }
@@ -313,7 +307,7 @@ fn inspect(frame: &mut TrapContext, ident: &TaskIdent, token: PieToken, buf: Vir
             .team
             .space
             .memory
-            .validate_access(buf.get(), PieInfo::SIZE, PteFlags::W)
+            .validate_access(buf.get(), PieInfo::SIZE, Access::WRITE)
         {
             return Err(PieFail::Denied);
         }
@@ -340,7 +334,7 @@ fn collect(
             .team
             .space
             .memory
-            .validate_access(buf.get(), len, PteFlags::W)
+            .validate_access(buf.get(), len, Access::WRITE)
         {
             return Err(PieFail::Denied);
         }

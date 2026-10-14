@@ -1,7 +1,7 @@
 use alloc::sync::Arc;
 
-use crate::core::memory::manager::{MapError, Mapping, Reservation};
-use crate::core::work::unit::space::Space;
+use crate::core::memory::nest::{NestError, Reservation};
+use crate::core::work::unit::space::{Mapping, Space};
 
 /// 任务自己的内存段：空间、栈（含守卫的保留格）与外壳页。字段由
 /// `TaskBuilder::prepare` 按申请—映射—回滚的次序装配。
@@ -13,7 +13,7 @@ pub(crate) struct TaskMemory {
 }
 
 impl TaskMemory {
-    pub(super) fn retire(&mut self) -> Result<(), MapError> {
+    pub(super) fn retire(&mut self) -> Result<(), NestError> {
         if let Some(mapping) = &self.frame {
             self.space.memory.unmap(mapping)?;
             self.frame = None;

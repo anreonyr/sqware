@@ -11,7 +11,7 @@ mod unchain;
 use alloc::sync::{Arc, Weak};
 use core::time::Duration;
 
-use crate::core::memory::manager::asid::Asid;
+use crate::core::memory::nest::Asid;
 use crate::core::work::record::trace::{self, EventKind, RoomEvent};
 use crate::core::work::room::deadline;
 use crate::core::work::room::conductor::current;

@@ -1,18 +1,26 @@
 #![cfg(debug_assertions)]
 
-use crate::core::memory::manager::{MapError, addr::VirtAddr};
+use alloc::sync::Arc;
+
+use crate::core::memory::PAGE_SIZE;
+use crate::core::memory::nest::{Access, NestError, RegionId, View, ViewRange};
+use crate::core::memory::address::{PageCount, PageOffset, VirtAddr};
 use crate::core::work::unit::tally;
-use crate::core::memory::manager::{Mapping, RegionId};
-use crate::core::work::unit::space::{Space, SpaceBuilder};
+use crate::core::work::unit::space::{Mapping, Space, SpaceBuilder};
 use crate::core::work::unit::team::TeamBuilder;
 
-fn own_pages(
-    space: &Space,
-    start: VirtAddr,
-    size: usize,
-    access: crate::core::memory::manager::entry::PteFlags,
-) -> Mapping {
-    use crate::core::memory::manager::{Frame, entry::PteFlags};
+/// 一段页对齐窗口在某个关系上的身份选择。
+fn select(view: &Arc<View>, start: VirtAddr, size: usize) -> ViewRange {
+    let offset = (start.as_usize() - view.initial_start().as_usize()) / PAGE_SIZE;
+    view.range(
+        PageOffset::new(offset),
+        PageCount::new(size / PAGE_SIZE).expect("task: page count"),
+    )
+    .expect("task: selection")
+}
+
+fn own_pages(space: &Space, start: VirtAddr, size: usize, access: Access) -> Mapping {
+    use crate::core::memory::flat::Frame;
     use alloc::vec::Vec;
     let reservation = space
         .memory
@@ -25,10 +33,9 @@ fn own_pages(
     for _ in 0..size / crate::core::memory::PAGE_SIZE {
         frames.push(crate::tag!(Pole, Frame::allocate().expect("owned frame")));
     }
-    let current = space.memory.pte_policy(access | PteFlags::V | PteFlags::A | PteFlags::D);
     space
         .memory
-        .map_frames(reservation, frames, access, current)
+        .map_frames(reservation, frames, access, access)
         .expect("map owned pages")
 }
 
@@ -36,13 +43,12 @@ fn stage_only(
     child: &alloc::sync::Arc<crate::core::work::unit::team::Team>,
     meta: &alloc::sync::Arc<crate::core::work::mail::pole::PoleMeta>,
     token: env::PieToken,
-    access: crate::core::memory::manager::entry::PteFlags,
+    access: Access,
     start: VirtAddr,
-) -> alloc::sync::Arc<crate::core::memory::manager::Map> {
-    use crate::core::memory::manager::entry::PteFlags;
+) -> alloc::sync::Arc<crate::core::memory::nest::View> {
     meta.reserve_record().expect("reserve Pole record");
     child.reserve_staging(1).expect("reserve staged record");
-    let source = meta.canonical_map().expect("canonical Pole map");
+    let source = meta.canonical_view().expect("canonical Pole view");
     let reservation = child
         .space
         .memory
@@ -51,18 +57,9 @@ fn stage_only(
     let mapping = child
         .space
         .memory
-        .derive(
-            reservation,
-            &source,
-            0,
-            access,
-            child
-                .space
-                .memory
-                .pte_policy(access | PteFlags::V | PteFlags::A | PteFlags::D),
-        )
+        .derive_into(reservation, &source, 0, access, access)
         .expect("derive staged map");
-    let map = mapping.map.clone();
+    let view = mapping.view().clone();
     assert!(
         meta.record(token, &child.space, mapping, Some(child.id), false)
             .is_ok()
@@ -70,9 +67,9 @@ fn stage_only(
     child.push_staging(crate::core::work::unit::team::Staging {
         token,
         meta: meta.clone(),
-        map: map.clone(),
+        view: view.clone(),
     });
-    map
+    view
 }
 
 pub fn preparation() {
@@ -80,9 +77,9 @@ pub fn preparation() {
     space
         .memory
         .attach_region(
-            crate::core::memory::manager::RegionId::Normal,
+            crate::core::memory::nest::RegionId::Normal,
             0x4000_0000,
-            crate::core::memory::manager::mode::upper().as_usize(),
+            crate::machine::mode::upper().as_usize(),
         )
         .unwrap();
     let team = TeamBuilder::new(space).spawn().unwrap();
@@ -103,34 +100,34 @@ pub fn preparation() {
     }
     for stage in 1..=4 {
         crate::core::work::unit::task::fail_preparation_at(stage);
-        assert!(matches!(team.task().prepare(), Err(MapError::OutOfMemory)));
+        assert!(matches!(team.task().prepare(), Err(NestError::OutOfMemory)));
         assert_eq!(tally::counts(), counts);
         assert_eq!(team.space.memory.backend().table_count(), tables);
         assert!(team.tasks.members.lock().is_empty());
     }
-    let maps = team.space.memory.backend().map_count();
+    let maps = team.space.memory.backend().view_count();
     for stage in 1..=2 {
         crate::core::work::unit::task::fail_invalidation_at(stage);
-        assert!(matches!(team.task().prepare(), Err(MapError::Shootdown)));
+        assert!(matches!(team.task().prepare(), Err(NestError::Shootdown)));
         assert_eq!(tally::counts(), counts);
         assert!(team.tasks.members.lock().is_empty());
-        assert!(team.space.memory.backend().map_count() > maps);
+        // 已发布的那一段由巢的清理责任收尾：重试前后都不留残留。
         team.space
             .memory
             .retry_invalidation()
             .expect("prepare: recover failed installation");
-        assert_eq!(team.space.memory.backend().map_count(), maps);
+        assert_eq!(team.space.memory.backend().view_count(), maps);
         assert_eq!(team.space.memory.backend().table_count(), tables);
         let prepared = team.task().prepare().unwrap();
         drop(prepared);
-        assert_eq!(team.space.memory.backend().map_count(), maps);
+        assert_eq!(team.space.memory.backend().view_count(), maps);
         assert_eq!(team.space.memory.backend().table_count(), tables);
     }
     let expected = team
         .space
         .memory
         .allocate_low(
-            crate::core::memory::manager::RegionId::Kernel,
+            crate::core::memory::nest::RegionId::Kernel,
             crate::core::memory::PAGE_SIZE,
         )
         .unwrap();
@@ -138,13 +135,13 @@ pub fn preparation() {
     team.space.memory.release_reservation(expected).unwrap();
     crate::core::work::unit::task::fail_preparation_at(3);
     crate::core::work::unit::task::fail_rollback_fence();
-    assert!(matches!(team.task().prepare(), Err(MapError::OutOfMemory)));
+    assert!(matches!(team.task().prepare(), Err(NestError::OutOfMemory)));
     assert_eq!(tally::counts(), counts);
     let reserved = team
         .space
         .memory
         .allocate_low(
-            crate::core::memory::manager::RegionId::Kernel,
+            crate::core::memory::nest::RegionId::Kernel,
             crate::core::memory::PAGE_SIZE,
         )
         .unwrap();
@@ -155,24 +152,24 @@ pub fn preparation() {
         .space
         .memory
         .allocate_low(
-            crate::core::memory::manager::RegionId::Kernel,
+            crate::core::memory::nest::RegionId::Kernel,
             crate::core::memory::PAGE_SIZE,
         )
         .unwrap();
     assert_eq!(reused.start(), first_frame);
     team.space.memory.release_reservation(reused).unwrap();
     assert_eq!(team.space.memory.backend().table_count(), tables);
-    assert_eq!(team.space.memory.backend().map_count(), maps);
+    assert_eq!(team.space.memory.backend().view_count(), maps);
     assert!(matches!(
         team.task().stack(usize::MAX).prepare(),
-        Err(MapError::NoRegion)
+        Err(NestError::NoRegion)
     ));
     assert_eq!(tally::counts(), counts);
 }
 
 pub fn construction() {
     use crate::core::memory::PAGE_SIZE;
-    use crate::core::memory::manager::entry::PteFlags;
+    use crate::core::memory::nest::table::PteFlags;
     use crate::core::work::mail::{Mail, pole};
     use crate::core::work::room::scheduler;
     use crate::core::work::{pend, unit::team};
@@ -186,7 +183,7 @@ pub fn construction() {
         .attach_region(
             RegionId::Normal,
             PAGE_SIZE,
-            crate::core::memory::manager::mode::upper().as_usize(),
+            crate::machine::mode::upper().as_usize(),
         )
         .unwrap();
     let parent = TeamBuilder::new(parent_space).spawn().unwrap();
@@ -203,16 +200,16 @@ pub fn construction() {
         .attach_region(
             RegionId::Normal,
             PAGE_SIZE,
-            crate::core::memory::manager::mode::upper().as_usize(),
+            crate::machine::mode::upper().as_usize(),
         )
         .unwrap();
     let code = own_pages(
         &child.space,
         VirtAddr::wrap(0x10000),
         PAGE_SIZE,
-        PteFlags::R | PteFlags::X,
+        Access::READ | Access::EXECUTE,
     );
-    assert_eq!(code.map.initial_range().0, VirtAddr::wrap(0x10000));
+    assert_eq!(code.view().initial_range().0, VirtAddr::wrap(0x10000));
     let (_, code_flags) = child
         .space
         .memory
@@ -222,9 +219,9 @@ pub fn construction() {
     assert!(code_flags.contains(PteFlags::R | PteFlags::X));
     assert!(!code_flags.contains(PteFlags::W));
     let mut roots = Vec::new();
-    let mut frame_weak: Vec<Vec<Weak<crate::core::memory::manager::Frame>>> = Vec::new();
+    let mut frame_weak: Vec<Vec<Weak<crate::core::memory::flat::Frame>>> = Vec::new();
     let mut stage_maps = Vec::new();
-    for (index, access) in [PteFlags::R, PteFlags::R | PteFlags::W]
+    for (index, access) in [Access::READ, Access::READ | Access::WRITE]
         .into_iter()
         .enumerate()
     {
@@ -232,11 +229,11 @@ pub fn construction() {
             &parent.space,
             VirtAddr::wrap(0x30000 + index * PAGE_SIZE),
             PAGE_SIZE,
-            PteFlags::R | PteFlags::W,
+            Access::READ | Access::WRITE,
         );
         let frames = input
-            .map
-            .frames_in(input.reservation.start(), PAGE_SIZE)
+            .view()
+            .frames_in(input.address(), PAGE_SIZE)
             .unwrap();
         frame_weak.push(
             frames
@@ -256,11 +253,7 @@ pub fn construction() {
         let token = root.token();
         pend::insert(&caller, root).unwrap();
         meta.commit_source();
-        let open = parent
-            .space
-            .memory
-            .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
-        let (open_va, _) = pole::open(&meta, token, &parent.space, open).unwrap();
+        let (open_va, _) = pole::open(&meta, token, &parent.space, Access::READ | Access::WRITE).unwrap();
         assert!(
             parent
                 .space
@@ -283,7 +276,7 @@ pub fn construction() {
         let at = VirtAddr::wrap(0x20000 + index * PAGE_SIZE);
         let staged = stage_only(&child, &meta, token, access, at);
         stage_maps.push(staged);
-        if !access.contains(PteFlags::W) {
+        if !access.contains(Access::WRITE) {
             pend::reduce(
                 &caller,
                 token,
@@ -331,7 +324,7 @@ pub fn construction() {
     let frame = unsafe { &*(frame_pa as *const crate::machine::switcher::context::TrapContext) };
     assert_eq!(
         frame.gpr.x(crate::machine::switcher::context::Gprs::SP),
-        crate::core::memory::manager::mode::upper().as_usize()
+        crate::machine::mode::upper().as_usize()
     );
     assert_eq!(child.default_entry(), 0x10000);
     assert!(child.staged_len() == 0);
@@ -374,7 +367,7 @@ pub fn construction() {
 
 pub fn cancellation() {
     use crate::core::memory::PAGE_SIZE;
-    use crate::core::memory::manager::entry::PteFlags;
+    use crate::core::memory::nest::table::PteFlags;
     use crate::core::work::mail::{Mail, pole};
     use crate::core::work::pend;
     use alloc::sync::{Arc, Weak};
@@ -386,7 +379,7 @@ pub fn cancellation() {
         .attach_region(
             RegionId::Normal,
             PAGE_SIZE,
-            crate::core::memory::manager::mode::upper().as_usize(),
+            crate::machine::mode::upper().as_usize(),
         )
         .unwrap();
     let parent = TeamBuilder::new(parent_space).spawn().unwrap();
@@ -403,20 +396,20 @@ pub fn cancellation() {
         .attach_region(
             RegionId::Normal,
             PAGE_SIZE,
-            crate::core::memory::manager::mode::upper().as_usize(),
+            crate::machine::mode::upper().as_usize(),
         )
         .unwrap();
     let input = own_pages(
         &parent.space,
         VirtAddr::wrap(0x30000),
         3 * PAGE_SIZE,
-        PteFlags::R | PteFlags::W,
+        Access::READ | Access::WRITE,
     );
     let frames = input
-        .map
-        .frames_in(input.reservation.start(), 3 * PAGE_SIZE)
+        .view()
+        .frames_in(input.address(), 3 * PAGE_SIZE)
         .unwrap();
-    let weak_frames: Vec<Weak<crate::core::memory::manager::Frame>> = frames
+    let weak_frames: Vec<Weak<crate::core::memory::flat::Frame>> = frames
         .iter()
         .map(|(_, frame)| Arc::downgrade(frame))
         .collect();
@@ -434,7 +427,7 @@ pub fn cancellation() {
     meta.commit_source();
     pole::shut(&meta, token).unwrap();
     let at = VirtAddr::wrap(0x20000);
-    let staged_map = stage_only(&child, &meta, token, PteFlags::R | PteFlags::W, at);
+    let staged_map = stage_only(&child, &meta, token, Access::READ | Access::WRITE, at);
     pend::reduce(
         &caller,
         token,
@@ -446,23 +439,16 @@ pub fn cancellation() {
         .space
         .memory
         .backend()
-        .protect(
-            &staged_map,
-            at + PAGE_SIZE,
-            PAGE_SIZE,
-            PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::U,
-        )
+        .set_access(select(&staged_map, at + PAGE_SIZE, PAGE_SIZE), Access::READ)
         .unwrap();
     assert!(
         child
             .space
             .memory
             .backend()
-            .protect(
-                &staged_map,
-                at + PAGE_SIZE,
-                PAGE_SIZE,
-                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D | PteFlags::U,
+            .set_access(
+                select(&staged_map, at + PAGE_SIZE, PAGE_SIZE),
+                Access::READ | Access::WRITE,
             )
             .is_err()
     );
@@ -482,7 +468,7 @@ pub fn cancellation() {
         &meta,
         token,
         &parent.space,
-        parent.space.memory.pte_policy(PteFlags::V | PteFlags::R),
+        Access::READ,
     )
     .unwrap();
     let (_, view_flags) = parent
@@ -492,6 +478,7 @@ pub fn cancellation() {
         .translate(VirtAddr::wrap(view))
         .expect("read-only Pole view");
     assert!(!view_flags.contains(PteFlags::W));
+    child.cancel_staging().unwrap();
     pole::shut(&meta, token).unwrap();
     pend::release(&caller, token).unwrap();
     assert!(pend::locate(&caller, token).is_none());
@@ -505,7 +492,7 @@ pub fn cancellation() {
 
 pub fn branch_control() {
     use crate::core::work::unit::copies::Origin;
-    use crate::core::memory::manager::RegionId;
+    use crate::core::memory::nest::RegionId;
     use crate::core::work::unit::task::{Task, TaskExitCause, TaskState, TaskWeak};
     use alloc::sync::Arc;
     fn team(parent: Option<&Arc<Task>>) -> Arc<crate::core::work::unit::team::Team> {

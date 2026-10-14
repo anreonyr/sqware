@@ -59,6 +59,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn lock_dependency_check_is_armed() {
+        kernel::entry::check::depend::accept();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn spare_budget() {
         kernel::entry::check::spare::accept();
     }
@@ -77,14 +83,14 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn manager_tree_mapping() {
-        kernel::entry::check::tree::manager_tree();
+    fn nest_views_and_primitives() {
+        kernel::entry::check::nest::nest_views();
     }
 
     #[cfg(debug_assertions)]
     #[test]
-    fn manager_tree_invalidation_failure() {
-        kernel::entry::check::tree_failure::invalidation();
+    fn nest_invalidation_failure() {
+        kernel::entry::check::nest_failure::invalidation();
     }
 
     #[cfg(debug_assertions)]
@@ -139,6 +145,12 @@ mod tests {
     #[test]
     fn pagetable_recycle() {
         kernel::entry::check::pagetable::pagetable();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn flat_source_model() {
+        kernel::entry::check::flat::accept();
     }
 
     #[cfg(debug_assertions)]

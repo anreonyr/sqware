@@ -1,6 +1,7 @@
 use riscv::register::{scause, sepc, stval};
 
-use crate::core::memory::manager::{FaultKind, addr::VirtAddr};
+use crate::core::memory::address::VirtAddr;
+use crate::core::memory::nest::FaultKind;
 
 #[derive(Debug)]
 pub struct PageFault {
