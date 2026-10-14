@@ -14,25 +14,25 @@ use super::{access::Access, mode, tree};
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::core::memory::manager::entry::PteFlags;
-use crate::core::memory::manager::table::MapError;
+use crate::core::memory::manager::MapError;
 use crate::machine::layout::{TEAM_FRAME_BASE, TEAM_FRAME_WINDOW_SIZE};
 use crate::machine::sync::{Level, SpinLock};
 
 mod cleanup;
 mod mapping;
-mod plan;
 mod range_reclaim;
 mod reclaim;
 mod reservation;
+mod va_allocator;
 
 pub use mapping::Mapping;
 pub use reservation::Reservation;
-pub(crate) use plan::RegionId;
+pub(crate) use va_allocator::RegionId;
 
 use cleanup::CleanupNode;
-use plan::VaAllocator;
 use range_reclaim::RangeReclaim;
 use reclaim::Reclaim;
+use va_allocator::VaAllocator;
 
 #[cfg(debug_assertions)]
 static FAIL_CLEANUP: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -423,7 +423,7 @@ impl Memory {
             self.tree.protect(&map, start, size, flags)?;
         }
         if access.contains(Access::EXECUTE) {
-            super::sync_instructions()?;
+            super::asid::sync_instructions()?;
         }
         Ok(())
     }

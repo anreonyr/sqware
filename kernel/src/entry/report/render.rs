@@ -1,6 +1,46 @@
 use ::core::fmt::Write;
 
+use alloc::{format, string::String, vec, vec::Vec};
+
+use crate::core::memory::manager::addr::VirtAddr;
 use crate::entry::report::report::{Paragraph, Report};
+
+use super::backtrace::{Backtrace, FrameKind};
+
+pub(super) fn hex(x: usize) -> String {
+    format!("{x:#018x}")
+}
+
+pub(super) fn address_label(va: VirtAddr) -> String {
+    format!("{:#x}", va.as_usize())
+}
+
+pub(super) fn backtrace_rows(trace: &Backtrace, head: &str) -> Vec<Vec<Option<String>>> {
+    let frames = trace.frames();
+    let mut rows: Vec<Vec<Option<String>>> = vec![vec![
+        Some(head.into()),
+        Some("kind".into()),
+        Some("pc".into()),
+        Some("space".into()),
+        Some("sp".into()),
+        Some("fp".into()),
+    ]];
+    for (i, f) in frames.iter().enumerate() {
+        let kind = FrameKind::of(f.pc);
+        rows.push(vec![
+            Some(format!("#{i}")),
+            Some(kind.label().into()),
+            Some(hex(f.pc.as_usize())),
+            Some(format!("{:?}", f.space)),
+            Some(hex(f.sp.as_usize())),
+            Some(
+                f.fp.map(|v| hex(v.as_usize()))
+                    .unwrap_or_else(|| "-".into()),
+            ),
+        ]);
+    }
+    rows
+}
 
 pub fn render(r: &Report, sink: &mut impl Write, indent: usize) {
     for p in &r.paras {

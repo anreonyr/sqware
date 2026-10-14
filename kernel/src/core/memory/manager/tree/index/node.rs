@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 
 use crate::core::memory::manager::addr::VirtAddr;
-use crate::core::memory::manager::table::MapError;
+use crate::core::memory::manager::MapError;
 
 use super::super::map::{Map, MapRange};
 

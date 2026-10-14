@@ -1,30 +1,19 @@
-use alloc::format;
-use alloc::string::String;
-use alloc::vec;
-use alloc::vec::Vec;
-
-use super::scene::Scene;
-use crate::core::memory::manager::addr::VirtAddr;
-use crate::entry::report::frame::Frame;
 use crate::core::memory::manager::SpaceKind;
 
-fn hex(x: usize) -> String {
-    format!("{x:#018x}")
-}
+mod config;
+mod frame;
+mod reader;
+mod walk;
 
-pub(crate) fn symbol(va: VirtAddr) -> String {
-    format!("{:#x}", va.as_usize())
-}
+pub use config::WalkConfig;
+pub use frame::Frame;
+pub(super) use frame::FrameKind;
+pub use reader::StackReader;
+use walk::Walk;
 
-const DEPTH: usize = 32;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FrameKind {
-    Root,
-    Kernel,
-    Normal,
-    Unknown,
-}
+pub const SPAN: usize = 4096;
+pub const DEPTH: usize = 32;
+const ALIGN: usize = 4;
 
 #[derive(Debug)]
 pub struct Backtrace {
@@ -33,86 +22,53 @@ pub struct Backtrace {
 }
 
 impl Backtrace {
+    fn new(world: SpaceKind) -> Self {
+        Self {
+            frames: [Frame {
+                pc: crate::core::memory::manager::addr::VirtAddr::from_raw(0),
+                sp: crate::core::memory::manager::addr::VirtAddr::from_raw(0),
+                fp: None,
+                space: world,
+            }; DEPTH],
+            count: 0,
+        }
+    }
+
     pub(crate) fn frames(&self) -> &[Frame] {
         &self.frames[..self.count]
     }
 
-    pub(crate) fn from_walk(r: ([Frame; DEPTH], usize)) -> Backtrace {
-        Backtrace {
-            frames: r.0,
-            count: r.1,
+    fn push(&mut self, frame: Frame) -> bool {
+        if self.full()
+            || frame.pc.as_usize() == 0
+            || frame.pc.as_usize() & (ALIGN - 1) != 0
+            || self.frames().last().is_some_and(|last| last.pc == frame.pc)
+        {
+            return false;
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct FrameResolver {
-    world: SpaceKind,
-}
-
-impl FrameResolver {
-    fn new(world: SpaceKind) -> FrameResolver {
-        FrameResolver { world }
+        self.frames[self.count] = frame;
+        self.count += 1;
+        true
     }
 
-    fn classify(&self, pc: VirtAddr) -> FrameKind {
-        let k = crate::machine::image::kernel_edge();
-        if pc.as_usize() >= k && pc.as_usize() < k + crate::machine::image::ROOT_STACK_SIZE {
-            return FrameKind::Root;
+    fn full(&self) -> bool {
+        self.count == DEPTH
+    }
+
+    pub fn walk(
+        reader: &mut StackReader,
+        cfg: &WalkConfig,
+        sp: usize,
+        fp: usize,
+        code: Option<&dyn Fn(usize) -> bool>,
+    ) -> Self {
+        let world = cfg.world;
+        let mut walk = Walk::new(reader, fp, world);
+        let ceiling = cfg.ceiling;
+        let broke = walk.chain(world, sp.saturating_add(16), ceiling);
+        if let Some(code) = code {
+            walk.scan(code, cfg.gaps, broke.saturating_add(8), ceiling, world);
         }
-        if pc.is_kernel() {
-            return FrameKind::Kernel;
-        }
-        if pc.is_user() {
-            return FrameKind::Normal;
-        }
-        if self.executable(pc) {
-            return match self.world {
-                SpaceKind::Supervisor => FrameKind::Kernel,
-                SpaceKind::User => FrameKind::Normal,
-            };
-        }
-        FrameKind::Unknown
+        walk.finish()
     }
-
-    fn executable(&self, _pc: VirtAddr) -> bool {
-        false
-    }
-}
-
-fn kind_label(k: FrameKind) -> &'static str {
-    match k {
-        FrameKind::Root => "R",
-        FrameKind::Kernel => "K",
-        FrameKind::Normal => "N",
-        FrameKind::Unknown => "?",
-    }
-}
-
-pub(crate) fn backtrace_rows(scene: &Scene, head: &str) -> Vec<Vec<Option<String>>> {
-    let resolver = FrameResolver::new(scene.space);
-    let frames = scene.backtrace.frames();
-    let mut rows: Vec<Vec<Option<String>>> = vec![vec![
-        Some(head.into()),
-        Some("kind".into()),
-        Some("pc".into()),
-        Some("space".into()),
-        Some("sp".into()),
-        Some("fp".into()),
-    ]];
-    for (i, f) in frames.iter().enumerate() {
-        let kind = resolver.classify(f.pc);
-        rows.push(vec![
-            Some(format!("#{i}")),
-            Some(kind_label(kind).into()),
-            Some(hex(f.pc.as_usize())),
-            Some(format!("{:?}", f.space)),
-            Some(hex(f.sp.as_usize())),
-            Some(
-                f.fp.map(|v| hex(v.as_usize()))
-                    .unwrap_or_else(|| "-".into()),
-            ),
-        ]);
-    }
-    rows
 }

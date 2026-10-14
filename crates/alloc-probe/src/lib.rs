@@ -274,16 +274,20 @@ pub mod core {
     }
 }
 
-/// 内核 `crate::core::memory` 的宿主版：页大小 + 五份**逐字未改**的分配器源码
-/// （`include!` 进来）+ 统计写侧垫片。公开拼法还有 `core::memory`（同一模块的别名）。
+/// 内核 `crate::core::memory` 的宿主版：页大小 + **逐字未改**的分配器源码
+/// （`include!` 进来，含共享的 `Link`）+ 统计写侧垫片。公开拼法还有 `core::memory`（同一模块的别名）。
 pub mod memory {
     pub const PAGE_SIZE: usize = 0x1000;
 
     pub mod allocator {
-        use core::ptr::NonNull;
-
         // 内核源码**逐字未改**地编进来（`include!` 的路径相对本文件 ⇒ 三级上到仓库根）。
         // 用 `include!` 而不是 `#[path]`：后者对嵌套模块按"模块目录"解析，层级会绕。
+        // 内核那几份源码用 `#[path = "<模块>/<文件>.rs"]` 声明子模块（`frame/inner.rs` 等）；
+        // 该 `#[path]` 相对**被 include 的文件**，于是与内核编译时的拼法一致。
+        pub mod link {
+            include!("../../../kernel/src/core/memory/allocator/link.rs");
+        }
+        pub(crate) use link::Link;
         pub mod bump {
             include!("../../../kernel/src/core/memory/allocator/bump.rs");
         }
@@ -391,7 +395,7 @@ pub mod memory {
         /// `allocate` / `deallocate` 都过这道门。
         ///
         /// 宿主上**恒放行**：门的两端都不在场 —— 守卫（`NoAllocation`）与它那张 `FORBIDDEN` 表
-        /// 住在 `manager`（不在 `include!` 的五份里），本 crate 也不造发表提交。
+        /// 住在 `manager`（不在 `include!` 进来的源码里），本 crate 也不造发表提交。
         /// 装一个空门只会假装判过（同 `statistics::install_*_kinds` 那条"不镜像"）。
         #[inline]
         pub(crate) fn assert_allocation_allowed() {}
@@ -409,18 +413,6 @@ pub mod memory {
 
         /// 与内核同名同形：`erra::Result`（带调用点上下文的 `Result`）。
         pub type InitResult<T> = erra::Result<T, InitError>;
-
-        /// 自由链节点（内核 `Link` 的宿主版：同字段、同可见性规则）。
-        pub(crate) struct Link {
-            pub(crate) prev: Option<NonNull<Link>>,
-            pub(crate) next: Option<NonNull<Link>>,
-        }
-
-        impl Link {
-            pub(crate) fn new(prev: Option<NonNull<Link>>, next: Option<NonNull<Link>>) -> Self {
-                Self { prev, next }
-            }
-        }
     }
 }
 

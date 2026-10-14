@@ -2,8 +2,10 @@ use alloc::sync::{Arc, Weak};
 
 use env::{Mark, PieFail, PieToken};
 
-use super::pie::{Heir, Need, Permission};
+use super::Need;
+use super::pie::{Heir, Permission};
 use crate::core::work::grant::narrows;
+use crate::core::work::mail::pole::PoleOperation;
 use crate::core::work::room::messenger::{self, WakeKey};
 use crate::core::work::unit::task::Task;
 
@@ -22,7 +24,7 @@ pub(crate) fn accord(
         let pie = super::locate(caller, src).ok_or(PieFail::Denied)?;
         let pole = pie.mail().pole();
         let _operation = if let Some(p) = &pole {
-            let operation = p.operation().ok_or(PieFail::Busy)?;
+            let operation = PoleOperation::acquire(p).ok_or(PieFail::Busy)?;
             if p.reserved() != 0 {
                 return Err(PieFail::HandedOver);
             }
@@ -91,7 +93,7 @@ pub(crate) fn accord(
 
 pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
     let pend_guard = task.pend.lock();
-    let commit_guard = crate::core::work::unit::commit();
+    let commit_guard = crate::core::work::commit();
     let child = {
         let heirs = task.pend.heirs.lock();
         heirs

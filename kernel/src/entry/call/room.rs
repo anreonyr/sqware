@@ -7,23 +7,11 @@ use env::{RoomCall, RoomFail};
 use crate::core::work::record::trace::{self, EventKind, RoomEvent};
 use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::core::work::room::messenger::{self, Handoff, WakeKey, park, park_until, wait, wake};
-use crate::core::work::room::scheduler::core::{current, muster};
+use crate::core::work::room::conductor::current;
+use crate::core::work::room::scheduler::roster::muster;
 use crate::core::work::unit::task::TaskIdent;
 
-use super::ret_err;
-
-pub(super) enum Outcome {
-    Resume,
-    Switch(*mut TrapContext),
-    Exit,
-}
-
-impl Outcome {
-    fn fail<E: env::FailCode>(frame: &mut TrapContext, e: E) -> Self {
-        ret_err(frame, e);
-        Self::Resume
-    }
-}
+use super::outcome::Outcome;
 
 pub(super) fn dispatch(frame: &mut TrapContext, call: RoomCall, ident: Arc<TaskIdent>) -> Outcome {
     match call {

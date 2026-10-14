@@ -1,37 +1,21 @@
 use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
-use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::core::memory::manager::Map;
 use crate::machine::sync::SpinLock;
 
-const AVAILABLE: u8 = 0;
-const CLAIMED: u8 = 1;
-const CONSUMED: u8 = 2;
+mod creation;
+mod lease;
+mod node;
+mod prepared;
 
-struct Creation {
-    state: AtomicU8,
-}
-
-struct Node {
-    map: Weak<Map>,
-    creation: Arc<Creation>,
-    next: Option<Box<Node>>,
-}
+use creation::Creation;
+pub(crate) use lease::CreationLease;
+use node::Node;
+pub(crate) use prepared::PreparedAllocation;
 
 pub(crate) struct CreationRegistry {
     nodes: SpinLock<Option<Box<Node>>>,
-}
-
-pub(crate) struct PreparedAllocation<'a> {
-    registry: &'a CreationRegistry,
-    node: Option<Box<Node>>,
-}
-
-pub(crate) struct CreationLease<'a> {
-    registry: &'a CreationRegistry,
-    creation: Arc<Creation>,
-    committed: bool,
 }
 
 fn chain(head: Option<&Node>) -> impl Iterator<Item = &Node> {
@@ -46,9 +30,7 @@ impl CreationRegistry {
     }
 
     pub(crate) fn prepare(&self) -> Result<PreparedAllocation<'_>, env::PieFail> {
-        let creation = Arc::try_new(Creation {
-            state: AtomicU8::new(AVAILABLE),
-        })
+        let creation = Arc::try_new(Creation::new())
         .map_err(|_| env::PieFail::OoM)?;
         let node = Box::try_new(Node {
             map: Weak::new(),
@@ -58,33 +40,20 @@ impl CreationRegistry {
         .map_err(|_| env::PieFail::OoM)?;
         Ok(PreparedAllocation {
             registry: self,
-            node: Some(node),
+            node,
         })
     }
 
     pub(crate) fn claim(&self, map: &Arc<Map>) -> Result<CreationLease<'_>, env::PieFail> {
         let nodes = self.nodes.lock();
         let node = chain(nodes.as_deref())
-            .find(|node| {
-                node.map
-                    .upgrade()
-                    .is_some_and(|held| Arc::ptr_eq(&held, map))
-            })
+            .find(|node| node.matches(map))
             .ok_or(env::PieFail::Denied)?;
-        match node.creation.state.compare_exchange(
-            AVAILABLE,
-            CLAIMED,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => Ok(CreationLease {
-                registry: self,
-                creation: node.creation.clone(),
-                committed: false,
-            }),
-            Err(CLAIMED) => Err(env::PieFail::Busy),
-            Err(_) => Err(env::PieFail::Denied),
-        }
+        node.creation.claim()?;
+        Ok(CreationLease {
+            registry: self,
+            creation: node.creation.clone(),
+        })
     }
 
     pub(crate) fn locate(
@@ -113,44 +82,6 @@ impl CreationRegistry {
             }
             let Some(node) = link.as_mut() else { return };
             link = &mut node.next;
-        }
-    }
-}
-
-impl PreparedAllocation<'_> {
-    pub(crate) fn commit(mut self, map: &Arc<Map>) {
-        let mut node = self.node.take().expect("prepared creation record");
-        node.map = Arc::downgrade(map);
-        let mut head = self.registry.nodes.lock();
-        if chain(head.as_deref()).any(|node| {
-            node.map
-                .upgrade()
-                .is_some_and(|held| Arc::ptr_eq(&held, map))
-        }) {
-            return;
-        }
-        node.next = head.take();
-        *head = Some(node);
-    }
-}
-
-impl CreationLease<'_> {
-    pub(crate) fn commit(mut self) {
-        self.creation.state.store(CONSUMED, Ordering::Release);
-        self.registry.remove(&self.creation);
-        self.committed = true;
-    }
-}
-
-impl Drop for CreationLease<'_> {
-    fn drop(&mut self) {
-        if !self.committed {
-            let _ = self.creation.state.compare_exchange(
-                CLAIMED,
-                AVAILABLE,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            );
         }
     }
 }
@@ -190,6 +121,18 @@ mod tests {
             .claim(&root)
             .expect("dropped lease restores availability")
             .commit();
+        assert!(matches!(registry.claim(&root), Err(env::PieFail::Denied)));
+    }
+
+    #[test]
+    fn committed_lease_cannot_restore_consumed_creation() {
+        let registry = CreationRegistry::new();
+        let root = Arc::new(Map);
+        registry.prepare().unwrap().commit(&root);
+        let lease = registry.claim(&root).unwrap();
+        let creation = lease.creation.clone();
+        lease.commit();
+        assert!(matches!(creation.claim(), Err(env::PieFail::Denied)));
         assert!(matches!(registry.claim(&root), Err(env::PieFail::Denied)));
     }
 }

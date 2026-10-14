@@ -1,3 +1,7 @@
+mod held_map;
+mod pole_operation;
+mod relation;
+
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -5,7 +9,7 @@ use core::time::Duration;
 
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::{Map, MapError, addr::PhysAddr, entry::PteFlags};
-use crate::core::memory::manager::{Mapping, RegionId, Reservation};
+use crate::core::memory::manager::{Mapping, RegionId};
 use crate::core::work::grant::Grant;
 use crate::core::work::room::messenger::{self, Handoff, WakeKey};
 use crate::core::work::unit::life::Life;
@@ -13,23 +17,10 @@ use crate::core::work::unit::space::Space;
 use crate::machine::sync::{Level, SpinLock};
 use env::{Bit, MailFail, Permission, PieFail, PieToken, TaskId, TeamId};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Relation {
-    Input,
-    Keeper,
-    Authority,
-    Open,
-    View,
-    Staged(TeamId),
-}
+use held_map::HeldMap;
+use relation::Relation;
 
-struct HeldMap {
-    map: Arc<Map>,
-    token: Option<PieToken>,
-    grant: Option<Arc<Grant>>,
-    placement: Option<(Weak<Space>, Reservation)>,
-    relation: Relation,
-}
+pub(crate) use pole_operation::PoleOperation;
 
 pub struct PoleMeta {
     maps: SpinLock<Vec<HeldMap>>,
@@ -135,9 +126,9 @@ impl PoleMeta {
     pub(crate) fn canonical_map(&self) -> Option<Arc<Map>> {
         let maps = self.maps.lock();
         maps.iter()
-            .filter(|entry| entry.relation == Relation::Keeper)
+            .filter(|entry| entry.keeper())
             .chain(maps.iter().filter(|entry| entry.placement.is_some()))
-            .find(|entry| entry.map.is_live())
+            .find(|entry| entry.live())
             .map(|entry| entry.map.clone())
     }
 
@@ -152,56 +143,31 @@ impl PoleMeta {
         maps.try_reserve(1).map_err(|_| PieFail::OoM)?;
         if let Some(input) = maps
             .iter_mut()
-            .find(|entry| entry.relation == Relation::Input && entry.token.is_none())
+            .find(|entry| entry.input() && entry.token.is_none())
         {
             input.token = Some(token);
             input.grant = Some(grant.clone());
         }
-        maps.push(HeldMap {
-            map: source,
-            token: Some(token),
-            grant: Some(grant),
-            placement: None,
-            relation: Relation::Authority,
-        });
+        maps.push(HeldMap::authority(source, token, grant));
         Ok(())
     }
 
     pub(crate) fn release_grant(&self, token: PieToken) {
-        self.maps
-            .lock()
-            .retain(|entry| !(entry.token == Some(token) && entry.relation == Relation::Authority));
+        self.maps.lock().retain(|entry| !entry.authorizes(token));
     }
 
     pub(crate) fn grant(&self, token: PieToken) -> Option<Arc<Grant>> {
         self.maps
             .lock()
             .iter()
-            .find(|entry| entry.relation == Relation::Authority && entry.token == Some(token))
+            .find(|entry| entry.authorizes(token))
             .and_then(|entry| entry.grant.clone())
     }
 
     pub(crate) fn readonly(&self) -> bool {
         let maps = self.maps.lock();
         for entry in maps.iter() {
-            if entry.relation == Relation::Authority
-                && entry
-                    .grant
-                    .as_ref()
-                    .and_then(|grant| grant.permission())
-                    .is_some_and(|permission| permission.contains(Permission::STORE))
-            {
-                return false;
-            }
-            if entry.placement.is_some()
-                && entry.relation != Relation::Keeper
-                && entry.map.is_live()
-                && entry.map.ranges().map_or(true, |ranges| {
-                    ranges
-                        .iter()
-                        .any(|range| range.current.contains(PteFlags::W))
-                })
-            {
+            if entry.storing() || entry.writable() {
                 return false;
             }
         }
@@ -209,57 +175,30 @@ impl PoleMeta {
     }
 
     pub(crate) fn exclusive(&self) -> bool {
-        self.maps
-            .lock()
-            .iter()
-            .filter(|entry| {
-                entry.relation == Relation::Authority
-                    && entry
-                        .grant
-                        .as_ref()
-                        .and_then(|grant| grant.permission())
-                        .is_some()
-            })
-            .count()
-            == 1
+        let maps = self.maps.lock();
+        maps.iter().filter(|entry| entry.granted()).count() == 1
     }
 
     pub(crate) fn reserved(&self) -> usize {
         self.maps
             .lock()
             .iter()
-            .find_map(|entry| {
-                if let Relation::Staged(team) = entry.relation {
-                    Some(team.get())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0)
+            .find_map(|entry| entry.staged())
+            .map_or(0, TeamId::get)
     }
 
     pub(crate) fn opened(&self, map: &Arc<Map>) -> bool {
-        self.maps.lock().iter().any(|entry| {
-            matches!(entry.relation, Relation::Input | Relation::Open)
-                && Arc::ptr_eq(&entry.map, map)
-                && entry.map.is_live()
-        })
+        self.maps
+            .lock()
+            .iter()
+            .any(|entry| entry.opened() && Arc::ptr_eq(&entry.map, map) && entry.live())
     }
 
     pub(crate) fn mapped(&self) -> bool {
-        self.maps.lock().iter().any(|entry| {
-            matches!(
-                entry.relation,
-                Relation::Input | Relation::Open | Relation::View
-            ) && entry.map.is_live()
-        })
-    }
-
-    pub(crate) fn operation(self: &Arc<Self>) -> Option<PoleOperation> {
-        self.operating
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .ok()?;
-        Some(PoleOperation(self.clone()))
+        self.maps
+            .lock()
+            .iter()
+            .any(|entry| entry.mapped() && entry.live())
     }
 
     pub(crate) fn reserve_record(&self) -> Result<(), PieFail> {
@@ -274,13 +213,9 @@ impl PoleMeta {
         grant: Option<Arc<Grant>>,
         relation: Relation,
     ) {
-        self.maps.lock().push(HeldMap {
-            map: mapping.map,
-            token,
-            grant,
-            placement: Some((Arc::downgrade(space), mapping.reservation)),
-            relation,
-        });
+        self.maps
+            .lock()
+            .push(HeldMap::placed(mapping, space, token, grant, relation));
     }
 
     pub(crate) fn record(
@@ -294,7 +229,7 @@ impl PoleMeta {
         let mut maps = self.maps.lock();
         let grant = maps
             .iter()
-            .find(|entry| entry.relation == Relation::Authority && entry.token == Some(token))
+            .find(|entry| entry.authorizes(token))
             .and_then(|entry| entry.grant.clone());
         if !self.alive()
             || grant
@@ -304,12 +239,12 @@ impl PoleMeta {
         {
             return Err(mapping);
         }
-        maps.push(HeldMap {
-            map: mapping.map,
-            token: Some(token),
+        maps.push(HeldMap::placed(
+            mapping,
+            space,
+            Some(token),
             grant,
-            placement: Some((Arc::downgrade(space), mapping.reservation)),
-            relation: staged.map_or(
+            staged.map_or(
                 if opened {
                     Relation::Open
                 } else {
@@ -317,25 +252,21 @@ impl PoleMeta {
                 },
                 Relation::Staged,
             ),
-        });
+        ));
         Ok(())
     }
 
     pub(crate) fn detach_staging(&self, token: PieToken, team: TeamId) {
-        self.maps.lock().retain(|entry| {
-            !(entry.token == Some(token) && entry.relation == Relation::Staged(team))
-        });
+        self.maps
+            .lock()
+            .retain(|entry| !entry.staged_for(token, team));
     }
 
     fn close_token(&self, token: PieToken) -> Result<(), PieFail> {
         loop {
             let mut entry = {
                 let mut maps = self.maps.lock();
-                let index = maps.iter().position(|entry| {
-                    entry.token == Some(token)
-                        && entry.placement.is_some()
-                        && !matches!(entry.relation, Relation::Keeper | Relation::Staged(_))
-                });
+                let index = maps.iter().position(|entry| entry.closable(token));
                 match index {
                     Some(index) => maps.remove(index),
                     None => return Ok(()),
@@ -361,11 +292,7 @@ impl PoleMeta {
         loop {
             let entry = {
                 let mut maps = self.maps.lock();
-                let index = maps.iter().position(|entry| {
-                    entry.token == Some(token)
-                        && entry.placement.is_some()
-                        && !matches!(entry.relation, Relation::Keeper | Relation::Staged(_))
-                });
+                let index = maps.iter().position(|entry| entry.closable(token));
                 match index {
                     Some(index) => maps.remove(index),
                     None => return,
@@ -383,13 +310,6 @@ impl PoleMeta {
     }
 }
 
-pub(crate) struct PoleOperation(Arc<PoleMeta>);
-impl Drop for PoleOperation {
-    fn drop(&mut self) {
-        self.0.operating.store(false, Ordering::Release);
-    }
-}
-
 fn pie_map_error(error: MapError) -> PieFail {
     match error {
         MapError::OutOfMemory => PieFail::OoM,
@@ -403,7 +323,7 @@ impl Drop for PoleMeta {
         seal(self);
         let maps = core::mem::take(&mut *self.maps.lock());
         for entry in maps {
-            if entry.relation == Relation::Input && !self.committed.load(Ordering::Acquire) {
+            if entry.input() && !self.committed.load(Ordering::Acquire) {
                 continue;
             }
             if let Some((weak, reservation)) = entry.placement {
@@ -424,7 +344,7 @@ pub(crate) fn open(
     space: &Arc<Space>,
     flags: PteFlags,
 ) -> Result<(usize, usize), PieFail> {
-    let _operation = meta.operation().ok_or(PieFail::Busy)?;
+    let _operation = PoleOperation::acquire(meta).ok_or(PieFail::Busy)?;
     if !meta.alive() {
         return Err(PieFail::Dead);
     }
@@ -442,13 +362,7 @@ pub(crate) fn open(
         let maps = meta.maps.lock();
         maps.iter()
             .find(|entry| {
-                entry.token == Some(token)
-                    && matches!(entry.relation, Relation::Input | Relation::Open)
-                    && entry
-                        .placement
-                        .as_ref()
-                        .is_some_and(|(weak, _)| weak.ptr_eq(&Arc::downgrade(space)))
-                    && entry.map.is_live()
+                entry.holds(token) && entry.opened() && entry.placed_in(space) && entry.live()
             })
             .map(|entry| entry.map.clone())
     };
@@ -493,7 +407,7 @@ pub(crate) fn open(
 }
 
 pub(crate) fn shut(meta: &Arc<PoleMeta>, token: PieToken) -> Result<(), PieFail> {
-    let _operation = meta.operation().ok_or(PieFail::Busy)?;
+    let _operation = PoleOperation::acquire(meta).ok_or(PieFail::Busy)?;
     meta.close_token(token)
 }
 
@@ -509,10 +423,7 @@ pub(crate) fn narrow(
     {
         let maps = meta.maps.lock();
         targets.try_reserve(maps.len()).map_err(|_| PieFail::OoM)?;
-        for entry in maps
-            .iter()
-            .filter(|entry| entry.token == Some(token) && entry.placement.is_some())
-        {
+        for entry in maps.iter().filter(|entry| entry.placed_by(token)) {
             if let Some(tree) = entry.map.tree() {
                 targets.push((
                     tree,

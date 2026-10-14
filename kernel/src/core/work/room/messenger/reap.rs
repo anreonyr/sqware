@@ -4,9 +4,10 @@ use env::{NOTE_MAX, TaskId};
 
 use crate::core::work::record::ledger;
 use crate::core::work::record::trace::{self, EventKind, RoomEvent};
-use crate::core::work::room::scheduler::core::current;
-use crate::core::work::room::{Chain, conductor};
+use crate::core::work::room::chain::Chain;
+use crate::core::work::room::conductor::current;
 use crate::core::work::unit::space::Space;
+use crate::core::work::unit::tally;
 use crate::core::work::unit::task::{Task, TaskExitCause, TaskState};
 use crate::machine::sync::{Level, OnceLock, SpinLock};
 
@@ -49,7 +50,7 @@ impl Husks {
 
 pub(super) fn reap(task: Arc<Task>, cause: TaskExitCause, reason: usize) {
     let (cause, reason) = {
-        let _commit = crate::core::work::unit::commit();
+        let _commit = crate::core::work::commit();
         let mut state = task.state.lock();
         if state.exit().is_some() {
             return;
@@ -60,7 +61,7 @@ pub(super) fn reap(task: Arc<Task>, cause: TaskExitCause, reason: usize) {
     };
     hooked(&task);
     {
-        let _commit = crate::core::work::unit::commit();
+        let _commit = crate::core::work::commit();
         task.transform_checked(TaskState::reaped(cause, reason));
     }
     super::signal(WakeKey::Task { id: task.ident.id });
@@ -72,7 +73,7 @@ pub fn quit() -> usize {
     let cond = current();
     let requested = super::take_exit_reason();
     let (exited, _next_pa, reason) = {
-        let _commit = crate::core::work::unit::commit();
+        let _commit = crate::core::work::commit();
         let (task, next) = cond.swap();
         let mut state = task.state.lock();
         let (cause, reason) = state.dying().unwrap_or((TaskExitCause::Reap, requested));
@@ -100,7 +101,7 @@ pub fn quit() -> usize {
         reason,
     }));
     let owner = {
-        let _commit = crate::core::work::unit::commit();
+        let _commit = crate::core::work::commit();
         exited
             .ident
             .team
@@ -111,7 +112,7 @@ pub fn quit() -> usize {
     ledger::note(tid, reason, text, owner);
     reap(exited, TaskExitCause::Reap, reason);
     bury();
-    crate::core::work::room::scheduler::trap::run()
+    crate::core::work::room::conductor::run::run()
 }
 
 fn note_out<'a>(
@@ -170,9 +171,9 @@ fn bury() {
             wipe_space(z.ident.team.space.memory.asid());
         }
         z.ident.team.prune_tasks();
-        let _pruned = crate::core::work::room::scheduler::core::prune_dead();
+        let _pruned = crate::core::work::room::scheduler::roster::prune_dead();
         drop(z);
-        conductor::exit();
+        tally::exit();
     }
 }
 

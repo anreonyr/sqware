@@ -1,11 +1,12 @@
 use crate::core::work::record::{ledger, trace};
-use crate::core::work::room::{conductor, deadline, interrupt, messenger};
+use crate::core::work::room::{deadline, halt, interrupt, messenger, scheduler};
+use crate::core::work::unit::tally;
 use crate::machine::clock;
 use crate::putln;
 
 pub(crate) fn waiting() {
-    let (arrived, total) = conductor::barrier();
-    let (pushed, reaped) = conductor::counts();
+    let (arrived, total) = halt::barrier();
+    let (pushed, reaped) = tally::counts();
     putln!(
         "[stop] halt 屏障等待：已达 {arrived}/{total} 核；任务 PUSHED={pushed}                      REAPED={reaped}（差 {}）—— 屏障等的是**核**，不是任务",
         pushed.saturating_sub(reaped)
@@ -28,7 +29,7 @@ pub(crate) fn report() {
     );
     let (held, starved, blocked, nudged) = messenger::branch_stats();
     putln!("doom: held={held} starved={starved} blocked={blocked} nudged={nudged}");
-    let (kicks, fallback) = conductor::kick_stats();
+    let (kicks, fallback) = scheduler::kick_stats();
     putln!("sched: kicks={kicks} fallback={fallback}");
     let (ring, busy, idle_ring, idle_busy) = interrupt::stats();
     putln!(
@@ -42,7 +43,7 @@ pub(crate) fn verdict() {
     if !crate::testing() {
         return;
     }
-    if conductor::counts().0 == 0 {
+    if tally::counts().0 == 0 {
         putln!("[verdict] 一台域都没起：世界没跑起来，这一景什么都没验");
         semihosting::process::exit(101)
     }

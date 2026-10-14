@@ -20,7 +20,7 @@ static SELF_ADDR: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 pub(crate) fn wfi_entry(hart: crate::machine::hart::HartId) {
     if hart.get() < SLOTS {
         IN_WFI[hart.get()].store(1, Ordering::Relaxed);
-        let me = crate::core::work::room::scheduler::core::current() as *const _ as usize;
+        let me = crate::core::work::room::conductor::current() as *const _ as usize;
         SELF_ADDR[hart.get()].store(me, Ordering::Relaxed);
     }
 }
@@ -99,7 +99,7 @@ pub(crate) fn run(tag: &str, due: Option<u64>) -> (usize, usize, usize) {
         left_passes -= 1;
         let (b_woke, b_ssip, b_rounds) = rounds(target, true, b_due);
         let self_addr = SELF_ADDR[target.get()].load(Ordering::Relaxed);
-        let expect = crate::core::work::room::scheduler::core::scheduler_addr(target);
+        let expect = crate::core::work::room::scheduler::scheduler_addr(target);
         crate::putln!(
             "ipi: {tag} target={target} directed={d_woke}/{d_rounds} ssip={d_ssip} broadcast={b_woke}/{b_rounds} ssip={b_ssip} match={}",
             self_addr == expect

@@ -13,16 +13,14 @@ mod control;
 mod debug;
 pub(crate) mod mail;
 mod memory;
+mod outcome;
 pub(crate) mod pie;
 pub(crate) mod resources;
 mod room;
 pub(crate) mod tole;
 mod unit;
 
-fn ret_err<E: env::FailCode>(frame: &mut TrapContext, e: E) -> *mut TrapContext {
-    frame.gpr.set_x(Gprs::A0, e.code() as usize);
-    frame as *mut TrapContext
-}
+use outcome::{ret_err, Outcome};
 
 fn instr_len(space: &Space, sepc: KVirt) -> usize {
     let b0 = space.memory.instruction_byte(sepc.as_usize()).unwrap_or(0b11);
@@ -30,11 +28,6 @@ fn instr_len(space: &Space, sepc: KVirt) -> usize {
 }
 
 pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Option<*mut TrapContext> {
-    let pa = dispatch_inner(frame, ident);
-    if pa.is_null() { None } else { Some(pa) }
-}
-
-fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapContext {
     let number = frame.gpr.x(Gprs::A7);
     let regs = [
         frame.gpr.x(Gprs::A0),
@@ -57,47 +50,43 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
     );
     let envcall = match EnvCall::from_wire(number, &regs) {
         Ok(c) => c,
-        Err(_) => return ret_err(frame, env::DispatchFail::Unknown),
+        Err(_) => {
+            ret_err(frame, env::DispatchFail::Unknown);
+            return Some(frame as *mut TrapContext);
+        }
     };
-    match envcall {
-        EnvCall::Room(call) => match room::dispatch(frame, call, ident) {
-            room::Outcome::Resume => {}
-            room::Outcome::Switch(pa) => return pa,
-            room::Outcome::Exit => return ::core::ptr::null_mut(),
-        },
-        EnvCall::Unit(call) => match unit::dispatch(frame, call, ident) {
-            unit::Outcome::Resume => {}
-            unit::Outcome::Switch(pa) => return pa,
-        },
+    let outcome = match envcall {
+        EnvCall::Room(call) => room::dispatch(frame, call, ident),
+        EnvCall::Unit(call) => unit::dispatch(frame, call, ident),
         EnvCall::Memory(call) => {
             memory::dispatch(frame, call, &ident);
+            Outcome::Resume
         }
-        EnvCall::Chrono(call) => chrono::dispatch(frame, call),
-        EnvCall::Mail(call) => {
-            if let Some(out) = mail::dispatch(frame, call, ident) {
-                return match out {
-                    mail::Outcome::Resume => frame as *mut TrapContext,
-                    mail::Outcome::Park(next) => next,
-                };
-            }
+        EnvCall::Chrono(call) => {
+            chrono::dispatch(frame, call);
+            Outcome::Resume
         }
+        EnvCall::Mail(call) => mail::dispatch(frame, call, ident),
         EnvCall::Control(call) => {
             control::dispatch(frame, call, &ident);
+            Outcome::Resume
         }
         EnvCall::Pie(call) => {
-            if let Some(pie::Outcome::Resume) = pie::dispatch(frame, call, ident) {
-                return frame as *mut TrapContext;
-            }
+            pie::dispatch(frame, call, ident);
+            Outcome::Resume
         }
         EnvCall::Debug(DebugCall::Put { buf, len }) => {
-            return debug::put(frame, &ident, buf.get(), len);
+            debug::put(frame, &ident, buf.get(), len);
+            Outcome::Resume
         }
         EnvCall::Debug(DebugCall::Get { buf, len }) => {
-            return debug::get(frame, &ident, buf.get(), len);
+            debug::get(frame, &ident, buf.get(), len);
+            Outcome::Resume
         }
         EnvCall::Debug(DebugCall::SetTrace { on }) => {
             frame.gpr.set_x(Gprs::A0, debug::set_trace(on));
+            Outcome::Resume
         }
     };
-    frame as *mut TrapContext
+    outcome.next(frame as *mut TrapContext)
 }

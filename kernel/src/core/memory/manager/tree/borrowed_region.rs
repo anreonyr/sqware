@@ -3,7 +3,7 @@ use core::num::NonZeroUsize;
 
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::addr::PhysAddr;
-use crate::core::memory::manager::table::MapError;
+use crate::core::memory::manager::MapError;
 
 /// 调用者保证仍然保留的物理区间。它不冒充分配器拥有的 Frame。
 pub struct BorrowedRegion {

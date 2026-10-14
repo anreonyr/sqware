@@ -9,30 +9,23 @@ use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::core::work::mail;
 use crate::core::work::pend::{self, Need, PieSnapshot};
 use crate::core::work::room::messenger::Handoff;
-use crate::core::work::room::scheduler::core::current;
+use crate::core::work::room::conductor::current;
 use crate::core::memory::manager::Memory;
 use crate::core::work::unit::space::Space;
 
+use super::outcome::{answer, ret_err, Outcome};
 use super::pie::usable;
 use crate::core::work::unit::task::TaskIdent;
 
-pub(crate) enum Outcome {
-    Resume,
-    Park(*mut TrapContext),
-}
-
-pub(crate) fn dispatch(
+pub(super) fn dispatch(
     frame: &mut TrapContext,
     call: MailCall,
     ident: Arc<TaskIdent>,
-) -> Option<Outcome> {
-    if matches!(
-        call,
-        MailCall::Attach { .. } | MailCall::Detach { .. } | MailCall::Await { .. }
-    ) {
-        return super::tole::dispatch(frame, call, ident);
-    }
-    Some(match call {
+) -> Outcome {
+    match call {
+        MailCall::Attach { .. } | MailCall::Detach { .. } | MailCall::Await { .. } => {
+            super::tole::dispatch(frame, call, ident)
+        }
         MailCall::Push { token, msg, len } => push(frame, ident, token, msg.get(), len),
         MailCall::Pull {
             token,
@@ -48,8 +41,7 @@ pub(crate) fn dispatch(
         } => wait_dir(frame, ident, token, condition, millis),
         MailCall::Hush { token, bit } => hush(frame, token, bit),
         MailCall::Ring { token, bit } => ring(frame, token, bit),
-        _ => unreachable!(),
-    })
+    }
 }
 
 fn push(
@@ -78,13 +70,7 @@ fn push(
         let bytes = Arc::try_new(cell).map_err(|_| MailFail::OoM)?;
         reservation.commit(bytes, me)
     });
-    frame.gpr.set_x(
-        Gprs::A0,
-        match r {
-            Ok(()) => 0,
-            Err(e) => e.code() as usize,
-        },
-    );
+    answer(frame, r.map(|()| 0));
     Outcome::Resume
 }
 
@@ -97,7 +83,7 @@ fn pull(
     oversize: Oversize,
 ) -> Outcome {
     if !Memory::user_range(buf, max) {
-        frame.gpr.set_x(Gprs::A0, MailFail::Denied.code() as usize);
+        ret_err(frame, MailFail::Denied);
         return Outcome::Resume;
     }
     let r = with_pie(token, Need::Fetch, |pie| {
@@ -117,7 +103,7 @@ fn pull(
             frame.gpr.set_x(Gprs::A1, from.get());
             frame.gpr.set_x(Gprs::A2, discarded as usize);
         }
-        Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
+        Err(e) => ret_err(frame, e),
     }
     Outcome::Resume
 }
@@ -159,7 +145,7 @@ fn peek(frame: &mut TrapContext, token: PieToken) -> Outcome {
             frame.gpr.set_x(Gprs::A1, from.get());
             frame.gpr.set_x(Gprs::A2, depth);
         }
-        Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
+        Err(e) => ret_err(frame, e),
     }
     Outcome::Resume
 }
@@ -180,8 +166,8 @@ fn wait_dir(
     });
     match r {
         Ok(Handoff::Resume(ready)) => frame.gpr.set_x(Gprs::A0, ready as usize),
-        Ok(Handoff::Switch(pa)) => return Outcome::Park(pa as *mut TrapContext),
-        Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
+        Ok(Handoff::Switch(pa)) => return Outcome::Switch(pa as *mut TrapContext),
+        Err(e) => ret_err(frame, e),
     }
     Outcome::Resume
 }
@@ -197,25 +183,13 @@ fn hush(frame: &mut TrapContext, token: PieToken, bit: Bit) -> Outcome {
         }
         Ok(())
     });
-    frame.gpr.set_x(
-        Gprs::A0,
-        match r {
-            Ok(()) => 0,
-            Err(e) => e.code() as usize,
-        },
-    );
+    answer(frame, r.map(|()| 0));
     Outcome::Resume
 }
 
 fn ring(frame: &mut TrapContext, token: PieToken, bit: Bit) -> Outcome {
     let r = with_pie(token, Need::Store, |pie| pie.mail().ring(bit));
-    frame.gpr.set_x(
-        Gprs::A0,
-        match r {
-            Ok(()) => 0,
-            Err(e) => e.code() as usize,
-        },
-    );
+    answer(frame, r.map(|()| 0));
     Outcome::Resume
 }
 

@@ -1,45 +1,46 @@
-use super::mail::Outcome;
+use super::outcome::{answer, ret_err, Outcome};
 use crate::core::work::pend::available;
-use crate::machine::switcher::context::{Gprs, TrapContext};
+use crate::machine::switcher::context::TrapContext;
 use crate::core::work::mail::{
     self,
     tole::{self, AwaitWait, Cell, Watch},
 };
 use crate::core::work::pend::{self, Need};
 use crate::core::work::room::messenger::{self, Handoff, WakeKey};
-use crate::core::work::room::scheduler::core::{current, muster};
+use crate::core::work::room::conductor::current;
+use crate::core::work::room::scheduler::roster::muster;
 use crate::core::work::unit::task::{Task, TaskIdent};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use env::{MailCall, MailFail, Source};
 
-pub(crate) fn dispatch(
+pub(super) fn dispatch(
     frame: &mut TrapContext,
     call: MailCall,
     _: Arc<TaskIdent>,
-) -> Option<Outcome> {
+) -> Outcome {
     let task = match current().running_task() {
         Some(task) => task,
         None => {
-            answer(frame, Err(MailFail::Denied));
-            return Some(Outcome::Resume);
+            ret_err(frame, MailFail::Denied);
+            return Outcome::Resume;
         }
     };
     match call {
         MailCall::Attach { tole, source } => {
             let result = (|| {
-                let _commit = crate::core::work::unit::commit();
+                let _commit = crate::core::work::commit();
                 let pie = pend::accede(&task, tole, Need::Store).map_err(mail::mail_fail)?;
                 available(&pie)?;
                 let group = pie.mail().tole().ok_or(MailFail::Denied)?;
                 tole::attach(&group, cell(&task, source)?)
             })();
-            answer(frame, result);
-            Some(Outcome::Resume)
+            answer(frame, result.map(|()| 0));
+            Outcome::Resume
         }
         MailCall::Detach { tole, source } => {
             let result = (|| {
-                let _commit = crate::core::work::unit::commit();
+                let _commit = crate::core::work::commit();
                 let pie = pend::accede(&task, tole, Need::Store).map_err(mail::mail_fail)?;
                 available(&pie)?;
                 {
@@ -47,8 +48,8 @@ pub(crate) fn dispatch(
                     tole::detach(&group, task.ident.id, source)
                 }
             })();
-            answer(frame, result);
-            Some(Outcome::Resume)
+            answer(frame, result.map(|()| 0));
+            Outcome::Resume
         }
         MailCall::Await { tole, millis } => {
             let result = (|| {
@@ -59,12 +60,12 @@ pub(crate) fn dispatch(
             })();
             match result {
                 Ok(Handoff::Resume(reply)) => AwaitWait::write(frame, Ok(reply)),
-                Ok(Handoff::Switch(pa)) => return Some(Outcome::Park(pa as *mut TrapContext)),
+                Ok(Handoff::Switch(pa)) => return Outcome::Switch(pa as *mut TrapContext),
                 Err(e) => AwaitWait::write(frame, Err(e)),
             }
-            Some(Outcome::Resume)
+            Outcome::Resume
         }
-        _ => None,
+        _ => unreachable!("mail::dispatch routes only Attach, Detach and Await"),
     }
 }
 pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> {
@@ -101,7 +102,7 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
                 false,
                 env::Wait::POLL,
             );
-            keys.push((wait.key(), wait.life()));
+            keys.push((wait.target.key(), wait.target.life()));
             Watch::Join { target, selected }
         }
         Source::Inspect { task: id, token } => {
@@ -155,10 +156,4 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
         keys: Arc::try_new(keys).map_err(|_| MailFail::OoM)?,
         watch,
     })
-}
-fn answer(frame: &mut TrapContext, result: Result<(), MailFail>) {
-    frame.gpr.set_x(
-        Gprs::A0,
-        result.map_or_else(|e| env::FailCode::code(e) as usize, |_| 0),
-    );
 }

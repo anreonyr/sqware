@@ -1,7 +1,6 @@
 pub(crate) mod backtrace;
 #[cfg(feature = "semihosting")]
 pub(crate) mod export;
-pub(crate) mod frame;
 pub(crate) mod halt;
 pub(crate) mod render;
 pub(crate) mod report;

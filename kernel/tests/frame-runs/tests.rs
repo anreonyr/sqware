@@ -4,7 +4,7 @@ use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::addr::VirtAddr;
 use crate::core::memory::manager::entry::PteFlags;
 use crate::core::memory::manager::frame::Frame;
-use crate::core::memory::manager::table::MapError;
+use crate::core::memory::manager::MapError;
 use crate::counting_alloc::count_allocations;
 
 use super::range::MapRange;

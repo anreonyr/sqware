@@ -23,6 +23,12 @@ mod lock {
             self.0.try_lock().ok()
         }
     }
+    pub use std::sync::MutexGuard as SpinLockGuard;
+
+    pub mod spin {
+        pub use super::SpinLockGuard;
+    }
+
     pub fn reserve_depend(_: usize) -> Result<(), ()> {
         let hook = HOOK.with(|slot| slot.borrow_mut().take());
         if let Some(hook) = hook { hook(); }
@@ -56,9 +62,16 @@ mod memory {
 }
 mod work {
     pub use crate::grant;
+
+    /// work 全域提交锁的宿主桩（内核那侧是 `crate::core::work::commit`）。
+    pub fn commit() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap()
+    }
+
     pub mod room {
         pub mod scheduler {
-            pub mod core {
+            pub mod roster {
                 use alloc::sync::{Arc, Weak};
                 use crate::core::work::unit::task::Task;
                 use env::TaskId;
@@ -148,7 +161,6 @@ mod work {
                     pub fn alive(&self) -> bool {
                         self.live.load(Ordering::Acquire)
                     }
-                    pub fn operation(self: &Arc<Self>) -> Option<Operation> { self.control.operation() }
                     pub fn reserved(&self) -> usize { self.control.reserved() }
                     pub fn has_cells(&self) -> bool {
                         false
@@ -283,6 +295,12 @@ mod work {
         }
         pub mod pole {
             pub use super::PoleMeta;
+            pub struct PoleOperation(super::Operation);
+            impl PoleOperation {
+                pub fn acquire(meta: &alloc::sync::Arc<PoleMeta>) -> Option<Self> {
+                    meta.control.operation().map(Self)
+                }
+            }
             pub fn seal(meta: &PoleMeta) {
                 meta.seal();
             }
@@ -299,17 +317,12 @@ mod work {
         }
     }
     pub mod unit {
-        pub fn commit() -> std::sync::MutexGuard<'static, ()> {
-            static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-            LOCK.lock().unwrap()
-        }
         pub mod task {
-            use crate::pend::{CreationRegistry, Pie};
+            use crate::pend::Pend;
             use crate::machine::sync::SpinLock;
             use alloc::sync::{Arc, Weak};
-            use alloc::vec::Vec;
             use ::core::sync::atomic::{AtomicUsize, Ordering};
-            use env::{PieToken, TaskId};
+            use env::TaskId;
             static NEXT: AtomicUsize = AtomicUsize::new(1);
             pub struct TaskIdent {
                 pub id: TaskId,
@@ -336,20 +349,10 @@ mod work {
                     self.paused = false;
                 }
             }
-            pub struct Pend {
-                serial: SpinLock<()>,
-                pub version: AtomicUsize,
-                pub pies: SpinLock<Vec<Pie>>,
-                pub heirs: SpinLock<Vec<(PieToken, Weak<Task>, PieToken)>>,
-                pub creations: CreationRegistry,
-            }
-            impl Pend {
-                pub fn lock(&self) -> std::sync::MutexGuard<'_, ()> { self.serial.lock() }
-            }
             pub struct Task {
                 pub ident: TaskIdent,
                 pub state: SpinLock<TaskState>,
-                pub pend: Pend,
+                pub(crate) pend: Pend,
                 life: Arc<()>,
             }
             unsafe impl Send for Task {}
@@ -366,12 +369,10 @@ mod work {
                             id: TaskId::new(NEXT.fetch_add(1, Ordering::Relaxed)),
                         },
                         state: SpinLock::new(TaskState::held()),
-                        pend: Pend { serial: SpinLock::new(()), version: AtomicUsize::new(0),
-                            pies: SpinLock::new(Vec::new()), heirs: SpinLock::new(Vec::new()),
-                            creations: CreationRegistry::new() },
+                        pend: Pend::new(),
                         life: Arc::new(()),
                     });
-                    crate::core::work::room::scheduler::core::register(&task);
+                    crate::core::work::room::scheduler::roster::register(&task);
                     task
                 }
                 pub fn dead(&self) -> bool {
@@ -398,7 +399,7 @@ pub mod grant;
 #[path = "../../src/core/work/pend/mod.rs"]
 pub mod pend;
 
-pub use work::unit::commit;
+pub use work::commit;
 
 #[cfg(test)]
 mod tests;

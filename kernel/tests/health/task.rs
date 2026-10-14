@@ -1,7 +1,7 @@
 #![cfg(debug_assertions)]
 
 use crate::core::memory::manager::{MapError, addr::VirtAddr};
-use crate::core::work::room::conductor;
+use crate::core::work::unit::tally;
 use crate::core::memory::manager::{Mapping, RegionId};
 use crate::core::work::unit::space::{Space, SpaceBuilder};
 use crate::core::work::unit::team::TeamBuilder;
@@ -86,7 +86,7 @@ pub fn preparation() {
         )
         .unwrap();
     let team = TeamBuilder::new(space).spawn().unwrap();
-    let counts = conductor::counts();
+    let counts = tally::counts();
     let tables = team.space.memory.backend().table_count();
     for _ in 0..4 {
         let prepared = team
@@ -94,17 +94,17 @@ pub fn preparation() {
             .entry(VirtAddr::wrap(0x4000_0000))
             .prepare()
             .unwrap();
-        assert_eq!(conductor::counts(), counts);
+        assert_eq!(tally::counts(), counts);
         assert!(team.tasks.members.lock().is_empty());
         assert!(team.tasks.held.lock().is_empty());
         drop(prepared);
         assert_eq!(team.space.memory.backend().table_count(), tables);
-        assert_eq!(conductor::counts(), counts);
+        assert_eq!(tally::counts(), counts);
     }
     for stage in 1..=4 {
         crate::core::work::unit::task::fail_preparation_at(stage);
         assert!(matches!(team.task().prepare(), Err(MapError::OutOfMemory)));
-        assert_eq!(conductor::counts(), counts);
+        assert_eq!(tally::counts(), counts);
         assert_eq!(team.space.memory.backend().table_count(), tables);
         assert!(team.tasks.members.lock().is_empty());
     }
@@ -112,7 +112,7 @@ pub fn preparation() {
     for stage in 1..=2 {
         crate::core::work::unit::task::fail_invalidation_at(stage);
         assert!(matches!(team.task().prepare(), Err(MapError::Shootdown)));
-        assert_eq!(conductor::counts(), counts);
+        assert_eq!(tally::counts(), counts);
         assert!(team.tasks.members.lock().is_empty());
         assert!(team.space.memory.backend().map_count() > maps);
         team.space
@@ -139,7 +139,7 @@ pub fn preparation() {
     crate::core::work::unit::task::fail_preparation_at(3);
     crate::core::work::unit::task::fail_rollback_fence();
     assert!(matches!(team.task().prepare(), Err(MapError::OutOfMemory)));
-    assert_eq!(conductor::counts(), counts);
+    assert_eq!(tally::counts(), counts);
     let reserved = team
         .space
         .memory
@@ -167,7 +167,7 @@ pub fn preparation() {
         team.task().stack(usize::MAX).prepare(),
         Err(MapError::NoRegion)
     ));
-    assert_eq!(conductor::counts(), counts);
+    assert_eq!(tally::counts(), counts);
 }
 
 pub fn construction() {
@@ -179,7 +179,7 @@ pub fn construction() {
     use alloc::sync::{Arc, Weak};
     use alloc::vec::Vec;
     use env::{Mark, Permission, UnitFail};
-    scheduler::boot::init().expect("scheduler init");
+    scheduler::init().expect("scheduler init");
     let parent_space = SpaceBuilder::supervisor().build().unwrap();
     parent_space
         .memory
@@ -191,7 +191,7 @@ pub fn construction() {
         .unwrap();
     let parent = TeamBuilder::new(parent_space).spawn().unwrap();
     let caller = parent.task().hold().unwrap();
-    let child = crate::core::work::unit::build(
+    let child = crate::core::work::unit::team::TeamBuilder::build(
         crate::core::work::unit::space::SpaceKind::User,
         crate::core::work::unit::task::TaskWeak::empty(),
     )
@@ -293,7 +293,7 @@ pub fn construction() {
         }
         roots.push(token);
     }
-    let counts = conductor::counts();
+    let counts = tally::counts();
     let tables = child.space.memory.backend().table_count();
     for (entry, stack, expected) in [
         (0, 0, UnitFail::BadEntry),
@@ -305,18 +305,18 @@ pub fn construction() {
         );
         assert!(!child.ready());
         assert_eq!(child.default_entry(), 0);
-        assert_eq!(conductor::counts(), counts);
+        assert_eq!(tally::counts(), counts);
         assert_eq!(child.space.memory.backend().table_count(), tables);
         for token in &roots {
             assert!(pend::locate(&caller, *token).is_some());
         }
     }
-    scheduler::core::fail_next_reservation();
+    scheduler::roster::fail_next_reservation();
     assert!(matches!(
         team::spawn(&child, Some(&caller), 0x10000, Vec::new(), 0),
         Err(UnitFail::OoM)
     ));
-    assert_eq!(conductor::counts(), counts);
+    assert_eq!(tally::counts(), counts);
     assert_eq!(child.space.memory.backend().table_count(), tables);
     assert!(!child.ready());
     assert_eq!(child.default_entry(), 0);
@@ -336,7 +336,7 @@ pub fn construction() {
     assert_eq!(child.default_entry(), 0x10000);
     assert!(child.staged_len() == 0);
     assert!(
-        scheduler::core::muster(task.ident.id)
+        scheduler::roster::muster(task.ident.id)
             .unwrap()
             .upgrade()
             .is_some()
@@ -364,7 +364,7 @@ pub fn construction() {
     assert!(child.release_held(&task));
     drop(task);
     drop(child);
-    assert_eq!(conductor::counts(), (counts.0 + 1, counts.1 + 1));
+    assert_eq!(tally::counts(), (counts.0 + 1, counts.1 + 1));
     assert!(parent.release_held(&caller));
     drop(caller);
     for weak_frames in &frame_weak {
@@ -391,7 +391,7 @@ pub fn cancellation() {
         .unwrap();
     let parent = TeamBuilder::new(parent_space).spawn().unwrap();
     let caller = parent.task().hold().unwrap();
-    let child = crate::core::work::unit::build(
+    let child = crate::core::work::unit::team::TeamBuilder::build(
         crate::core::work::unit::space::SpaceKind::User,
         crate::core::work::unit::task::TaskWeak::empty(),
     )
@@ -471,9 +471,9 @@ pub fn cancellation() {
         pend::release(&caller, token),
         Err(env::PieFail::Busy)
     ));
-    let counts = conductor::counts();
+    let counts = tally::counts();
     child.cancel_staging().unwrap();
-    assert_eq!(conductor::counts(), counts);
+    assert_eq!(tally::counts(), counts);
     assert_eq!(meta.reserved(), 0);
     assert!(child.space.memory.backend().translate(at).is_none());
     let remaining = pend::locate(&caller, token).unwrap().permission();
@@ -569,7 +569,7 @@ pub fn branch_control() {
     let space = Arc::downgrade(&later.space);
     later.release_held(&grandchild);
     *grandchild.state.lock() = TaskState::reaped(TaskExitCause::Reap, 17);
-    conductor::exit();
+    tally::exit();
     assert_eq!(record.exit().unwrap().reason, 17);
     assert_eq!(observe.poll(), observe.poll());
     assert!(receive.poll().unwrap().is_reaped());
@@ -619,7 +619,7 @@ pub fn branch_control() {
     drop(record);
     child.release_held(&member);
     *member.state.lock() = TaskState::reaped(TaskExitCause::Reap, 0);
-    conductor::exit();
+    tally::exit();
     child.life.clear(main.ident.id, None);
     child.life.prune();
     main.oust(child.id);
@@ -627,11 +627,11 @@ pub fn branch_control() {
     drop(child);
     root.release_held(&peer);
     *peer.state.lock() = TaskState::reaped(TaskExitCause::Reap, 0);
-    conductor::exit();
+    tally::exit();
     drop(peer);
     root.release_held(&main);
     *main.state.lock() = TaskState::reaped(TaskExitCause::Reap, 0);
-    conductor::exit();
+    tally::exit();
     root.life.prune();
     drop(main);
     drop(root);

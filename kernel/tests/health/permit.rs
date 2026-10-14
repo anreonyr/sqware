@@ -10,7 +10,7 @@ use crate::core::work::mail::tole::{Cell, Watch};
 use crate::core::work::mail::{hole, nole, tole};
 use crate::core::work::pend::{self, Need, Permission, Pie};
 use crate::core::work::room::messenger::{self, FWD_MAX, WakeKey};
-use crate::core::work::room::scheduler::core::prune_dead;
+use crate::core::work::room::scheduler::roster::prune_dead;
 use crate::core::work::unit::life::Life;
 use crate::core::work::unit::space::SpaceBuilder;
 use crate::core::work::unit::team::TeamBuilder;

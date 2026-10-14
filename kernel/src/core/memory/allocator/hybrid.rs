@@ -3,7 +3,6 @@ use core::ptr::NonNull;
 
 use alloc::alloc::{AllocError, Allocator};
 
-use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::allocator::{InitResult, block, frame};
 
 pub(crate) struct HybridAllocator;
@@ -23,7 +22,7 @@ impl HybridAllocator {
 unsafe impl Allocator for HybridAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         super::assert_allocation_allowed();
-        if layout.size() <= PAGE_SIZE / 2 {
+        if layout.size() <= block::MAX_SIZE {
             block::allocator().allocate(layout)
         } else {
             frame::allocator().allocate(layout)
@@ -33,7 +32,7 @@ unsafe impl Allocator for HybridAllocator {
     #[track_caller]
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         unsafe {
-            if layout.size() <= PAGE_SIZE / 2 {
+            if layout.size() <= block::MAX_SIZE {
                 block::allocator().deallocate(ptr, layout);
             } else {
                 frame::allocator().deallocate(ptr, layout);

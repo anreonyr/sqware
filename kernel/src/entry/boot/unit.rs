@@ -12,8 +12,9 @@ use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::{
     BorrowedRegion, Frame, MapError,
     addr::{PhysAddr, VirtAddr},
+    asid,
     entry::PteFlags,
-    flush_asid, mode,
+    mode,
 };
 use crate::machine::board;
 use crate::core::memory::manager::RegionId;
@@ -129,7 +130,7 @@ pub fn init() -> MapResult<()> {
                 kernel_space.memory.root_ppn(),
             );
 
-            flush_asid(kernel_space.memory.asid());
+            asid::flush(kernel_space.memory.asid());
             #[cfg(debug_assertions)]
             crate::machine::layout::validate();
 

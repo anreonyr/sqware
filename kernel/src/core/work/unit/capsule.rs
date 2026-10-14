@@ -80,7 +80,7 @@ pub(crate) fn assemble(bytes: &'static [u8]) -> Result<Arc<Team>, MapError> {
         }
     }
     space.memory.advance_region(RegionId::Normal, image_end)?;
-    crate::core::memory::manager::sync_instructions()?;
+    crate::core::memory::manager::asid::sync_instructions()?;
     let team = TeamBuilder::new(space).spawn()?;
     team.set_default_entry(capsule.entry);
     Ok(team)

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::addr::VirtAddr;
 use crate::core::memory::manager::frame::Frame;
-use crate::core::memory::manager::table::MapError;
+use crate::core::memory::manager::MapError;
 
 use super::super::BorrowedRegion;
 use super::range::MapRange;

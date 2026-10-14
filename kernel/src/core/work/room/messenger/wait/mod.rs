@@ -1,5 +1,12 @@
+pub(super) mod call;
+pub(super) mod fwd;
 pub(super) mod holder;
+pub(super) mod key;
 pub(super) mod site;
+
+mod blocked;
+mod fail;
+mod unchain;
 
 use alloc::sync::{Arc, Weak};
 use core::time::Duration;
@@ -7,63 +14,22 @@ use core::time::Duration;
 use crate::core::memory::manager::asid::Asid;
 use crate::core::work::record::trace::{self, EventKind, RoomEvent};
 use crate::core::work::room::deadline;
-use crate::core::work::room::scheduler::core::{current, launch};
-use crate::core::work::room::scheduler::trap::run;
+use crate::core::work::room::conductor::current;
+use crate::core::work::room::conductor::run::run;
+use crate::core::work::room::scheduler::launch;
 use crate::core::work::unit::life::{Life, TaskLife};
 use crate::core::work::unit::task::Task;
 use crate::machine::clock;
 
+use self::blocked::{Blocked, finish_block};
+use self::call::WaitCall;
+use self::fail::WaitFail;
+use self::fwd::Fwd;
 use self::holder::{Ticket, hold, void};
-use self::site::{Fwd, SITE_SHARDS, Site, WakeKey, prune, shard_at, sites, take_beacon};
+use self::key::WakeKey;
+use self::site::{SITE_SHARDS, Site, prune, shard_at, sites, take_beacon};
+use self::unchain::Unchain;
 use super::handoff::Handoff;
-
-pub(crate) trait WaitFail: env::FailCode {
-    fn busy() -> Self;
-    fn oom() -> Self;
-}
-
-impl WaitFail for env::RoomFail {
-    fn busy() -> Self {
-        env::RoomFail::Busy
-    }
-    fn oom() -> Self {
-        env::RoomFail::OoM
-    }
-}
-
-impl WaitFail for env::UnitFail {
-    fn busy() -> Self {
-        env::UnitFail::Busy
-    }
-    fn oom() -> Self {
-        env::UnitFail::OoM
-    }
-}
-
-impl WaitFail for env::MailFail {
-    fn busy() -> Self {
-        env::MailFail::Busy
-    }
-    fn oom() -> Self {
-        env::MailFail::OoM
-    }
-}
-
-enum Blocked {
-    Resume,
-    Switch(Option<usize>),
-    Quit(usize),
-}
-fn finish_block(blocked: Blocked) -> Handoff<()> {
-    match blocked {
-        Blocked::Resume => Handoff::Resume(()),
-        Blocked::Switch(next) => Handoff::Switch(next.unwrap_or_else(run)),
-        Blocked::Quit(reason) => {
-            super::set_exit_reason(reason);
-            Handoff::Switch(super::quit())
-        }
-    }
-}
 
 fn block_with_call<E: WaitFail>(
     key: WakeKey,
@@ -81,15 +47,10 @@ fn block_with_call<E: WaitFail>(
         drop(me);
         return Ok(Blocked::Quit(reason));
     }
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     {
         let mut sites = sites(key).lock();
-        if !sites.contains_key(&key) {
-            sites.try_reserve(1).map_err(|_| E::oom())?;
-            let mut site = Site::new(&Weak::new());
-            site.life = life;
-            sites.insert(key, site);
-        }
+        Site::ensure(&mut sites, key, &life).map_err(|()| E::oom())?;
     }
     let ticket = Ticket::next_id();
     let at = (dur != Duration::MAX).then(|| clock::now().add(dur).as_ticks());
@@ -145,7 +106,7 @@ fn fan_out(fwd: &Fwd) {
 fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
     let mut woke = 0;
     for task in tasks {
-        let _commit = crate::core::work::unit::commit();
+        let _commit = crate::core::work::commit();
         let t = task;
         if let Some(join) = t.take_wait() {
             let resumed = match join {
@@ -168,18 +129,17 @@ fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
     woke
 }
 
-struct Unchain {
-    cur: Option<Arc<Task>>,
-}
-
-impl Iterator for Unchain {
-    type Item = Arc<Task>;
-
-    fn next(&mut self) -> Option<Arc<Task>> {
-        let task = self.cur.take()?;
-        void(task.wait_ticket());
-        self.cur = task.take_next();
-        Some(task)
+fn alarm_block<E: WaitFail>(task: Arc<Task>, wake_at: usize, dur: Duration) -> Result<usize, E> {
+    let me = task.ident.id;
+    trace::note(EventKind::Room(RoomEvent::Park {
+        tid: me.get(),
+        wake_at,
+    }));
+    let life = task.life();
+    drop(task);
+    match wait(WakeKey::Alarm { task: me }, life, dur)? {
+        Handoff::Switch(pa) => Ok(pa),
+        Handoff::Resume(()) => unreachable!("Alarm 无投信方"),
     }
 }
 
@@ -187,18 +147,8 @@ pub fn park<E: WaitFail>(duration: Duration) -> Result<usize, E> {
     let Some(task) = current().running_task() else {
         return Ok(run());
     };
-    let me = task.ident.id;
-    let wake_at = clock::now().add(duration).as_ticks();
-    trace::note(EventKind::Room(RoomEvent::Park {
-        tid: me.get(),
-        wake_at: wake_at as usize,
-    }));
-    let life = task.life();
-    drop(task);
-    match wait(WakeKey::Alarm { task: me }, life, duration)? {
-        Handoff::Switch(pa) => Ok(pa),
-        Handoff::Resume(()) => unreachable!("Alarm 无投信方"),
-    }
+    let wake_at = clock::now().add(duration).as_ticks() as usize;
+    alarm_block::<E>(task, wake_at, duration)
 }
 
 pub fn park_until<E: WaitFail>(at: u64) -> Result<Option<usize>, E> {
@@ -210,22 +160,9 @@ pub fn park_until<E: WaitFail>(at: u64) -> Result<Option<usize>, E> {
     let Some(task) = current().running_task() else {
         return Ok(Some(run()));
     };
-    let me = task.ident.id;
     let wait_ticks = at_ticks - now_ticks;
-    trace::note(EventKind::Room(RoomEvent::Park {
-        tid: me.get(),
-        wake_at: (clock::now().as_ticks() + wait_ticks) as usize,
-    }));
-    let life = task.life();
-    drop(task);
-    match wait(
-        WakeKey::Alarm { task: me },
-        life,
-        clock::ticks_to_duration(wait_ticks),
-    )? {
-        Handoff::Switch(pa) => Ok(Some(pa)),
-        Handoff::Resume(()) => unreachable!("Alarm 无投信方"),
-    }
+    let wake_at = (clock::now().as_ticks() + wait_ticks) as usize;
+    alarm_block::<E>(task, wake_at, clock::ticks_to_duration(wait_ticks)).map(Some)
 }
 
 pub fn wait<E: WaitFail>(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, E> {
@@ -241,7 +178,7 @@ pub fn fall<E: WaitFail>(me: TaskLife, dur: Duration) -> Result<Handoff<bool>, E
 }
 
 pub(crate) fn wipe(key: WakeKey) -> usize {
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     let chain = {
         let mut sites = sites(key).lock();
         sites.remove(&key)
@@ -253,11 +190,11 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
         }
         None => None,
     };
-    rise(Unchain { cur: chain })
+    rise(Unchain::new(chain))
 }
 
 pub(crate) fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     let mut fwd = Fwd::empty();
     let chain = {
         let mut sites = sites(key).lock();
@@ -271,10 +208,10 @@ pub(crate) fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
                 chain
             }
             None => {
-                if !Life::dead(life) && sites.try_reserve(1).is_ok() {
-                    let mut site = Site::new(life);
+                if !Life::dead(life)
+                    && let Ok(site) = Site::ensure(&mut sites, key, life)
+                {
                     site.pend = true;
-                    sites.insert(key, site);
                 }
                 None
             }
@@ -283,7 +220,7 @@ pub(crate) fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
         chain
     };
     fan_out(&fwd);
-    rise(Unchain { cur: chain })
+    rise(Unchain::new(chain))
 }
 
 pub(crate) fn forward(
@@ -293,11 +230,7 @@ pub(crate) fn forward(
     tole_life: Weak<Life>,
 ) -> Result<(), ()> {
     let mut sites = sites(key).lock();
-    if !sites.contains_key(&key) {
-        sites.try_reserve(1).map_err(|_| ())?;
-        sites.insert(key, Site::new(&life));
-    }
-    let site = sites.get_mut(&key).ok_or(())?;
+    let site = Site::ensure(&mut sites, key, &life)?;
     let r = site.fwd.attach(tole, tole_life);
     prune(&mut sites, key);
     r
@@ -312,7 +245,7 @@ pub(crate) fn unforward(key: WakeKey, tole: usize) {
 }
 
 pub(crate) fn signal(key: WakeKey) -> usize {
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     let mut fwd = Fwd::empty();
     let chain = {
         let mut sites = sites(key).lock();
@@ -327,7 +260,7 @@ pub(crate) fn signal(key: WakeKey) -> usize {
         chain
     };
     fan_out(&fwd);
-    rise(Unchain { cur: chain })
+    rise(Unchain::new(chain))
 }
 
 #[cfg(debug_assertions)]
@@ -338,7 +271,7 @@ pub(crate) fn site_count() -> usize {
 }
 
 pub(crate) fn wipe_space(space: Asid) -> usize {
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     let mut woken = 0usize;
     for shard in 0..SITE_SHARDS {
         loop {
@@ -351,16 +284,14 @@ pub(crate) fn wipe_space(space: Asid) -> usize {
                 key.and_then(|key| sites.remove(&key))
             };
             let Some(mut site) = taken else { break };
-            woken += rise(Unchain {
-                cur: site.chain.take(),
-            });
+            woken += rise(Unchain::new(site.chain.take()));
         }
     }
     woken
 }
 
 pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     debug_assert!(
         !matches!(key, WakeKey::Tole { .. }),
         "组键要走 knock（提示型/整链放行），不能走 wake（交付型/一人）"
@@ -370,7 +301,7 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
         if Life::dead(life) {
             let chain = sites.remove(&key).and_then(|mut site| site.chain.take());
             drop(sites);
-            rise(Unchain { cur: chain });
+            rise(Unchain::new(chain));
             return false;
         } else {
             let mut beacon_only = false;
@@ -387,10 +318,8 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
                     None
                 }
             };
-            if beacon_only && sites.try_reserve(1).is_ok() {
-                let mut site = Site::new(life);
+            if beacon_only && let Ok(site) = Site::ensure(&mut sites, key, life) {
                 site.pend = true;
-                sites.insert(key, site);
             }
             let fwd = sites.get(&key).map_or_else(Fwd::empty, |s| s.fwd.clone());
             prune(&mut sites, key);
@@ -405,7 +334,7 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
 }
 
 pub fn redeem() -> bool {
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     const MAX_DUE: usize = 64;
     let mut due = [0u64; MAX_DUE];
     let n = deadline::drain(clock::now(), &mut due);
@@ -437,14 +366,14 @@ pub(crate) fn unit_join(
     join: crate::core::work::unit::join::JoinWait,
 ) -> Result<Handoff<env::JoinReply>, env::UnitFail> {
     loop {
-        let _commit = crate::core::work::unit::commit();
+        let _commit = crate::core::work::commit();
         let reply = join.poll()?;
         if reply != env::JoinReply::Pending || join.remaining() == Duration::ZERO {
             return Ok(Handoff::Resume(reply));
         }
         let blocked = block_with_call::<env::UnitFail>(
-            join.key(),
-            join.life(),
+            join.target.key(),
+            join.target.life(),
             join.remaining(),
             Some(WaitCall::Join(join.clone())),
         )?;
@@ -458,13 +387,13 @@ pub(crate) fn unit_join(
 fn resume_join(task: &Arc<Task>, join: crate::core::work::unit::join::JoinWait) -> bool {
     use crate::machine::switcher::context::TrapContext;
     use env::JoinReply;
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     let result = join.poll();
     let result = if matches!(result, Ok(JoinReply::Pending)) && join.remaining() != Duration::ZERO {
         match requeue(
             task,
-            join.key(),
-            join.life(),
+            join.target.key(),
+            join.target.life(),
             join.remaining(),
             WaitCall::Join(join.clone()),
             env::UnitFail::OoM,
@@ -489,10 +418,7 @@ fn requeue<E: Copy>(
 ) -> Result<(), E> {
     {
         let mut table = sites(key).lock();
-        if !table.contains_key(&key) {
-            table.try_reserve(1).map_err(|_| oom)?;
-            table.insert(key, Site::new(&life));
-        }
+        Site::ensure(&mut table, key, &life).map_err(|()| oom)?;
     }
     let ticket = Ticket::next_id();
     if dur != Duration::MAX {
@@ -510,16 +436,11 @@ fn requeue<E: Copy>(
     Ok(())
 }
 
-#[derive(Clone)]
-pub(crate) enum WaitCall {
-    Join(crate::core::work::unit::join::JoinWait),
-    Mail(crate::core::work::mail::tole::AwaitWait),
-}
 pub(crate) fn mail_await(
     wait: crate::core::work::mail::tole::AwaitWait,
 ) -> Result<Handoff<env::AwaitReply>, env::MailFail> {
     loop {
-        let commit = crate::core::work::unit::commit();
+        let commit = crate::core::work::commit();
         let reply = match wait.poll() {
             Ok(reply) => reply,
             Err(e) => {
@@ -552,7 +473,7 @@ pub(crate) fn mail_await(
     }
 }
 fn resume_await(task: &Arc<Task>, wait: crate::core::work::mail::tole::AwaitWait) -> bool {
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     let result = wait.poll();
     let result =
         if matches!(result, Ok(env::AwaitReply::Pending)) && wait.remaining() != Duration::ZERO {

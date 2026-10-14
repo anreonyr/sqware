@@ -1,8 +1,16 @@
-use ::core::fmt::{self, Write};
+use ::core::fmt;
 
 use sbi::{DbcnCall, ecall::SArgs, fid::Dbcn};
 
 use crate::core::memory::manager::addr::VirtAddr;
+
+mod line;
+mod logger;
+mod sink;
+
+use line::Line;
+pub use logger::init;
+pub use sink::Sink;
 
 const IDENTITY_BASE: usize = 0x8000_0000;
 
@@ -10,33 +18,17 @@ fn identity_edge() -> usize {
     crate::machine::board::dram_edge().unwrap_or(0x9000_0000)
 }
 
-struct Console;
-
-impl Write for Console {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        let bytes = s.as_bytes();
-        let va = bytes.as_ptr() as usize;
-        let end = va + bytes.len();
-        if va >= IDENTITY_BASE && end <= identity_edge() {
-            DbcnCall::new(Dbcn::ConsoleWrite)
-                .args(SArgs {
-                    a0: bytes.len(),
-                    a1: va,
-                    ..Default::default()
-                })
-                .call()
-                .expect("Dbcn");
-        } else if let Some(pa) = translate_kernel(va, bytes.len()) {
-            DbcnCall::new(Dbcn::ConsoleWrite)
-                .args(SArgs {
-                    a0: bytes.len(),
-                    a1: pa,
-                    ..Default::default()
-                })
-                .call()
-                .expect("Dbcn");
-        }
-        Ok(())
+fn write(s: &str) {
+    let bytes = s.as_bytes();
+    if let Some(pa) = physical_buffer(bytes.as_ptr() as usize, bytes.len()) {
+        DbcnCall::new(Dbcn::ConsoleWrite)
+            .args(SArgs {
+                a0: bytes.len(),
+                a1: pa,
+                ..Default::default()
+            })
+            .call()
+            .expect("Dbcn");
     }
 }
 
@@ -44,13 +36,7 @@ pub fn read(buf: &mut [u8]) -> Option<usize> {
     if buf.is_empty() {
         return None;
     }
-    let va = buf.as_ptr() as usize;
-    let end = va + buf.len();
-    let pa = if va >= IDENTITY_BASE && end <= identity_edge() {
-        va
-    } else {
-        translate_kernel(va, buf.len())?
-    };
+    let pa = physical_buffer(buf.as_ptr() as usize, buf.len())?;
     let got = DbcnCall::new(Dbcn::ConsoleRead)
         .args(SArgs {
             a0: buf.len(),
@@ -60,6 +46,14 @@ pub fn read(buf: &mut [u8]) -> Option<usize> {
         .call()
         .ok()?;
     Some(got.min(buf.len()))
+}
+
+fn physical_buffer(va: usize, len: usize) -> Option<usize> {
+    if va >= IDENTITY_BASE && va + len <= identity_edge() {
+        Some(va)
+    } else {
+        translate_kernel(va, len)
+    }
 }
 
 fn translate_kernel(va: usize, len: usize) -> Option<usize> {
@@ -80,57 +74,10 @@ fn translate_kernel(va: usize, len: usize) -> Option<usize> {
     Some(pa0.as_usize())
 }
 
-const LINE_MAX: usize = 256;
-
-struct Line {
-    buf: [u8; LINE_MAX],
-    len: usize,
-}
-
-impl Line {
-    fn new() -> Self {
-        Line {
-            buf: [0u8; LINE_MAX],
-            len: 0,
-        }
-    }
-
-    fn emit(&mut self) {
-        if self.len == 0 {
-            return;
-        }
-        if let Ok(text) = ::core::str::from_utf8(&self.buf[..self.len]) {
-            let _ = Console.write_str(text);
-        }
-        self.len = 0;
-    }
-}
-
-impl Write for Line {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        if self.buf.len() - self.len >= s.len() {
-            self.buf[self.len..self.len + s.len()].copy_from_slice(s.as_bytes());
-            self.len += s.len();
-        } else {
-            self.emit();
-            let _ = Console.write_str(s);
-        }
-        Ok(())
-    }
-}
-
 pub fn _write(args: fmt::Arguments) {
     let mut line = Line::new();
     let _ = fmt::write(&mut line, args);
     line.emit();
-}
-
-pub struct Sink;
-impl Write for Sink {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        _write(format_args!("{s}"));
-        Ok(())
-    }
 }
 
 #[macro_export]
@@ -142,26 +89,4 @@ macro_rules! put {
 macro_rules! putln {
     () => { $crate::put!("\n") };
     ($($arg:tt)*) => { $crate::machine::console::_write(format_args!("{}\n", format_args!($($arg)*))) };
-}
-
-struct KernelLogger;
-static LOGGER: KernelLogger = KernelLogger;
-
-impl log::Log for KernelLogger {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= log::Level::Error
-    }
-
-    fn log(&self, record: &log::Record) {
-        if self.enabled(record.metadata()) {
-            _write(format_args!("[{}] {}\n", record.level(), record.args()));
-        }
-    }
-
-    fn flush(&self) {}
-}
-
-pub fn init() {
-    let _ = log::set_logger(&LOGGER);
-    log::set_max_level(log::LevelFilter::Error);
 }

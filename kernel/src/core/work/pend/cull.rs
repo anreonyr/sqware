@@ -5,6 +5,7 @@ use core::sync::atomic::Ordering;
 use env::{PieFail, PieToken, TaskId};
 
 use super::pie::{Heir, Pie};
+use crate::core::work::mail::pole::PoleOperation;
 use crate::core::work::unit::task::Task;
 
 pub(crate) struct Cleanup {
@@ -203,7 +204,7 @@ pub(super) fn cull(
                 }
                 let pole = root.mail().pole();
                 let _operation = if !closing && let Some(p) = &pole {
-                    let operation = p.operation().ok_or(PieFail::Busy)?;
+                    let operation = PoleOperation::acquire(p).ok_or(PieFail::Busy)?;
                     if p.reserved() != 0 {
                         return Err(PieFail::Busy);
                     }

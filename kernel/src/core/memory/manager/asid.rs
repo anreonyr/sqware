@@ -5,7 +5,7 @@ use crate::core::memory::allocator::bitmap::BitmapAllocator;
 use crate::machine::hart;
 use crate::machine::sync::{Level, SpinLock};
 
-use super::flush_asid;
+use super::MapError;
 
 mod error;
 
@@ -100,7 +100,7 @@ pub(crate) fn fail_next_shootdown(asid: Asid) {
 
 pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
     crate::core::memory::allocator::assert_allocation_allowed();
-    unsafe { flush_asid(asid) };
+    unsafe { flush(asid) };
 
     #[cfg(debug_assertions)]
     if FAIL_NEXT
@@ -150,3 +150,38 @@ pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
 }
 
 const _: () = assert!(ASID_BITS == 16);
+
+/// 本 hart 直接失效该 ASID 的 TLB（shootdown 的本地一半）。
+#[inline(always)]
+pub unsafe fn flush(asid: Asid) {
+    unsafe {
+        if asid.is_kernel() {
+            core::arch::asm!("sfence.vma zero, zero");
+        } else {
+            core::arch::asm!("sfence.vma zero, {}", in(reg) asid.get());
+        }
+    }
+}
+
+/// 让已写下的指令字节对所有在线地址空间的 hart 可见。
+pub fn sync_instructions() -> Result<(), MapError> {
+    unsafe { core::arch::asm!("fence rw, rw", options(nostack)) };
+    hart::request_instruction_sync();
+    unsafe { core::arch::asm!("fence rw, rw", "fence.i", options(nostack)) };
+    let me = hart::hart_id();
+    let mut mask = 0usize;
+    for h in (0..hart::hart_count()).map(hart::HartId::new) {
+        if h != me && lease(h).is_some() {
+            mask |= h.bit().1;
+        }
+    }
+    sbi::RfenceCall::new(sbi::fid::Rfence::RemoteFenceI)
+        .args(SArgs {
+            a0: mask,
+            a1: 0,
+            ..Default::default()
+        })
+        .call()
+        .map(|_| ())
+        .map_err(|_| MapError::NoRegion)
+}

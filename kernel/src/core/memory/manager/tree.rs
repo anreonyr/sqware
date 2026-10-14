@@ -30,9 +30,9 @@ use map::range::valid_leaf_flags;
 use state::TreeState;
 
 pub use borrowed_region::BorrowedRegion;
-pub use map::{Map, MapRange};
+pub(crate) use map::{Map, MapRange};
 
-pub struct Tree {
+pub(crate) struct Tree {
     asid: Asid,
     geometry: mode::Geo,
     state: ManuallyDrop<SpinLock<TreeState>>,

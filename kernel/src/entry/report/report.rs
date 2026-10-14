@@ -4,17 +4,13 @@ use serde::Serialize;
 use crate::machine::hart;
 use crate::machine::clock;
 
+mod paragraph;
+pub use paragraph::Paragraph;
+
 #[derive(Serialize, Default)]
 pub struct Report {
     seal: (usize, u64),
     pub paras: Vec<Paragraph>,
-}
-
-#[derive(Serialize)]
-pub struct Paragraph {
-    pub name: &'static str,
-    pub title: Option<String>,
-    pub items: Vec<Vec<Option<String>>>,
 }
 
 impl Report {

@@ -2,7 +2,7 @@ use super::*;
 
 #[cfg(debug_assertions)]
 pub fn acceptance() {
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     use crate::machine::hart::HartId;
     use crate::core::work::unit::{space::SpaceBuilder, team::TeamBuilder};
 
@@ -20,7 +20,7 @@ pub fn acceptance() {
     for task in &mut tasks {
         task.as_ref().transform_checked(TaskState::ready());
     }
-    let victim = Scheduler::new(HartId::new(0));
+    let victim = Conductor::new(HartId::new(0));
     assert!(victim.push(tasks[0].clone()));
     assert!(!victim.push(tasks[1].clone()));
     assert!(!victim.push(tasks[2].clone()));

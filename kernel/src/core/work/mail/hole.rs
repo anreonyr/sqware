@@ -1,5 +1,11 @@
+mod hand;
+mod pending;
+mod queue;
+mod reading;
+mod reservation;
+mod slot;
+
 use alloc::sync::{Arc, Weak};
-use alloc::{collections::VecDeque, vec::Vec};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::time::Duration;
 
@@ -12,39 +18,13 @@ use crate::core::work::room::messenger::{self, Handoff, WakeKey};
 use crate::core::work::unit::life::Life;
 use env::MailFail;
 
-enum Pending {
-    Queue(Queue),
-    Rung { count: usize, spare: VecDeque<Slot> },
-    Dead,
-}
+use pending::Pending;
+use queue::Queue;
+use slot::Slot;
 
-#[derive(Default)]
-struct Queue {
-    hands: VecDeque<Slot>,
-    taking: bool,
-    bytes: usize,
-}
-
-const RING_CAP: usize = 4;
-
-struct Hand {
-    from: TaskId,
-    buf: Arc<Vec<u8>>,
-    at: u64,
-}
-
-enum Slot {
-    Reserved(usize, usize),
-    Ready(Hand),
-}
-impl Slot {
-    fn hand(&self) -> Option<&Hand> {
-        match self {
-            Self::Ready(hand) => Some(hand),
-            Self::Reserved(..) => None,
-        }
-    }
-}
+pub(crate) use pending::{hush, ring};
+pub(crate) use reading::{peek, read};
+pub(crate) use reservation::reserve_len;
 
 pub struct HoleMeta {
     pub(crate) id: usize,
@@ -97,19 +77,10 @@ impl HoleMeta {
 
     pub(crate) fn ready(&self, dir: MailCondition) -> bool {
         let pending = self.pending.lock();
-        match dir {
-            MailCondition::Pull => match &*pending {
-                Pending::Queue(q) => q.hands.front().and_then(Slot::hand).is_some() && !q.taking,
-                Pending::Rung { count, .. } => *count > 0,
-                Pending::Dead => false,
-            },
-            MailCondition::Signal(_) => false,
-            MailCondition::Push => {
-                matches!(&*pending, Pending::Queue(q) if q.hands.len() < self.limits.max_messages && q.bytes < self.limits.max_bytes)
-            }
-            MailCondition::Empty => {
-                matches!(&*pending, Pending::Queue(q) if q.hands.is_empty() && !q.taking)
-            }
+        match &*pending {
+            Pending::Queue(queue) => queue.ready(dir, &self.limits),
+            Pending::Rung { count, .. } => dir == MailCondition::Pull && *count > 0,
+            Pending::Dead => false,
         }
     }
 }
@@ -122,249 +93,6 @@ impl Drop for HoleMeta {
 
 pub(crate) fn key(meta: &HoleMeta, dir: MailCondition) -> WakeKey {
     WakeKey::Hole { hole: meta.id, dir }
-}
-
-pub(crate) fn reserve_len(meta: &HoleMeta, len: usize) -> Result<Reservation<'_>, MailFail> {
-    static NEXT: AtomicUsize = AtomicUsize::new(1);
-    let mut pending = meta.pending.lock();
-    let q = match &mut *pending {
-        Pending::Queue(q) => q,
-        Pending::Dead => return Err(MailFail::Dead),
-        Pending::Rung { .. } => return Err(MailFail::Busy),
-    };
-    if len > meta.limits.max_len {
-        return Err(MailFail::Denied);
-    }
-    if q.hands.len() >= meta.limits.max_messages
-        || len > meta.limits.max_bytes.saturating_sub(q.bytes)
-    {
-        return Err(MailFail::Busy);
-    }
-    q.hands.try_reserve(1).map_err(|_| MailFail::OoM)?;
-    let id = NEXT
-        .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-        .map_err(|_| MailFail::OoM)?;
-    q.hands.push_back(Slot::Reserved(id, len));
-    q.bytes += len;
-    Ok(Reservation { meta, id: Some(id) })
-}
-
-pub(crate) struct Reservation<'a> {
-    meta: &'a HoleMeta,
-    id: Option<usize>,
-}
-impl Reservation<'_> {
-    pub(crate) fn commit(mut self, buf: Arc<Vec<u8>>, from: TaskId) -> Result<(), MailFail> {
-        if buf.is_empty() {
-            return Err(MailFail::Denied);
-        }
-        let at = clock::uptime_ticks();
-        {
-            let mut pending = self.meta.pending.lock();
-            let Pending::Queue(q) = &mut *pending else {
-                return Err(MailFail::Dead);
-            };
-            let at_slot = q
-                .hands
-                .iter()
-                .position(|slot| matches!(slot, Slot::Reserved(id, _) if Some(*id) == self.id))
-                .ok_or(MailFail::Dead)?;
-            let reserved_len = match q.hands[at_slot] {
-                Slot::Reserved(_, len) => len,
-                _ => unreachable!(),
-            };
-            if buf.len() > self.meta.limits.max_len {
-                return Err(MailFail::Denied);
-            }
-            if reserved_len != 0 && reserved_len != buf.len() {
-                return Err(MailFail::Denied);
-            }
-            let next_bytes = q.bytes - reserved_len;
-            if buf.len() > self.meta.limits.max_bytes.saturating_sub(next_bytes) {
-                return Err(MailFail::Busy);
-            }
-            q.bytes = next_bytes + buf.len();
-            q.hands[at_slot] = Slot::Ready(Hand { from, buf, at });
-            HANDS_LIVE.fetch_add(1, Ordering::Relaxed);
-            self.id = None;
-        }
-        let _ = messenger::wake(key(self.meta, MailCondition::Pull), &self.meta.life());
-        Ok(())
-    }
-}
-impl Drop for Reservation<'_> {
-    fn drop(&mut self) {
-        let Some(id) = self.id.take() else {
-            return;
-        };
-        let removed = {
-            let mut pending = self.meta.pending.lock();
-            match &mut *pending {
-                Pending::Queue(q) => {
-                    let at = q
-                        .hands
-                        .iter()
-                        .position(|slot| matches!(slot, Slot::Reserved(known, _) if *known == id));
-                    if let Some(Slot::Reserved(_, len)) = at.and_then(|at| q.hands.remove(at)) {
-                        q.bytes -= len;
-                        true
-                    } else {
-                        false
-                    }
-                }
-                _ => false,
-            }
-        };
-        if removed {
-            let _ = messenger::wake(key(self.meta, MailCondition::Pull), &self.meta.life());
-            let _ = messenger::wake(key(self.meta, MailCondition::Empty), &self.meta.life());
-            let _ = messenger::wake(key(self.meta, MailCondition::Push), &self.meta.life());
-        }
-    }
-}
-
-pub(crate) struct Reading<'a> {
-    meta: &'a HoleMeta,
-    pub(crate) from: TaskId,
-    pub(crate) bytes: Arc<Vec<u8>>,
-    finished: bool,
-}
-impl Reading<'_> {
-    pub(crate) fn finish(mut self) {
-        taken(self.meta);
-        self.finished = true;
-    }
-}
-impl Drop for Reading<'_> {
-    fn drop(&mut self) {
-        if !self.finished {
-            back(self.meta);
-        }
-    }
-}
-pub(crate) fn read(meta: &HoleMeta) -> Result<Reading<'_>, MailFail> {
-    let mut pending = meta.pending.lock();
-    let queue = match &mut *pending {
-        Pending::Queue(queue) => queue,
-        Pending::Dead => return Err(MailFail::Dead),
-        _ => return Err(MailFail::Busy),
-    };
-    if queue.taking {
-        return Err(MailFail::Busy);
-    }
-    let head = queue
-        .hands
-        .front()
-        .and_then(Slot::hand)
-        .ok_or(MailFail::Busy)?;
-    let reading = Reading {
-        meta,
-        from: head.from,
-        bytes: head.buf.clone(),
-        finished: false,
-    };
-    queue.taking = true;
-    Ok(reading)
-}
-
-fn taken(meta: &HoleMeta) {
-    let mut off = None;
-    {
-        let mut pending = meta.pending.lock();
-        if let Pending::Queue(q) = &mut *pending {
-            if q.taking {
-                q.taking = false;
-                off = q.hands.pop_front().and_then(|slot| match slot {
-                    Slot::Ready(hand) => {
-                        q.bytes -= hand.buf.len();
-                        Some(hand)
-                    }
-                    Slot::Reserved(_, len) => {
-                        q.bytes -= len;
-                        None
-                    }
-                });
-            }
-        }
-    }
-    if let Some(hand) = off {
-        let len = hand.buf.len();
-        HANDS_LIVE.fetch_sub(1, Ordering::Relaxed);
-        note_hand_off(meta, hand.from, len, hand.at);
-    }
-    let _ = messenger::wake(key(meta, MailCondition::Empty), &meta.life());
-    let _ = messenger::wake(key(meta, MailCondition::Push), &meta.life());
-    let _ = messenger::wake(key(meta, MailCondition::Pull), &meta.life());
-}
-
-fn back(meta: &HoleMeta) {
-    {
-        let mut pending = meta.pending.lock();
-        if let Pending::Queue(q) = &mut *pending {
-            q.taking = false;
-        }
-    }
-    let _ = messenger::wake(key(meta, MailCondition::Pull), &meta.life());
-}
-
-pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId, usize), MailFail> {
-    if !meta.alive() {
-        return Err(MailFail::Dead);
-    }
-    let pending = meta.pending.lock();
-    match &*pending {
-        Pending::Queue(q) => match q.hands.front().and_then(Slot::hand) {
-            Some(hand) => Ok((
-                hand.buf.len(),
-                hand.from,
-                q.hands.iter().filter_map(Slot::hand).count(),
-            )),
-            None => Err(MailFail::Busy),
-        },
-        _ => Err(MailFail::Busy),
-    }
-}
-
-pub(crate) fn ring(meta: &HoleMeta) -> Result<(), MailFail> {
-    if !meta.alive() {
-        return Err(MailFail::Dead);
-    }
-    {
-        let mut pending = meta.pending.lock();
-        match &mut *pending {
-            Pending::Queue(q) if q.hands.is_empty() && !q.taking => {
-                *pending = Pending::Rung {
-                    count: 1,
-                    spare: core::mem::take(&mut q.hands),
-                };
-            }
-            Pending::Rung { count, .. } if *count < RING_CAP => {
-                *count += 1;
-            }
-            _ => return Err(MailFail::Busy),
-        }
-    };
-    let _ = messenger::wake(key(meta, MailCondition::Pull), &meta.life());
-    Ok(())
-}
-
-pub(crate) fn hush(meta: &HoleMeta) -> Result<(), MailFail> {
-    let mut pending = meta.pending.lock();
-    match &mut *pending {
-        Pending::Rung { count, .. } if *count > 1 => *count -= 1,
-        Pending::Rung { spare, .. } => {
-            *pending = Pending::Queue(Queue {
-                hands: core::mem::take(spare),
-                taking: false,
-                bytes: 0,
-            });
-        }
-        _ => return Err(MailFail::Busy),
-    }
-    drop(pending);
-    let _ = messenger::wake(key(meta, MailCondition::Push), &meta.life());
-    let _ = messenger::wake(key(meta, MailCondition::Empty), &meta.life());
-    Ok(())
 }
 
 pub(crate) fn wait(
@@ -420,7 +148,7 @@ fn note_shape(meta: &HoleMeta) {
         Pending::Queue(q) => {
             if q.hands.is_empty() {
                 "queue-empty"
-            } else if q.hands.front().and_then(Slot::hand).is_none() {
+            } else if q.head().is_none() {
                 "queue-reserved"
             } else if q.taking {
                 "queue-taking"
@@ -447,7 +175,7 @@ fn elapsed_ms(at: u64) -> usize {
 fn hand_age(meta: &HoleMeta) -> Option<(TaskId, usize, usize)> {
     let pending = meta.pending.lock();
     let (from, len, at) = match &*pending {
-        Pending::Queue(q) => match q.hands.front().and_then(Slot::hand) {
+        Pending::Queue(q) => match q.head() {
             Some(hand) => (hand.from, hand.buf.len(), hand.at),
             None => return None,
         },

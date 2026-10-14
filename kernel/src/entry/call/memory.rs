@@ -5,24 +5,20 @@ use env::{MemoryCall, MemoryFail};
 use crate::core::memory::manager::Access;
 use crate::core::memory::manager::Memory;
 use crate::core::memory::manager::addr::VirtAddr as KVirt;
+use crate::core::work::mail::pole::PoleOperation;
 use crate::core::work::unit::task::TaskIdent;
-use crate::machine::switcher::context::{Gprs, TrapContext};
+use crate::machine::switcher::context::TrapContext;
 
-use super::ret_err;
+use super::outcome::answer;
 
 pub(super) fn dispatch(frame: &mut TrapContext, call: MemoryCall, ident: &Arc<TaskIdent>) {
-    let result = execute(call, ident);
-    match result {
-        Ok(value) => frame.gpr.set_x(Gprs::A0, value),
-        Err(error) => {
-            ret_err(frame, error);
-        }
-    }
+    answer(frame, execute(call, ident));
 }
 
 fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail> {
     use crate::core::work::pend::{self, Permission};
-    use crate::core::work::room::scheduler::core::{current, muster};
+    use crate::core::work::room::conductor::current;
+    use crate::core::work::room::scheduler::roster::muster;
     let raw_size = match call {
         MemoryCall::Allocate { size }
         | MemoryCall::Deallocate { size, .. }
@@ -126,7 +122,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 Some((pie, meta))
             };
             let _operation = match &source {
-                Some((_, meta)) => Some(meta.operation().ok_or(MemoryFail::Busy)?),
+                Some((_, meta)) => Some(PoleOperation::acquire(meta).ok_or(MemoryFail::Busy)?),
                 None => None,
             };
             let mut private = false;
@@ -206,7 +202,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 }
             }
             if access.contains(Access::EXECUTE) {
-                if let Err(error) = crate::core::memory::manager::sync_instructions() {
+                if let Err(error) = crate::core::memory::manager::asid::sync_instructions() {
                     let _ = space.memory.dispose(mapping);
                     return Err(error.into());
                 }
@@ -257,7 +253,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             if let Some(index) = staged {
                 let entry = target.staged_at(index).ok_or(MemoryFail::Denied)?;
                 let (meta, token) = (entry.meta.clone(), entry.token);
-                let _operation = meta.operation().ok_or(MemoryFail::Busy)?;
+                let _operation = PoleOperation::acquire(&meta).ok_or(MemoryFail::Busy)?;
                 space.memory.unmap_range(KVirt::wrap(addr.get()), size)?;
                 meta.detach_staging(token, target.id);
                 target.remove_staging(index);

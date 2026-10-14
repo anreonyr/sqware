@@ -53,6 +53,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn backtrace_chain_scan_and_gaps() {
+        kernel::entry::check::backtrace::walk();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn spare_budget() {
         kernel::entry::check::spare::accept();
     }

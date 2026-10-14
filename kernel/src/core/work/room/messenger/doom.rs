@@ -1,9 +1,10 @@
 use super::reap::reap;
 use super::wait::holder::Ticket;
-use super::wait::site::{SITE_SHARDS, WakeKey, shard_at};
+use super::wait::key::WakeKey;
+use super::wait::site::{SITE_SHARDS, shard_at};
 use super::{prune, void};
-use crate::core::work::room::Counter;
-use crate::core::work::room::scheduler::core::muster;
+use crate::core::work::room::counter::Counter;
+use crate::core::work::room::scheduler::roster::muster;
 use crate::core::work::unit::life::TeamLife;
 use crate::core::work::unit::task::{Task, TaskExitCause};
 use crate::core::work::unit::team::Team;
@@ -22,18 +23,18 @@ pub(crate) fn branch_stats() -> (usize, usize, usize, usize) {
     )
 }
 fn suspend(task: &Arc<Task>, cause: TaskExitCause, reason: usize) -> bool {
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     if task.dead() {
         return false;
     }
     if let Some(hart) = task.on_hart() {
         task.state.lock().doom(Some(hart), cause, reason);
         NUDGED.bump();
-        crate::core::work::room::conductor::nudge(hart);
+        crate::core::work::room::scheduler::idle::nudge(hart);
         return false;
     }
     if task.ready() && !task.stopped() {
-        assert!(crate::core::work::room::scheduler::core::remove_from_starved(
+        assert!(crate::core::work::room::scheduler::remove_from_starved(
             task
         ));
         CULL_STARVED.bump();
@@ -110,7 +111,7 @@ pub(crate) fn doom(task: &Arc<Task>) {
     while let Some(child) = task.heir_node(at) {
         at += 1;
         {
-            let _commit = crate::core::work::unit::commit();
+            let _commit = crate::core::work::commit();
             child.life.clear(task.ident.id, None);
         }
         child.cancel_staging().expect("cancel construction");

@@ -3,7 +3,7 @@ use core::num::NonZeroUsize;
 
 use crate::core::memory::manager::addr::VirtAddr;
 use crate::core::memory::manager::entry::PteFlags;
-use crate::core::memory::manager::table::MapError;
+use crate::core::memory::manager::MapError;
 
 /// 一段存活虚拟区间：ceiling 是权限上限，current 是当前叶子权限位。
 #[derive(Debug, Clone, Copy)]

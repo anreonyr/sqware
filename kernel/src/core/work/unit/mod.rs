@@ -1,68 +1,12 @@
-static COMMIT: crate::machine::sync::RelLock<()> =
-    crate::machine::sync::RelLock::new_level(crate::machine::sync::Level::Unit, ());
-
-#[cfg(debug_assertions)]
-pub(crate) fn assert_unlocked() {
-    assert!(
-        !COMMIT.held_by_current(),
-        "idle wait while holding Unit commit lock"
-    );
-}
-
-pub(crate) fn commit() -> crate::machine::sync::reentrant::RelLockGuard<'static, ()> {
-    COMMIT.lock()
-}
-
 pub(crate) mod capsule;
 pub(crate) mod copies;
 pub(crate) mod join;
 pub(crate) mod life;
 pub mod space;
+pub(crate) mod tally;
 pub(crate) mod task;
 pub(crate) mod team;
 
-use crate::core::memory::manager::{MapError, SpaceKind};
-use alloc::sync::Arc;
-
-use space::SpaceBuilder;
+use crate::core::memory::manager::MapError;
 
 pub type MapResult<T> = erra::Result<T, MapError>;
-
-pub(crate) fn build(
-    kind: SpaceKind,
-    sire: task::TaskWeak,
-) -> Result<Arc<team::Team>, MapError> {
-    let space = match kind {
-        SpaceKind::Supervisor => SpaceBuilder::supervisor(),
-        SpaceKind::User => SpaceBuilder::user(),
-    }
-    .build()?;
-    team::TeamBuilder::new(space)
-        .sire(sire)
-        .constructing()
-        .spawn()
-}
-
-pub(crate) fn oust(me: &Arc<task::Task>, id: env::TeamId) -> Result<(), env::UnitFail> {
-    let child = me.clan(id).ok_or(env::UnitFail::Denied)?;
-    let operation = child.operation().ok_or(env::UnitFail::Busy)?;
-    {
-        let _commit = commit();
-        if !child.all_reaped() {
-            return Err(env::UnitFail::Busy);
-        }
-    }
-    child.cancel_staging().map_err(|_| env::UnitFail::Denied)?;
-    let retired = {
-        let _commit = commit();
-        child.state.lock().phase = team::TeamPhase::Ousted;
-        child.life.clear(me.ident.id, None);
-        let sire = child.sire.upgrade();
-        let detached = sire.as_ref().and_then(|sire| sire.oust(id));
-        child.life.prune();
-        (sire, detached)
-    };
-    drop(operation);
-    drop(retired);
-    Ok(())
-}

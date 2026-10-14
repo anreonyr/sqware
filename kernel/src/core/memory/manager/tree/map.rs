@@ -7,7 +7,7 @@ use crate::core::memory::manager::addr::VirtAddr;
 use crate::core::memory::manager::entry::PteFlags;
 #[cfg(debug_assertions)]
 use crate::core::memory::manager::frame::Frame;
-use crate::core::memory::manager::table::MapError;
+use crate::core::memory::manager::MapError;
 use crate::machine::sync::{Level, SpinLock};
 
 use super::Tree;
@@ -22,7 +22,7 @@ pub use range::MapRange;
 use state::MapState;
 
 /// 一段虚拟区间映射。
-pub struct Map {
+pub(crate) struct Map {
     pub(super) tree: Weak<Tree>,
     pub(super) initial_start: VirtAddr,
     pub(super) initial_size: NonZeroUsize,

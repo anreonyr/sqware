@@ -67,8 +67,8 @@ pub(crate) use handoff::Handoff;
 pub(crate) use reap::{hook, quit};
 pub(crate) use wait::holder::Ticket;
 #[cfg(debug_assertions)]
-pub(crate) use wait::site::FWD_MAX;
-pub(crate) use wait::site::WakeKey;
+pub(crate) use wait::fwd::FWD_MAX;
+pub(crate) use wait::key::WakeKey;
 #[cfg(debug_assertions)]
 pub(crate) use wait::site_count;
 pub(crate) use wait::{
@@ -94,4 +94,5 @@ pub(crate) fn probe_bookkeeping() -> (usize, usize) {
 
 pub(crate) use wait::unit_join;
 
-pub(crate) use wait::{WaitCall, mail_await};
+pub(crate) use wait::call::WaitCall;
+pub(crate) use wait::mail_await;

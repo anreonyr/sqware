@@ -5,7 +5,7 @@ use env::{ControlCall, DebugCall, EnvCall, MemoryCall, ProgramKind, RoomCall, Un
 
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::{addr::VirtAddr as KVirt, entry::PteFlags, mode};
-use crate::entry::report::frame::StackReader;
+use crate::entry::report::backtrace::StackReader;
 use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::entry::call as envcall;
 use crate::core::work::mail::{Mail, hole, pole};
@@ -75,7 +75,7 @@ impl Drop for Caller {
 }
 
 pub fn abi_and_privilege() {
-    crate::core::work::room::scheduler::boot::init().expect("scheduler init");
+    crate::core::work::room::scheduler::init().expect("scheduler init");
     use env::wire::{Decode, Wire};
     let user = Caller::new(false);
     assert!(user.raw(3usize << 32, [0; 6]) < 0);
@@ -213,7 +213,7 @@ pub fn abi_and_privilege() {
 }
 
 pub fn memory() {
-    crate::core::work::room::scheduler::boot::init().expect("scheduler init");
+    crate::core::work::room::scheduler::init().expect("scheduler init");
     let user = Caller::new(false);
     let zero = user.allocate(0);
     assert_eq!(
@@ -423,7 +423,7 @@ pub fn memory() {
 }
 
 pub fn pointers() {
-    crate::core::work::room::scheduler::boot::init().expect("scheduler init");
+    crate::core::work::room::scheduler::init().expect("scheduler init");
     let user = Caller::new(false);
     let at = user.allocate(PAGE_SIZE);
     assert!(user.team.space.memory.copy_out(b"readable", at));
@@ -509,7 +509,7 @@ pub fn pointers() {
 }
 
 pub fn capability() {
-    crate::core::work::room::scheduler::boot::init().expect("scheduler init");
+    crate::core::work::room::scheduler::init().expect("scheduler init");
     let user = Caller::new(false);
     let foreign = Caller::new(false);
     let meta = hole::HoleMeta::new(user.task.ident.id);
@@ -587,7 +587,7 @@ pub fn capability() {
         assert!(user.call(EnvCall::Memory(call)) < 0);
     }
     assert!(user.team.space.memory.validate_read(at, size));
-    let operation = pole.operation().expect("pole operation lease");
+    let operation = pole::PoleOperation::acquire(&pole).expect("pole operation lease");
     assert_eq!(pole::shut(&pole, token), Err(env::PieFail::Busy));
     drop(operation);
     pole::shut(&pole, token).unwrap();
@@ -598,7 +598,7 @@ pub fn resource_registration() {
     use crate::entry::boot::resources::Registry;
     use crate::entry::{call::resources as calls, trap::resources as traps};
     use env::{Call, Mark, Name, PieFail, PieToken, Trap};
-    crate::core::work::room::scheduler::boot::init().expect("scheduler init");
+    crate::core::work::room::scheduler::init().expect("scheduler init");
     let system = Caller::new(true);
     let service = Caller::new(false);
     let other = Caller::new(false);
@@ -779,7 +779,7 @@ pub fn resource_registration() {
 pub fn transfer_relations() {
     use alloc::vec::Vec;
     use env::{Mark, PieFail, PieToken};
-    crate::core::work::room::scheduler::boot::init().expect("scheduler init");
+    crate::core::work::room::scheduler::init().expect("scheduler init");
     let a = Caller::new(false);
     let b = Caller::new(false);
     let c = Caller::new(false);
@@ -864,9 +864,9 @@ pub fn transfer_relations() {
     let ad = grant(&a.task, memory, &d.task, permission);
     grant(&d.task, ad, &c.task, permission);
     {
-        let _operation = meta.operation().unwrap();
+        let _operation = pole::PoleOperation::acquire(&meta).unwrap();
         {
-            let _commit = crate::core::work::unit::commit();
+            let _commit = crate::core::work::commit();
             d.task.state.lock().doom(None, env::ExitCause::Slay, 0);
         }
         pend::doom(&d.task);
@@ -878,7 +878,7 @@ pub fn transfer_relations() {
     let ab = grant(&a.task, token, &b.task, permission);
     grant(&b.task, ab, &c.task, permission);
     {
-        let _commit = crate::core::work::unit::commit();
+        let _commit = crate::core::work::commit();
         b.task.state.lock().doom(None, env::ExitCause::Slay, 0);
     }
     pend::doom(&b.task);
@@ -902,7 +902,7 @@ pub fn unit_scan_and_receipts() {
     use crate::core::work::unit::task::{TaskState, TaskWeak};
     use alloc::vec::Vec;
     use env::{UnitFail, UnitTarget, Wait};
-    crate::core::work::room::scheduler::boot::init().unwrap();
+    crate::core::work::room::scheduler::init().unwrap();
     let caller = Caller::new(false);
     let mut children = Vec::new();
     for _ in 0..73 {
@@ -959,7 +959,7 @@ pub fn unit_scan_and_receipts() {
     );
     target.release_held(&task);
     *task.state.lock() = TaskState::reaped(env::ExitCause::Reap, 17);
-    crate::core::work::room::conductor::exit();
+    crate::core::work::unit::tally::exit();
     assert_eq!(caller.call(observe), env::ExitCause::Reap as isize);
     assert_eq!(caller.call(observe), env::ExitCause::Reap as isize);
     assert_eq!(

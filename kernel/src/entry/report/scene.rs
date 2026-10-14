@@ -10,20 +10,13 @@ use riscv::register::{satp, scause, sepc, sscratch, sstatus, stval, stvec};
 
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::addr::VirtAddr;
-use crate::entry::report::frame::{self, ResolveCfg, StackReader};
+use crate::entry::report::backtrace::{self, Backtrace, StackReader, WalkConfig};
 use crate::entry::report::report::Report;
 use crate::machine::switcher::context::{Gprs, TrapContext};
-use crate::core::work::room::scheduler::core::ident;
+use crate::core::work::room::identity::ident;
 use crate::core::memory::manager::SpaceKind;
 
-use super::backtrace::{backtrace_rows, symbol};
-
-#[allow(unused_imports)]
-pub use super::backtrace::{Backtrace, FrameKind, FrameResolver};
-
-fn hex(x: usize) -> String {
-    format!("{x:#018x}")
-}
+use super::render::{address_label, backtrace_rows, hex};
 
 fn gprs() -> [usize; 32] {
     let mut r = [0usize; 32];
@@ -63,19 +56,13 @@ fn gprs() -> [usize; 32] {
     r
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Registers {
-    pub pc: VirtAddr,
-    pub sp: VirtAddr,
-    pub fp: VirtAddr,
-}
-
 #[derive(Debug)]
 pub struct Scene {
     pub hart: crate::machine::hart::HartId,
     pub task: Option<usize>,
-    pub space: SpaceKind,
-    pub reg: Registers,
+    pc: VirtAddr,
+    sp: VirtAddr,
+    fp: VirtAddr,
     pub(crate) backtrace: Backtrace,
     cause: Option<Trap<Interrupt, Exception>>,
 }
@@ -96,23 +83,19 @@ impl Scene {
         let ceiling = match crate::machine::switcher::stack::trap_stack_hart(sp)
             .map(crate::machine::switcher::stack::trap_stack_edge)
         {
-            Some(edge) => sp.saturating_add(frame::SPAN).min(edge.as_usize()),
-            None => sp.saturating_add(frame::SPAN),
+            Some(edge) => sp.saturating_add(backtrace::SPAN).min(edge.as_usize()),
+            None => sp.saturating_add(backtrace::SPAN),
         };
         let mut reader = StackReader::new(satp::read().bits() & ((1usize << 44) - 1));
-        let cfg = ResolveCfg::kernel(ceiling);
+        let cfg = WalkConfig::kernel(ceiling);
         let code = |w: usize| VirtAddr::from_raw(w).is_kernel();
-        let r = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
-        let backtrace = Backtrace::from_walk(r);
+        let backtrace = Backtrace::walk(&mut reader, &cfg, sp, fp, Some(&code));
         Some(Scene {
             hart: crate::machine::hart::hart_id(),
             task: ident().map(|i| i.task_id()),
-            space: SpaceKind::Supervisor,
-            reg: Registers {
-                pc: VirtAddr::from_raw(sepc::read()),
-                sp: VirtAddr::from_raw(sp),
-                fp: VirtAddr::from_raw(fp),
-            },
+            pc: VirtAddr::from_raw(sepc::read()),
+            sp: VirtAddr::from_raw(sp),
+            fp: VirtAddr::from_raw(fp),
             cause: scause::read().cause().try_into().ok(),
             backtrace,
         })
@@ -135,19 +118,15 @@ impl Scene {
         }
         let fp = frame.gpr.x(Gprs::S0);
         let mut reader = StackReader::new(frame.user_satp.ppn());
-        let cfg = ResolveCfg::normal(world, sp.saturating_add(frame::SPAN));
+        let cfg = WalkConfig::normal(world, sp.saturating_add(backtrace::SPAN));
         let code = |w: usize| VirtAddr::from_raw(w).is_user();
-        let r = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
-        let backtrace = Backtrace::from_walk(r);
+        let backtrace = Backtrace::walk(&mut reader, &cfg, sp, fp, Some(&code));
         Some(Scene {
             hart: crate::machine::hart::hart_id(),
             task: Some(info.task_id()),
-            space: world,
-            reg: Registers {
-                pc: frame.sepc,
-                sp: VirtAddr::from_raw(sp),
-                fp: VirtAddr::from_raw(fp),
-            },
+            pc: frame.sepc,
+            sp: VirtAddr::from_raw(sp),
+            fp: VirtAddr::from_raw(fp),
             cause: None,
             backtrace,
         })
@@ -184,7 +163,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     rows.push(vec![
         Some("sepc".into()),
         Some(hex(sepc::read())),
-        Some(symbol(VirtAddr::from_raw(sepc::read()))),
+        Some(address_label(VirtAddr::from_raw(sepc::read()))),
     ]);
     {
         let a = stval::read();
@@ -207,7 +186,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     rows.push(vec![
         Some("stvec".into()),
         Some(hex(stvec::read().address())),
-        Some(symbol(VirtAddr::from_raw(stvec::read().address()))),
+        Some(address_label(VirtAddr::from_raw(stvec::read().address()))),
     ]);
     {
         let scr = sscratch::read();
@@ -321,9 +300,9 @@ fn scene_rows(scene: &Scene) -> Vec<Vec<Option<String>>> {
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| "-".into()),
         ),
-        Some(hex(scene.reg.pc.as_usize())),
-        Some(hex(scene.reg.sp.as_usize())),
-        Some(hex(scene.reg.fp.as_usize())),
+        Some(hex(scene.pc.as_usize())),
+        Some(hex(scene.sp.as_usize())),
+        Some(hex(scene.fp.as_usize())),
         Some(cause),
     ]);
     rows
@@ -353,12 +332,12 @@ pub fn dump(r: &mut Report) {
     if let Some(scene) = kernel_scene.as_ref() {
         r.paragraph("kbt", None)
             .items
-            .extend(backtrace_rows(scene, "kbt"));
+            .extend(backtrace_rows(&scene.backtrace, "kbt"));
     }
     if let Some(scene) = Scene::capture_normal() {
         r.paragraph("nbt", None)
             .items
-            .extend(backtrace_rows(&scene, "nbt"));
+            .extend(backtrace_rows(&scene.backtrace, "nbt"));
     }
 
     crate::entry::report::trace::panic_dump(r);

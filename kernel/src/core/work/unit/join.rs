@@ -1,16 +1,12 @@
-use super::life::TeamLife;
-use super::team::{Member, TeamPhase, TeamStage};
 use crate::machine::clock;
 use crate::machine::switcher::context::{Gprs, TrapContext};
 use alloc::sync::Arc;
 use core::time::Duration;
 use env::{JoinReply, TaskId, UnitFail, Wait};
 
-#[derive(Clone)]
-pub(crate) enum JoinTarget {
-    Task(Arc<Member>),
-    Team(Arc<TeamLife>),
-}
+mod target;
+pub(crate) use target::JoinTarget;
+
 #[derive(Clone)]
 pub(crate) struct JoinWait {
     pub target: JoinTarget,
@@ -35,20 +31,8 @@ impl JoinWait {
             clock::ticks_to_duration(at.saturating_sub(clock::now().as_ticks()))
         })
     }
-    pub fn key(&self) -> crate::core::work::room::messenger::WakeKey {
-        match &self.target {
-            JoinTarget::Task(m) => crate::core::work::room::messenger::WakeKey::Task { id: m.id },
-            JoinTarget::Team(t) => crate::core::work::room::messenger::WakeKey::Team { id: t.id },
-        }
-    }
-    pub fn life(&self) -> alloc::sync::Weak<super::life::Life> {
-        match &self.target {
-            JoinTarget::Task(m) => Arc::downgrade(&m.life),
-            JoinTarget::Team(t) => Arc::downgrade(&t.life),
-        }
-    }
     pub fn poll(&self) -> Result<JoinReply, UnitFail> {
-        let _commit = super::commit();
+        let _commit = crate::core::work::commit();
         let member = match &self.target {
             JoinTarget::Task(m) => {
                 if self.receive && !m.pending(self.owner) {
@@ -58,11 +42,7 @@ impl JoinWait {
             }
             JoinTarget::Team(t) => {
                 if !self.receive {
-                    let constructing = {
-                        let state = t.state.lock();
-                        matches!(state.stage, TeamStage::Constructing)
-                            && !matches!(state.phase, TeamPhase::Doomed | TeamPhase::Ousted)
-                    };
+                    let constructing = t.state.lock().constructing();
                     return Ok(if !constructing && t.all_reaped() {
                         JoinReply::Complete
                     } else {
@@ -79,7 +59,7 @@ impl JoinWait {
                     return Err(UnitFail::Denied);
                 }
                 let next = t.next(self.owner);
-                if next.is_none() && matches!(t.state.lock().phase, TeamPhase::Ousted) {
+                if next.is_none() && t.state.lock().phase.ousted() {
                     return Err(UnitFail::Denied);
                 }
                 next
@@ -122,26 +102,13 @@ pub(crate) fn observe(
     me: &Arc<super::task::Task>,
     target: env::UnitTarget,
 ) -> Result<JoinTarget, UnitFail> {
-    let _commit = super::commit();
+    let _commit = crate::core::work::commit();
     match target {
         env::UnitTarget::Team(id) => {
-            fn find(root: &Arc<TeamLife>, id: env::TeamId) -> Option<Arc<TeamLife>> {
-                if root.id == id {
-                    return Some(root.clone());
-                }
-                let mut at = 0;
-                loop {
-                    let child = root.children.lock().get(at).cloned()?;
-                    at += 1;
-                    if let Some(found) = find(&child, id) {
-                        return Some(found);
-                    }
-                }
-            }
             if id == me.ident.team.id {
                 return Err(UnitFail::Denied);
             }
-            find(&me.ident.team.life, id)
+            me.ident.team.life.find_team(id)
                 .map(JoinTarget::Team)
                 .ok_or(UnitFail::Denied)
         }

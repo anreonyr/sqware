@@ -8,7 +8,7 @@ use crate::core::work::unit::copies::Origin;
 use crate::core::work::unit::task::{Task, TaskWeak};
 use crate::machine::sync::{Level, OnceLock, SpinLock};
 
-use super::site::WakeKey;
+use super::key::WakeKey;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Ticket(pub(super) u64);

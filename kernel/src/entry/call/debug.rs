@@ -3,6 +3,8 @@ use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::core::work::unit::task::TaskIdent;
 use env::DebugFail;
 
+use super::outcome::ret_err;
+
 pub static TRACE: ::core::sync::atomic::AtomicBool = ::core::sync::atomic::AtomicBool::new(false);
 
 const DBCN_MAX: usize = 256;
@@ -12,21 +14,22 @@ pub(super) fn put(
     ident: &TaskIdent,
     buf: usize,
     len: usize,
-) -> *mut TrapContext {
+) {
     if len == 0 {
-        return err(frame, DebugFail::Denied);
+        ret_err(frame, DebugFail::Denied);
+        return;
     }
     let n = len.min(DBCN_MAX);
     let mut text = [0u8; DBCN_MAX];
     let space = &ident.team.space;
     if !crate::core::memory::manager::Memory::user_range(buf, len) || !space.memory.copy_in(&mut text[..n], buf)
     {
-        return err(frame, DebugFail::Denied);
+        ret_err(frame, DebugFail::Denied);
+        return;
     }
     let text = ::core::str::from_utf8(&text[..n]).unwrap_or("<non-utf8>");
     putln!("{text}");
     frame.gpr.set_x(Gprs::A0, n);
-    frame
 }
 
 pub(super) fn get(
@@ -34,37 +37,37 @@ pub(super) fn get(
     ident: &TaskIdent,
     buf: usize,
     len: usize,
-) -> *mut TrapContext {
+) {
     if len == 0 || len > DBCN_MAX {
-        return err(frame, DebugFail::Denied);
+        ret_err(frame, DebugFail::Denied);
+        return;
     }
     if !ident.team.space.memory.validate_write(buf, len) {
-        return err(frame, DebugFail::Denied);
+        ret_err(frame, DebugFail::Denied);
+        return;
     }
     let mut stage = [0u8; DBCN_MAX];
     let n = match crate::machine::console::read(&mut stage[..len]) {
         Some(n) if n <= len => n,
-        _ => return err(frame, DebugFail::Denied),
+        _ => {
+            ret_err(frame, DebugFail::Denied);
+            return;
+        }
     };
     if n == 0 {
         frame.gpr.set_x(Gprs::A0, 0);
-        return frame;
+        return;
     }
     let space = &ident.team.space;
     if !space.memory.copy_out(&stage[..n], buf) {
-        return err(frame, DebugFail::Denied);
+        ret_err(frame, DebugFail::Denied);
+        return;
     }
     frame.gpr.set_x(Gprs::A0, n);
-    frame
 }
 
 pub(super) fn set_trace(on: usize) -> usize {
     let v = on != 0;
     TRACE.store(v, ::core::sync::atomic::Ordering::Relaxed);
     v as usize
-}
-
-fn err(frame: &mut TrapContext, e: DebugFail) -> *mut TrapContext {
-    frame.gpr.set_x(Gprs::A0, e.code() as usize);
-    frame
 }

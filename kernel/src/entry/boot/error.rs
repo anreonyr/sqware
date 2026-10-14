@@ -9,6 +9,12 @@ use crate::machine::clock::ClockError;
 use crate::entry::report::halt;
 use crate::core::work::record::trace::TraceInitError;
 
+mod map_operation;
+mod resource_operation;
+
+pub use map_operation::MapOperation;
+pub use resource_operation::ResourceOperation;
+
 const TITLE: &str = "sqware: boot failed";
 
 #[derive(Debug)]
@@ -50,31 +56,11 @@ pub enum BootError {
     },
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum MapOperation {
-    AssembleCapsule,
-    ImageView,
-    LedgerView,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ResourceOperation {
-    InitializeTraps,
-    InitializeCalls,
-    Devices,
-    Traps,
-    Calls,
-    Freeze,
-    LedgerSize,
-    Grant,
-    WriteLedger,
-}
-
 impl BootError {
-    fn fields(&self, out: &mut ConsoleFields<'_, impl Write>) -> fmt::Result {
+    fn fields(&self, out: &mut impl Write) -> fmt::Result {
         macro_rules! field {
             ($key:literal, $($value:tt)*) => {
-                out.field($key, format_args!($($value)*))?
+                writeln!(out, "  {:<10} {}", $key, format_args!($($value)*))?
             };
         }
         macro_rules! reason {
@@ -127,33 +113,11 @@ impl BootError {
                 field!("reason", "invalid entry descriptor or capsule range");
             }
             Self::Mapping { operation, source } => {
-                field!(
-                    "operation",
-                    "{}",
-                    match operation {
-                        MapOperation::AssembleCapsule => "assemble boot capsule",
-                        MapOperation::ImageView => "map boot image",
-                        MapOperation::LedgerView => "map resource ledger",
-                    }
-                );
+                field!("operation", "{}", operation.label());
                 field!("reason", "{source}");
             }
             Self::Resources { operation, source } => {
-                field!(
-                    "operation",
-                    "{}",
-                    match operation {
-                        ResourceOperation::InitializeTraps => "initialize trap resources",
-                        ResourceOperation::InitializeCalls => "initialize call resources",
-                        ResourceOperation::Devices => "register device resources",
-                        ResourceOperation::Traps => "register trap resources",
-                        ResourceOperation::Calls => "register call resources",
-                        ResourceOperation::Freeze => "freeze resources",
-                        ResourceOperation::LedgerSize => "size resource ledger",
-                        ResourceOperation::Grant => "grant bootstrap resources",
-                        ResourceOperation::WriteLedger => "write resource ledger",
-                    }
-                );
+                field!("operation", "{}", operation.label());
                 field!("reason", "{source}");
             }
             Self::Bootstrap(source) => reason!("create bootstrap task", source),
@@ -174,16 +138,8 @@ impl BootError {
 
     fn print(&self, sink: &mut impl Write) {
         let _ = writeln!(sink, "{TITLE}\n");
-        let _ = self.fields(&mut ConsoleFields(sink));
+        let _ = self.fields(sink);
         let _ = writeln!(sink);
-    }
-}
-
-struct ConsoleFields<'a, W>(&'a mut W);
-
-impl<W: Write> ConsoleFields<'_, W> {
-    fn field(&mut self, key: &'static str, value: fmt::Arguments<'_>) -> fmt::Result {
-        writeln!(self.0, "  {key:<10} {value}")
     }
 }
 
@@ -204,68 +160,7 @@ pub fn fail(error: BootError) -> ! {
 }
 
 #[cfg(debug_assertions)]
-pub fn accept() {
-    struct Buffer {
-        bytes: [u8; 2048],
-        len: usize,
-    }
-    impl Buffer {
-        fn new() -> Self {
-            Self {
-                bytes: [0; 2048],
-                len: 0,
-            }
-        }
-        fn text(&self) -> &str {
-            ::core::str::from_utf8(&self.bytes[..self.len]).unwrap()
-        }
-    }
-    impl Write for Buffer {
-        fn write_str(&mut self, text: &str) -> fmt::Result {
-            let end = self.len.checked_add(text.len()).ok_or(fmt::Error)?;
-            let dest = self.bytes.get_mut(self.len..end).ok_or(fmt::Error)?;
-            dest.copy_from_slice(text.as_bytes());
-            self.len = end;
-            Ok(())
-        }
-    }
-
-    let mut output = Buffer::new();
-    {
-        let _guard = crate::core::memory::allocator::NoAllocation::enter();
-        BootError::Allocator(erra::Error::new(
-            "initializing allocator",
-            InitError::OutOfMemory,
-        ))
-        .print(&mut output);
-    }
-    assert_eq!(
-        output.text(),
-        concat!(
-            "sqware: boot failed\n\n",
-            "  operation  initialize allocator\n",
-            "  context    initializing allocator\n",
-            "  reason     memory allocation failed while initializing allocator\n\n",
-        )
-    );
-
-    let error = BootError::HartStart {
-        hart: HartId::new(2),
-        source: erra::Error::new("s-mode environment call", sbi::ecall::SError::Denied),
-    };
-    let mut output = Buffer::new();
-    {
-        let _guard = crate::core::memory::allocator::NoAllocation::enter();
-        error.print(&mut output);
-    }
-    assert_eq!(
-        output.text(),
-        concat!(
-            "sqware: boot failed\n\n",
-            "  operation  start hart\n",
-            "  hart       2\n",
-            "  context    s-mode environment call\n",
-            "  reason     access denied\n\n",
-        )
-    );
-}
+#[path = "../../../tests/health/boot_errors.rs"]
+mod tests;
+#[cfg(debug_assertions)]
+pub use tests::accept;

@@ -1,5 +1,6 @@
 use super::pie::Permission;
 use crate::core::work::grant::narrows;
+use crate::core::work::mail::pole::PoleOperation;
 use env::PieFail;
 
 pub(crate) fn reduce(
@@ -36,7 +37,7 @@ fn reduce_locked(
                 PteFlags::empty()
             };
         let meta = &p;
-        let _operation = meta.operation().ok_or(PieFail::Busy)?;
+        let _operation = PoleOperation::acquire(meta).ok_or(PieFail::Busy)?;
         let reserved = meta.reserved();
         let target = if reserved == 0 {
             None
@@ -52,7 +53,7 @@ fn reduce_locked(
         };
         crate::core::work::mail::pole::narrow(meta, token, flags)?;
         let _pend = task.pend.lock();
-        let _commit = crate::core::work::unit::commit();
+        let _commit = crate::core::work::commit();
         let mut pies = task.pend.pies.lock();
         let pie = pies
             .iter_mut()
@@ -63,7 +64,7 @@ fn reduce_locked(
         return Ok(());
     }
     let _pend = task.pend.lock();
-    let _commit = crate::core::work::unit::commit();
+    let _commit = crate::core::work::commit();
     let mut pies = task.pend.pies.lock();
     let pie = pies
         .iter_mut()

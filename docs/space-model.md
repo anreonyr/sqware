@@ -55,7 +55,7 @@ Tree 修改页表后先完成本地及远端 TLB 失效，完成后才丢弃延�
 
 `machine::sync::Level` 的递增顺序为 `Unit < Scheduler < Space < Tree < Map < TeamTasks < L3 < Roster < Asid < Frame < Block < Tally < Spare < UnitState`。新增锁必须按严格递增次序取得；debug 构建会检测递归获取、倒序和跟踪容量越界。锁与其守卫分别定义，守卫作为锁的子模块访问私有字段。持锁集长度由 `Vec::len()` 给出，不另存一份计数；8 个槽是初始容量，不是不可扩展的上限。
 
-ASID shootdown 总是刷新本 hart。远端 kernel shootdown 依据 `ONLINE` 原子位图，用户 Tree shootdown 依据各 hart 当前 ASID lease。次级 hart 在启动入口发布 online 位（Release），shootdown 侧用 Acquire 读取；切换地址空间时 ASID lease 也以 Release 写、Acquire 读。这样 kernel 映射修改会覆盖已 online 的 hart，即使其当前 lease 不是该 kernel ASID。启动请求路径仍写入 `STARTED_HARTS`，但没有读取者；它不是在线状态或 ASID lease 的来源。
+ASID shootdown 总是刷新本 hart。远端 kernel shootdown 依据 `ONLINE` 原子位图，用户 Tree shootdown 依据各 hart 当前 ASID lease。次级 hart 在启动入口发布 online 位（Release），shootdown 侧用 Acquire 读取；切换地址空间时 ASID lease 也以 Release 写、Acquire 读。这样 kernel 映射修改会覆盖已 online 的 hart，即使其当前 lease 不是该 kernel ASID。
 
 保留的 `MapError` 覆盖物理内存不足、未对齐、已映射/未映射、无所属区域、权限上限不可加宽、DRAM 布局重叠、shootdown 失败和内核 Tree pinned。普通接口保留既有失败码映射，shootdown 未完成对应 Busy，不丢弃映射资源或重用 reservation。
 
@@ -138,7 +138,7 @@ Pend 与 Trace 的宿主套件通过 `#[path]` 编译生产实现，运行时必
 workspace `--all-targets` 会把 stream 的宿主 std 测试编译到裸机目标，在迁移前即失败；
 生产 workspace 与 kernel 测试目标分别检查，不修改源码掩盖这个目标口径差异。
 
-### Memory 接口与内部原语验收
+### Memory 接口与内部原语验收（接口批次）
 
 - workspace debug/release、kernel all-targets debug/release，以及 semihosting 两档编译检查通过。
 - `nu scripts/qtest.nu --package kernel`：45 项健康用例通过；未带 initrd 的 scene 单独报预期失败，整次命令退出码为 101。
@@ -150,11 +150,70 @@ workspace `--all-targets` 会把 stream 的宿主 std 测试编译到裸机目�
 - Layout 用例覆盖字节取整、零大小、指定地址、超对齐、最低空档复用、错误 owner、失败回收与共享视图；eager、lazy、view 三条路径都实际核对超对齐。
 - 普通内存调用入口不包含 PTE、物理帧、页大小或地址桶的组装；生产 Memory backend 借用为 0。
 
-manager 的 37 个具名类型和 sync 的 18 个具名类型已各自独立定义，关联或对偶不作为同文件豁免。索引与锁的组成通过子模块表达；类型数量和字段归组不冒充持久状态净减。其他内核对象仍按下述边界单独验收。
+manager 的 37 个具名类型和 sync 的 18 个具名类型已各自独立定义，关联或对偶不作为同文件豁免。`Memory` 的子模块保存凭证、回收记录及 `VaAllocator`；后者的子模块保存地址区域与预约槽。`TableNode` 定义在 `table.rs`，其物理 `PageTable` 保存在 `table/page.rs`。`MapError` 属于 manager 共同词汇，不从 table 借出；本地 TLB 刷新与跨核指令同步由 ASID 机制实现，module 入口只声明与导出。Tree 与 Map 仅向 crate 内提供机制接口，普通使用面保持 Memory、Layout、Access 与 Mapping。类型数量和字段归组不冒充持久状态净减。其他内核对象仍按下述边界单独验收。
 
-顶层迁移没有完成全树一型一文件。当前 sync 的 18 个类型已分别归位，守卫保持在锁的
-子模块；Tree 的映射、索引、节点及失效状态也已按内部组成归位。manager 的普通使用接口
-采用 Layout、Access 和 Mapping 凭证，生产调用不再使用 `backend()`。scheduler/conductor 的领域归位及
-其余独立类型、构造器、守卫和诊断用途仍须分别验收。
+顶层迁移本身没有完成全树一型一文件。后续归位保持类型与自身实现同处，子目录表达
+实际组成或算法；相互关联不作为同文件豁免。manager 的普通使用接口采用 Layout、
+Access 和 Mapping 凭证，生产调用不再使用 `backend()`。
 普通数据类型的双向引用不自动构成协议倒置，不能为了画 DAG 复制事实或拆断清理责任。
 字段搬迁不计作字段净减少。
+
+### 深层组成与规则归位
+
+以下按 `kernel/src/**/*.rs` 中手写的具名 struct/enum/union 声明计数，包括宏输入中的声明，
+不包括宏展开生成项。迁移前取 `193af277`，迁移后取本轮源码；同一类型的 impl 不另计。
+
+| 范围 | 具名声明：前 → 后 | 多型文件：前 → 后 |
+| --- | ---: | ---: |
+| core | 155 → 151 | 25 → 0 |
+| entry | 29 → 21 | 6 → 0 |
+| machine | 32 → 31 | 5 → 0 |
+| 合计 | 216 → 203 | 36 → 0 |
+
+文件数为 170 → 277。声明减少包括测试 Buffer 迁出生产目录，不能换算成运行期状态或内存
+节省；结构验收同时要求规则归实际拥有者，不能只凭多型文件清零宣称设计完成。
+
+- `room::conductor` 持有每 hart 的运行槽、饥饿队列和身份位，执行本地调度；
+  `room::scheduler` 持有跨 hart 的放置、名册与唤醒协调。没有 `scheduler/core` 兼容层。
+- 工作存活计数属于 `unit::tally`；各核停机到达、屏障与注入的清理钩子属于 `room::halt`。
+  钩子次序仍是报告、调度资源清理、分配器 flush、判决。
+- 提交锁属于 `work` 共同父，`Level::Unit` 的既有值与锁序不变。Task 的身份、内存、
+  状态轴和构造过程、Team 的成员、收据、暂存与构造租约分别归其真实组成。
+  状态转换、链载荷是否合法、团队终止判定由状态拥有者实现。
+- 调用返回控制只有 `Resume / Switch / Exit` 一套词汇，失败码只有一个 A0 写入口；
+  一值、两值与三值的成功回复保留各自 wire 形状，不引入 Pair/Triple 回包框架。
+- `Backtrace` 自己持有帧集合，walk 直接产生该结果；scan 与链遍历不另存一份末帧缓存。
+  回溯展示只读取 Backtrace，不反向依赖 Scene。零填充十六进制与裸地址标签保持各自格式。
+- 分配器保留真实空闲链、诊断表和锁豁免。Frame 的空闲幂用 `Option<u8>` 表示，
+  不另存 `free` 标志或写入无人读取的已分配幂；其每项仍为两字节，不宣称节省台面内存。
+  Pump 无读的长度计数退出；block/hybrid 的大小上界取同一处定义。
+  alloc-probe 直接编译共享 Link，不保留镜像实现。
+- 创建权的唯一状态是 `AVAILABLE / CLAIMED / CONSUMED`。CreationLease 不再另存
+  committed 标志，取消只能把 CLAIMED 改回 AVAILABLE；消费后的 Drop 不会恢复创建权。
+  PreparedAllocation 直接拥有预分配节点，不表示永远不可达的空节点。
+  Pend 宿主夹具使用生产能力账本，而不是字段同形的另一个 Pend。
+- Site 建立规则只有一个实现；Alarm 等待共用一个具体动作。不同的 signal、wake、
+  wipe 与空间清理协议仍分别保留，取消票据和放锁后唤醒的顺序不改变。
+- Mail 的写入预约与读取守卫各自持有提交、取消和返还规则；PoleOperation 持有操作位的
+  CAS 与 Drop，HeldMap 持有关系与放置判据。可重试关闭与接管清理仍是不同的所有权操作。
+  Tole 的 Cell 判定相同 key 的第一次 forward 与最后一次 unforward，保留双侧账本及回滚。
+
+真实删减与纯迁移分别记录：无读取的启动计数、Pump 长度、重复末帧缓存与创建租约标志
+属于删减；字段换文件、身份词汇内联、状态归组不计作持久数据净减。暂存、收据、
+Map 身份、Task 的上下文缓存与失败清理责任仍然存在。
+
+`system-fault` 在深层批次验证中出现 Loader 超时。用 `git archive 193af277` 的独立源码
+运行同一命令也失败，签名相同：`loader.rs:361` 的 `Err(6)`、`:306` 的等待超时和
+`:190` 的 IPC 超时。此项未验收通过；它与不带 initrd 时故意失败的 scene 哨兵不同。
+没有修改程序、超时门槛或验收断言来使其变绿。
+
+本轮最终验证：
+
+- workspace debug/release、kernel all-targets debug/release、semihosting 两档编译通过。
+- `nu scripts/qtest.nu --package kernel`：46 项健康用例通过；无 initrd 的 scene 哨兵失败，
+  命令退出 101。`--scene accept`、`--scene product` 各 1 项通过。
+- Pend 宿主 35 项，Trace 默认/semihosting 各 2 项，frame-runs 9 项，console-line 5 项通过。
+  Trace 的新增断言核对 19 种事件 payload 的序列化形状。
+- env ABI 13 项、capability 16 项通过；env 的既有 unused Wire import 警告未处理。
+- alloc-probe 从其自身目录运行 all-targets 宿主检查、默认 6 项、plain 10 项和多核 4 项通过。
+- `system-fault` 未通过，基线对照如上；未做 semihosting 外层 JSONL/fs 的整机导出验收。

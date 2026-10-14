@@ -9,8 +9,8 @@ use crate::core::work::room::deadline;
 use crate::core::work::record::trace::{self, EventKind, MemoryEvent, RoomEvent};
 use crate::machine::switcher::context::TrapContext;
 use crate::core::work::room::messenger::{self, redeem};
-use crate::core::work::room::scheduler::core::{Identity, ident};
-use crate::core::work::room::scheduler::trap::run;
+use crate::core::work::room::conductor::run::run;
+use crate::core::work::room::identity::{Identity, ident};
 
 pub(crate) mod resources;
 use crate::machine::switcher::stack::{
@@ -127,9 +127,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             if let Some(running) = ident.as_ref().and_then(Identity::live)
                 && let Some(reason) = crate::core::work::room::messenger::take_doomed(running.id)
             {
-                messenger::set_exit_reason(reason);
-                drop(ident);
-                return crate::core::work::room::messenger::quit() as *mut TrapContext;
+                return quit(ident, reason);
             }
             if from_task {
                 run() as *mut TrapContext
@@ -146,9 +144,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             if let Some(running) = ident.as_ref().and_then(Identity::live)
                 && let Some(reason) = crate::core::work::room::messenger::take_doomed(running.id)
             {
-                messenger::set_exit_reason(reason);
-                drop(ident);
-                return crate::core::work::room::messenger::quit() as *mut TrapContext;
+                return quit(ident, reason);
             }
             if from_task {
                 run() as *mut TrapContext
@@ -220,19 +216,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 stval: stval_bits,
             }));
             putln!("user fault killed: tid={tid} cause={cause_bits} stval={stval_bits:#x}");
-            if let Some(task) = crate::core::work::room::scheduler::core::current().running_task() {
-                let _commit = crate::core::work::unit::commit();
-                if !task.dead() {
-                    task.state.lock().doom(
-                        Some(crate::machine::hart::hart_id()),
-                        env::ExitCause::Fault,
-                        messenger::EXIT_FAULT,
-                    );
-                }
-            }
-            messenger::set_exit_reason(messenger::EXIT_FAULT);
-            drop(ident);
-            return crate::core::work::room::messenger::quit() as *mut TrapContext;
+            return kill_fault(ident);
         }
         Trap::Exception(other) => {
             if from_task {
@@ -252,19 +236,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                     "user exception killed: tid={tid} cause={:?} stval={stval_bits:#x}",
                     other
                 );
-                if let Some(task) = crate::core::work::room::scheduler::core::current().running_task() {
-                    let _commit = crate::core::work::unit::commit();
-                    if !task.dead() {
-                        task.state.lock().doom(
-                            Some(crate::machine::hart::hart_id()),
-                            env::ExitCause::Fault,
-                            messenger::EXIT_FAULT,
-                        );
-                    }
-                }
-                messenger::set_exit_reason(messenger::EXIT_FAULT);
-                drop(ident);
-                return crate::core::work::room::messenger::quit() as *mut TrapContext;
+                return kill_fault(ident);
             }
             panic!(
                 "unhandled kernel exception: {other:?} at sepc={:#x}, stval={:#x}",
@@ -284,4 +256,24 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
     asid::occupy(Asid::from_raw(unsafe { (*next).user_satp.asid() }));
 
     next
+}
+
+fn quit(ident: Option<Identity>, reason: usize) -> *mut TrapContext {
+    messenger::set_exit_reason(reason);
+    drop(ident);
+    messenger::quit() as *mut TrapContext
+}
+
+fn kill_fault(ident: Option<Identity>) -> *mut TrapContext {
+    if let Some(task) = crate::core::work::room::conductor::current().running_task() {
+        let _commit = crate::core::work::commit();
+        if !task.dead() {
+            task.state.lock().doom(
+                Some(crate::machine::hart::hart_id()),
+                env::ExitCause::Fault,
+                messenger::EXIT_FAULT,
+            );
+        }
+    }
+    quit(ident, messenger::EXIT_FAULT)
 }

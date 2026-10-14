@@ -1,4 +1,5 @@
 pub mod hole;
+mod liveness;
 pub mod nole;
 pub mod pole;
 pub mod tole;
@@ -14,6 +15,7 @@ use crate::core::work::room::messenger::{Handoff, WakeKey};
 use crate::core::work::unit::life::Life;
 
 pub(crate) use hole::HoleMeta;
+pub(crate) use liveness::Liveness;
 pub(crate) use nole::NoleMeta;
 pub(crate) use pole::PoleMeta;
 pub(crate) use tole::ToleMeta;
@@ -21,12 +23,6 @@ pub(crate) use tole::ToleMeta;
 pub(crate) fn next_id() -> usize {
     static NEXT: AtomicUsize = AtomicUsize::new(1);
     NEXT.fetch_add(1, Ordering::Relaxed)
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Liveness {
-    Live,
-    Dead,
 }
 
 #[derive(Clone)]

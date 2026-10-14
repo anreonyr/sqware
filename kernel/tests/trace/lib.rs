@@ -59,8 +59,8 @@ mod machine {
     }
 }
 
-#[path = "../../src/core/work/record/trace.rs"]
-mod trace;
+#[path = "../../src/core/work/record/trace/mod.rs"]
+pub mod trace;
 
 #[cfg(test)]
 mod tests {
@@ -113,5 +113,46 @@ mod tests {
         #[cfg(feature = "semihosting")]
         assert_eq!(&*CAPTURED.lock().unwrap(), &[(0, 123)]);
         assert_eq!(init(), Err(TraceInitError::AlreadyInit));
+    }
+
+    #[test]
+    fn event_variants_keep_wire_schema() {
+        use super::trace::{BootEvent, EnvEvent, HaltEvent, MemoryEvent};
+        use crate::fault::FaultKind;
+        use serde_json::json;
+
+        for (kind, expected) in [
+            (EventKind::Room(RoomEvent::Spawn { tid: 1 }), json!({"room":{"spawn":{"tid":1}}})),
+            (EventKind::Room(RoomEvent::Switch { prev_tid: 1, next_tid: 2 }),
+                json!({"room":{"switch":{"prev_tid":1,"next_tid":2}}})),
+            (EventKind::Room(RoomEvent::Starve { tid: 1 }), json!({"room":{"starve":{"tid":1}}})),
+            (EventKind::Room(RoomEvent::Park { tid: 1, wake_at: 2 }),
+                json!({"room":{"park":{"tid":1,"wake_at":2}}})),
+            (EventKind::Room(RoomEvent::Wait { tid: 1, key: 2 }),
+                json!({"room":{"wait":{"tid":1,"key":2}}})),
+            (EventKind::Room(RoomEvent::Wake { tid: 1 }), json!({"room":{"wake":{"tid":1}}})),
+            (EventKind::Room(RoomEvent::Exit { tid: 1, reason: 2 }),
+                json!({"room":{"exit":{"tid":1,"reason":2}}})),
+            (EventKind::Room(RoomEvent::Reap { tid: 1 }), json!({"room":{"reap":{"tid":1}}})),
+            (EventKind::Room(RoomEvent::FaultKilled { tid: 1, cause: 2, stval: 3 }),
+                json!({"room":{"fault_killed":{"tid":1,"cause":2,"stval":3}}})),
+            (EventKind::Room(RoomEvent::Doomed { tid: 1, by: 2 }),
+                json!({"room":{"doomed":{"tid":1,"by":2}}})),
+            (EventKind::Room(RoomEvent::Idle), json!({"room":"idle"})),
+            (EventKind::Env(EnvEvent::Call { call: 1, arg: 2 }),
+                json!({"env":{"call":{"call":1,"arg":2}}})),
+            (EventKind::Memory(MemoryEvent::PageFault { va: 1, fault: FaultKind::Instruction, resolved: true }),
+                json!({"memory":{"page_fault":{"va":1,"fault":"Instruction","resolved":true}}})),
+            (EventKind::Memory(MemoryEvent::PageFault { va: 1, fault: FaultKind::Load, resolved: false }),
+                json!({"memory":{"page_fault":{"va":1,"fault":"Load","resolved":false}}})),
+            (EventKind::Memory(MemoryEvent::PageFault { va: 1, fault: FaultKind::Store, resolved: true }),
+                json!({"memory":{"page_fault":{"va":1,"fault":"Store","resolved":true}}})),
+            (EventKind::Halt(HaltEvent::Halt), json!({"halt":"halt"})),
+            (EventKind::Halt(HaltEvent::Panic), json!({"halt":"panic"})),
+            (EventKind::Boot(BootEvent::Launch { hart: 1 }), json!({"boot":{"launch":{"hart":1}}})),
+            (EventKind::Boot(BootEvent::Done { hart: 1 }), json!({"boot":{"done":{"hart":1}}})),
+        ] {
+            assert_eq!(serde_json::to_value(kind).unwrap(), expected);
+        }
     }
 }

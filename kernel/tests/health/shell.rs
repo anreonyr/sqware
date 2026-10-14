@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 
 use crate::core::memory::allocator::statistics;
 use crate::core::memory::manager::mode;
-use crate::core::work::room::scheduler::core::prune_dead;
+use crate::core::work::room::scheduler::roster::prune_dead;
 use crate::core::work::unit::copies::Origin;
 use crate::core::memory::manager::RegionId;
 use crate::core::work::unit::space::SpaceBuilder;
@@ -101,7 +101,7 @@ fn oust_round() {
     let released = child.release_held(&unborn);
     crate::expect!(released, "oust: 摘出未放行线程失败");
     *unborn.state.lock() = crate::core::work::unit::task::TaskState::reaped(env::ExitCause::Reap, 0);
-    crate::core::work::room::conductor::exit();
+    crate::core::work::unit::tally::exit();
     drop(unborn);
     crate::expect!(child.all_reaped(), "oust: 摘净之后应当算已收尾");
     crate::expect!(sire.oust(held_id).is_some(), "oust: 摘净之后应当放得下");

@@ -51,9 +51,8 @@ mod core {
             pub mod mode {
                 include!("support/mode.rs");
             }
-            pub mod table {
-                include!("support/table.rs");
-            }
+
+            include!("support/error.rs");
 
             pub mod tree {
                 pub mod map {

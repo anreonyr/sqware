@@ -6,11 +6,14 @@ use env::{
 };
 
 use crate::core::memory::manager::entry::PteFlags;
-use crate::machine::switcher::context::{Gprs, TrapContext};
-use crate::core::work::mail::{self, Mail};
+use crate::machine::switcher::context::TrapContext;
+use crate::core::work::mail::{self, Mail, pole::PoleOperation};
 use crate::core::work::pend::{self, Need, Permission, PieSnapshot, clear_heir};
-use crate::core::work::room::scheduler::core::{current, muster};
+use crate::core::work::room::conductor::current;
+use crate::core::work::room::scheduler::roster::muster;
 use crate::core::work::unit::task::TaskIdent;
+
+use super::outcome::{answer, answer_pair};
 
 fn subset_to_pte(subset: Permission) -> Result<PteFlags, PieFail> {
     if !subset.contains(Permission::FETCH) {
@@ -24,17 +27,12 @@ fn subset_to_pte(subset: Permission) -> Result<PteFlags, PieFail> {
     Ok(f)
 }
 
-pub(crate) enum Outcome {
-    Resume,
-}
-
 pub(crate) fn dispatch(
     frame: &mut TrapContext,
     call: PieCall,
     ident: Arc<TaskIdent>,
-) -> Option<Outcome> {
-    let _ = &ident;
-    Some(match call {
+) {
+    match call {
         PieCall::Unseal { args } => match args {
             UnsealArgs::Hole { mark, limits } => unseal_hole(frame, mark, limits),
             UnsealArgs::Pole { addr, size, shared } => unseal_pole(frame, addr, size, shared),
@@ -68,28 +66,7 @@ pub(crate) fn dispatch(
                     .and_then(|task| pend::same(&task, a, b))
                     .map(usize::from),
             );
-            Outcome::Resume
         }
-    })
-}
-
-fn answer(frame: &mut TrapContext, r: Result<usize, PieFail>) {
-    frame.gpr.set_x(
-        Gprs::A0,
-        match r {
-            Ok(v) => v,
-            Err(e) => e.code() as usize,
-        },
-    );
-}
-
-fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), PieFail>) {
-    match r {
-        Ok((v0, v1)) => {
-            frame.gpr.set_x(Gprs::A0, v0);
-            frame.gpr.set_x(Gprs::A1, v1);
-        }
-        Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
     }
 }
 
@@ -104,7 +81,7 @@ pub(crate) fn usable(pie: &PieSnapshot) -> Result<(), env::PieFail> {
     Ok(())
 }
 
-fn unseal_hole(frame: &mut TrapContext, mark: Mark, limits: HoleLimits) -> Outcome {
+fn unseal_hole(frame: &mut TrapContext, mark: Mark, limits: HoleLimits) {
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
         if !limits.valid() {
@@ -123,10 +100,9 @@ fn unseal_hole(frame: &mut TrapContext, mark: Mark, limits: HoleLimits) -> Outco
         Ok(token.get())
     })();
     answer(frame, r);
-    Outcome::Resume
 }
 
-fn unseal_nole(frame: &mut TrapContext) -> Outcome {
+fn unseal_nole(frame: &mut TrapContext) {
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
         let meta = mail::nole::NoleMeta::try_new(task.ident.id).map_err(|_| PieFail::OoM)?;
@@ -141,7 +117,6 @@ fn unseal_nole(frame: &mut TrapContext) -> Outcome {
         Ok(token.get())
     })();
     answer(frame, r);
-    Outcome::Resume
 }
 
 #[cfg(debug_assertions)]
@@ -197,7 +172,7 @@ pub(crate) fn create_pole(
     Ok(token)
 }
 
-fn unseal_pole(frame: &mut TrapContext, addr: VirtAddr, size: usize, shared: bool) -> Outcome {
+fn unseal_pole(frame: &mut TrapContext, addr: VirtAddr, size: usize, shared: bool) {
     let result = current()
         .running_task()
         .ok_or(PieFail::Denied)
@@ -211,10 +186,9 @@ fn unseal_pole(frame: &mut TrapContext, addr: VirtAddr, size: usize, shared: boo
             .map(|token| token.get())
         });
     answer(frame, result);
-    Outcome::Resume
 }
 
-fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outcome {
+fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) {
     let looked = current()
         .running_task()
         .ok_or(PieFail::Denied)
@@ -232,10 +206,9 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
         )
     })();
     answer_pair(frame, r);
-    Outcome::Resume
 }
 
-fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outcome {
+fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) {
     let _ = &ident;
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
@@ -248,10 +221,9 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
         mail::pole::shut(&p, token).map(|()| 0)
     })();
     answer(frame, r);
-    Outcome::Resume
 }
 
-fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
+fn seal(frame: &mut TrapContext, token: PieToken) {
     let r = (|| -> Result<usize, PieFail> {
         let me = current().running_task().ok_or(PieFail::Denied)?;
         let pie = pend::locate(&me, token).ok_or(PieFail::Denied)?;
@@ -263,7 +235,7 @@ fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
         }
         let pole = pie.mail().pole();
         let _operation = if let Some(p) = &pole {
-            Some(p.operation().ok_or(PieFail::Busy)?)
+            Some(PoleOperation::acquire(p).ok_or(PieFail::Busy)?)
         } else {
             None
         };
@@ -271,7 +243,6 @@ fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
         Ok(0)
     })();
     answer(frame, r);
-    Outcome::Resume
 }
 
 fn accord(
@@ -280,7 +251,7 @@ fn accord(
     dst_id: TaskId,
     subset: Permission,
     mark: Mark,
-) -> Outcome {
+) {
     let r = (|| -> Result<usize, PieFail> {
         let caller = current().running_task().ok_or(PieFail::Denied)?;
         let src = pend::locate(&caller, src_token).ok_or(PieFail::Denied)?;
@@ -289,27 +260,24 @@ fn accord(
         pend::accord(&caller, src_token, dst.as_weak(), subset, mark)
     })();
     answer(frame, r);
-    Outcome::Resume
 }
 
-fn narrow(frame: &mut TrapContext, token: PieToken, subset: Permission) -> Outcome {
+fn narrow(frame: &mut TrapContext, token: PieToken, subset: Permission) {
     let r = current()
         .running_task()
         .ok_or(PieFail::Denied)
         .and_then(|task| pend::reduce(&task, token, subset))
         .map(|()| 0);
     answer(frame, r);
-    Outcome::Resume
 }
 
-fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
+fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) {
     let r = (|| -> Result<usize, PieFail> {
         let caller = current().running_task().ok_or(PieFail::Denied)?;
         let target = muster(dst_id).ok_or(PieFail::Denied)?;
         pend::revoke(&caller, target.as_weak(), token).map(|_| 0)
     })();
     answer(frame, r);
-    Outcome::Resume
 }
 
 fn information(task: &Arc<crate::core::work::unit::task::Task>, pie: &PieSnapshot) -> PieInfo {
@@ -337,8 +305,8 @@ fn write_info(ident: &TaskIdent, buf: usize, info: PieInfo) -> Result<(), PieFai
     Ok(())
 }
 
-fn inspect(frame: &mut TrapContext, ident: &TaskIdent, token: PieToken, buf: VirtAddr) -> Outcome {
-    let r = (|| {
+fn inspect(frame: &mut TrapContext, ident: &TaskIdent, token: PieToken, buf: VirtAddr) {
+    let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
         let pie = pend::locate(&task, token).ok_or(PieFail::Denied)?;
         if !ident
@@ -353,7 +321,6 @@ fn inspect(frame: &mut TrapContext, ident: &TaskIdent, token: PieToken, buf: Vir
         Ok(0)
     })();
     answer(frame, r);
-    Outcome::Resume
 }
 
 fn collect(
@@ -362,8 +329,8 @@ fn collect(
     after: PieToken,
     buf: VirtAddr,
     capacity: usize,
-) -> Outcome {
-    let r = (|| {
+) {
+    let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
         let len = capacity.checked_mul(PieInfo::SIZE).ok_or(PieFail::Denied)?;
         if capacity == 0 {
@@ -405,10 +372,9 @@ fn collect(
         Ok(count)
     })();
     answer(frame, r);
-    Outcome::Resume
 }
 
-fn release(frame: &mut TrapContext, token: PieToken, mode: ReleaseMode) -> Outcome {
+fn release(frame: &mut TrapContext, token: PieToken, mode: ReleaseMode) {
     let r = current()
         .running_task()
         .ok_or(PieFail::Denied)
@@ -418,11 +384,10 @@ fn release(frame: &mut TrapContext, token: PieToken, mode: ReleaseMode) -> Outco
         })
         .map(|_| 0);
     answer(frame, r);
-    Outcome::Resume
 }
 
-fn unseal_tole(frame: &mut TrapContext, shared: bool) -> Outcome {
-    let r = (|| {
+fn unseal_tole(frame: &mut TrapContext, shared: bool) {
+    let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
         let meta = mail::tole::ToleMeta::try_new(task.ident.id).map_err(|_| PieFail::OoM)?;
         let mut permission = Permission::FETCH | Permission::STORE | Permission::VEST;
@@ -435,5 +400,4 @@ fn unseal_tole(frame: &mut TrapContext, shared: bool) -> Outcome {
         Ok(token.get())
     })();
     answer(frame, r);
-    Outcome::Resume
 }

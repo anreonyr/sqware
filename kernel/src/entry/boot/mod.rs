@@ -23,7 +23,7 @@ use crate::core::work::record::trace;
 use crate::machine::switcher::context::TrapContext;
 use crate::machine::switcher::trampoline::restore;
 use crate::machine::switcher::stack::{arm_hart, boot_stack};
-use crate::core::work::room::scheduler;
+use crate::core::work::room::{conductor, scheduler};
 use crate::core::work::unit::team::kernel;
 
 global_asm!(
@@ -44,7 +44,7 @@ unsafe extern "C" {
 }
 
 pub fn start() -> Result<(), BootError> {
-    scheduler::boot::init().map_err(BootError::Scheduler)?;
+    scheduler::init().map_err(BootError::Scheduler)?;
     register_runtime_hooks();
 
     #[cfg(debug_assertions)]
@@ -58,10 +58,10 @@ pub fn start() -> Result<(), BootError> {
     }
 
     if let Some(entry) = spawn_entry()? {
-        crate::core::work::room::scheduler::core::beacon_arm(&entry);
+        crate::core::work::room::halt::beacon::arm(&entry);
     }
 
-    crate::core::work::room::conductor::rooted();
+    crate::core::work::unit::tally::rooted();
 
     boot_harts()?;
 
@@ -80,11 +80,11 @@ pub fn start() -> Result<(), BootError> {
 }
 
 pub fn run() -> ! {
-    restore(scheduler::trap::run())
+    restore(conductor::run::run())
 }
 
 fn register_runtime_hooks() {
-    use crate::core::work::room::conductor;
+    use crate::core::work::room::halt;
     use crate::core::work::room::messenger;
 
     static EXIT_HOOKS: &[fn(&alloc::sync::Arc<crate::core::work::unit::task::Task>)] =
@@ -93,11 +93,11 @@ fn register_runtime_hooks() {
 
     const SHUTDOWN_HOOKS: &[fn()] = &[
         crate::entry::report::shutdown::report,
-        crate::core::work::room::scheduler::core::rip,
+        crate::core::work::room::scheduler::rip,
         crate::core::memory::allocator::block::flush,
         crate::entry::report::shutdown::verdict,
     ];
-    conductor::hook(SHUTDOWN_HOOKS, crate::entry::report::shutdown::waiting);
+    halt::hook(SHUTDOWN_HOOKS, crate::entry::report::shutdown::waiting);
 }
 
 fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task::Task>>, BootError> {
@@ -241,7 +241,6 @@ fn read_only() -> crate::core::memory::manager::entry::PteFlags {
 
 fn boot_harts() -> Result<(), BootError> {
     let me = hart::hart_id();
-    hart::mark_hart_started(me);
     let count = hart::hart_count();
     let entry = ::core::ptr::addr_of!(_boot_entry) as usize;
     for hart in 0..count {
@@ -262,7 +261,6 @@ fn boot_harts() -> Result<(), BootError> {
             hart: HartId::new(hart),
             source,
         })?;
-        hart::mark_hart_started(HartId::new(hart));
     }
     Ok(())
 }
@@ -288,5 +286,5 @@ pub(crate) extern "C" fn boot_main() -> ! {
     trace::note(trace::EventKind::Boot(trace::BootEvent::Done {
         hart: me.get(),
     }));
-    scheduler::boot::idle()
+    run()
 }

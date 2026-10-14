@@ -1,197 +1,246 @@
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+//! 运行槽：每核一张。
+//!
+//! 槽里装着此刻在座的那一枚任务、它的饥饿队列（FIFO），以及队列起等的时刻 ——
+//! 队列等久了就压低本核的时限（`ready_ceiling`），把核让给别的活。
+//! 跨核的事不在这里：往哪放、怎么叫醒，都归 `scheduler`。
 
-use super::Counter;
+mod badge;
+mod fetch;
+mod inner;
+pub(crate) mod run;
 
-use crate::machine::hart::{self, HartId};
-use crate::machine::sync::OnceLock;
-use sbi::ecall::SArgs;
-use sbi::{self, fid};
+use alloc::sync::Arc;
+#[cfg(debug_assertions)]
+use core::time::Duration;
 
-static PUSHED: Counter = Counter::new();
-static REAPED: Counter = Counter::new();
-static ROOTED: AtomicBool = AtomicBool::new(false);
+use crate::core::work::record::trace::{self, EventKind, RoomEvent};
+use crate::core::work::room::chain::Chain;
+use crate::core::work::room::deadline;
+use crate::core::work::unit::task::{Task, TaskState};
+use crate::machine::clock;
+use crate::machine::hart::HartId;
+use crate::machine::switcher::context::{Gprs, TrapContext};
+use crate::machine::switcher::stack::trap_stack_edge;
+use crate::machine::sync::{Level, SpinLock};
 
-const BARRIER_REPORT_AT: usize = 20_000_000;
+use self::badge::Badge;
+use self::inner::Inner;
 
-static HALTING: AtomicBool = AtomicBool::new(false);
-static HALT_ARRIVED: AtomicUsize = AtomicUsize::new(0);
+const QUANTUM_TICKS: u32 = 8;
+const READY_MS: u64 = 2;
 
-static WAITING: [AtomicUsize; WAITING_WORDS] = [const { AtomicUsize::new(0) }; WAITING_WORDS];
-
-static PICK_CURSOR: AtomicUsize = AtomicUsize::new(0);
-
-const WAITING_WORDS: usize = crate::machine::layout::MAX_HART_SLOTS / usize::BITS as usize;
-
-pub(crate) fn push() {
-    PUSHED.bump();
+#[repr(align(64))]
+pub(crate) struct Conductor {
+    pub(super) hart: HartId,
+    pub(super) inner: SpinLock<Inner>,
+    pub(super) badge: Badge,
 }
 
-pub(crate) fn exit() {
-    REAPED.bump();
-}
-
-pub(super) fn done() -> bool {
-    if !ROOTED.load(Ordering::Acquire) {
-        return false;
+impl Conductor {
+    pub(super) fn new(hart: HartId) -> Conductor {
+        Conductor {
+            hart,
+            inner: SpinLock::new_level(
+                Level::Scheduler,
+                Inner {
+                    running: None,
+                    chain: Chain::new(),
+                    ready_since: None,
+                },
+            ),
+            badge: Badge::new(),
+        }
     }
-    let pushed = PUSHED.get();
-    pushed == 0 || REAPED.get() == pushed
-}
 
-pub(crate) fn counts() -> (usize, usize) {
-    (PUSHED.get(), REAPED.get())
-}
+    fn starved_push(&self, i: &mut Inner, task: Arc<Task>) {
+        debug_assert!(
+            task.ready() && task.next().is_none(),
+            "starved 容器只收就绪任务，且入队前不得挂在链上"
+        );
+        if i.chain.is_empty() {
+            i.ready_since = Some(clock::now().as_ticks());
+        }
+        i.chain.push(task);
+    }
 
-pub(crate) fn barrier() -> (usize, usize) {
-    (
-        HALT_ARRIVED.load(Ordering::Acquire),
-        crate::machine::hart::hart_count(),
-    )
-}
-
-pub(crate) fn rooted() {
-    ROOTED.store(true, Ordering::Release);
-}
-
-pub(super) fn halt() -> ! {
-    crate::core::memory::manager::asid::vacate();
-    HALT_ARRIVED.fetch_add(1, Ordering::AcqRel);
-    if !HALTING.swap(true, Ordering::AcqRel) {
-        yell();
-        let mut spins = 0usize;
-        let mut reported = false;
-        while HALT_ARRIVED.load(Ordering::Acquire) < hart::hart_count() {
-            spins += 1;
-            if !reported && spins == BARRIER_REPORT_AT {
-                reported = true;
-                if let Some((_, waiting)) = HOOKS.get() {
-                    waiting();
-                }
+    fn starved_pop(&self, i: &mut Inner) -> Option<Arc<Task>> {
+        loop {
+            let head = i.chain.pop()?;
+            i.ready_since = if i.chain.is_empty() {
+                None
+            } else {
+                Some(clock::now().as_ticks())
+            };
+            if head.stopped() || head.ident.team.paused() {
+                Task::park(head);
+                continue;
             }
-            core::hint::spin_loop();
-        }
-        hooked();
-        let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();
-    }
-    loop {
-        unsafe { core::arch::asm!("wfi") };
-    }
-}
-
-type Hook = fn();
-
-static HOOKS: OnceLock<(&'static [Hook], fn())> = OnceLock::new();
-
-pub(crate) fn hook(hooks: &'static [Hook], waiting: fn()) {
-    let _ = HOOKS.set((hooks, waiting));
-}
-
-fn hooked() {
-    if let Some((hooks, _)) = HOOKS.get() {
-        for h in hooks.iter() {
-            h();
-        }
-    }
-}
-
-pub(super) fn sleep(hart: HartId) {
-    debug_assert!(
-        hart.get() < crate::machine::layout::MAX_HART_SLOTS,
-        "sleep hart {hart} beyond MAX_HART_SLOTS"
-    );
-    let (word, bit) = hart.bit();
-    WAITING[word].fetch_or(bit, Ordering::AcqRel);
-}
-
-pub(super) fn wake(hart: HartId) {
-    debug_assert!(
-        hart.get() < crate::machine::layout::MAX_HART_SLOTS,
-        "wake hart {hart} beyond MAX_HART_SLOTS"
-    );
-    let (word, bit) = hart.bit();
-    WAITING[word].fetch_and(!bit, Ordering::AcqRel);
-}
-
-pub(crate) fn waiting(hart: HartId) -> bool {
-    debug_assert!(
-        hart.get() < crate::machine::layout::MAX_HART_SLOTS,
-        "waiting hart {hart} beyond MAX_HART_SLOTS"
-    );
-    let (word, bit) = hart.bit();
-    WAITING[word].load(Ordering::Acquire) & bit != 0
-}
-
-pub(crate) fn pick() -> HartId {
-    let seat = PICK_CURSOR.fetch_add(1, Ordering::Relaxed);
-    let n = hart::hart_count();
-    debug_assert!(n > 0, "pick with no hart");
-    let sm = seat % (usize::BITS as usize);
-    let mut best_rel = usize::MAX;
-    let mut best_bit = 0usize;
-    for (w, word) in WAITING.iter().enumerate() {
-        let bits = word.load(Ordering::Acquire);
-        if bits == 0 {
-            continue;
-        }
-        let rot = bits.rotate_right(sm as u32);
-        let rel = rot.trailing_zeros() as usize;
-        let bit = w * (usize::BITS as usize) + (sm + rel) % (usize::BITS as usize);
-        if rel < best_rel {
-            best_rel = rel;
-            best_bit = bit;
+            return Some(head);
         }
     }
 
-    if best_rel != usize::MAX {
-        HartId::new(best_bit)
-    } else {
-        let me = hart::hart_id();
-        let mut to = seat % n;
-        if n > 1 && to == me.get() {
-            to = (to + 1) % n;
+    pub(super) fn starved_remove(&self, i: &mut Inner, target: &Arc<Task>) -> bool {
+        let removed = i.chain.remove_if(&mut |t| Arc::ptr_eq(t, target)).is_some();
+        if removed && i.chain.is_empty() {
+            i.ready_since = None;
         }
-        HartId::new(to)
+        removed
+    }
+
+    pub(super) fn starved_clear(&self, i: &mut Inner) {
+        let _commit = crate::core::work::commit();
+        while self.starved_pop(i).is_some() {}
+    }
+
+    pub(super) fn push(&self, task: Arc<Task>) -> bool {
+        let _commit = crate::core::work::commit();
+        debug_assert!(task.ready(), "starved 容器只收就绪任务");
+        let mut i = self.inner.lock();
+        let notify = i.starved_is_empty();
+        self.starved_push(&mut i, task);
+        notify
+    }
+
+    fn pull(&self) -> Option<Arc<Task>> {
+        let _commit = crate::core::work::commit();
+        let mut i = self.inner.lock();
+        self.starved_pop(&mut i)
+    }
+
+    pub(super) fn steal(&self) -> Option<Arc<Task>> {
+        let _commit = crate::core::work::commit();
+        let mut i = self.inner.try_lock()?;
+        self.starved_pop(&mut i)
+    }
+
+    fn prepare(&self, task: &mut Arc<Task>, ceiling: u64) {
+        let t = task.as_ref();
+        t.transform_checked(TaskState::running(self.hart, QUANTUM_TICKS));
+        unsafe {
+            let frame = &mut *(t.ident.frame_pa.as_usize() as *mut TrapContext);
+            frame.kernel_sp = trap_stack_edge(self.hart);
+            if t.ident.team.space.memory.asid().is_kernel() {
+                frame
+                    .gpr
+                    .set_x(Gprs::TP, crate::machine::hart::per_hart_ptr(self.hart));
+            }
+        }
+        deadline::beat_until(ceiling);
+    }
+
+    fn seat(&self, mut task: Arc<Task>) -> Option<usize> {
+        let _commit = crate::core::work::commit();
+        let mut i = self.inner.lock();
+        if task.stopped() || task.ident.team.paused() {
+            Task::park(task);
+            return None;
+        }
+        self.prepare(&mut task, i.ready_ceiling());
+        let pa = task.ident.frame_pa.as_usize();
+        self.badge.seat(&task.ident);
+        debug_assert!(task.on_hart().is_some(), "running 容器只装在核上的任务");
+        let prev = i.running.replace(task);
+        debug_assert!(prev.is_none(), "装槽前 running 必须为空");
+        Some(pa)
+    }
+
+    pub(crate) fn swap(&self) -> (Arc<Task>, Option<usize>) {
+        let _commit = crate::core::work::commit();
+        let mut i = self.inner.lock();
+        let task = i.running.take().expect("no running task");
+        let next = self.starved_pop(&mut i);
+        drop(i);
+        self.badge.shed(&task.ident);
+        let next_pa = if let Some(next) = next {
+            self.seat(next)
+        } else {
+            None
+        };
+        (task, next_pa)
+    }
+
+    pub(crate) fn running_task(&self) -> Option<Arc<Task>> {
+        let i = self.inner.lock();
+        i.running.as_ref().map(Arc::clone)
+    }
+
+    fn rotate(&self, i: &mut Inner, cur: Arc<Task>) -> Option<Arc<Task>> {
+        cur.transform_checked(TaskState::ready());
+        self.starved_push(i, cur);
+        self.starved_pop(i)
+    }
+
+    pub(crate) fn starve(&self) -> usize {
+        let _commit = crate::core::work::commit();
+        if self.running_task().is_some_and(|t| t.doomed()) {
+            drop(_commit);
+            return crate::core::work::room::messenger::quit();
+        }
+        if self
+            .running_task()
+            .is_some_and(|t| t.stopped() || t.ident.team.paused())
+        {
+            let next = self.advance();
+            drop(_commit);
+            return next.unwrap_or_else(fetch::fetch);
+        }
+        let mut i = self.inner.lock();
+        let Some(cur) = i.running.take() else {
+            panic!("starve with no running task on hart {}", self.hart);
+        };
+        if i.starved_is_empty() {
+            let pa = cur.ident.frame_pa.as_usize();
+            i.running = Some(cur);
+            return pa;
+        }
+        let prev_tid = cur.ident.id.get();
+        self.badge.shed(&cur.ident);
+        let next = self.rotate(&mut i, cur);
+        drop(i);
+        let pa = next.and_then(|next| self.seat(next));
+        trace::note(EventKind::Room(RoomEvent::Starve { tid: prev_tid }));
+        drop(_commit);
+        pa.unwrap_or_else(fetch::fetch)
+    }
+
+    fn advance(&self) -> Option<usize> {
+        let _commit = crate::core::work::commit();
+        let mut i = self.inner.lock();
+        let cur = i.running.take()?;
+        if cur.stopped() || cur.ident.team.paused() {
+            self.badge.shed(&cur.ident);
+            Task::park(cur);
+            let next = self.starved_pop(&mut i);
+            drop(i);
+            return next.and_then(|next| self.seat(next));
+        }
+        let ticks_left = cur.ticks_left();
+        let ceiling = i.ready_ceiling();
+        if i.starved_is_empty() || (ticks_left > 1 && ceiling != 0) {
+            if ticks_left > 1 {
+                cur.dec_ticks_left();
+            }
+            let pa = cur.ident.frame_pa.as_usize();
+            i.running = Some(cur);
+            deadline::beat_until(ceiling);
+            return Some(pa);
+        }
+        let prev_tid = cur.ident.id.get();
+        self.badge.shed(&cur.ident);
+        let next = self.rotate(&mut i, cur);
+        let next_tid = next.as_ref().map_or(0, |t| t.ident.id.get());
+        drop(i);
+        let pa = next.and_then(|next| self.seat(next));
+        trace::note(EventKind::Room(RoomEvent::Switch { prev_tid, next_tid }));
+        pa
     }
 }
 
-static KICKS: Counter = Counter::new();
-static FALLBACK: Counter = Counter::new();
-
-pub(crate) fn note_kick_ipi() {
-    KICKS.bump();
+/// 本核的运行槽。
+pub(crate) fn current() -> &'static Conductor {
+    unsafe { &*(crate::machine::hart::scheduler() as *const Conductor) }
 }
 
-pub(crate) fn note_fallback() {
-    FALLBACK.bump();
-}
-
-pub(crate) fn kick_stats() -> (usize, usize) {
-    (KICKS.get(), FALLBACK.get())
-}
-
-pub(super) fn yell() {
-    for (w, word) in WAITING.iter().enumerate() {
-        let waiting = word.load(Ordering::Acquire);
-        if waiting == 0 {
-            continue;
-        }
-        let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
-            .args(SArgs {
-                a0: waiting,
-                a1: w * (usize::BITS as usize),
-                ..Default::default()
-            })
-            .call();
-    }
-}
-
-pub(crate) fn nudge(hart: HartId) {
-    let (word, bit) = hart.bit();
-    let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
-        .args(SArgs {
-            a0: bit,
-            a1: word * (usize::BITS as usize),
-            ..Default::default()
-        })
-        .call();
-}
+#[cfg(debug_assertions)]
+#[path = "../../../../tests/health/scheduler.rs"]
+pub mod tests;

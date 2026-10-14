@@ -21,8 +21,9 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
 
 pub use crate::entry::boot::error::accept as boot_errors;
 pub use crate::core::work::mail::hole::tests as hole;
-pub use crate::core::work::room::scheduler::core::acceptance as scheduler;
+pub use crate::core::work::room::conductor::tests::acceptance as scheduler;
 
+pub mod backtrace;
 pub mod frame;
 pub mod hart;
 pub mod manager_api;

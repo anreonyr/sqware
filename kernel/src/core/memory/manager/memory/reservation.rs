@@ -1,6 +1,6 @@
 use alloc::sync::Weak;
 
-use super::plan::RegionId;
+use super::va_allocator::RegionId;
 use crate::core::memory::manager::addr::VirtAddr;
 use crate::core::memory::manager::tree::Tree;
 

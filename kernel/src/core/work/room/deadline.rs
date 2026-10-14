@@ -24,21 +24,12 @@ static MUTE_N: AtomicU64 = AtomicU64::new(0);
 static TICKS: AtomicU64 = AtomicU64::new(0);
 
 struct TimerHeap {
-    inner: SpinLock<TimerInner>,
+    inner: SpinLock<BinaryHeap<Reverse<(u64, u64)>>>,
     nearest: AtomicU64,
 }
 
-struct TimerInner {
-    heap: BinaryHeap<Reverse<(u64, u64)>>,
-}
-
 static TIMER_HEAP: TimerHeap = TimerHeap {
-    inner: SpinLock::new_level(
-        Level::L3,
-        TimerInner {
-            heap: BinaryHeap::new(),
-        },
-    ),
+    inner: SpinLock::new_level(Level::L3, BinaryHeap::new()),
     nearest: AtomicU64::new(NONE),
 };
 
@@ -47,8 +38,8 @@ impl TimerHeap {
         self.nearest.load(Ordering::Acquire)
     }
 
-    fn recompute_nearest(&self, i: &TimerInner) {
-        let t = i.heap.iter().map(|e| e.0.0).min().unwrap_or(NONE);
+    fn recompute_nearest(&self, i: &BinaryHeap<Reverse<(u64, u64)>>) {
+        let t = i.iter().map(|e| e.0.0).min().unwrap_or(NONE);
         self.nearest.store(t, Ordering::Release);
     }
 }
@@ -71,8 +62,8 @@ pub fn beat_until(ceil: u64) {
 
 pub fn tock(handle: u64, wake_at: u64) -> Result<(), ()> {
     let mut i = TIMER_HEAP.inner.lock();
-    i.heap.try_reserve(1).map_err(|_| ())?;
-    i.heap.push(Reverse((wake_at, handle)));
+    i.try_reserve(1).map_err(|_| ())?;
+    i.push(Reverse((wake_at, handle)));
     TIMER_HEAP.recompute_nearest(&i);
     TOCK_N.fetch_add(1, Ordering::Relaxed);
     Ok(())
@@ -80,9 +71,9 @@ pub fn tock(handle: u64, wake_at: u64) -> Result<(), ()> {
 
 pub fn mute(handle: u64) {
     let mut i = TIMER_HEAP.inner.lock();
-    let before = i.heap.len();
-    i.heap.retain(|Reverse((_, h))| *h != handle);
-    if i.heap.len() != before {
+    let before = i.len();
+    i.retain(|Reverse((_, h))| *h != handle);
+    if i.len() != before {
         MUTE_N.fetch_add(1, Ordering::Relaxed);
     }
     TIMER_HEAP.recompute_nearest(&i);
@@ -97,11 +88,11 @@ pub fn drain(now: Instant, out: &mut [u64]) -> usize {
     let mut n = 0usize;
     let mut i = TIMER_HEAP.inner.lock();
     let now = now.as_ticks();
-    while let Some(Reverse((t, _))) = i.heap.peek() {
+    while let Some(Reverse((t, _))) = i.peek() {
         if *t > now || n >= out.len() {
             break;
         }
-        let Reverse((wake_at, handle)) = i.heap.pop().expect("peeked non-empty heap entry");
+        let Reverse((wake_at, handle)) = i.pop().expect("peeked non-empty heap entry");
         out[n] = handle;
         n += 1;
         let late = now.saturating_sub(wake_at);

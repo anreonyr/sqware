@@ -1,4 +1,8 @@
+use super::pending::RING_CAP;
+use super::reading::{back, taken};
+use super::reservation::Reservation;
 use super::*;
+use alloc::vec::Vec;
 
 fn storage(meta: &HoleMeta) -> (usize, usize) {
     let pending = meta.pending.lock();

@@ -3,7 +3,8 @@ use alloc::vec::Vec;
 use crate::core::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::core::memory::manager::entry::PteFlags;
 use crate::core::memory::manager::mode;
-use crate::core::memory::manager::table::{MapError, TableNode};
+use crate::core::memory::manager::MapError;
+use crate::core::memory::manager::table::TableNode;
 use crate::core::memory::{PAGE_SHIFT, PAGE_SIZE};
 
 pub(crate) fn large_pages_accept() {

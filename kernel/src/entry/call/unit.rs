@@ -7,7 +7,7 @@ use crate::core::memory::manager::MapError;
 use crate::core::memory::manager::addr::VirtAddr as KVirt;
 use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::core::work::room::messenger::{self, Handoff};
-use crate::core::work::room::scheduler::core::muster;
+use crate::core::work::room::scheduler::roster::muster;
 use crate::core::work::unit::copies::Origin;
 use crate::core::work::unit::join::JoinWait;
 use crate::core::work::unit::life::TaskLife;
@@ -15,19 +15,7 @@ use crate::core::memory::manager::{Memory, SpaceKind};
 use crate::core::work::unit::space::Space;
 use crate::core::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskWeak};
 
-use super::ret_err;
-
-pub(super) enum Outcome {
-    Resume,
-    Switch(*mut TrapContext),
-}
-
-impl Outcome {
-    fn fail<E: env::FailCode>(frame: &mut TrapContext, e: E) -> Self {
-        ret_err(frame, e);
-        Self::Resume
-    }
-}
+use super::outcome::Outcome;
 
 fn map_err(e: MapError) -> UnitFail {
     match e {
@@ -111,7 +99,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 return Outcome::fail(frame, UnitFail::Denied);
             }
             let sire = TaskWeak::stored(Arc::downgrade(&parent), Origin::Sire);
-            match crate::core::work::unit::build(SpaceKind::from(kind), sire) {
+            match crate::core::work::unit::team::TeamBuilder::build(SpaceKind::from(kind), sire) {
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
                 Err(error) => return Outcome::fail(frame, map_err(error)),
             }
@@ -131,7 +119,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             let mut page = [0u64; 64];
             let mut n = 0;
             {
-                let _commit = crate::core::work::unit::commit();
+                let _commit = crate::core::work::commit();
                 let heirs = me.heir.lock();
                 let mut cursor = after.get();
                 while n < capacity {
@@ -174,7 +162,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 Err(error) => return Outcome::fail(frame, error),
             }
             {
-                let _commit = crate::core::work::unit::commit();
+                let _commit = crate::core::work::commit();
                 ident.team.life.prune();
                 let mut at = 0;
                 while let Some(root) = me.heir_node(at) {
@@ -184,7 +172,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             }
         }
         UnitCall::Oust { team } => {
-            if let Err(error) = crate::core::work::unit::oust(&me, team) {
+            if let Err(error) = crate::core::work::unit::team::oust(&me, team) {
                 return Outcome::fail(frame, error);
             }
         }
@@ -215,7 +203,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                             let result = Task::debark(&task);
                             if id == ident.id && matches!(result, Err(UnitFail::Busy)) {
                                 return Outcome::Switch(
-                                    crate::core::work::room::scheduler::trap::run() as *mut TrapContext
+                                    crate::core::work::room::conductor::run::run() as *mut TrapContext
                                 );
                             }
                             result

@@ -4,13 +4,10 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use super::{bump, hybrid, spare};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[repr(u8)]
-pub enum Backend {
-    Bump = 1,
-    Hybrid = 2,
-    Spare = 3,
-}
+#[path = "portal/backend.rs"]
+mod backend;
+
+pub use backend::Backend;
 
 static BACKEND: AtomicU8 = AtomicU8::new(0);
 

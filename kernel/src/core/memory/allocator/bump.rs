@@ -4,8 +4,12 @@ use core::ptr::NonNull;
 use erra::ResultExt;
 
 use crate::core::memory::allocator::{InitError, InitResult};
-use crate::machine::board;
 use crate::machine::sync::SpinLock;
+
+#[path = "bump/inner.rs"]
+mod inner;
+
+use inner::BumpInner;
 
 pub(crate) struct BumpAllocator {
     inner: SpinLock<Option<BumpInner>>,
@@ -23,28 +27,6 @@ impl BumpAllocator {
         let mut inner = BumpInner::new(0, 0, 0);
         inner.init()?;
         guard.replace(inner);
-        Ok(())
-    }
-}
-
-struct BumpInner {
-    used: usize,
-    base: usize,
-    edge: usize,
-}
-
-impl BumpInner {
-    const fn new(base: usize, edge: usize, used: usize) -> Self {
-        Self { base, edge, used }
-    }
-
-    fn init(&mut self) -> Result<(), InitError> {
-        let m = board::info();
-        if m.free.size == 0 {
-            return Err(InitError::NoFreeMemory);
-        }
-        self.base = m.free.base;
-        self.edge = m.free.base + m.free.size;
         Ok(())
     }
 }

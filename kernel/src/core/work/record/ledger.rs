@@ -1,65 +1,49 @@
-use env::{NOTE_MAX, Reason, TaskId};
+use env::{Reason, TaskId};
 
 use crate::machine::sync::SpinLock;
 
+mod entry;
+pub use entry::Entry;
+
 const RING: usize = 8;
-
-#[derive(Clone, Copy)]
-pub struct Entry {
-    pub task: TaskId,
-    pub reason: Reason,
-    bytes: [u8; NOTE_MAX],
-    len: usize,
-}
-
-impl Entry {
-    const EMPTY: Self = Self {
-        task: TaskId::new(0),
-        reason: 0,
-        bytes: [0; NOTE_MAX],
-        len: 0,
-    };
-
-    pub fn note(&self) -> &str {
-        core::str::from_utf8(&self.bytes[..self.len]).unwrap_or("<non-utf8 note>")
-    }
-}
 
 struct Ring {
     entries: [Entry; RING],
     written: usize,
 }
 
-static LEDGER: SpinLock<Ring> = SpinLock::new(Ring {
-    entries: [Entry::EMPTY; RING],
-    written: 0,
-});
+impl Ring {
+    const fn new() -> Self {
+        Self {
+            entries: [Entry::EMPTY; RING],
+            written: 0,
+        }
+    }
+
+    fn push(&mut self, entry: Entry) {
+        let at = self.written % RING;
+        self.entries[at] = entry;
+        self.written += 1;
+    }
+
+    fn each(&self, mut f: impl FnMut(&Entry)) {
+        let start = self.written.saturating_sub(RING);
+        for i in start..self.written {
+            f(&self.entries[i % RING]);
+        }
+    }
+}
+
+static LEDGER: SpinLock<Ring> = SpinLock::new(Ring::new());
 
 pub fn note(task: TaskId, reason: Reason, note: &str, owner: Option<TaskId>) {
     if reason == 0 || owner.is_some() {
         return;
     }
-    let raw = note.as_bytes();
-    let len = raw.len().min(NOTE_MAX);
-    let mut entry = Entry {
-        task,
-        reason,
-        bytes: [0; NOTE_MAX],
-        len,
-    };
-    entry.bytes[..len].copy_from_slice(&raw[..len]);
-
-    let mut ring = LEDGER.lock();
-    let at = ring.written % RING;
-    ring.entries[at] = entry;
-    ring.written += 1;
+    let entry = Entry::new(task, reason, note);
+    LEDGER.lock().push(entry);
 }
 
 pub fn each(f: impl FnMut(&Entry)) {
-    let mut f = f;
-    let ring = LEDGER.lock();
-    let start = ring.written.saturating_sub(RING);
-    for i in start..ring.written {
-        f(&ring.entries[i % RING]);
-    }
+    LEDGER.lock().each(f);
 }
