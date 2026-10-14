@@ -6,9 +6,9 @@
 //! | 判据 | 通道 | 依据 |
 //! |---|---|---|
 //! | 交付区**跨线程**不重叠 / 不被簿记踩 | 全局**原子登记表**（占位 + 扫描）+ 交付区模式写读 | 交付区是共享内存：同一段被交付两次 ⇒ 两个线程往同一段写不同 tag ⇒ 归还时必有一方读回不符 |
-//! | 取还**守恒** | `statistics` 的原子计数（块级 / 帧级 / 池级） | 块级**严格守恒**；帧级/池级的差值只能是池的**迟滞**（每 size class 1 页，`block.rs` 头注） |
+//! | 取还**守恒** | `statistics` 的原子计数（块级 / 帧级 / 池级） | 块级**严格守恒**；帧级/池级的差值只能是池的**迟滞**（每 size class 1 页，`block/mod.rs` 头注） |
 //! | 在途块**全部归还** | `LIVE` 原子计数 | 一趟并发跑完必须归零 |
-//! | 跨 hart 归还真的**回了本池** | `block::heap().own(pa)`（池归属读数） | `home != me` 时走 `feed`；本池下次 `pull` 时 `suck` 抽回（`block.rs` 的泵是唯一回路） |
+//! | 跨 hart 归还真的**回了本池** | `block::heap().own(pa)`（池归属读数） | `home != me` 时走 `feed`；本池下次 `pull` 时 `suck` 抽回（`block/mod.rs` 的泵是唯一回路） |
 //!
 //! # 两层为什么各有一份 `run` 循环
 //!
@@ -160,10 +160,10 @@ pub fn counters() -> Counters {
 }
 
 /// 池的**迟滞**：每个 size class（`MIN_POWER..=MAX_POWER` = 3..=11，共 9 档）至多留
-/// 1 个空闲页不还（`block.rs` 头注的 arena 迟滞）—— **每池**一份。
+/// 1 个空闲页不还（`block/mod.rs` 头注的 arena 迟滞）—— **每池**一份。
 pub const SPARE_PAGES_PER_POOL: usize = 9;
 
-/// 帧级/池级差值的上界：**每池**迟滞 × 池数（池按 hart 数建，见 `block.rs::init`）。
+/// 帧级/池级差值的上界：**每池**迟滞 × 池数（池按 hart 数建，见 `block/mod.rs::init`）。
 pub fn spare_pages_max() -> usize {
     machine::hart::hart_count().max(1) * SPARE_PAGES_PER_POOL
 }

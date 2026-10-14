@@ -11,9 +11,9 @@ use crate::core::memory::{
 use crate::machine::hart;
 use crate::machine::sync::{Level, OnceLock, SpinLock};
 
-#[path = "spare/blk.rs"]
+#[path = "blk.rs"]
 mod blk;
-#[path = "spare/inner.rs"]
+#[path = "inner.rs"]
 mod inner;
 
 use blk::Blk;

@@ -271,5 +271,5 @@ pub(crate) fn seal(meta: &HoleMeta) {
 }
 
 #[cfg(debug_assertions)]
-#[path = "../../../../tests/health/hole.rs"]
+#[path = "../../../../../tests/health/hole.rs"]
 pub mod tests;

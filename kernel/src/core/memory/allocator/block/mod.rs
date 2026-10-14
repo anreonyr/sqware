@@ -11,15 +11,15 @@ use crate::machine::board;
 use crate::machine::hart;
 use crate::machine::sync::OnceLock;
 
-#[path = "block/cell.rs"]
+#[path = "cell.rs"]
 mod cell;
-#[path = "block/inner.rs"]
+#[path = "inner.rs"]
 mod inner;
-#[path = "block/pool.rs"]
+#[path = "pool.rs"]
 mod pool;
-#[path = "block/pump.rs"]
+#[path = "pump.rs"]
 mod pump;
-#[path = "block/tally.rs"]
+#[path = "tally.rs"]
 mod tally;
 
 use cell::Cell;

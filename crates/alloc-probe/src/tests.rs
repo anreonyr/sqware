@@ -3,7 +3,7 @@
 //! 判据分三层 + 一个未接线的出口（与 `lib.rs` 的头注同一张表）：
 //!   ① 检测后端（`smartalloc` / `mockalloc` / `dhat` **三选一**，见 README「六条路」）；
 //!   ② 本文件 + `harness` 的**影子账**：区间不重叠、指针满足对齐、交付区写读一致、
-//!      `block.rs:315` 的请求门必须拒、预算内的合法请求必须成；
+//!      `BlockAllocator::allocate` 的请求门必须拒、预算内的合法请求必须成；
 //!   ③ 收尾对账：借出去的都还回去之后，影子账与分配器自有簿记都回到起点；
 //!   ④ [`crate::fault::allocator_fault`]：**未接线**（照实记：零调用点）—— 分配器自身违例
 //!      目前由②的 `Violation`（`Err`）归因。
@@ -147,7 +147,7 @@ fn frame_no_double_delivery_under_churn() {
     done();
 }
 
-/// 块：混合档位取还 + **契约门**（`block.rs:315` 的越界/超对齐请求必须被拒）。
+/// 块：混合档位取还 + **契约门**（`BlockAllocator::allocate` 的越界/超对齐请求必须被拒）。
 #[test]
 fn block_alloc_free_round_trip() {
     let _a = harness::boot();
@@ -173,7 +173,7 @@ fn block_alloc_free_round_trip() {
     );
     assert_eq!(
         r.rejected, 4,
-        "越界/超对齐的 4 条必须被拒（block.rs:315）：{r:?}"
+        "越界/超对齐的 4 条必须被拒（BlockAllocator::allocate）：{r:?}"
     );
     assert_eq!(r.given, 7, "{r:?}");
     done();
@@ -184,7 +184,7 @@ fn block_alloc_free_round_trip() {
 /// 这是影子账问不了的两件事（影子账只认"我取的那几块"）：
 /// * **容量守恒** —— 合并若漏掉某一段，第二轮就取不到同样多的页（帧"丢"了）；
 /// * **合并没有漏** —— 还尽之后必须还能拿到 4 MiB 的连续块（整段拼不回来就取不到）；
-/// * **`Err` 不是死路** —— 台面满时返 `Err` 而不是 panic（`frame.rs` 的
+/// * **`Err` 不是死路** —— 台面满时返 `Err` 而不是 panic（`frame/mod.rs` 的
 ///   `pull_link` 对污染 `Link` 有意"降级成 `AllocError`"），且它还回一块之后必须立刻可用。
 ///
 /// Miri 下**跳过**：这里要 4000+ 次拆分 + 一次 4 MiB 合并，解释执行下只换来"进度条很慢"，

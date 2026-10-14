@@ -2,22 +2,22 @@ mod error;
 mod stats;
 
 #[cfg(debug_assertions)]
-#[path = "statistics/block_kinds.rs"]
+#[path = "block_kinds.rs"]
 mod block_kinds;
 #[cfg(debug_assertions)]
-#[path = "statistics/frame_kinds.rs"]
+#[path = "frame_kinds.rs"]
 mod frame_kinds;
 #[cfg(debug_assertions)]
-#[path = "statistics/kind.rs"]
+#[path = "kind.rs"]
 mod kind;
 #[cfg(debug_assertions)]
-#[path = "statistics/kinds.rs"]
+#[path = "kinds.rs"]
 mod kinds;
 #[cfg(debug_assertions)]
-#[path = "statistics/mark.rs"]
+#[path = "mark.rs"]
 mod mark;
 #[cfg(debug_assertions)]
-#[path = "statistics/mark_cell.rs"]
+#[path = "mark_cell.rs"]
 mod mark_cell;
 
 pub use error::Error;

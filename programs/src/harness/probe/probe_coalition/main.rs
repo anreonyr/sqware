@@ -5,7 +5,7 @@
 //! Each entry must carry its action mark and belong to the same Identity authority.
 //!
 //! # 判据为什么必须 **panic**
-//! 整机那一格判的是"有没有 `EXIT_PANIC`"（`kernel/src/work/room/conductor.rs` 的判据只此一处）：
+//! 整机那一格判的是"有没有 `EXIT_PANIC`"（`kernel/src/core/work/room/conductor/mod.rs` 的判据只此一处）：
 //! 返回一个非零的 `Report` **不算红**。故每一步失败都当场塌。
 
 extern crate programs;

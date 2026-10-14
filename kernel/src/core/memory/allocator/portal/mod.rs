@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 
 use super::{bump, hybrid, spare};
 
-#[path = "portal/backend.rs"]
+#[path = "backend.rs"]
 mod backend;
 
 pub use backend::Backend;

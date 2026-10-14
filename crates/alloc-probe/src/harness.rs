@@ -7,7 +7,7 @@
 //!    `bump` → `block` → `frame`（顺序不可换，见 `block::init` 的文档）；
 //! ② **随机序列**：[`plan`] 把任意字节串翻译成 [`Op`] 序列，[`run`] 执行它 —— proptest
 //!    与"把最小输入贴回语料复现"共用这一个定义，故**换随机源不改判据**；
-//! ③ **影子账模型**：在册交付区间、写读模式、对齐契约、以及 `block.rs:315` 的请求门，
+//! ③ **影子账模型**：在册交付区间、写读模式、对齐契约、以及 `BlockAllocator::allocate` 的请求门，
 //!    任何一条不成立都由 [`Violation`] 当场指名。它**只**报分配器自身的问题 ——
 //!    "谁没 drop"在这一层根本不在场（那正是本 crate 存在的理由）。
 //!
@@ -20,10 +20,10 @@
 //!
 //! | 判据 | 依据 | 违反长什么样 |
 //! |---|---|---|
-//! | 交付区不与任何在册区间重叠 | `frame::pagemeta` 是"这页在不在手"的唯一答案（`frame.rs:18/68`） | 同一段内存被交付两次 ⇒ 两个调用方写同一块 |
+//! | 交付区不与任何在册区间重叠 | 空闲链与 `FrameInner::pagemeta` 配合记录空闲块及其幂 | 同一段内存被交付两次 ⇒ 两个调用方写同一块 |
 //! | 交付指针满足 `layout.align()` | `Allocator` 的契约（`GlobalAlloc` 同理） | 上游 smartalloc 就栽在这条上（见 lib.rs 接管段①） |
 //! | 交付区写读一致 | 交付区是调用方的，分配器**自己**的簿记不得踩进来 | 分配器把 `Link`/`Meta` 写进了已交付的块 |
-//! | `block.rs:315` 的请求门必须**拒** | `power > MAX_POWER \|\| align > 1 << power` 是防御门 | 出界/超对齐的请求被接受 ⇒ 交付出来就是越界写 |
+//! | `BlockAllocator::allocate` 的请求门必须**拒** | `power > MAX_POWER \|\| align > 1 << power` 是防御门 | 出界/超对齐的请求被接受 ⇒ 交付出来就是越界写 |
 //! | 预算内的合法请求必须**成** | 台面（16 MiB）远大于在册预算（8 MiB） | 返 `Err` 只可能是 freelist 坏了或假性耗尽 |
 
 use core::alloc::{Allocator, Layout};
@@ -115,7 +115,7 @@ pub fn init() {
         let run = || {
             machine::board::configure(a.base(), a.size(), HARTS);
             bump::init().expect("bump::init");
-            // **block 必须在 frame 之前**（`block.rs` 的 `init` 文档：池的页要向 frame 借，
+            // **block 必须在 frame 之前**（`block/mod.rs` 的 `init` 文档：池的页要向 frame 借，
             // 而簿记表要覆盖 free 区；顺序反了帧链的链头就是毒化内存 —— 实测过）。
             block::init().expect("block::init");
             frame::init().expect("frame::init");
@@ -174,13 +174,13 @@ pub const INIT_BLOCKS: u64 = 10;
 ///
 /// | # | 笔 | 出处 |
 /// |---|---|---|
-/// | 1 | `Box<FrameAllocator>` | `frame.rs:546`（`SpinLock` 非 `Send` ⇒ 存 `&'static`） |
-/// | 2 | `freelist` 的 Vec 缓冲 | `frame.rs:165`（`max_power` 条 `Option<NonNull<Link>>`） |
-/// | 3 | `pagemeta` 的 Vec 缓冲 | `frame.rs:169`（free 区每页一条 `Option<Meta>`） |
-/// | 4 | `Box<Tally>` | `block.rs:284`（簿记表本身） |
-/// | 5 | `Box<[BlockInner]>` | `block.rs:301`（per-hart 池集合） |
-/// | 6–9 | 每池 `freepool` 的 Vec 缓冲 ×4 | `block.rs:596`（`Pool::init` 的 `try_reserve`） |
-/// | 10 | `Box<SpareAllocator>` | `spare.rs:311`（后备仓本身，同样存 `&'static`） |
+/// | 1 | `Box<FrameAllocator>` | `frame::init`（`SpinLock` 非 `Send` ⇒ 存 `&'static`） |
+/// | 2 | `freelist` 的 Vec 缓冲 | `FrameInner::init`（`max_power` 条 `Option<NonNull<Link>>`） |
+/// | 3 | `pagemeta` 的 Vec 缓冲 | `FrameInner::init`（free 区每页一条 `Option<u8>`） |
+/// | 4 | `Box<Tally>` | `BlockAllocator::init`（簿记表本身） |
+/// | 5 | `Box<[BlockInner]>` | `BlockAllocator::init`（per-hart 池集合） |
+/// | 6–9 | 每池 `freepool` 的 Vec 缓冲 ×4 | `Pool::init` 的 `try_reserve` |
+/// | 10 | `Box<SpareAllocator>` | `spare::init`（后备仓本身，同样存 `&'static`） |
 ///
 /// 这 10 笔是**设计**（表要活到进程结束），不是缺陷：判据是"**除它们之外**一笔都不能不配对"。
 /// 笔数变化 ⇒ 有人加了一笔没还的分配 ⇒ 这条用例当场点名。
@@ -236,7 +236,7 @@ impl Backend {
 /// `block` 的请求表 `(字节数, 对齐)`；[`Op::Take`] 的 `req` 是它的下标。
 ///
 /// 前 14 条**合法**（size class ≤ 半页 2048，对齐不超过该 size class 的尺寸）；
-/// 后 4 条按 `block.rs:315` 的守护门必须被**拒**：越界/超对齐的请求一旦被交付，
+/// 后 4 条按 `BlockAllocator::allocate` 的守护门必须被**拒**：越界/超对齐的请求一旦被交付，
 /// 调用方拿到的就是一段越界的块。
 const BLOCK_REQS: [(usize, usize); 18] = [
     (1, 8),
@@ -287,11 +287,11 @@ const SPARE_REQS: [(usize, usize); 8] = [
 pub enum Want {
     /// 合法请求：预算内**必须**成功。
     Ok,
-    /// 越界/超对齐请求：**必须**返 `Err`（`block.rs:315` 的守护门）。
+    /// 越界/超对齐请求：**必须**返 `Err`（`BlockAllocator::allocate` 的守护门）。
     Err,
 }
 
-/// `block` 的契约（**镜像** `block.rs:304-312` 那三行判据，不是另立一套）：
+/// `block` 的契约（**镜像** `BlockAllocator::allocate` 的判据，不是另立一套）：
 /// `power = max(size, 1 << MIN_POWER).next_power_of_two().ilog2()`，合法 ⇔
 /// `power <= MAX_POWER`（= `(PAGE_SIZE / 2).ilog2()` = 11）且 `align <= 1 << power`。
 fn block_want(size: usize, align: usize) -> Want {
@@ -339,7 +339,7 @@ pub(crate) fn request(backend: Backend, req: u8) -> (Layout, Want) {
             let (size, align) = SPARE_REQS[req as usize % SPARE_REQS.len()];
             (
                 Layout::from_size_align(size, align).expect("请求表是静态的，必然合法"),
-                // `spare.rs`：`align > MAX_ALIGN(16)` ⇒ Err（不 panic）—— 表里只放合法档位。
+                // `spare/mod.rs`：`align > MAX_ALIGN(16)` ⇒ Err（不 panic）—— 表里只放合法档位。
                 Want::Ok,
             )
         }
@@ -486,7 +486,7 @@ pub enum Violation {
         want: u8,
         got: u8,
     },
-    /// 契约要求拒绝的请求被**接受**了（`block.rs:315` 的守护门失灵）。
+    /// 契约要求拒绝的请求被**接受**了（`BlockAllocator::allocate` 的守护门失灵）。
     Accepted {
         backend: Backend,
         size: usize,
@@ -539,7 +539,7 @@ impl fmt::Display for Violation {
                 align,
             } => write!(
                 f,
-                "{}: 越界/超对齐请求被接受 —— size={size} align={align} 该被拒（block.rs:315 的守护门）",
+                "{}: 越界/超对齐请求被接受 —— size={size} align={align} 该被拒（BlockAllocator::allocate 的守护门）",
                 backend.name()
             ),
             Violation::Rejected {

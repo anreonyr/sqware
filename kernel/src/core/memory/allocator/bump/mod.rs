@@ -6,7 +6,7 @@ use erra::ResultExt;
 use crate::core::memory::allocator::{InitError, InitResult};
 use crate::machine::sync::SpinLock;
 
-#[path = "bump/inner.rs"]
+#[path = "inner.rs"]
 mod inner;
 
 use inner::BumpInner;

@@ -7,7 +7,7 @@
 //! 两者的**修法完全不同** —— 前者在分配器内部（表/链/簿记三套口径对不上），后者在对象
 //! 的持有者（谁没 drop）。本 crate 是测试侧的同一刀：
 //!
-//! * 把 `frame.rs` / `block.rs` / `bump.rs`（**逐字未改的内核源码**，按 `include!`
+//! * 把 `frame/mod.rs` / `block/mod.rs` / `bump/mod.rs`（**逐字未改的内核源码**，按 `include!`
 //!   引进来）放到宿主上跑；
 //! * 分配器**元数据**的分配落在宿主堆上 ⇒ 泄漏检测器（LeakSanitizer / smartalloc）
 //!   能直接看见"分配器自己有没有漏掉它自己的簿记"；
@@ -21,14 +21,14 @@
 //! |---|---|---|
 //! | ① 后端（**三选一**，见本文件接管段） | `smartalloc` / `mockalloc` / `dhat` | 孤儿块 / 分配释放**配对** / 宿主堆**用量** |
 //! | ①′ 零依赖后端 | `RUSTFLAGS=-Zsanitizer=leak`（**必须不接管**） | LeakSanitizer 看宿主堆 |
-//! | ② 影子账（`harness` + `tests.rs`） | 本 crate 自己 | 区间不重叠 / 指针满足对齐 / 交付区写读一致 / `block.rs:315` 的请求门必须拒 |
+//! | ② 影子账（`harness` + `tests.rs`） | 本 crate 自己 | 区间不重叠 / 指针满足对齐 / 交付区写读一致 / `BlockAllocator::allocate` 的请求门必须拒 |
 //! | ③ 随机序列（`tests/{pairing,heap}.rs` + `harness::plan`） | proptest | 把②的判据铺到随机分配/释放序列与随机工作负载上 |
 //! | ④ 当场炸的通道（[`fault::allocator_fault`]） | **未接线**（照实记：零调用点） | 分配器**自身**违例本应由它当场炸；目前实际走②的 `Violation`（`Err`）归因 |
 //!
 //! ②③ 两条腿**不依赖后端**：`plain` / `smartalloc` / `mockalloc` / `dhat` 四档都跑同一批判据，
 //! 后端只换读数口径。
 
-#![feature(allocator_api)] // 内核分配器源码用 `core::alloc::Allocator`（bump.rs）
+#![feature(allocator_api)] // 内核分配器源码用 `core::alloc::Allocator`（bump/mod.rs）
 #![allow(dead_code, unused_imports, unused_variables)]
 
 extern crate alloc;
@@ -165,7 +165,7 @@ mod shim_machine {
     }
 
     /// 核的身份 —— 与内核 `crate::machine::hart::HartId` **同形**：`include!` 进来的分配器源码
-    /// 按内核的写法调 `.get()`（`block.rs` 的 per-hart 池）。`bit()` 今日无人调，
+    /// 按内核的写法调 `.get()`（`block/mod.rs` 的 per-hart 池）。`bit()` 今日无人调，
     /// 一并给出是为了**两处形状不分家**——垫片的义务是"同形"，不是"够用就行"。
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct HartId(usize);
@@ -195,12 +195,12 @@ mod shim_machine {
     }
     static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
-    /// 当前 hart（宿主上 = **当前线程**）。内核用它选 per-hart 池（`block.rs` 的
+    /// 当前 hart（宿主上 = **当前线程**）。内核用它选 per-hart 池（`block/mod.rs` 的
     /// `blocks[hart_id]`），宿主上"线程即 hart"，于是并发那层天然压到两条路径：
     ///
     /// * 不同线程落在**不同池**上（`hart_bind` 给确定性绑定，见下）；
     /// * 跨线程归还走 `feed`（不是本池）→ 本池下次 `pull` 时 `suck` 抽空泵 ——
-    ///   `feed`/`suck` 是块池唯二的过境路径（`block.rs` 的 pump）。
+    ///   `feed`/`suck` 是块池唯二的过境路径（`block/mod.rs` 的 pump）。
     ///
     /// 单线程用例里恒 0（与"没有多线程"时的旧行为一致）：id 按**首次调用顺序**轮转分配，
     /// 主线程第一个拿到 0。
@@ -232,12 +232,12 @@ mod shim_machine {
 /// 三份全是上面 `shim_machine` / `shim_lock` 的 `pub use`：同一份事实换个内核拼法。
 pub mod machine {
     /// 核身份与"当前 hart"（内核 `crate::machine::hart`）。宿主上"线程即 hart"（见
-    /// `shim_machine::hart_id`）：`block.rs` 的 per-hart 池、`spare.rs` 的仓容量都问这里。
+    /// `shim_machine::hart_id`）：`block/mod.rs` 的 per-hart 池、`spare/mod.rs` 的仓容量都问这里。
     pub mod hart {
         pub use crate::shim_machine::{HartId, hart_bind, hart_count, hart_id};
     }
 
-    /// 机器事实：空闲区与保留区（内核 `crate::machine::board`；`frame.rs` 的 `holes` 问这里）。
+    /// 机器事实：空闲区与保留区（内核 `crate::machine::board`；`frame/mod.rs` 的 `holes` 问这里）。
     pub mod board {
         pub use crate::shim_machine::{MAX_RESERVED, Machine, Region, configure, info};
     }
@@ -282,20 +282,20 @@ pub mod memory {
     pub mod allocator {
         // 内核源码**逐字未改**地编进来（`include!` 的路径相对本文件 ⇒ 三级上到仓库根）。
         // 用 `include!` 而不是 `#[path]`：后者对嵌套模块按"模块目录"解析，层级会绕。
-        // 内核那几份源码用 `#[path = "<模块>/<文件>.rs"]` 声明子模块（`frame/inner.rs` 等）；
-        // 该 `#[path]` 相对**被 include 的文件**，于是与内核编译时的拼法一致。
+        // 内核那几份源码用 `#[path = "<文件>.rs"]` 声明子模块（`inner.rs` 等）；
+        // 该 `#[path]` 相对**被 include 的文件**（`<模块>/mod.rs`），于是与内核编译时的拼法一致。
         pub mod link {
             include!("../../../kernel/src/core/memory/allocator/link.rs");
         }
         pub(crate) use link::Link;
         pub mod bump {
-            include!("../../../kernel/src/core/memory/allocator/bump.rs");
+            include!("../../../kernel/src/core/memory/allocator/bump/mod.rs");
         }
         pub mod frame {
-            include!("../../../kernel/src/core/memory/allocator/frame.rs");
+            include!("../../../kernel/src/core/memory/allocator/frame/mod.rs");
         }
         pub mod block {
-            include!("../../../kernel/src/core/memory/allocator/block.rs");
+            include!("../../../kernel/src/core/memory/allocator/block/mod.rs");
         }
         /// 分流器（≤ 2 KiB 走 block、否则走 frame）。宿主上**不需要 init**：
         /// 它只是一个 `static` 路由器（`HYBRID_ALLOCATOR` 是 `const fn new()`），
@@ -307,12 +307,12 @@ pub mod memory {
         /// 装台时它从混合分配器整块取一段仓区（`ring_bytes(harts) + HEADER + DUMP_BUDGET`），
         /// 故它是**台面的一部分**：容量读数与判据都看得见它。
         pub mod spare {
-            include!("../../../kernel/src/core/memory/allocator/spare.rs");
+            include!("../../../kernel/src/core/memory/allocator/spare/mod.rs");
         }
 
         /// 统计出口的宿主版：**只是计数**，不参与分配器正确性判据。
         ///
-        /// 与内核 `statistics.rs` 的**写侧**同名同形（内核那份的读侧是 health 用例的判据
+        /// 与内核 `statistics/mod.rs` 的**写侧**同名同形（内核那份的读侧是 health 用例的判据
         /// 输入；宿主侧那批判据由影子账自己算 ⇒ 这里只留写侧）。内核源码改了写侧签名，
         /// 这里必须跟着改 —— 它是 shim，不是内核的一部分（`include!` 进来的源码**逐字未改**）。
         ///

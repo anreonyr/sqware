@@ -151,7 +151,7 @@ fn runner_workload(runner: &mut TestRunner, baseline: dhat::HeapStats) {
                         "分配器自身违例：{v}（计划 {bytes:?}）"
                     )));
                 }
-                // 三条零增量：热路径一次都不上全局堆（`frame.rs`/`block.rs` 的元数据
+                // 三条零增量：热路径一次都不上全局堆（`frame/mod.rs`/`block/mod.rs` 的元数据
                 // 全在装台期分配好），故累计不涨、常驻不涨、峰值也抬不起来。
                 // 这是**实测发现**的固化：哪天真要在热路径上加宿主分配，先让它配对，
                 // 再把这三条改成上界断言，并把发现写进 README。

@@ -160,7 +160,7 @@ pub fn fail(error: BootError) -> ! {
 }
 
 #[cfg(debug_assertions)]
-#[path = "../../../tests/health/boot_errors.rs"]
+#[path = "../../../../tests/health/boot_errors.rs"]
 mod tests;
 #[cfg(debug_assertions)]
 pub use tests::accept;

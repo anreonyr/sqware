@@ -10,7 +10,7 @@ use alloc::{
 use crate::core::memory::allocator::{InitError, InitResult};
 use crate::machine::sync::{Level, OnceLock, SpinLock};
 
-#[path = "frame/inner.rs"]
+#[path = "inner.rs"]
 mod inner;
 
 use inner::FrameInner;

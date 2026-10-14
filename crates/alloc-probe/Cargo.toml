@@ -58,7 +58,7 @@ mockalloc = ["dep:mockalloc"]
 dhat = ["dep:dhat"]
 # **照实记（这一格 feature 随内核那一刀删了）**：这里原先有 `framework = []`——因为
 # `include!` 进来的内核源码里有 `#[cfg(feature = "framework")]` 分支（帧侧范围断言，
-# `frame.rs:71/100`），声明它只为压掉 `unexpected_cfgs`。用户裁定"迁移到 embedded-test"之后，
+# `FrameAllocator::allocate/deallocate`），声明它只为压掉 `unexpected_cfgs`。用户裁定"迁移到 embedded-test"之后，
 # 内核那两处的门收成了 `#[cfg(debug_assertions)]` ⇒ **本 crate 不再需要这一格**：宿主上
 # `debug_assertions` 开着（dev 档），那些分支照旧编得进来，与内核同一档。
 

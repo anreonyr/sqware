@@ -242,5 +242,5 @@ pub(crate) fn current() -> &'static Conductor {
 }
 
 #[cfg(debug_assertions)]
-#[path = "../../../../tests/health/scheduler.rs"]
+#[path = "../../../../../tests/health/scheduler.rs"]
 pub mod tests;

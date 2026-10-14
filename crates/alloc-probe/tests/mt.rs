@@ -88,7 +88,7 @@ fn concurrent_churn_conserves_atomic_counters() {
     // ① 在途块全部归还（原子计数必须归零）。
     assert_eq!(concurrent::registry_live(), 0, "并发跑完仍有在册块");
 
-    // ② 块级原子账**严格守恒**：交付多少块就归还多少块（`block.rs:319/344` 的写侧计数）。
+    // ② 块级原子账**严格守恒**：交付多少块就归还多少块（`record_block_take` / `record_block_give`）。
     assert_eq!(
         d.block_take, d.block_give,
         "块级原子账不平（交付 {} / 归还 {}）",

@@ -513,7 +513,7 @@ impl TableNode {
 }
 
 #[cfg(debug_assertions)]
-#[path = "../../../../tests/health/large_pages.rs"]
+#[path = "../../../../../tests/health/large_pages.rs"]
 mod tests;
 
 #[cfg(debug_assertions)]

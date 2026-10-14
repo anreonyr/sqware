@@ -150,7 +150,7 @@ workspace `--all-targets` 会把 stream 的宿主 std 测试编译到裸机目�
 - Layout 用例覆盖字节取整、零大小、指定地址、超对齐、最低空档复用、错误 owner、失败回收与共享视图；eager、lazy、view 三条路径都实际核对超对齐。
 - 普通内存调用入口不包含 PTE、物理帧、页大小或地址桶的组装；生产 Memory backend 借用为 0。
 
-manager 的 37 个具名类型和 sync 的 18 个具名类型已各自独立定义，关联或对偶不作为同文件豁免。`Memory` 的子模块保存凭证、回收记录及 `VaAllocator`；后者的子模块保存地址区域与预约槽。`TableNode` 定义在 `table.rs`，其物理 `PageTable` 保存在 `table/page.rs`。`MapError` 属于 manager 共同词汇，不从 table 借出；本地 TLB 刷新与跨核指令同步由 ASID 机制实现，module 入口只声明与导出。Tree 与 Map 仅向 crate 内提供机制接口，普通使用面保持 Memory、Layout、Access 与 Mapping。类型数量和字段归组不冒充持久状态净减。其他内核对象仍按下述边界单独验收。
+manager 的 37 个具名类型和 sync 的 18 个具名类型已各自独立定义，关联或对偶不作为同文件豁免。`Memory` 的子模块保存凭证、回收记录及 `VaAllocator`；后者的子模块保存地址区域与预约槽。`TableNode` 定义在 `table/mod.rs`，其物理 `PageTable` 保存在 `table/page.rs`。`MapError` 属于 manager 共同词汇，不从 table 借出；本地 TLB 刷新与跨核指令同步由 ASID 机制实现，module 入口只声明与导出。Tree 与 Map 仅向 crate 内提供机制接口，普通使用面保持 Memory、Layout、Access 与 Mapping。类型数量和字段归组不冒充持久状态净减。其他内核对象仍按下述边界单独验收。
 
 顶层迁移本身没有完成全树一型一文件。后续归位保持类型与自身实现同处，子目录表达
 实际组成或算法；相互关联不作为同文件豁免。manager 的普通使用接口采用 Layout、
@@ -172,6 +172,10 @@ Access 和 Mapping 凭证，生产调用不再使用 `backend()`。
 
 文件数为 170 → 277。声明减少包括测试 Buffer 迁出生产目录，不能换算成运行期状态或内存
 节省；结构验收同时要求规则归实际拥有者，不能只凭多型文件清零宣称设计完成。
+
+`kernel/src` 的物理布局统一为：有子模块的模块把本体放在 `foo/mod.rs`，没有子模块的叶子
+保留 `foo.rs`。44 处同层 `foo.rs + foo/` 组合已全部退出；模块路径、声明数和实现不变，
+不新增同名类型文件或转发层。此规则的本轮范围是 kernel，其他 crate 与 programs 未统一。
 
 - `room::conductor` 持有每 hart 的运行槽、饥饿队列和身份位，执行本地调度；
   `room::scheduler` 持有跨 hart 的放置、名册与唤醒协调。没有 `scheduler/core` 兼容层。
