@@ -5,13 +5,15 @@ use env::{
     VirtAddr,
 };
 
-use crate::core::memory::nest::Access;
-use crate::machine::switcher::context::TrapContext;
+use crate::core::memory::PAGE_SIZE;
+use crate::core::memory::address::VirtAddr as KVirt;
+use crate::core::memory::nest::{Access, Nest, View};
 use crate::core::work::mail::{self, Mail, pole::PoleOperation};
 use crate::core::work::pend::{self, Need, Permission, PieSnapshot, clear_heir};
 use crate::core::work::room::conductor::current;
 use crate::core::work::room::scheduler::roster::muster;
 use crate::core::work::unit::task::TaskIdent;
+use crate::machine::switcher::context::TrapContext;
 
 use super::outcome::{answer, answer_pair};
 
@@ -26,11 +28,7 @@ fn subset_to_access(subset: Permission) -> Result<Access, PieFail> {
     Ok(access)
 }
 
-pub(crate) fn dispatch(
-    frame: &mut TrapContext,
-    call: PieCall,
-    ident: Arc<TaskIdent>,
-) {
+pub(crate) fn dispatch(frame: &mut TrapContext, call: PieCall, ident: Arc<TaskIdent>) {
     match call {
         PieCall::Unseal { args } => match args {
             UnsealArgs::Hole { mark, limits } => unseal_hole(frame, mark, limits),
@@ -150,13 +148,10 @@ pub(crate) fn create_pole(
     shared: bool,
 ) -> Result<PieToken, PieFail> {
     let task_space = task.ident.team.space.clone();
-    let mapping = task_space
-        .memory
-        .mapping_at(addr, size)
-        .map_err(|_| PieFail::Denied)?;
-    let creation = task.pend.creations.claim(mapping.view())?;
+    let view = view_at(&task_space.nest, addr, size).ok_or(PieFail::Denied)?;
+    let creation = task.pend.creations.claim(&view)?;
     pole_checkpoint(1)?;
-    let meta = mail::pole::PoleMeta::from_mapping(&task_space, mapping, task.ident.id)?;
+    let meta = mail::pole::PoleMeta::from_mapping(&task_space, view, task.ident.id)?;
     pole_checkpoint(2)?;
     let mut permission = Permission::FETCH | Permission::STORE | Permission::VEST;
     if !shared {
@@ -169,6 +164,15 @@ pub(crate) fn create_pole(
     meta.commit_source();
     creation.commit();
     Ok(token)
+}
+
+/// 按线外 VA + 字节跨度取一段已有关系：候选由 VA 给出，身份以 `View` 为准。
+pub(in crate::entry) fn view_at(nest: &Nest, start: KVirt, size: usize) -> Option<Arc<View>> {
+    if size == 0 || start.offset() != 0 || !size.is_multiple_of(PAGE_SIZE) {
+        return None;
+    }
+    let view = nest.probe(start)?;
+    (view.initial_range() == (start, size) && view.is_live()).then_some(view)
 }
 
 fn unseal_pole(frame: &mut TrapContext, addr: VirtAddr, size: usize, shared: bool) {
@@ -292,8 +296,9 @@ fn information(task: &Arc<crate::core::work::unit::task::Task>, pie: &PieSnapsho
 
 fn write_info(ident: &TaskIdent, buf: usize, info: PieInfo) -> Result<(), PieFail> {
     let words = info.words();
-    let bytes = unsafe { ::core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), PieInfo::SIZE) };
-    if !ident.team.space.memory.copy_out(bytes, buf) {
+    let bytes =
+        unsafe { ::core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), PieInfo::SIZE) };
+    if !ident.team.space.copy_out(bytes, KVirt::wrap(buf)) {
         return Err(PieFail::Denied);
     }
     Ok(())
@@ -306,8 +311,7 @@ fn inspect(frame: &mut TrapContext, ident: &TaskIdent, token: PieToken, buf: Vir
         if !ident
             .team
             .space
-            .memory
-            .validate_access(buf.get(), PieInfo::SIZE, Access::WRITE)
+            .validate_access(KVirt::wrap(buf.get()), PieInfo::SIZE, Access::WRITE)
         {
             return Err(PieFail::Denied);
         }
@@ -333,8 +337,7 @@ fn collect(
         if !ident
             .team
             .space
-            .memory
-            .validate_access(buf.get(), len, Access::WRITE)
+            .validate_access(KVirt::wrap(buf.get()), len, Access::WRITE)
         {
             return Err(PieFail::Denied);
         }

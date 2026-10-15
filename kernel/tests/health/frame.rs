@@ -7,9 +7,11 @@ use alloc::vec::Vec;
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::address::{PageCount, PageOffset, VirtAddr};
 use crate::core::memory::flat::Frame;
-use crate::core::memory::nest::{Access, NestError, RegionId, View, ViewRange, identity};
+use crate::core::memory::nest::{Access, NestError, View, ViewRange, identity};
 use crate::core::work::grant::Grant;
 use crate::core::work::unit::space::SpaceBuilder;
+
+use super::support;
 
 /// 一段页对齐窗口在某个关系上的身份选择。
 fn select(view: &Arc<View>, start: VirtAddr, size: usize) -> ViewRange {
@@ -35,64 +37,35 @@ pub fn sharing() {
         .collect();
     let lifetimes: Vec<_> = frames.iter().map(Arc::downgrade).collect();
     let flags = Access::READ;
-    let first = a
-        .memory
-        .map_frames(
-            a.memory
-                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), 3 * PAGE_SIZE)
-                .unwrap(),
-            frames.clone(),
-            Access::READ,
-            flags,
-        )
-        .unwrap();
-    let second = b
-        .memory
-        .map_frames(
-            b.memory
-                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), 3 * PAGE_SIZE)
-                .unwrap(),
-            frames,
-            Access::READ,
-            flags,
-        )
-        .unwrap();
+    let first = support::map_frames(
+        &a,
+        VirtAddr::wrap(BASE),
+        frames.clone(),
+        Access::READ,
+        flags,
+    )
+    .unwrap();
+    let second =
+        support::map_frames(&b, VirtAddr::wrap(BASE), frames, Access::READ, flags).unwrap();
     for (index, physical) in addresses.iter().enumerate() {
         let at = VirtAddr::wrap(BASE + index * PAGE_SIZE);
-        assert_eq!(
-            a.memory.backend().translate(at).unwrap().0.as_usize(),
-            *physical
-        );
-        assert_eq!(
-            b.memory.backend().translate(at).unwrap().0.as_usize(),
-            *physical
-        );
+        assert_eq!(a.nest.translate(at).unwrap().0.as_usize(), *physical);
+        assert_eq!(b.nest.translate(at).unwrap().0.as_usize(), *physical);
     }
     assert_eq!(
-        a.memory
-            .backend()
-            .set_access(select(first.view(), VirtAddr::wrap(BASE), 3 * PAGE_SIZE), Access::READ | Access::WRITE),
+        a.nest.set_access(
+            select(&first, VirtAddr::wrap(BASE), 3 * PAGE_SIZE),
+            Access::READ | Access::WRITE
+        ),
         Err(NestError::WidenDenied)
     );
-    a.memory
-        .backend()
-        .detach(select(first.view(), VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE))
+    a.nest
+        .detach(select(&first, VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE))
         .unwrap();
-    assert!(
-        a.memory
-            .backend()
-            .translate(VirtAddr::wrap(BASE + PAGE_SIZE))
-            .is_none()
-    );
-    assert!(
-        b.memory
-            .backend()
-            .translate(VirtAddr::wrap(BASE + PAGE_SIZE))
-            .is_some()
-    );
+    assert!(a.nest.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_none());
+    assert!(b.nest.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_some());
     assert_eq!(
-        a.memory
-            .backend()
+        a.nest
             .translate(VirtAddr::wrap(BASE + 2 * PAGE_SIZE))
             .unwrap()
             .0
@@ -100,29 +73,27 @@ pub fn sharing() {
         addresses[2]
     );
     assert_eq!(
-        a.memory.backend().set_access(
-            select(first.view(), VirtAddr::wrap(BASE + 2 * PAGE_SIZE), PAGE_SIZE),
+        a.nest.set_access(
+            select(&first, VirtAddr::wrap(BASE + 2 * PAGE_SIZE), PAGE_SIZE),
             Access::READ | Access::WRITE
         ),
         Err(NestError::WidenDenied)
     );
-    a.memory
-        .backend()
+    a.nest
         .set_access(
-            select(first.view(), VirtAddr::wrap(BASE + 2 * PAGE_SIZE), PAGE_SIZE),
+            select(&first, VirtAddr::wrap(BASE + 2 * PAGE_SIZE), PAGE_SIZE),
             Access::READ,
         )
         .unwrap();
-    b.memory
-        .backend()
-        .detach(select(second.view(), VirtAddr::wrap(BASE), PAGE_SIZE))
+    b.nest
+        .detach(select(&second, VirtAddr::wrap(BASE), PAGE_SIZE))
         .unwrap();
     assert!(Arc::ptr_eq(
-        &a.memory.backend().probe(VirtAddr::wrap(BASE)).unwrap(),
-        first.view()
+        &a.nest.probe(VirtAddr::wrap(BASE)).unwrap(),
+        &first
     ));
-    a.memory.backend().audit();
-    b.memory.backend().audit();
+    a.nest.audit();
+    b.nest.audit();
     drop(first);
     drop(second);
     drop(a);
@@ -139,18 +110,14 @@ pub fn sharing() {
         let frame = Frame::allocate().unwrap();
         addresses[index] = frame.physical_address();
         lifetimes.push(Arc::downgrade(&frame));
-        space
-            .memory
-            .map_frames(
-                space
-                    .memory
-                    .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
-                    .unwrap(),
-                vec![frame],
-                Access::READ | Access::WRITE,
-                Access::READ | Access::WRITE,
-            )
-            .unwrap();
+        support::map_frames(
+            space,
+            VirtAddr::wrap(BASE),
+            vec![frame],
+            Access::READ | Access::WRITE,
+            Access::READ | Access::WRITE,
+        )
+        .unwrap();
     }
     assert_ne!(addresses[0], addresses[1]);
     unsafe {
@@ -192,104 +159,61 @@ pub fn retirement() {
     let space = SpaceBuilder::user().build().unwrap();
     let frame = Frame::allocate().unwrap();
     let weak = Arc::downgrade(&frame);
-    let mapping = space
-        .memory
-        .map_frames(
-            space
-                .memory
-                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
-                .unwrap(),
-            vec![frame],
-            Access::READ | Access::WRITE,
-            Access::READ | Access::WRITE,
-        )
-        .unwrap();
-    let stale = space
-        .memory
-        .mapping_at(VirtAddr::wrap(BASE), PAGE_SIZE)
-        .unwrap();
-    identity::fail_next_shootdown(space.memory.asid());
-    assert_eq!(space.memory.unmap(&mapping), Err(NestError::Shootdown));
-    assert!(weak.upgrade().is_some());
-    assert!(
-        space
-            .memory
-            .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
-            .is_err()
+    let mapping = support::map_frames(
+        &space,
+        VirtAddr::wrap(BASE),
+        vec![frame],
+        Access::READ | Access::WRITE,
+        Access::READ | Access::WRITE,
+    )
+    .unwrap();
+    let stale = support::view_at(&space, VirtAddr::wrap(BASE), PAGE_SIZE).unwrap();
+    identity::fail_next_shootdown(space.nest.asid());
+    assert_eq!(
+        space.nest.detach(mapping.whole()),
+        Err(NestError::Shootdown)
     );
-    space.memory.unmap(&mapping).unwrap();
+    assert!(weak.upgrade().is_some());
+    assert!(support::reserve(&space, VirtAddr::wrap(BASE), PAGE_SIZE).is_err());
+    space.nest.detach(mapping.whole()).unwrap();
     // 撤销 PTE 不释放页：该 Frame 仍由关系的 Flat 来源强持。
     assert!(weak.upgrade().is_some());
-    let replacement = space
-        .memory
-        .map_lazy(
-            space
-                .memory
-                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
-                .unwrap(),
-            Access::READ,
-            Access::READ,
-        )
-        .unwrap();
-    space.memory.unmap(&stale).unwrap();
+    let replacement = support::map_lazy(
+        &space,
+        support::reserve(&space, VirtAddr::wrap(BASE), PAGE_SIZE).unwrap(),
+        Access::READ,
+        Access::READ,
+    )
+    .unwrap();
+    space.nest.detach(stale.whole()).unwrap();
     assert!(Arc::ptr_eq(
-        &space.memory.backend().probe(VirtAddr::wrap(BASE)).unwrap(),
-        replacement.view()
+        &space.nest.probe(VirtAddr::wrap(BASE)).unwrap(),
+        &replacement
     ));
-    space.memory.unmap(&replacement).unwrap();
+    space.nest.detach(replacement.whole()).unwrap();
 
-    let reservation = space
-        .memory
-        .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
-        .unwrap();
+    let reservation = support::reserve(&space, VirtAddr::wrap(BASE), PAGE_SIZE).unwrap();
     let frame = Frame::allocate().unwrap();
     let failed = Arc::downgrade(&frame);
     crate::core::memory::nest::fail_cleanup_prepare();
     assert!(matches!(
-        space
-            .memory
-            .map_frames(reservation, vec![frame], Access::READ, Access::READ),
+        support::attach_frames(&space, reservation, vec![frame], Access::READ, Access::READ),
         Err(NestError::OutOfMemory)
     ));
     assert!(failed.upgrade().is_none());
-    let reservation = space
-        .memory
-        .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
-        .unwrap();
-    space.memory.release_reservation(reservation).unwrap();
-    let entire = space
-        .memory
-        .reserve(RegionId::Normal, VirtAddr::wrap(BASE), 3 * PAGE_SIZE)
-        .unwrap();
-    let (prefix, tail) = space.memory.split_reservation(entire, PAGE_SIZE).unwrap();
-    let (middle, suffix) = space.memory.split_reservation(tail, PAGE_SIZE).unwrap();
-    space.memory.release_reservation(prefix).unwrap();
-    let reused = space
-        .memory
-        .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
-        .unwrap();
-    assert!(
-        space
-            .memory
-            .reserve(
-                RegionId::Normal,
-                VirtAddr::wrap(BASE + PAGE_SIZE),
-                PAGE_SIZE
-            )
-            .is_err()
-    );
-    space.memory.release_reservation(middle).unwrap();
-    let middle = space
-        .memory
-        .reserve(
-            RegionId::Normal,
-            VirtAddr::wrap(BASE + PAGE_SIZE),
-            PAGE_SIZE,
-        )
-        .unwrap();
-    space.memory.release_reservation(reused).unwrap();
-    space.memory.release_reservation(middle).unwrap();
-    space.memory.release_reservation(suffix).unwrap();
+    let reservation = support::reserve(&space, VirtAddr::wrap(BASE), PAGE_SIZE).unwrap();
+    space.nest.release_reservation(reservation).unwrap();
+    let entire = support::reserve(&space, VirtAddr::wrap(BASE), 3 * PAGE_SIZE).unwrap();
+    let (prefix, tail) = space.nest.split_reservation(entire, PAGE_SIZE).unwrap();
+    let (middle, suffix) = space.nest.split_reservation(tail, PAGE_SIZE).unwrap();
+    space.nest.release_reservation(prefix).unwrap();
+    let reused = support::reserve(&space, VirtAddr::wrap(BASE), PAGE_SIZE).unwrap();
+    assert!(support::reserve(&space, VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE).is_err());
+    space.nest.release_reservation(middle).unwrap();
+    let middle = support::reserve(&space, VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE).unwrap();
+    space.nest.release_reservation(reused).unwrap();
+    space.nest.release_reservation(middle).unwrap();
+    space.nest.release_reservation(suffix).unwrap();
 
     // 来源级保留：最后一份关系 / 来源持有消失后才回收该页。
     assert!(weak.upgrade().is_some());

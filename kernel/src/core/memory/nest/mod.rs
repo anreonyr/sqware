@@ -55,6 +55,9 @@ static FAIL_CLEANUP: AtomicBool = AtomicBool::new(false);
 static FAIL_WITHDRAW_PREPARE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(debug_assertions)]
+static FAIL_PUBLISH_PREPARE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(debug_assertions)]
 pub(crate) fn fail_cleanup_prepare() {
     assert!(crate::testing());
     FAIL_CLEANUP.store(true, Ordering::Relaxed);
@@ -64,6 +67,13 @@ pub(crate) fn fail_cleanup_prepare() {
 pub(crate) fn fail_withdraw_prepare() {
     assert!(crate::testing());
     FAIL_WITHDRAW_PREPARE.store(true, Ordering::Relaxed);
+}
+
+/// 下一次安装时让“发布记录容量”那一批准备失败：它必须在任何 PTE 写入之前。
+#[cfg(debug_assertions)]
+pub(crate) fn fail_publish_prepare() {
+    assert!(crate::testing());
+    FAIL_PUBLISH_PREPARE.store(true, Ordering::Relaxed);
 }
 
 /// 一个 CPU 地址空间：身份、根页表、全局占用、关系与同步退休。
@@ -346,20 +356,23 @@ impl Nest {
         ceiling: Access,
         current: Access,
     ) -> Result<Arc<View>, NestError> {
+        if let Err(error) = self.check_owner(&reservation) {
+            return Err(Self::abandon(reservation, error));
+        }
         let attrs = self.attrs(reservation.region());
-        let active = [ActiveRange::new(
-            reservation.start(),
-            reservation.size(),
-            ceiling,
-            current,
-        )?];
+        let active =
+            match ActiveRange::new(reservation.start(), reservation.size(), ceiling, current) {
+                Ok(active) => [active],
+                Err(error) => return Err(Self::abandon(reservation, error)),
+            };
         self.attach_shaped(reservation, source, attrs, &active)
     }
 
     /// 按给定活动形状挂载：与普通入口共用一个私有安装/提交。
     ///
     /// 只接真实占用、真实来源与明确的活动区间；不接来源关系、
-    /// 不接第二份可伪造的地址投影。
+    /// 不接第二份可伪造的地址投影。占用必须是本 Nest 的（否则 `NoRegion`），
+    /// 未发布的失败退回它的属主，已发布的失败进清理链。
     pub(crate) fn attach_shaped(
         self: &Arc<Self>,
         reservation: Reservation,
@@ -367,16 +380,18 @@ impl Nest {
         attrs: PteFlags,
         active: &[ActiveRange],
     ) -> Result<Arc<View>, NestError> {
+        if let Err(error) = self.check_owner(&reservation) {
+            return Err(Self::abandon(reservation, error));
+        }
         if !View::attrs_are_architectural(attrs) {
-            return Err(NestError::NotAligned);
+            return Err(Self::abandon(reservation, NestError::NotAligned));
         }
         let mut ranges = Vec::new();
-        ranges
-            .try_reserve(active.len())
-            .map_err(|_| NestError::OutOfMemory)?;
+        if ranges.try_reserve(active.len()).is_err() {
+            return Err(Self::abandon(reservation, NestError::OutOfMemory));
+        }
         ranges.extend_from_slice(active);
-        let view = Arc::try_new(View::new(reservation, attrs, ranges, source)?)
-            .map_err(|_| NestError::OutOfMemory)?;
+        let view = View::new(reservation, attrs, ranges, source)?;
         match self.commit(&view) {
             Ok(()) => Ok(view),
             Err(error) => {
@@ -384,6 +399,25 @@ impl Nest {
                 Err(error)
             }
         }
+    }
+
+    /// 一笔尚未发布的占用的归还方向：它的属主自己的表，不是接收调用的那一方。
+    ///
+    /// 占用身份是全局唯一的，所以“拿裸坐标去目标表里找一笔”不会误删别人的槽；
+    /// 但那样也退不掉真属主的这一笔，因此归还一律按属主。
+    fn give_back_unpublished(reservation: &Reservation) -> bool {
+        reservation
+            .nest()
+            .is_some_and(|owner| owner.give_back(reservation))
+    }
+
+    /// 占用已经交出、本笔操作不再有承接者时唯一的归还路径：按属主交还并交出错误。
+    ///
+    /// 与调用方主动退的 `release_reservation` 成对；`give_back` / `give_back_span`
+    /// 只是“退还”的原语，不包含“这笔操作失败”的语义。
+    fn abandon(reservation: Reservation, error: NestError) -> NestError {
+        Self::give_back_unpublished(&reservation);
+        error
     }
 
     /// 安装失败的责任划分：已发布就把回收交给清理链（占用仍禁复用），
@@ -397,7 +431,7 @@ impl Nest {
                 .is_some_and(|held| Arc::ptr_eq(&held, view))
         };
         if !published {
-            self.give_back(&view.reservation);
+            Self::give_back_unpublished(&view.reservation);
             return;
         }
         // 取节点要先把占用锁放掉：它与清理链同属 `Level::Space`，套着取就是同级递归。
@@ -454,6 +488,19 @@ impl Nest {
                 }
             }
         }
+        // 发布记录容量是安装前的准备：与 PTE 写入同一批，备不齐就不进入安装。
+        // 于是“失败时还没有任何 PTE”对 `settle_failed_install` 的判据成立。
+        {
+            let mut inner = view.state.lock();
+            #[cfg(debug_assertions)]
+            if FAIL_PUBLISH_PREPARE.swap(false, Ordering::Relaxed) {
+                return Err(NestError::OutOfMemory);
+            }
+            inner
+                .published
+                .try_reserve(published.len())
+                .map_err(|_| NestError::OutOfMemory)?;
+        }
         let node =
             Box::try_new(IndexNode::new(view.clone())?).map_err(|_| NestError::OutOfMemory)?;
         let mut state = self.ready_state()?;
@@ -509,10 +556,6 @@ impl Nest {
         }
         {
             let mut inner = view.state.lock();
-            inner
-                .published
-                .try_reserve(published.len())
-                .map_err(|_| NestError::OutOfMemory)?;
             for (page, frame) in published {
                 inner.publish(page, frame);
             }
@@ -1034,11 +1077,14 @@ impl Nest {
     }
 
     fn give_back(&self, reservation: &Reservation) -> bool {
-        self.occupancy.lock().release(
-            reservation.start().as_usize(),
-            reservation.last(),
-            reservation.id(),
-        )
+        self.give_back_span(reservation.start(), reservation.size(), reservation.id())
+    }
+
+    /// 按占用身份交还一段尚未落地的跨度（凭证已经不在手里时用）。
+    fn give_back_span(&self, start: VirtAddr, size: usize, identity: usize) -> bool {
+        self.occupancy
+            .lock()
+            .release(start.as_usize(), start.as_usize() + (size - 1), identity)
     }
 
     /// 结算待失效与退休，再收尾清理链上已经消费的关系。

@@ -5,7 +5,8 @@
 PR 1 已完成：完整物理来源模型及旧 CPU 映射路径的来源适配。
 PR 2 已完成：Nest 的地址占用、翻译关系、失效与退休回收。
 PR 3 已完成：Pole 直接持授权来源，普通来源消费者不再经过 keeper。
-新 ABI、迁移 facade 删除、System 独立保留和设备服务仍属后续阶段。
+PR 4 已完成：迁移 facade 与空包装删除，失败责任和测试保真收口。
+新 ABI、System 独立保留和设备服务仍属后续阶段。
 
 执行基线为 `master`，`03eabbde92586a6d6cf398d9a7a0b20e17b099c5`。
 开始验证时工作区干净。仓库内没有 `AGENT.md` 或 `AGENTS.md`。
@@ -433,9 +434,205 @@ facade 删除时由调用方直接组合来源准备、Nest reserve 与 attach�
 不能靠给 Reservation 加隐式释放或新通用 owner 掩盖。
 本轮 `allocate_lazy_core` 已改为先建立来源再占位。
 创建资格仍由 pend 的真实 View 身份维护，旧 wire 编码没有改变。
+以上各条已由下文 PR 4 节收口（形状桥等价测试、六处占用交还、facade 与 `Mapping` 删除）；
+本节其余描述是 PR 3 检查点记录。
 
 最终命名与行为 spot 均通过；行为 reviewer 独立复跑健康轮、差异与格式检查，
 得到相同的 50 + 哨兵 1、差异干净和 146 个格式块。
 封存 SHA256 前缀：`pole/mod.rs 2ecb4e32605f`、
 `space/memory.rs 40df188cdeed`、`health/pole.rs 7e46c3c1aad9`、
 `health/syscall.rs 5f8377b36923`。
+
+## PR 4：删除迁移层，验证组合闭合
+
+PR 4 基线为 `b6bba234cf87d50bc7378fb561730a8eb065fbce`（PR 1 / 2 / 3 已提交推送）。
+本节描述当前实现；PR 1–3 各节的 `Memory` / `Mapping` / keeper 描述是各自检查点记录。
+
+### 功能、状态与失败责任归位
+
+| 层 | 位置 | 独立效果 | 状态权威 | 失败责任 |
+|---|---|---|---|---|
+| 物理来源 | `memory/flat/` | 逻辑页来源与物化 | 页槽与物化结果 | 来源构造失败不公布来源；物化失败保留已成功槽 |
+| CPU 翻译 | `memory/nest/` | VA 占用、PTE、View、同步退休 | 占用表 generation / PTE / View 活动库存 | 未发布失败退回占用，已发布失败进清理链 |
+| 团队地址空间 | `work/unit/space/space.rs` | 持 `Arc<Nest>` + `Arc<Life>` | `Nest` 与 `Life` | 随 Space 生命周期 |
+| 空间构造 | `space/builder.rs` | 建 `Nest`、复制跳板 | — | 构造失败不公布 Space |
+| 子系统组合 | `task/builder.rs`、`capsule.rs`、`entry/boot/*`、`pole/*`、`entry/call/memory.rs` | 来源准备 → 选址 → 挂载 | 各自局部 | 先完成全部可失败准备再 `reserve`；确需先占位的失败显式交还本次仍 live 的占用 |
+
+`Space` 的最终表面是 `{ nest: Arc<Nest>, life }` 加 `kind` / `life` 两个稳定属性，
+以及 5 个用户访问组合：`user_range` / `copy_in` / `copy_out` / `validate_access` /
+`instruction_byte`。它们都是“用户可达范围 + 本 Nest 真实翻译”的组合，不是裸转发；
+`Space` 上没有任何一对一转发到 `Nest` 的方法，也没有字节区间到映射的动词。
+
+### 删、迁、留（按职责）
+
+- 删：`core/work/unit/space/memory.rs`（整个 `Memory` facade）与 `space/mapping.rs`（单 Arc 空壳）。
+  形状 / 派生桥 `view` / `view_record` / `derive_into` / `project` / `whole_or_range` /
+  `selection` 与临时适配 `attach_range` / `attach_range_shaped` / `map_range` 一并退出；
+  生产调用点直接组合来源准备、`Nest::reserve` 与 `Nest::attach`。
+- 留真权威：`kind` / `asid` / `satp` / `root_ppn` / `physical_at` / `audit` /
+  `resolve_fault` / `advance_region` / `split_reservation` / `release_reservation` /
+  `reserve` / `set_access` / `detach` / `dispose` / `views_in` 全部直呼 `Space::nest`；
+  借出式 `unmap` 落成 `Nest::detach(view.whole())`，消费式 `dispose` 落成 `Nest::dispose(view)`，两者语义不混。
+- 留 entry 边界：`basic_bytes` / `exact_bytes` / `fixed_range` / `place` /
+  `unmap_bytes`（旧 VA + 字节口径多关系撤销）/ `protect`（旧 `Mprotect` 口径）与
+  `From<NestError> for MemoryFail` / `From<FlatError> for MemoryFail` 都在
+  `entry/call/memory.rs`；`view_at`（按 VA + 跨度取候选，最终以 `Arc<View>` 身份校验）在
+  `entry/call/pie.rs`。
+- 留调用者：`seed_trampoline` 在 `space/builder.rs`；启动静态挂载的
+  `attach_exact` / `map_borrowed` 在 `entry/boot/mod.rs`，调用者直接 `attach_shaped`，
+  不再保留 `attach_held` 转发；`reserve_at` 在 `capsule.rs`；
+  `narrow_view` 在 `pole/mod.rs`（`open` 复用与 Pole `narrow` 共用一份）。
+- `TaskMemory` 持 `Option<Arc<View>>` 与 `Option<Reservation>`；`HeldMap` 与 `PoleMeta` 持真实
+  `Arc<View>`；`Team::cancel_staging` 按 `item.view.whole()` 的真实身份撤下，不再从 View 反推 VA 再扫其他 View。
+
+### 六处“先占位、后失败丢 VA”的迁后形态
+
+统一规则：能失败的准备（来源、帧表、元数据）全部移到 `reserve` 之前；
+`reserve` 与 `attach` 之间不再有可失败步骤；占用来是调用方交进真在手上时，
+本步自己的失败显式 `release_reservation` 那一笔仍 live 的占用。
+不给 `Reservation` 加 `Drop`，也不新增 owner / guard / PreparedView 类型。
+
+| 旧函数 | 迁后位置 | 新形态 |
+|---|---|---|
+| `map_frames` | `capsule.rs`、`task/builder.rs`、`entry/boot/{mod,stack,unit}.rs` | `Flat::from_frames` + `try_reserve_exact` 全部前移到 `reserve` 之前 |
+| `map_lazy` | `capsule.rs` bss 段 | `Flat::acquire` 前移 |
+| `map_borrowed` | `capsule.rs` 只读段、`entry/boot/mod.rs` 镜像 / 账本视图 | `BorrowedRegion::new` + `Flat::from_region` 前移 |
+| `attach_static` | `entry/boot/unit.rs` 低 identity 段 | 五段的借用来源与两处活动形状在整段 identity 登记之前备齐 |
+| `map_boot_frames` | `entry/boot/unit.rs` hart frame、`entry/boot/stack.rs` trap stack | 先 `Flat::from_frames`，再 `attach_exact`（活动形状也先于登记） |
+| `project`（只有测试调用） | `kernel/tests/health/support.rs::derive` | 测试侧显式组合：源活动片段先在来源关系上物化发布，再按请求窗口与权限 `attach_shaped` |
+
+其中 Task 栈与 trap frame 原本在 `split_reservation` 之后才能知道 body 起点，
+本轮把帧表与来源整体前移到 `allocate_high` / `split_reservation` 之前，
+所以两条 `release_reservation(body)` 回滚分支随之消失。
+占位模式确实存在的地方只有三处，全部显式交还：
+`support::attach_frames` / `support::map_lazy`（旧 `map_frames` / `map_lazy` 的调用形状：
+占用已经交进）；`entry/boot/unit.rs` 低 identity（必须先占位再抬高窗口下界，
+`advance_region` 失败显式交还）；同一循环内 `split_reservation` / 挂载失败时
+交还**尚未附着**的 tail（已交给 Nest 的 piece 按 Nest 责任，不双放）。
+`space/builder.rs::seed_trampoline` 与 `entry/boot/mod.rs::attach_exact`
+把活动形状与来源都排在登记占用之前。
+
+### 本轮改到的核心合同
+
+本轮修复两类失败责任错误：
+（a）`Reservation` 没有 `Drop`，而安装路径的提前失败（属性位、`try_reserve`、
+`View::new` 构造校验、`Arc` 分配）在收下凭证之后发生，失败时占用永不再回；
+（b）`commit` 里发布记录容量这一批准备落在 PTE 写入与 `pending_views.push` 之后，
+它失败时 PTE 已成型，而 `settle_failed_install` 按索引里有没有判“未发布”
+去交还仍带 PTE 的跨度。受影响调用者就是本轮迁后的这一批：`capsule` 三段、
+Task 栈与外壳页、启动静态布局、`PoleMeta::open`、entry 的
+`Allocate` / `Mmap` / `Mprotect`，以及健康面夹具。
+
+1. `nest/mod.rs::commit`：`view.state.published` 的容量预留移到**任何 PTE 写入、
+   `pending_views.push` 与索引接入之前**（与 `publish` / `withdraw` 同一种顺序），
+   并新增精确 debug hook `fail_publish_prepare`（只在这一个准备块内生效）。
+   准备之后到 `index.insert` 之间再也没有可失败准备。
+2. `nest/view/mod.rs::View::new`：构造失败即按占用身份退回，并直接返回 `Arc<Self>`，
+   把 `Arc` 分配失败也纳入同一条责任。
+3. `nest/mod.rs::attach` / `attach_shaped`：入口 `check_owner`（不是本 Nest 的占用 ⇒
+   `NoRegion`），且输入已按值消费，失败一律还给它的真属主：
+   `give_back_unpublished` 是“归还方向 = 属主”的那一个原语，
+   `abandon` = “按属主交还 + 交出错误”（与调用方主动退的 `release_reservation` 成对），
+   `settle_failed_install` 的未发布分支与 `View::new` 的失败路径都走同一方向；
+   已发布失败仍进清理链。`give_back` / `give_back_span` 只是“退还”原语。
+4. `nest/view/range.rs`：只被已删派生桥调用的 `active_fragments` 随桥退出；
+   `ViewRange::source()` **保留**（核心的 `Nest::materialize_active` 仍在用）。
+5. 两处纯查询可见性放宽，无语义改动：`ActiveRange::intersection` 到 `pub(crate)`
+   （健康面的派生等价组合直接调真实交集算术，不另写一份 max/min），
+   `Reservation::id` 到 `pub(crate)`（用例断言“同址重登记拿到新 generation”）。
+
+生产里每一个调用者都把“自己的 Nest 建出的 `Reservation`”交给同一个 Nest，所以第 3 条
+不是今日可达的故障路径，而是把已经分裂的失败责任（四个阶段里三个按 target、
+一个按属主）统一成一个方向；测试用 A/B 两个 Nest 在同一 VA 上各自持合法凭证来钉住它。
+
+### 测试保真：健康面无第二份线外 policy
+
+`kernel/tests/health/support.rs` 不再复制线外算法：尺寸取整（`basic_bytes`）、
+选址（`place`）、窗口内固定登记（`reserve_at`）、按字节改权 / 撤销（`protect` /
+`unmap_bytes`）与按 VA 取候选（`view_at`）全部调 `entry::call::memory` /
+`entry::call::pie` 的真实入口，夹具只做 `&Space → &Space::nest` 适配；
+为此把这些 helper 与 `pub(in crate::entry) mod memory` 放宽到 `entry` 父域，
+不宽到 `core/work`、不下沉 core、不新增 test-only 反依赖。
+派生等价组合的片段交集也不再另写一份 max/min：直接用 `ActiveRange::intersection`，
+夹具只负责选窗口与收集。只有确定仅测试的原语组合保留在夹具里
+（`frames_source` / `attach_frames` / `map_frames` / `map_lazy` / `allocate` /
+`allocate_lazy` / `attach_static` / `derive`）。
+健康面模块也改为 `health/memory.rs`（原 `manager_api.rs`），
+四个用例名为 `memory_placement` / `memory_view_identity` /
+`memory_access_wire` / `memory_source_sharing`。
+
+### 实际验证
+
+工具链与基线相同（`rustc a69a63265` / `cargo b2e9d5f9d`）。主工作区实际执行：
+
+| 实际检查 | 结果 |
+|---|---|
+| workspace dev/release、kernel all-targets dev/release、semihosting dev/release | 通过，无警告 |
+| programs all-targets | 通过 |
+| `nu scripts/qtest.nu --package kernel` | 51 例，50 passed；缺 initrd 的 `scene` 1 failed，退出 101 |
+| `--scene accept` | 1 passed |
+| `--scene product` | 默认 EOF 场景 1 passed |
+| `--scene system-fault` | 退出 101，签名与基线相同：`loader.rs:361` Denied(6) → `:306` / `:190` 超时级联 |
+| frame-runs / Pend / Trace 默认与 semihosting / console-line | 9 / 35 / 2 + 2 / 5 passed |
+| env 宿主（显式宿主 target） | 13 passed；既有 unused Wire 警告仍在 |
+| resource capability（独立 manifest） | 16 passed |
+| alloc-probe 库 / 无默认特性宿主测试 / all-targets 检查 | 6 / 6 + 4 / 通过 |
+| `git diff --check` | 通过 |
+| `cargo fmt --all -- --check` | 退出 1，60 个 Diff 块；只格式化本轮触碰的文件，未全树重排 |
+
+健康轮与 accept 是实际结果；`system-fault` 仍是真实失败，未改超时门槛、未删断言。
+
+本轮新增的失败注入证据都在 `nest_invalidation_failure` 这一例内（子函数形式，保持 51 例不变）：
+
+- 轴 1（尚未发布）：`fail_publish_prepare` 让发布记录容量准备失败 ⇒ `OutOfMemory`，
+  `probe` / `translate` 均空、`pending_views` 空、关系数与表节点数不变、无待办失效；
+  同址 `reserve` **成功**（未被“拒复用”），且输入 `FlatRange` 仍持原 Frame 与内容，
+  同一段来源重新 `attach` 后拿到同一 PA 与同一 `Arc<Frame>`。
+- 轴 2（已发布）：保留原有 shootdown 注入 ⇒ 旧 VA 拒复用直到 `retry_invalidation`，
+  来源 / Frame / 清理链仍持有（旧断言未放宽）。
+- 属主方向：A / B 两个 Nest 在同一 VA 上各自持合法凭证，把 B 的凭证交给 A ⇒
+  `NoRegion`；A 自己的占用不受影响，B 同址可再 `reserve` 且拿到**新 generation**。
+  非架构属性位（自己的凭证）与构造跨度不等（`View::new` 拒绝）也都退回自己的表。
+
+F3 的几处“先占位后失败”路径（`advance_region` / `split_reservation` / loop 中段挂载失败
+与未附着 tail 的交还）是代码里显式写的，但本轮**没有**为 boot 加注入 hook；
+它们由已经单独测过的原语（`nest.rs` 的切分 / 登记、`nest_failure.rs` 的安装失败）
+真实 accept 覆盖正常启动；不声称这些 boot 失败分支已注入验证。
+
+### 保留的判据与残留
+
+迁到直接组合的等价测试保留了原断言：保洞（被撤页不被派生重发布）、
+源活动片段先物化再回源关系发布的旧副作用、两边 Frame 身份（`Arc::ptr_eq`）、
+局部 `current` 权限与拷贝拒、派生不继承源页 current、来源在源树关闭后仍持帧、
+每个用例与整轮的帧 / 表净零。`task::cancellation` 仍实际走 `cancel_staging`：
+新写法比旧 `unmap_range` 更强（活动已撤但票未结算的一段也会按同身份继续退休），
+旧写法“该范围没有任何活动关系就报 `NoRegion`”那条现在不可达。
+
+仍未做：多 hart 并发物化 / 撤销、分配器元数据 OOM 的强制注入、
+`system-fault` 的 Loader 首次构造失败根因；新 ABI / TLS 包装、来源授权身份（`FlatReference` / `ViewId`）、
+System 独立保留、IOMMU / DMAC 均属后续阶段，本轮未动。
+健康面的 `health/memory.rs`（原 `manager_api.rs`）与四个用例名（`memory_placement` /
+`memory_view_identity` / `memory_access_wire` / `memory_source_sharing`）已同步改名，
+不再指向已删的 manager 模块；`Mapping` 已在 PR 4 随 `space/mapping.rs` 删除，
+借出句柄直接就是 `Arc<View>`。
+
+### 集成后复核
+
+隔离工作区的复原不能代替合回后的检查。本轮合回曾使非目标
+`entry/call/resources.rs` 内容错置、`entry/call/tole.rs` 带冲突标记，
+并多改 `health/spare.rs` 的格式。父工作区只将这三个文件恢复为已提交基线，
+再对它们及同期涉及的八个非目标文件逐字节核对，十一份均与 HEAD 一致。
+核心、来源调用者与失败用例的封存指纹没有改变。
+
+恢复后父工作区独立重跑上表编译矩阵、健康轮、accept、product、system-fault
+以及列明的宿主套件，读数与表内一致；差异检查干净，源码无冲突标记，
+格式检查仍退出 1、60 个 Diff 块。这里的结果来自集成后的实际文件，
+不是把 worker 隔离树的通过结果当作主工作区证据。
+
+最终命名 / 层次与行为 spot 均通过；行为 reviewer 另行独立编译通过，
+按实现核对了容量准备顺序、两轴失败证据、属主回收、启动尾段和测试保真。
+SHA256 前缀：`nest/mod.rs 0fac4616cd88`、`nest/view/mod.rs eba3e61f4140`、
+`entry/call/memory.rs fd56c0dbd30d`、`health/support.rs 52edc4ac0def`、
+`health/nest_failure.rs af8b2c1efe57`、`health/memory.rs 8f6586036621`。
+记录级限制仍包括：boot 常量经预校验后的 Exact 构造没有专项失败注入；
+内存用例中只对合法输入自算尺寸的期望值不代替 wire 溢出验证。

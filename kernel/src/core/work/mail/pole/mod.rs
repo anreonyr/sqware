@@ -11,11 +11,11 @@ use core::time::Duration;
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::address::{PageCount, PageOffset, PhysAddr};
 use crate::core::memory::flat::{BorrowedRegion, Flat, FlatError, FlatRange};
-use crate::core::memory::nest::{Access, NestError, View};
+use crate::core::memory::nest::{Access, Nest, NestError, Placement, RegionId, View};
 use crate::core::work::grant::Grant;
 use crate::core::work::room::messenger::{self, Handoff, WakeKey};
 use crate::core::work::unit::life::Life;
-use crate::core::work::unit::space::{Mapping, Space};
+use crate::core::work::unit::space::Space;
 use crate::machine::sync::{Level, SpinLock};
 use env::{Bit, MailFail, Permission, PieFail, PieToken, TaskId, TeamId};
 
@@ -77,14 +77,14 @@ impl PoleMeta {
     /// 于是它被关闭后 RAM 仍由来源范围保留。
     pub(crate) fn from_mapping(
         space: &Arc<Space>,
-        mapping: Mapping,
+        view: Arc<View>,
         owner: TaskId,
     ) -> Result<Arc<Self>, PieFail> {
-        let (start, size) = mapping.view().initial_range();
-        if size == 0 || mapping.view().frame_count() != size / PAGE_SIZE {
+        let (start, size) = view.initial_range();
+        if size == 0 || view.frame_count() != size / PAGE_SIZE {
             return Err(PieFail::Denied);
         }
-        let ranges = mapping.view().active().map_err(pie_map_error)?;
+        let ranges = view.active().map_err(pie_map_error)?;
         let mut covered = 0;
         for range in ranges {
             if start.as_usize().checked_add(covered) != Some(range.start.as_usize()) {
@@ -95,8 +95,8 @@ impl PoleMeta {
         if covered != size {
             return Err(PieFail::Denied);
         }
-        let meta = Self::new(mapping.view().source(), size, owner)?;
-        meta.add(mapping, space, None, Relation::Input);
+        let meta = Self::new(view.source(), size, owner)?;
+        meta.add(view, space, None, Relation::Input);
         Ok(meta)
     }
 
@@ -231,14 +231,14 @@ impl PoleMeta {
 
     fn add(
         &self,
-        mapping: Mapping,
+        view: Arc<View>,
         space: &Arc<Space>,
         token: Option<PieToken>,
         relation: Relation,
     ) {
         self.maps
             .lock()
-            .push(HeldMap::placed(mapping, space, token, relation));
+            .push(HeldMap::placed(view, space, token, relation));
     }
 
     /// 把一段已落地的关系记入该 token：先核对授权记录，再入活跃 View 表。
@@ -246,20 +246,20 @@ impl PoleMeta {
         &self,
         token: PieToken,
         space: &Arc<Space>,
-        mapping: Mapping,
+        view: Arc<View>,
         staged: Option<TeamId>,
         opened: bool,
-    ) -> Result<(), Mapping> {
+    ) -> Result<(), Arc<View>> {
         let permitted = self
             .authorities
             .lock()
             .iter()
             .any(|record| record.authorizes(token) && record.permitted());
         if !self.alive() || !permitted {
-            return Err(mapping);
+            return Err(view);
         }
         self.maps.lock().push(HeldMap::placed(
-            mapping,
+            view,
             space,
             Some(token),
             staged.map_or(
@@ -292,8 +292,7 @@ impl PoleMeta {
             };
             if let Some(weak) = entry.placement.take() {
                 if let Some(space) = weak.upgrade() {
-                    let mapping = Mapping::new(entry.view.clone());
-                    if let Err(error) = space.memory.unmap(&mapping) {
+                    if let Err(error) = space.nest.detach(entry.view.whole()) {
                         entry.placement = Some(weak);
                         self.maps.lock().push(entry);
                         return Err(pie_map_error(error));
@@ -315,7 +314,7 @@ impl PoleMeta {
             };
             if let Some(weak) = entry.placement {
                 if let Some(space) = weak.upgrade() {
-                    let _ = space.memory.dispose(Mapping::new(entry.view));
+                    let _ = space.nest.dispose(entry.view);
                 }
             }
         }
@@ -345,11 +344,23 @@ impl Drop for PoleMeta {
             }
             if let Some(weak) = entry.placement {
                 if let Some(space) = weak.upgrade() {
-                    let _ = space.memory.dispose(Mapping::new(entry.view));
+                    let _ = space.nest.dispose(entry.view);
                 }
             }
         }
     }
+}
+
+/// 把一条关系的每个活动区间的上限与当前权限都收到 `access`。
+///
+/// 收窄是幂等的：已在同一上限上的区间重放不改变库存与 PTE。
+fn narrow_view(nest: &Arc<Nest>, view: &Arc<View>, access: Access) -> Result<(), NestError> {
+    for range in view.active()? {
+        let offset = (range.start.as_usize() - view.initial_start().as_usize()) / PAGE_SIZE;
+        let count = PageCount::new(range.size.get() / PAGE_SIZE).ok_or(NestError::NotAligned)?;
+        nest.narrow(view.range(PageOffset::new(offset), count)?, access)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn open(
@@ -381,29 +392,31 @@ pub(crate) fn open(
             .map(|entry| entry.view.clone())
     };
     if let Some(view) = reusable {
-        for range in view.active().map_err(pie_map_error)? {
-            if range.ceiling != access {
-                space
-                    .memory
-                    .narrow_record(&view, range.start, range.size.get(), access)
-                    .map_err(pie_map_error)?;
-            }
-        }
+        narrow_view(&space.nest, &view, access).map_err(pie_map_error)?;
         return Ok((view.initial_range().0.as_usize(), meta.size()));
     }
     meta.reserve_record()?;
-    // 来源已在手上：选址之后直接按来源范围挂载，不再经过任何 kernel / canonical 视图。
-    let mapping = space
-        .memory
-        .map_range(meta.source(), PAGE_SIZE, None, access, access)
+    // 来源已在手上：先选址登记，再按来源范围挂载，不经任何 kernel / canonical 视图。
+    let source = meta.source();
+    let size = source
+        .page_count()
+        .checked_bytes()
+        .ok_or(PieFail::NotAligned)?;
+    let reservation = space
+        .nest
+        .reserve(Placement::lowest(RegionId::Normal, size, PAGE_SIZE).map_err(pie_map_error)?)
         .map_err(pie_map_error)?;
-    let address = mapping.address().as_usize();
+    let view = space
+        .nest
+        .attach(reservation, source, access, access)
+        .map_err(pie_map_error)?;
+    let address = view.initial_start().as_usize();
     if !meta.alive() || grant.permission().is_none() {
-        let _ = space.memory.dispose(mapping);
+        let _ = space.nest.dispose(view);
         return Err(PieFail::Dead);
     }
-    if let Err(mapping) = meta.record(token, space, mapping, None, true) {
-        let _ = space.memory.dispose(mapping);
+    if let Err(view) = meta.record(token, space, view, None, true) {
+        let _ = space.nest.dispose(view);
         return Err(PieFail::Dead);
     }
     Ok((address, meta.size()))
@@ -424,23 +437,12 @@ pub(crate) fn narrow(meta: &Arc<PoleMeta>, token: PieToken, access: Access) -> R
         targets.try_reserve(maps.len()).map_err(|_| PieFail::OoM)?;
         for entry in maps.iter().filter(|entry| entry.placed_by(token)) {
             if let Some(nest) = entry.view.owner() {
-                targets.push((
-                    nest,
-                    entry.view.clone(),
-                    entry.view.active().map_err(pie_map_error)?,
-                ));
+                targets.push((nest, entry.view.clone()));
             }
         }
     }
-    for (nest, view, ranges) in targets {
-        for range in ranges {
-            let offset = (range.start.as_usize() - view.initial_start().as_usize()) / PAGE_SIZE;
-            let count = PageCount::new(range.size.get() / PAGE_SIZE).ok_or(PieFail::NotAligned)?;
-            let selection = view
-                .range(PageOffset::new(offset), count)
-                .map_err(pie_map_error)?;
-            nest.narrow(selection, access).map_err(pie_map_error)?;
-        }
+    for (nest, view) in targets {
+        narrow_view(&nest, &view, access).map_err(pie_map_error)?;
     }
     Ok(())
 }

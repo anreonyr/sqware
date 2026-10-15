@@ -44,41 +44,58 @@ impl core::fmt::Debug for View {
 
 impl View {
     /// 建立一段关系；活动区间必须落在初始范围内，来源跨度必须等长。
+    ///
+    /// 构造失败即退回占用：调用方交出的凭证不会随失败一起丢掉。
     pub(in crate::core::memory::nest) fn new(
         reservation: Reservation,
         attrs: PteFlags,
         active: Vec<ActiveRange>,
         source: FlatRange,
-    ) -> Result<Self, NestError> {
+    ) -> Result<Arc<Self>, NestError> {
         let (start, size) = (reservation.start(), reservation.size());
-        let end = start
-            .as_usize()
-            .checked_add(size - 1)
-            .ok_or(NestError::NotAligned)?;
+        let end = start.as_usize().checked_add(size - 1);
+        let reject = |error: NestError| -> NestError {
+            // 构造失败即按属主退回占用：凭证不会随失败一起丢掉。
+            super::Nest::give_back_unpublished(&reservation);
+            error
+        };
+        let Some(end) = end else {
+            return Err(reject(NestError::NotAligned));
+        };
         if size == 0
             || !size.is_multiple_of(PAGE_SIZE)
             || active.is_empty()
             || source.page_count().checked_bytes() != Some(size)
         {
-            return Err(NestError::NotAligned);
+            return Err(reject(NestError::NotAligned));
         }
         for range in &active {
             let last = range.end();
             if range.start.as_usize() < start.as_usize() || last > end {
-                return Err(NestError::NoRegion);
+                return Err(reject(NestError::NoRegion));
             }
         }
         if active
             .windows(2)
             .any(|pair| pair[0].end() >= pair[1].start.as_usize())
         {
-            return Err(NestError::AlreadyMapped);
+            return Err(reject(NestError::AlreadyMapped));
         }
-        Ok(Self {
+        let nest = reservation.nest();
+        let identity = reservation.id();
+        match Arc::try_new(Self {
             reservation,
             attrs,
             state: SpinLock::new_level(Level::View, ViewState::new(active, source)),
-        })
+        }) {
+            Ok(view) => Ok(view),
+            Err(_) => {
+                if let Some(nest) = nest {
+                    nest.give_back_span(start, size, identity);
+                }
+                Err(NestError::OutOfMemory)
+            }
+        }
     }
 
     pub fn initial_start(&self) -> VirtAddr {

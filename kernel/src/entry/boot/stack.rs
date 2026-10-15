@@ -2,8 +2,8 @@ use alloc::vec::Vec;
 use riscv::register::satp;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::address::VirtAddr;
-use crate::core::memory::flat::Frame;
+use crate::core::memory::address::{PageCount, PageIndex, VirtAddr};
+use crate::core::memory::flat::{Flat, Frame};
 use crate::core::memory::nest::table::PteFlags;
 use crate::core::memory::nest::{Access, NestError};
 use crate::core::work::room::deadline;
@@ -16,6 +16,8 @@ use crate::machine::layout::{
 use crate::machine::switcher::context::TrapContext;
 use crate::machine::switcher::stack::{self, TRAP_STACK_CANARY, trap_stack_base, trap_stack_edge};
 use crate::machine::switcher::trampoline::check_fits_page;
+
+use super::attach_exact;
 
 pub(super) fn init() -> Result<(), NestError> {
     let segments = hart::hart_count();
@@ -47,17 +49,21 @@ pub(super) fn init() -> Result<(), NestError> {
         let boot = crate::tag!(TrapStack, Frame::allocate()?);
         boot_stacks.push(boot);
 
-        let mut frames = Vec::new();
-        frames
+        let mut indexed = Vec::new();
+        indexed
             .try_reserve_exact(body_pages)
             .map_err(|_| NestError::OutOfMemory)?;
-        for _ in 0..body_pages {
-            frames.push(crate::tag!(TrapStack, Frame::allocate()?));
+        for page in 0..body_pages {
+            indexed.push((
+                PageIndex::new(page),
+                crate::tag!(TrapStack, Frame::allocate()?),
+            ));
         }
+        let count = PageCount::new(indexed.len()).ok_or(NestError::NotAligned)?;
+        // 主体帧先备齐，再登记占用：来源准备失败不留无人持有的地址。
+        let source = Flat::from_frames(count, &indexed)?.whole();
         let body_va = trap_stack_base(HartId::new(h));
-        space
-            .memory
-            .map_boot_frames(body_va, frames, Access::from_pte(flags), attrs)?;
+        attach_exact(&space.nest, body_va, source, Access::from_pte(flags), attrs)?;
         unsafe {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);
         }
@@ -68,7 +74,7 @@ pub(super) fn init() -> Result<(), NestError> {
     let ksatp = satp::read();
     for h in (0..hart::hart_count()).map(HartId::new) {
         let pa = space
-            .memory
+            .nest
             .physical_at(HART_FRAME_BASE + h.get() * PAGE_SIZE)
             .expect("kernel frame not mapped");
         let frame = unsafe { &mut *(pa.as_usize() as *mut TrapContext) };

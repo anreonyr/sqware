@@ -3,13 +3,13 @@
 use alloc::sync::Arc;
 
 use crate::core::memory::flat::allocator::statistics;
-use crate::machine::mode;
+use crate::core::memory::nest::RegionId;
 use crate::core::work::room::scheduler::roster::prune_dead;
 use crate::core::work::unit::copies::Origin;
-use crate::core::memory::nest::RegionId;
 use crate::core::work::unit::space::SpaceBuilder;
 use crate::core::work::unit::task::TaskWeak;
 use crate::core::work::unit::team::TeamBuilder;
+use crate::machine::mode;
 
 pub fn accept() {
     shell_round();
@@ -35,7 +35,7 @@ const USER_BASE: usize = 0x4000_0000;
 fn shell_round() {
     let space = SpaceBuilder::user().build().expect("shell: build space");
     space
-        .memory
+        .nest
         .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
         .unwrap();
     let team = TeamBuilder::new(space).spawn().expect("shell: spawn team");
@@ -54,7 +54,7 @@ fn oust_round() {
         .build()
         .expect("oust: build home space");
     home_space
-        .memory
+        .nest
         .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
         .unwrap();
     let home = TeamBuilder::new(home_space)
@@ -64,7 +64,7 @@ fn oust_round() {
 
     let space = SpaceBuilder::user().build().expect("oust: build space");
     space
-        .memory
+        .nest
         .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
         .unwrap();
     let child = TeamBuilder::new(space)
@@ -81,7 +81,7 @@ fn oust_round() {
 
     let space = SpaceBuilder::user().build().expect("oust: build space");
     space
-        .memory
+        .nest
         .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
         .unwrap();
     let child = TeamBuilder::new(space)
@@ -100,7 +100,8 @@ fn oust_round() {
     );
     let released = child.release_held(&unborn);
     crate::expect!(released, "oust: 摘出未放行线程失败");
-    *unborn.state.lock() = crate::core::work::unit::task::TaskState::reaped(env::ExitCause::Reap, 0);
+    *unborn.state.lock() =
+        crate::core::work::unit::task::TaskState::reaped(env::ExitCause::Reap, 0);
     crate::core::work::unit::tally::exit();
     drop(unborn);
     crate::expect!(child.all_reaped(), "oust: 摘净之后应当算已收尾");

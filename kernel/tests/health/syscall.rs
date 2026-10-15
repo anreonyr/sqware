@@ -10,6 +10,8 @@ use crate::core::memory::nest::{Access, RegionId};
 use crate::core::work::mail::{Mail, hole, pole};
 use crate::core::work::pend::{self, Need, Permission};
 use crate::core::work::unit::space::SpaceBuilder;
+
+use super::support;
 use crate::core::work::unit::task::Task;
 use crate::core::work::unit::team::{Team, TeamBuilder};
 use crate::entry::call as envcall;
@@ -32,7 +34,7 @@ impl Caller {
         .build()
         .unwrap();
         space
-            .memory
+            .nest
             .attach_region(RegionId::Normal, 0x4000_0000, mode::upper().as_usize())
             .unwrap();
         let team = TeamBuilder::new(space).spawn().unwrap();
@@ -168,7 +170,7 @@ pub fn abi_and_privilege() {
     );
     let space = SpaceBuilder::user().build().unwrap();
     space
-        .memory
+        .nest
         .attach_region(RegionId::Normal, 0x4000_0000, mode::upper().as_usize())
         .unwrap();
     let child = TeamBuilder::new(space)
@@ -250,8 +252,7 @@ pub fn memory() {
     let before = user
         .team
         .space
-        .memory
-        .backend()
+        .nest
         .translate(KVirt::wrap(at))
         .unwrap()
         .1
@@ -268,8 +269,7 @@ pub fn memory() {
         assert_eq!(
             user.team
                 .space
-                .memory
-                .backend()
+                .nest
                 .translate(KVirt::wrap(at))
                 .unwrap()
                 .1
@@ -290,8 +290,7 @@ pub fn memory() {
         let actual = user
             .team
             .space
-            .memory
-            .backend()
+            .nest
             .translate(KVirt::wrap(at))
             .unwrap()
             .1
@@ -379,7 +378,7 @@ pub fn memory() {
         })),
         0
     );
-    assert!(user.team.space.memory.backend().translate(KVirt::wrap(at)).is_none());
+    assert!(user.team.space.nest.translate(KVirt::wrap(at)).is_none());
 
     let fixed = 0x4004_0000;
     assert_eq!(
@@ -407,17 +406,10 @@ pub fn memory() {
         (fixed + PAGE_SIZE, false),
         (fixed + 2 * PAGE_SIZE, true),
     ] {
-        let map = user
-            .team
-            .space
-            .memory
-            .backend()
-            .probe(KVirt::wrap(page))
-            .unwrap();
+        let map = user.team.space.nest.probe(KVirt::wrap(page)).unwrap();
         user.team
             .space
-            .memory
-            .backend()
+            .nest
             .materialize_active(
                 map.range(
                     PageOffset::new((page - map.initial_start().as_usize()) / PAGE_SIZE),
@@ -429,8 +421,7 @@ pub fn memory() {
         assert_eq!(
             user.team
                 .space
-                .memory
-                .backend()
+                .nest
                 .translate(KVirt::wrap(page))
                 .unwrap()
                 .1
@@ -454,14 +445,14 @@ pub fn memory() {
         })),
         0
     );
-    assert!(user.team.space.memory.backend().translate(KVirt::wrap(fixed)).is_none());
+    assert!(user.team.space.nest.translate(KVirt::wrap(fixed)).is_none());
 }
 
 pub fn pointers() {
     crate::core::work::room::scheduler::init().expect("scheduler init");
     let user = Caller::new(false);
     let at = user.allocate(PAGE_SIZE);
-    assert!(user.team.space.memory.copy_out(b"readable", at));
+    assert!(user.team.space.copy_out(b"readable", KVirt::wrap(at)));
     let mut bytes = [0xa5; 8];
     for (va, len) in [
         (0, 8),
@@ -471,15 +462,29 @@ pub fn pointers() {
         (at, usize::MAX),
         (usize::MAX - 3, 8),
     ] {
-        assert!(!user.team.space.memory.validate_read(va, len));
-        assert!(!user.team.space.memory.validate_write(va, len));
+        assert!(
+            !user
+                .team
+                .space
+                .validate_access(KVirt::wrap(va), len, Access::READ)
+        );
+        assert!(
+            !user
+                .team
+                .space
+                .validate_access(KVirt::wrap(va), len, Access::WRITE)
+        );
         assert!(
             user.call(EnvCall::Debug(DebugCall::Put {
                 buf: VirtAddr::new(va),
                 len
             })) < 0
         );
-        if !user.team.space.memory.validate_read(va, size_of::<usize>()) {
+        if !user
+            .team
+            .space
+            .validate_access(KVirt::wrap(va), size_of::<usize>(), Access::READ)
+        {
             assert!(
                 user.call(EnvCall::Unit(UnitCall::Spawn {
                     team: env::TeamId::new(0),
@@ -491,10 +496,15 @@ pub fn pointers() {
             );
         }
     }
-    assert!(!user.team.space.memory.copy_in(&mut bytes, at + PAGE_SIZE - 4));
+    assert!(
+        !user
+            .team
+            .space
+            .copy_in(&mut bytes, KVirt::wrap(at + PAGE_SIZE - 4))
+    );
     assert_eq!(bytes, [0xa5; 8]);
-    assert!(user.team.space.memory.copy_in(&mut [], 0));
-    assert!(user.team.space.memory.copy_out(&[], 0));
+    assert!(user.team.space.copy_in(&mut [], KVirt::wrap(0)));
+    assert!(user.team.space.copy_out(&[], KVirt::wrap(0)));
     assert_eq!(
         user.call(EnvCall::Debug(DebugCall::Put {
             buf: VirtAddr::new(0),
@@ -531,16 +541,21 @@ pub fn pointers() {
         })),
         0
     );
-    assert!(!user.team.space.memory.copy_in(&mut bytes, at));
+    assert!(!user.team.space.copy_in(&mut bytes, KVirt::wrap(at)));
     assert!(
         user.call(EnvCall::Debug(DebugCall::Put {
             buf: VirtAddr::new(at),
             len: 8
         })) < 0
     );
-    assert!(user.team.space.memory.instruction_byte(at).is_some());
+    assert!(user.team.space.instruction_byte(KVirt::wrap(at)).is_some());
     let foreign = Caller::new(false);
-    assert!(!foreign.team.space.memory.validate_read(at, 8));
+    assert!(
+        !foreign
+            .team
+            .space
+            .validate_access(KVirt::wrap(at), 8, Access::READ)
+    );
 }
 
 pub fn capability() {
@@ -576,14 +591,9 @@ pub fn capability() {
         Err(env::PieFail::Dead)
     ));
     let source = user.allocate(PAGE_SIZE);
-    let source_mapping = user
-        .team
-        .space
-        .memory
-        .mapping_at(KVirt::wrap(source), PAGE_SIZE)
-        .unwrap();
+    let source_view = support::view_at(&user.team.space, KVirt::wrap(source), PAGE_SIZE).unwrap();
     let pole =
-        pole::PoleMeta::from_mapping(&user.team.space, source_mapping, user.task.ident.id).unwrap();
+        pole::PoleMeta::from_mapping(&user.team.space, source_view, user.task.ident.id).unwrap();
     let pie = pend::Pie::try_new(
         Mail::Pole(pole.clone()),
         env::Mark::NONE,
@@ -593,13 +603,7 @@ pub fn capability() {
     .expect("pie allocation");
     let token = pie.token();
     user.task.pend.pies.lock().push(pie);
-    let original = user
-        .team
-        .space
-        .memory
-        .backend()
-        .probe(KVirt::wrap(source))
-        .unwrap();
+    let original = user.team.space.nest.probe(KVirt::wrap(source)).unwrap();
     user.task.pend.creations.claim(&original).unwrap().commit();
     pole.commit_source();
     let (at, size) = pole::open(&pole, token, &user.team.space, Access::READ).unwrap();
@@ -622,12 +626,21 @@ pub fn capability() {
     ] {
         assert!(user.call(EnvCall::Memory(call)) < 0);
     }
-    assert!(user.team.space.memory.validate_read(at, size));
+    assert!(
+        user.team
+            .space
+            .validate_access(KVirt::wrap(at), size, Access::READ)
+    );
     let operation = pole::PoleOperation::acquire(&pole).expect("pole operation lease");
     assert_eq!(pole::shut(&pole, token), Err(env::PieFail::Busy));
     drop(operation);
     pole::shut(&pole, token).unwrap();
-    assert!(!user.team.space.memory.validate_read(at, size));
+    assert!(
+        !user
+            .team
+            .space
+            .validate_access(KVirt::wrap(at), size, Access::READ)
+    );
 }
 
 /// 线上 Mmap 的来源路径：Pole 授权、来源窗口、关闭后重挂与借用来源的拒绝。
@@ -649,8 +662,7 @@ pub fn memory_pole() {
     let physical = user
         .team
         .space
-        .memory
-        .backend()
+        .nest
         .physical_at(KVirt::wrap(source))
         .unwrap();
     let map = |pole: env::PieToken, offset: usize, flags: u64| {
@@ -666,17 +678,26 @@ pub fn memory_pole() {
 
     // 关闭全部 View 之后来源仍在：装载器就是从这一步开始 Mmap 的。
     pole::shut(&meta, token).unwrap();
-    assert!(!user.team.space.memory.validate_read(source, size));
+    assert!(
+        !user
+            .team
+            .space
+            .validate_access(KVirt::wrap(source), size, Access::READ)
+    );
     let at = map(token, 0, 6);
     assert!(at > 0, "pole mmap after shut was rejected: {at}");
-    assert!(user.team.space.memory.validate_read(at as usize, size));
-    assert!(user.team.space.memory.validate_write(at as usize, size));
-    assert_eq!(
+    assert!(
         user.team
             .space
-            .memory
-            .backend()
-            .physical_at(KVirt::wrap(at as usize)),
+            .validate_access(KVirt::wrap(at as usize), size, Access::READ)
+    );
+    assert!(
+        user.team
+            .space
+            .validate_access(KVirt::wrap(at as usize), size, Access::WRITE)
+    );
+    assert_eq!(
+        user.team.space.nest.physical_at(KVirt::wrap(at as usize)),
         Some(physical)
     );
 
@@ -692,15 +713,13 @@ pub fn memory_pole() {
     assert!(
         user.team
             .space
-            .memory
-            .validate_read(readonly as usize, size)
+            .validate_access(KVirt::wrap(readonly as usize), size, Access::READ)
     );
     assert!(
         !user
             .team
             .space
-            .memory
-            .validate_write(readonly as usize, size)
+            .validate_access(KVirt::wrap(readonly as usize), size, Access::WRITE)
     );
 
     // 借用（设备）来源不算自有 RAM：旧共享授权拒绝，设备访问走 Pie Open。
@@ -717,7 +736,11 @@ pub fn memory_pole() {
     user.task.pend.pies.lock().push(pie);
     assert_eq!(map(device, 0, 2), MemoryFail::Denied.code() as isize);
     let (va, _) = pole::open(&borrowed, device, &user.team.space, Access::READ).unwrap();
-    assert!(user.team.space.memory.validate_read(va, size));
+    assert!(
+        user.team
+            .space
+            .validate_access(KVirt::wrap(va), size, Access::READ)
+    );
 
     // 构造中的队伍：没有 VEST 不接，有 VEST 才按定点地址交付来源页。
     let build = pend::Pie::try_new(
@@ -1018,14 +1041,8 @@ pub fn transfer_relations() {
 
     let d = Caller::new(false);
     let source = a.allocate(PAGE_SIZE);
-    let source_mapping = a
-        .team
-        .space
-        .memory
-        .mapping_at(KVirt::wrap(source), PAGE_SIZE)
-        .unwrap();
-    let meta =
-        pole::PoleMeta::from_mapping(&a.team.space, source_mapping, a.task.ident.id).unwrap();
+    let source_view = support::view_at(&a.team.space, KVirt::wrap(source), PAGE_SIZE).unwrap();
+    let meta = pole::PoleMeta::from_mapping(&a.team.space, source_view, a.task.ident.id).unwrap();
     let pie = pend::Pie::try_new(Mail::Pole(meta.clone()), Mark::NONE, permission, None)
         .expect("pie allocation");
     let memory = pie.token();
@@ -1078,7 +1095,7 @@ pub fn unit_scan_and_receipts() {
     for _ in 0..73 {
         let space = SpaceBuilder::user().build().unwrap();
         space
-            .memory
+            .nest
             .attach_region(RegionId::Normal, 0x4000_0000, mode::upper().as_usize())
             .unwrap();
         children.push(
@@ -1106,7 +1123,7 @@ pub fn unit_scan_and_receipts() {
     );
     assert_eq!(caller.call(scan(env::TeamId::new(0), 64)), 64);
     let mut page = [0u8; 512];
-    assert!(caller.team.space.memory.copy_in(&mut page, buffer));
+    assert!(caller.team.space.copy_in(&mut page, KVirt::wrap(buffer)));
     let ids: Vec<_> = page
         .chunks_exact(8)
         .map(|w| u64::from_le_bytes(w.try_into().unwrap()) as usize)

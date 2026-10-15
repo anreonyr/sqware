@@ -3,16 +3,16 @@ use alloc::vec::Vec;
 
 use env::{UnitCall, UnitFail, UnitTarget};
 
-use crate::core::memory::nest::{NestError, SpaceKind};
 use crate::core::memory::address::VirtAddr as KVirt;
-use crate::machine::switcher::context::{Gprs, TrapContext};
+use crate::core::memory::nest::{NestError, SpaceKind};
 use crate::core::work::room::messenger::{self, Handoff};
 use crate::core::work::room::scheduler::roster::muster;
 use crate::core::work::unit::copies::Origin;
 use crate::core::work::unit::join::JoinWait;
 use crate::core::work::unit::life::TaskLife;
-use crate::core::work::unit::space::{Memory, Space};
+use crate::core::work::unit::space::Space;
 use crate::core::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskWeak};
+use crate::machine::switcher::context::{Gprs, TrapContext};
 
 use super::outcome::Outcome;
 
@@ -37,7 +37,7 @@ fn copy_words(space: &Space, va: KVirt, count: usize) -> Option<Vec<usize>> {
     let width = size_of::<usize>();
     let len = count * width;
     let mut bytes = [0u8; MAX_ARGS * size_of::<usize>()];
-    if !space.memory.copy_in(&mut bytes[..len], va.as_usize()) {
+    if !space.copy_in(&mut bytes[..len], va) {
         return None;
     }
     let mut out: Vec<usize> = Vec::new();
@@ -112,7 +112,9 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             buf,
             capacity,
         } => {
-            if !(1..=64).contains(&capacity) || !Memory::user_range(buf.get(), capacity * 8) {
+            if !(1..=64).contains(&capacity)
+                || !Space::user_range(KVirt::wrap(buf.get()), capacity * 8)
+            {
                 return Outcome::fail(frame, UnitFail::Denied);
             }
             let mut page = [0u64; 64];
@@ -137,7 +139,11 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             for (at, id) in page[..n].iter().enumerate() {
                 bytes[at * 8..at * 8 + 8].copy_from_slice(&id.to_le_bytes());
             }
-            if !ident.team.space.memory.copy_out(&bytes[..n * 8], buf.get()) {
+            if !ident
+                .team
+                .space
+                .copy_out(&bytes[..n * 8], KVirt::wrap(buf.get()))
+            {
                 return Outcome::fail(frame, UnitFail::Denied);
             }
             frame.gpr.set_x(Gprs::A0, n);
@@ -202,7 +208,8 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                             let result = Task::debark(&task);
                             if id == ident.id && matches!(result, Err(UnitFail::Busy)) {
                                 return Outcome::Switch(
-                                    crate::core::work::room::conductor::run::run() as *mut TrapContext
+                                    crate::core::work::room::conductor::run::run()
+                                        as *mut TrapContext,
                                 );
                             }
                             result

@@ -53,11 +53,9 @@ impl ActiveRange {
     }
 
     /// 与 [lo, hi] 的含尾交集；无交集返回 None。
-    pub(in crate::core::memory::nest) fn intersection(
-        self,
-        lo: usize,
-        hi: usize,
-    ) -> Option<(usize, usize)> {
+    ///
+    /// 派生等价用例直接调这一个原语做交集算术，不另写一份 max/min 镜像。
+    pub(crate) fn intersection(self, lo: usize, hi: usize) -> Option<(usize, usize)> {
         let lo = self.start.as_usize().max(lo);
         let hi = self.end().min(hi);
         (lo <= hi).then_some((lo, hi))

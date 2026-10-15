@@ -157,7 +157,7 @@ pub fn order() {
     const USER_BASE: usize = 0x4000_0000;
     let space = SpaceBuilder::user().build().expect("order: build space");
     space
-        .memory
+        .nest
         .attach_region(
             crate::core::memory::nest::RegionId::Normal,
             USER_BASE,
@@ -272,7 +272,7 @@ pub fn badge() {
     const USER_BASE: usize = 0x4000_0000;
     let space = SpaceBuilder::user().build().expect("badge: build space");
     space
-        .memory
+        .nest
         .attach_region(
             crate::core::memory::nest::RegionId::Normal,
             USER_BASE,
@@ -333,7 +333,7 @@ pub fn references() {
     use env::{AwaitReply, Source, Wait};
     let space = SpaceBuilder::user().build().unwrap();
     space
-        .memory
+        .nest
         .attach_region(
             crate::core::memory::nest::RegionId::Normal,
             0x4000_0000,
@@ -401,31 +401,19 @@ pub fn references() {
         group.poll(&caller).unwrap() == AwaitReply::Pending,
         "失效后可摘除原描述"
     );
-    let reservation = caller
-        .ident
-        .team
-        .space
-        .memory
-        .allocate_low(
-            crate::core::memory::nest::RegionId::Normal,
-            crate::core::memory::PAGE_SIZE,
-        )
-        .unwrap();
-    let frame = crate::core::memory::flat::Frame::allocate().unwrap();
-    let rw = crate::core::memory::nest::Access::READ | crate::core::memory::nest::Access::WRITE;
-    let mapping = caller
-        .ident
-        .team
-        .space
-        .memory
-        .map_frames(reservation, alloc::vec![frame], rw, rw)
-        .unwrap();
-    let page = crate::core::work::mail::pole::PoleMeta::from_mapping(
-        &caller.ident.team.space,
-        mapping,
-        caller.ident.id,
+    let space = &caller.ident.team.space;
+    let reservation = super::support::reserve_low(
+        space,
+        crate::core::memory::nest::RegionId::Normal,
+        crate::core::memory::PAGE_SIZE,
     )
     .unwrap();
+    let frame = crate::core::memory::flat::Frame::allocate().unwrap();
+    let rw = crate::core::memory::nest::Access::READ | crate::core::memory::nest::Access::WRITE;
+    let view =
+        super::support::attach_frames(space, reservation, alloc::vec![frame], rw, rw).unwrap();
+    let page = crate::core::work::mail::pole::PoleMeta::from_mapping(space, view, caller.ident.id)
+        .unwrap();
     page.commit_source();
     let bit0 = env::Bit::FIRST;
     let bit1 = env::Bit::wrap(1);

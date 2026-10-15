@@ -4,23 +4,20 @@ use env::{Bit, MailCall, MailCondition, MailFail, Oversize, PieToken, PullOutcom
 
 use riscv::register::sie;
 
+use crate::core::memory::address::VirtAddr as KVirt;
 use crate::core::memory::nest::Access;
-use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::core::work::mail;
 use crate::core::work::pend::{self, Need, PieSnapshot};
-use crate::core::work::room::messenger::Handoff;
 use crate::core::work::room::conductor::current;
-use crate::core::work::unit::space::{Memory, Space};
+use crate::core::work::room::messenger::Handoff;
+use crate::core::work::unit::space::Space;
+use crate::machine::switcher::context::{Gprs, TrapContext};
 
-use super::outcome::{answer, ret_err, Outcome};
+use super::outcome::{Outcome, answer, ret_err};
 use super::pie::usable;
 use crate::core::work::unit::task::TaskIdent;
 
-pub(super) fn dispatch(
-    frame: &mut TrapContext,
-    call: MailCall,
-    ident: Arc<TaskIdent>,
-) -> Outcome {
+pub(super) fn dispatch(frame: &mut TrapContext, call: MailCall, ident: Arc<TaskIdent>) -> Outcome {
     match call {
         MailCall::Attach { .. } | MailCall::Detach { .. } | MailCall::Await { .. } => {
             super::tole::dispatch(frame, call, ident)
@@ -56,14 +53,19 @@ fn push(
         .unwrap_or(TaskId::new(0));
     let r = with_pie(token, Need::Store, |pie| {
         let hole = pie.mail().hole().ok_or(MailFail::Denied)?;
-        if len == 0 || !ident.team.space.memory.validate_access(msg, len, Access::READ) {
+        if len == 0
+            || !ident
+                .team
+                .space
+                .validate_access(KVirt::wrap(msg), len, Access::READ)
+        {
             return Err(MailFail::Denied);
         }
         let reservation = mail::hole::reserve_len(&hole, len)?;
         let mut cell = alloc::vec::Vec::new();
         cell.try_reserve_exact(len).map_err(|_| MailFail::OoM)?;
         cell.resize(len, 0);
-        if !ident.team.space.memory.copy_in(&mut cell, msg) {
+        if !ident.team.space.copy_in(&mut cell, KVirt::wrap(msg)) {
             return Err(MailFail::Denied);
         }
         let bytes = Arc::try_new(cell).map_err(|_| MailFail::OoM)?;
@@ -81,13 +83,17 @@ fn pull(
     max: usize,
     oversize: Oversize,
 ) -> Outcome {
-    if !Memory::user_range(buf, max) {
+    if !Space::user_range(KVirt::wrap(buf), max) {
         ret_err(frame, MailFail::Denied);
         return Outcome::Resume;
     }
     let r = with_pie(token, Need::Fetch, |pie| {
         let hole = pie.mail().hole().ok_or(MailFail::Denied)?;
-        if !ident.team.space.memory.validate_access(buf, max, Access::WRITE) {
+        if !ident
+            .team
+            .space
+            .validate_access(KVirt::wrap(buf), max, Access::WRITE)
+        {
             return Err(MailFail::Denied);
         }
         hand_over(&hole, &ident.team.space, buf, max, oversize)
@@ -121,11 +127,11 @@ fn hand_over(
         reading.finish();
         return Ok(PullOutcome::Discarded { len, sender: from });
     }
-    if len > max || !space.memory.validate_access(buf, len, Access::WRITE) {
+    if len > max || !space.validate_access(KVirt::wrap(buf), len, Access::WRITE) {
         mail::hole::note_back(len, max);
         return Err(MailFail::Denied);
     }
-    if !space.memory.copy_out(&reading.bytes, buf) {
+    if !space.copy_out(&reading.bytes, KVirt::wrap(buf)) {
         mail::hole::note_back(len, max);
         return Err(MailFail::Denied);
     }

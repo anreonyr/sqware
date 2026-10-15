@@ -9,8 +9,10 @@ use crate::core::memory::address::{PageCount, PageIndex, PageOffset, PhysAddr, V
 use crate::core::memory::flat::allocator::statistics;
 use crate::core::memory::flat::allocator::statistics::Kind;
 use crate::core::memory::flat::{Allocation, BorrowedRegion, Flat, FlatError, FlatRange, Frame};
-use crate::core::memory::nest::{Access, NestError, RegionId, View, ViewRange, identity};
+use crate::core::memory::nest::{Access, NestError, View, ViewRange, identity};
 use crate::core::work::unit::space::{Space, SpaceBuilder};
+
+use super::support;
 
 const BASE: usize = 0x6000_0000;
 
@@ -30,21 +32,15 @@ fn space() -> Space {
 }
 
 /// 在指定跨度上占一段并挂上既有帧。
-fn map_at(space: &Space, start: usize, frames: Vec<Arc<Frame>>) -> crate::core::work::unit::space::Mapping {
-    let size = frames.len() * PAGE_SIZE;
-    let reservation = space
-        .memory
-        .reserve(RegionId::Normal, VirtAddr::wrap(start), size)
-        .expect("flat: reservation");
-    space
-        .memory
-        .map_frames(
-            reservation,
-            frames,
-            Access::READ | Access::WRITE,
-            Access::READ | Access::WRITE,
-        )
-        .expect("flat: map frames")
+fn map_at(space: &Space, start: usize, frames: Vec<Arc<Frame>>) -> Arc<View> {
+    support::map_frames(
+        space,
+        VirtAddr::wrap(start),
+        frames,
+        Access::READ | Access::WRITE,
+        Access::READ | Access::WRITE,
+    )
+    .expect("flat: map frames")
 }
 
 /// Flat 来源模型的验收：来源持有、物化唯一、范围合成、借用语义与失败保留。
@@ -117,12 +113,10 @@ pub fn accept() {
 /// 建立来源不预约 VA、不分配数据页。
 fn acquire_is_a_logical_source() {
     let space = SpaceBuilder::user().build().expect("flat: probe space");
-    let probe = space
-        .memory
-        .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
-        .expect("flat: probe reservation");
+    let probe =
+        support::reserve(&space, VirtAddr::wrap(BASE), PAGE_SIZE).expect("flat: probe reservation");
     space
-        .memory
+        .nest
         .release_reservation(probe)
         .expect("flat: probe release");
     let before = statistics::frame_occupied();
@@ -155,12 +149,10 @@ fn acquire_is_a_logical_source() {
         "flat: a fresh source has no page slots"
     );
     // 这个 Flat 携带不了 VA：它没有任何 Space / Nest 入口；同一地址桶仍可受理同一段。
-    let again = space
-        .memory
-        .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
+    let again = support::reserve(&space, VirtAddr::wrap(BASE), PAGE_SIZE)
         .expect("flat: acquire must not occupy VA");
     space
-        .memory
+        .nest
         .release_reservation(again)
         .expect("flat: second release");
     drop(whole);
@@ -555,22 +547,18 @@ fn map_source_retains_pages_until_the_map_drops() {
     let space = space();
     let frame = Frame::allocate().expect("flat: frame");
     let weak = Arc::downgrade(&frame);
-    let mapping = space
-        .memory
-        .map_frames(
-            space
-                .memory
-                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
-                .expect("flat: reservation"),
-            vec![frame],
-            Access::READ | Access::WRITE,
-            Access::READ | Access::WRITE,
-        )
-        .expect("flat: map frames");
+    let mapping = support::map_frames(
+        &space,
+        VirtAddr::wrap(BASE),
+        vec![frame],
+        Access::READ | Access::WRITE,
+        Access::READ | Access::WRITE,
+    )
+    .expect("flat: map frames");
 
-    identity::fail_next_shootdown(space.memory.asid());
+    identity::fail_next_shootdown(space.nest.asid());
     crate::expect!(
-        space.memory.unmap(&mapping) == Err(NestError::Shootdown),
+        space.nest.detach(mapping.whole()) == Err(NestError::Shootdown),
         "flat: a failed sync reports Shootdown"
     );
     crate::expect!(
@@ -578,20 +566,16 @@ fn map_source_retains_pages_until_the_map_drops() {
         "flat: failure keeps the physical resource"
     );
     crate::expect!(
-        space
-            .memory
-            .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
-            .is_err(),
+        support::reserve(&space, VirtAddr::wrap(BASE), PAGE_SIZE).is_err(),
         "flat: failure keeps the VA from being reused"
     );
-    space.memory.unmap(&mapping).expect("flat: retried unmap");
+    space
+        .nest
+        .detach(mapping.whole())
+        .expect("flat: retried unmap");
 
     crate::expect!(
-        space
-            .memory
-            .backend()
-            .translate(VirtAddr::wrap(BASE))
-            .is_none(),
+        space.nest.translate(VirtAddr::wrap(BASE)).is_none(),
         "flat: a successful unmap retracts the PTE"
     );
     crate::expect!(
@@ -616,21 +600,20 @@ fn derived_source_outlives_the_source_tree() {
     let source = space();
     let source_map = map_at(&source, BASE, vec![frame]);
     let target = space();
-    let target_map = target
-        .memory
-        .view_record(
-            source_map.view(),
-            0,
-            PAGE_SIZE,
-            PAGE_SIZE,
-            Access::READ,
-            Access::READ,
-            Some(VirtAddr::from_raw(BASE + 0x20_000)),
-        )
-        .expect("flat: derived map");
+    let target_map = support::derive(
+        &target,
+        &source_map,
+        0,
+        PAGE_SIZE,
+        PAGE_SIZE,
+        Access::READ,
+        Access::READ,
+        Some(VirtAddr::from_raw(BASE + 0x20_000)),
+    )
+    .expect("flat: derived map");
 
     drop(source_map);
-    source.memory.backend().close().expect("flat: close source");
+    source.nest.close().expect("flat: close source");
     drop(source);
 
     crate::expect!(
@@ -639,8 +622,7 @@ fn derived_source_outlives_the_source_tree() {
     );
     crate::expect!(
         target
-            .memory
-            .backend()
+            .nest
             .translate(VirtAddr::from_raw(BASE + 0x20_000))
             .expect("flat: derived translation")
             .0
@@ -649,7 +631,7 @@ fn derived_source_outlives_the_source_tree() {
         "flat: derived identity resolves the original physical page"
     );
     drop(target_map);
-    target.memory.backend().close().expect("flat: close target");
+    target.nest.close().expect("flat: close target");
     drop(target);
     crate::expect!(
         weak.upgrade().is_none(),
@@ -671,48 +653,43 @@ fn partial_unmap_leaves_no_published_hole() {
     let source = space();
     let source_map = map_at(&source, BASE, frames);
     source
-        .memory
-        .backend()
-        .detach(select(source_map.view(), BASE + PAGE_SIZE, PAGE_SIZE))
+        .nest
+        .detach(select(&source_map, BASE + PAGE_SIZE, PAGE_SIZE))
         .expect("flat: partial unmap");
     crate::expect!(
         source
-            .memory
-            .backend()
+            .nest
             .translate(VirtAddr::from_raw(BASE + PAGE_SIZE))
             .is_none(),
         "flat: the revoked page is no longer translated"
     );
     crate::expect!(
-        source_map.view().frame_count() == 2,
+        source_map.frame_count() == 2,
         "flat: only the revoked page leaves the publication list"
     );
 
     let target = space();
-    let target_map = target
-        .memory
-        .view_record(
-            source_map.view(),
-            0,
-            3 * PAGE_SIZE,
-            PAGE_SIZE,
-            Access::READ,
-            Access::READ,
-            Some(VirtAddr::from_raw(BASE + 0x20_000)),
-        )
-        .expect("flat: derived map");
+    let target_map = support::derive(
+        &target,
+        &source_map,
+        0,
+        3 * PAGE_SIZE,
+        PAGE_SIZE,
+        Access::READ,
+        Access::READ,
+        Some(VirtAddr::from_raw(BASE + 0x20_000)),
+    )
+    .expect("flat: derived map");
     crate::expect!(
         target
-            .memory
-            .backend()
+            .nest
             .translate(VirtAddr::from_raw(BASE + 0x20_000 + PAGE_SIZE))
             .is_none(),
         "flat: derive must not republish a revoked hole"
     );
     crate::expect!(
         target
-            .memory
-            .backend()
+            .nest
             .translate(VirtAddr::from_raw(BASE + 0x20_000))
             .expect("flat: derived first page")
             .0
@@ -722,8 +699,7 @@ fn partial_unmap_leaves_no_published_hole() {
     );
     crate::expect!(
         target
-            .memory
-            .backend()
+            .nest
             .translate(VirtAddr::from_raw(BASE + 0x20_000 + 2 * PAGE_SIZE))
             .expect("flat: derived third page")
             .0
@@ -732,7 +708,7 @@ fn partial_unmap_leaves_no_published_hole() {
         "flat: derive keeps the last live page"
     );
     crate::expect!(
-        target_map.view().frame_count() == 2,
+        target_map.frame_count() == 2,
         "flat: the derived map publishes only the live fragments"
     );
 }
@@ -818,14 +794,12 @@ fn aliased_frames_retire_independently() {
     let source_map = map_at(&source, BASE, vec![frame.clone(), frame]);
 
     let first = source
-        .memory
-        .backend()
+        .nest
         .translate(VirtAddr::from_raw(BASE))
         .expect("flat: first alias")
         .0;
     let second = source
-        .memory
-        .backend()
+        .nest
         .translate(VirtAddr::from_raw(BASE + PAGE_SIZE))
         .expect("flat: second alias")
         .0;
@@ -839,29 +813,26 @@ fn aliased_frames_retire_independently() {
     );
 
     let target = space();
-    let target_map = target
-        .memory
-        .view_record(
-            source_map.view(),
-            0,
-            2 * PAGE_SIZE,
-            PAGE_SIZE,
-            Access::READ,
-            Access::READ,
-            Some(VirtAddr::from_raw(TARGET)),
-        )
-        .expect("flat: derived aliases");
+    let target_map = support::derive(
+        &target,
+        &source_map,
+        0,
+        2 * PAGE_SIZE,
+        PAGE_SIZE,
+        Access::READ,
+        Access::READ,
+        Some(VirtAddr::from_raw(TARGET)),
+    )
+    .expect("flat: derived aliases");
     crate::expect!(
         target
-            .memory
-            .backend()
+            .nest
             .translate(VirtAddr::from_raw(TARGET))
             .expect("flat: derived first alias")
             .0
             == first
             && target
-                .memory
-                .backend()
+                .nest
                 .translate(VirtAddr::from_raw(TARGET + PAGE_SIZE))
                 .expect("flat: derived second alias")
                 .0
@@ -870,32 +841,22 @@ fn aliased_frames_retire_independently() {
     );
 
     source
-        .memory
-        .backend()
-        .detach(select(source_map.view(), BASE, PAGE_SIZE))
+        .nest
+        .detach(select(&source_map, BASE, PAGE_SIZE))
         .expect("flat: revoke the first alias");
     crate::expect!(
-        source
-            .memory
-            .backend()
-            .translate(VirtAddr::from_raw(BASE))
-            .is_none(),
+        source.nest.translate(VirtAddr::from_raw(BASE)).is_none(),
         "flat: the revoked alias PTE is gone"
     );
     crate::expect!(
         source
-            .memory
-            .backend()
+            .nest
             .translate(VirtAddr::from_raw(BASE + PAGE_SIZE))
             .is_some(),
         "flat: the sibling alias PTE stays"
     );
     crate::expect!(
-        target
-            .memory
-            .backend()
-            .translate(VirtAddr::from_raw(TARGET))
-            .is_some(),
+        target.nest.translate(VirtAddr::from_raw(TARGET)).is_some(),
         "flat: the derived alias stays"
     );
     crate::expect!(
@@ -904,19 +865,16 @@ fn aliased_frames_retire_independently() {
     );
 
     target
-        .memory
-        .backend()
-        .detach(select(target_map.view(), TARGET, 2 * PAGE_SIZE))
+        .nest
+        .detach(select(&target_map, TARGET, 2 * PAGE_SIZE))
         .expect("flat: revoke the derived aliases");
     source
-        .memory
-        .backend()
-        .detach(select(source_map.view(), BASE + PAGE_SIZE, PAGE_SIZE))
+        .nest
+        .detach(select(&source_map, BASE + PAGE_SIZE, PAGE_SIZE))
         .expect("flat: revoke the sibling alias");
     crate::expect!(
         source
-            .memory
-            .backend()
+            .nest
             .translate(VirtAddr::from_raw(BASE + PAGE_SIZE))
             .is_none(),
         "flat: both alias PTEs are gone"
@@ -926,16 +884,8 @@ fn aliased_frames_retire_independently() {
         "flat: the old map still holds the source"
     );
 
-    source
-        .memory
-        .backend()
-        .close()
-        .expect("flat: close the alias source");
-    target
-        .memory
-        .backend()
-        .close()
-        .expect("flat: close the alias target");
+    source.nest.close().expect("flat: close the alias source");
+    target.nest.close().expect("flat: close the alias target");
     drop(source_map);
     drop(target_map);
     drop(source);

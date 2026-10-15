@@ -19,9 +19,9 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
     crate::putln!("[health] {item}: ok ({detail})");
 }
 
-pub use crate::entry::boot::error::accept as boot_errors;
 pub use crate::core::work::mail::hole::tests as hole;
 pub use crate::core::work::room::conductor::tests::acceptance as scheduler;
+pub use crate::entry::boot::error::accept as boot_errors;
 
 pub mod backtrace;
 pub mod depend;
@@ -29,7 +29,7 @@ pub mod flat;
 pub mod frame;
 pub mod hart;
 pub mod large_pages;
-pub mod manager_api;
+pub mod memory;
 pub mod nest;
 pub mod nest_failure;
 pub mod pagetable;
@@ -38,6 +38,7 @@ pub mod pole;
 pub mod shell;
 pub mod spare;
 pub mod stress;
+mod support;
 pub mod syscall;
 pub mod task;
 

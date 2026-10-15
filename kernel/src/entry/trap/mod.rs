@@ -2,22 +2,22 @@ pub(crate) mod fault;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{scause, sepc, sie, sip, stval};
 
-use crate::machine::hart::{self, HartId};
 use crate::core::memory::nest::identity::{self as asid, Asid};
-use crate::putln;
-use crate::core::work::room::deadline;
 use crate::core::work::record::trace::{self, EventKind, MemoryEvent, RoomEvent};
-use crate::machine::switcher::context::TrapContext;
-use crate::core::work::room::messenger::{self, redeem};
 use crate::core::work::room::conductor::run::run;
+use crate::core::work::room::deadline;
 use crate::core::work::room::identity::{Identity, ident};
+use crate::core::work::room::messenger::{self, redeem};
+use crate::machine::hart::{self, HartId};
+use crate::machine::switcher::context::TrapContext;
+use crate::putln;
 
 pub(crate) mod resources;
-use crate::machine::switcher::stack::{
-    TRAP_STACK_CANARY, trap_stack_guard_hart, trap_stack_hart, trap_stack_base,
-};
 #[cfg(debug_assertions)]
 use crate::machine::switcher::stack::trap_stack_edge;
+use crate::machine::switcher::stack::{
+    TRAP_STACK_CANARY, trap_stack_base, trap_stack_guard_hart, trap_stack_hart,
+};
 
 pub(crate) fn persist(frame: &TrapContext) -> bool {
     let Some(i) = ident() else {
@@ -26,7 +26,7 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
     let Some(task) = i.live() else {
         return false;
     };
-    if !task.team.space.memory.asid().is_kernel() {
+    if !task.team.space.nest.asid().is_kernel() {
         return false;
     }
     let Some(pa) = i.trap() else {
@@ -197,7 +197,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             let ok = running
                 .team
                 .space
-                .memory
+                .nest
                 .resolve_fault(fault.addr, fault.pc, fault.kind);
             trace::note(EventKind::Memory(MemoryEvent::PageFault {
                 va: fault.addr.as_usize(),

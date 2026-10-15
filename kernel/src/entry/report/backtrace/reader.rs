@@ -36,11 +36,9 @@ impl StackReader {
             return Some(base);
         }
         let edge = crate::machine::board::dram_edge().unwrap_or(0x9000_0000);
-        let (base, flags) = TableNode::walk_raw(
-            self.root,
-            VirtAddr::from_raw(page),
-            |pa| (0x8000_0000..edge).contains(&pa.as_usize()),
-        )?;
+        let (base, flags) = TableNode::walk_raw(self.root, VirtAddr::from_raw(page), |pa| {
+            (0x8000_0000..edge).contains(&pa.as_usize())
+        })?;
         if !flags.contains(PteFlags::R) {
             return None;
         }
@@ -52,8 +50,7 @@ impl StackReader {
         if let Some(space) = &self.space {
             let mut bytes = [0u8; size_of::<usize>()];
             return space
-                .memory
-                .copy_in(&mut bytes, addr)
+                .copy_in(&mut bytes, VirtAddr::wrap(addr))
                 .then(|| usize::from_le_bytes(bytes));
         }
         if (addr & (PAGE_SIZE - 1)) + size_of::<usize>() > PAGE_SIZE {

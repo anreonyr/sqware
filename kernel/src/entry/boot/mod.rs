@@ -1,7 +1,7 @@
+pub(crate) mod devices;
 pub(crate) mod error;
 mod init;
 pub(crate) mod initrd;
-pub(crate) mod devices;
 pub(crate) mod resources;
 mod stack;
 pub(crate) mod unit;
@@ -11,20 +11,27 @@ pub use init::init;
 
 use ::core::arch::global_asm;
 
+use alloc::sync::Arc;
+
 use riscv::register::satp;
 
-use crate::machine::hart::{self, HartId};
-use crate::machine::image::{ROOT_STACK_CANARY, root_stack_base};
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::nest::{Access, NestError, RegionId, identity};
-use crate::machine::mode;
-use crate::machine::board;
+use crate::core::memory::address::{PhysAddr, VirtAddr};
+use crate::core::memory::flat::{BorrowedRegion, Flat, FlatRange};
+use crate::core::memory::nest::table::PteFlags;
+use crate::core::memory::nest::{
+    Access, ActiveRange, Nest, NestError, Placement, RegionId, identity,
+};
 use crate::core::work::record::trace;
-use crate::machine::switcher::context::TrapContext;
-use crate::machine::switcher::trampoline::restore;
-use crate::machine::switcher::stack::{arm_hart, boot_stack};
 use crate::core::work::room::{conductor, scheduler};
 use crate::core::work::unit::team::kernel;
+use crate::machine::board;
+use crate::machine::hart::{self, HartId};
+use crate::machine::image::{ROOT_STACK_CANARY, root_stack_base};
+use crate::machine::mode;
+use crate::machine::switcher::context::TrapContext;
+use crate::machine::switcher::stack::{arm_hart, boot_stack};
+use crate::machine::switcher::trampoline::restore;
 
 global_asm!(
     ".section .text.boot",
@@ -89,8 +96,10 @@ fn register_runtime_hooks() {
     use crate::core::work::room::halt;
     use crate::core::work::room::messenger;
 
-    static EXIT_HOOKS: &[fn(&alloc::sync::Arc<crate::core::work::unit::task::Task>)] =
-        &[crate::core::work::room::messenger::doom, crate::core::work::pend::doom];
+    static EXIT_HOOKS: &[fn(&alloc::sync::Arc<crate::core::work::unit::task::Task>)] = &[
+        crate::core::work::room::messenger::doom,
+        crate::core::work::pend::doom,
+    ];
     messenger::hook(EXIT_HOOKS);
 
     const SHUTDOWN_HOOKS: &[fn()] = &[
@@ -102,7 +111,8 @@ fn register_runtime_hooks() {
     halt::hook(SHUTDOWN_HOOKS, crate::entry::report::shutdown::waiting);
 }
 
-fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task::Task>>, BootError> {
+fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task::Task>>, BootError>
+{
     let Some(region) = board::info().initrd() else {
         return Ok(None);
     };
@@ -113,39 +123,27 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
             base: region.base,
             size: region.size,
         })?;
-    let team =
-        crate::core::work::unit::capsule::assemble(capsule).map_err(|source| BootError::Mapping {
+    let team = crate::core::work::unit::capsule::assemble(capsule).map_err(|source| {
+        BootError::Mapping {
             operation: MapOperation::AssembleCapsule,
             source,
-        })?;
+        }
+    })?;
 
     let view_size = region.size.next_multiple_of(PAGE_SIZE);
-    let view_reservation = team
-        .space
-        .memory
-        .allocate_low(RegionId::Normal, view_size)
-        .map_err(|source| BootError::Mapping {
+    let view = map_borrowed(&team.space.nest, PhysAddr::from_raw(region.base), view_size).map_err(
+        |source| BootError::Mapping {
             operation: MapOperation::ImageView,
             source,
-        })?;
-    let view_mapping = unsafe {
-        team.space.memory.map_borrowed(
-            view_reservation,
-            crate::core::memory::address::PhysAddr::from_raw(region.base),
-            Access::READ,
-            Access::READ,
-        )
-    }
-    .map_err(|source| BootError::Mapping {
-        operation: MapOperation::ImageView,
-        source,
-    })?;
-    let view = view_mapping.address();
+        },
+    )?;
 
     let mut registry = crate::entry::boot::resources::Registry::default();
-    crate::entry::boot::devices::register(&mut registry).map_err(|source| BootError::Resources {
-        operation: ResourceOperation::Devices,
-        source,
+    crate::entry::boot::devices::register(&mut registry).map_err(|source| {
+        BootError::Resources {
+            operation: ResourceOperation::Devices,
+            source,
+        }
     })?;
     crate::entry::trap::resources::register(&mut registry).map_err(|source| {
         BootError::Resources {
@@ -164,32 +162,22 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
         source: e.into_parts().0,
     })?;
     let ledger_len =
-        crate::entry::boot::resources::ledger::size(resources.len()).map_err(|source| BootError::Resources {
-            operation: ResourceOperation::LedgerSize,
-            source,
+        crate::entry::boot::resources::ledger::size(resources.len()).map_err(|source| {
+            BootError::Resources {
+                operation: ResourceOperation::LedgerSize,
+                source,
+            }
         })?;
     let (ledger_pa, ledger_bytes) = crate::entry::boot::resources::ledger::block();
-    let ledger_reservation = team
-        .space
-        .memory
-        .allocate_low(RegionId::Normal, ledger_bytes)
-        .map_err(|source| BootError::Mapping {
-            operation: MapOperation::LedgerView,
-            source,
-        })?;
-    let ledger_mapping = unsafe {
-        team.space.memory.map_borrowed(
-            ledger_reservation,
-            crate::core::memory::address::PhysAddr::from_raw(ledger_pa),
-            Access::READ,
-            Access::READ,
-        )
-    }
+    let ledger = map_borrowed(
+        &team.space.nest,
+        PhysAddr::from_raw(ledger_pa),
+        ledger_bytes,
+    )
     .map_err(|source| BootError::Mapping {
         operation: MapOperation::LedgerView,
         source,
     })?;
-    let ledger = ledger_mapping.address();
 
     let mut args = [0usize; env::ledger::args::LEN];
     args[env::ledger::args::VIEW] = view.as_usize();
@@ -212,9 +200,11 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
             operation: ResourceOperation::Grant,
             source: e.into_parts().0,
         })?;
-    crate::entry::boot::resources::ledger::write(&entries).map_err(|source| BootError::Resources {
-        operation: ResourceOperation::WriteLedger,
-        source,
+    crate::entry::boot::resources::ledger::write(&entries).map_err(|source| {
+        BootError::Resources {
+            operation: ResourceOperation::WriteLedger,
+            source,
+        }
     })?;
     crate::core::work::unit::task::Task::release(&bootstrap).map_err(|source| {
         BootError::BootstrapRelease {
@@ -224,16 +214,48 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
     })?;
 
     #[cfg(debug_assertions)]
-    team.space.memory.audit();
+    team.space.nest.audit();
 
     #[cfg(debug_assertions)]
     kernel()
         .expect("kernel team not initialized")
         .space
-        .memory
+        .nest
         .audit();
 
     Ok(Some(bootstrap))
+}
+
+/// 把一段调用方仍保留的物理区间挂进 `Normal` 窗口的最低空档（只读）。
+///
+/// 借用凭证与来源在登记占用之前就已备齐：来源失败不留下无人持有的地址。
+fn map_borrowed(nest: &Arc<Nest>, physical: PhysAddr, size: usize) -> Result<VirtAddr, NestError> {
+    let borrowed = unsafe { BorrowedRegion::new(physical, size)? };
+    let source = Flat::from_region(borrowed)?.whole();
+    let reservation = nest.reserve(Placement::lowest(RegionId::Normal, size, PAGE_SIZE)?)?;
+    let view = nest.attach(reservation, source, Access::READ, Access::READ)?;
+    Ok(view.initial_start())
+}
+
+/// 启动静态挂载：按 `Exact` 在 `start` 登记真实占用，再把已备好的来源挂上去。
+///
+/// 活动形状在登记占用之前备齐；`Static` 区只有重叠检查、没有动态窗口，
+/// 所以这里不走窗口校验。
+fn attach_exact(
+    nest: &Arc<Nest>,
+    start: VirtAddr,
+    source: FlatRange,
+    access: Access,
+    attrs: PteFlags,
+) -> Result<(), NestError> {
+    let size = source
+        .page_count()
+        .checked_bytes()
+        .ok_or(NestError::NotAligned)?;
+    let active = ActiveRange::new(start, size, access, access)?;
+    let reservation = nest.reserve(Placement::exact(RegionId::Static, start, size)?)?;
+    nest.attach_shaped(reservation, source, attrs, &[active])?;
+    Ok(())
 }
 
 fn boot_harts() -> Result<(), BootError> {
@@ -268,7 +290,7 @@ pub(crate) extern "C" fn boot_main() -> ! {
     let ktc = kernel()
         .expect("kernel team not initialized")
         .space
-        .memory
+        .nest
         .physical_at(hart::hart_frame())
         .expect("kernel frame not mapped");
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };

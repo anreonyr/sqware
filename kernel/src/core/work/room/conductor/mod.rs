@@ -119,7 +119,7 @@ impl Conductor {
         unsafe {
             let frame = &mut *(t.ident.frame_pa.as_usize() as *mut TrapContext);
             frame.kernel_sp = trap_stack_edge(self.hart);
-            if t.ident.team.space.memory.asid().is_kernel() {
+            if t.ident.team.space.nest.asid().is_kernel() {
                 frame
                     .gpr
                     .set_x(Gprs::TP, crate::machine::hart::per_hart_ptr(self.hart));

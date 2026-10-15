@@ -3,12 +3,12 @@ use super::*;
 #[cfg(debug_assertions)]
 pub fn acceptance() {
     let _commit = crate::core::work::commit();
-    use crate::machine::hart::HartId;
     use crate::core::work::unit::{space::SpaceBuilder, team::TeamBuilder};
+    use crate::machine::hart::HartId;
 
     let space = SpaceBuilder::user().build().unwrap();
     space
-        .memory
+        .nest
         .attach_region(
             crate::core::memory::nest::RegionId::Normal,
             0x4000_0000,
@@ -39,7 +39,10 @@ pub fn acceptance() {
     assert!(Arc::ptr_eq(&victim.steal().unwrap(), &tasks[0]));
     assert!(Arc::ptr_eq(&victim.pull().unwrap(), &tasks[2]));
     assert!(victim.steal().is_none());
-    assert_eq!(victim.inner.lock().ready_ceiling(), deadline::blind_ceiling());
+    assert_eq!(
+        victim.inner.lock().ready_ceiling(),
+        deadline::blind_ceiling()
+    );
 
     {
         let mut state = tasks[0].state.lock();

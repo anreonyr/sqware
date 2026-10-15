@@ -15,6 +15,8 @@ use crate::core::memory::nest::{
 };
 use crate::core::work::unit::space::{Space, SpaceBuilder};
 
+use super::support;
+
 const BASE: usize = 0x6000_0000;
 const MEGA: usize = 1 << 21;
 
@@ -33,22 +35,8 @@ fn select(view: &Arc<View>, start: VirtAddr, size: usize) -> ViewRange {
 }
 
 /// 在 `start` 上占一段并挂上既有帧。
-fn frame_view(
-    space: &Space,
-    start: usize,
-    frame: Arc<Frame>,
-) -> crate::core::work::unit::space::Mapping {
-    space
-        .memory
-        .map_frames(
-            space
-                .memory
-                .reserve(RegionId::Normal, VirtAddr::wrap(start), PAGE_SIZE)
-                .expect("nest: reservation"),
-            vec![frame],
-            rw(),
-            rw(),
-        )
+fn frame_view(space: &Space, start: usize, frame: Arc<Frame>) -> Arc<View> {
+    support::map_frames(space, VirtAddr::wrap(start), vec![frame], rw(), rw())
         .expect("nest: map frames")
 }
 
@@ -76,7 +64,7 @@ pub fn nest_views() {
 /// 成功挂载之后读回的是干净提交：身份、根页表、几何、待失效与待收尾都归位。
 fn clean_commit_reads_back() {
     let space = SpaceBuilder::user().build().expect("nest: user space");
-    let nest = space.memory.backend();
+    let nest = &space.nest;
     let frame = Frame::allocate().expect("nest: frame");
     let weak = Arc::downgrade(&frame);
     let view = frame_view(&space, BASE, frame);
@@ -86,15 +74,12 @@ fn clean_commit_reads_back() {
     assert!(nest.geometry().levels >= 3);
     assert!(!nest.has_pending_invalidation());
     assert!(nest.pending_views().expect("nest: pending").is_empty());
-    assert_eq!(
-        view.view().initial_range(),
-        (VirtAddr::wrap(BASE), PAGE_SIZE)
-    );
+    assert_eq!(view.initial_range(), (VirtAddr::wrap(BASE), PAGE_SIZE));
     assert_eq!(nest.view_count(), 2);
-    space.memory.unmap(&view).expect("nest: release");
+    space.nest.detach(view.whole()).expect("nest: release");
     // 撤销只撤 PTE：来源仍强持这一页。
     assert!(weak.upgrade().is_some());
-    assert!(!view.view().is_live());
+    assert!(!view.is_live());
     drop(view);
     drop(space);
     assert!(weak.upgrade().is_none());
@@ -104,43 +89,36 @@ fn clean_commit_reads_back() {
 fn derive_publishes_source_window_and_shares_frames() {
     const TARGET: usize = BASE + 0x20_000;
     let space = SpaceBuilder::user().build().expect("nest: user space");
-    let nest = space.memory.backend();
-    let lazy = space
-        .memory
-        .map_lazy(
-            space
-                .memory
-                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), 2 * PAGE_SIZE)
-                .expect("nest: reservation"),
-            rw(),
-            rw(),
-        )
-        .expect("nest: lazy source");
+    let nest = &space.nest;
+    let lazy = support::map_lazy(
+        &space,
+        support::reserve(&space, VirtAddr::wrap(BASE), 2 * PAGE_SIZE).expect("nest: reservation"),
+        rw(),
+        rw(),
+    )
+    .expect("nest: lazy source");
     // 源还没物化：两页都没有翻译。
     assert!(nest.translate(VirtAddr::wrap(BASE)).is_none());
     assert!(nest.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_none());
-    let derived = space
-        .memory
-        .view_record(
-            lazy.view(),
-            0,
-            2 * PAGE_SIZE,
-            PAGE_SIZE,
-            rw(),
-            rw(),
-            Some(VirtAddr::wrap(TARGET)),
-        )
-        .expect("nest: derived view");
+    let derived = support::derive(
+        &space,
+        &lazy,
+        0,
+        2 * PAGE_SIZE,
+        PAGE_SIZE,
+        rw(),
+        rw(),
+        Some(VirtAddr::wrap(TARGET)),
+    )
+    .expect("nest: derived view");
     // 旧副作用：源活动片段被物化并发布，两边都翻译得到。
     for at in [BASE, BASE + PAGE_SIZE, TARGET, TARGET + PAGE_SIZE] {
         assert!(nest.translate(VirtAddr::wrap(at)).is_some(), "{at:#x}");
     }
     let source_frames = lazy
-        .view()
         .frames_in(VirtAddr::wrap(BASE), 2 * PAGE_SIZE)
         .expect("nest: source frames");
     let target_frames = derived
-        .view()
         .frames_in(VirtAddr::wrap(TARGET), 2 * PAGE_SIZE)
         .expect("nest: target frames");
     assert_eq!(source_frames.len(), 2);
@@ -160,38 +138,31 @@ fn derive_publishes_source_window_and_shares_frames() {
             .0,
     );
     // 同源物理页：写一侧，另一侧读得到。
-    assert!(space.memory.copy_out(b"shared", TARGET));
+    assert!(space.copy_out(b"shared", VirtAddr::wrap(TARGET)));
     let mut bytes = [0u8; 6];
-    assert!(space.memory.copy_in(&mut bytes, BASE));
+    assert!(space.copy_in(&mut bytes, VirtAddr::wrap(BASE)));
     assert_eq!(&bytes, b"shared");
     nest.audit();
-    space.memory.unmap(&derived).expect("nest: release derived");
-    space.memory.unmap(&lazy).expect("nest: release lazy");
+    space
+        .nest
+        .detach(derived.whole())
+        .expect("nest: release derived");
+    space.nest.detach(lazy.whole()).expect("nest: release lazy");
 }
 
 /// 同一关系里两页当前权限不同：逐页访问、跨页复制与派生都按各自 current 判。
 fn per_page_current_copies_and_boundary() {
     const SPAN: usize = 2 * PAGE_SIZE;
     let space = SpaceBuilder::user().build().expect("nest: user space");
-    let nest = space.memory.backend();
+    let nest = &space.nest;
     let frames = vec![
         Frame::allocate().expect("nest: frame a"),
         Frame::allocate().expect("nest: frame b"),
     ];
-    let view = space
-        .memory
-        .map_frames(
-            space
-                .memory
-                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), SPAN)
-                .expect("nest: reservation"),
-            frames,
-            rw(),
-            rw(),
-        )
+    let view = support::map_frames(&space, VirtAddr::wrap(BASE), frames, rw(), rw())
         .expect("nest: map two pages");
     nest.set_access(
-        select(view.view(), VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE),
+        select(&view, VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE),
         Access::READ,
     )
     .expect("nest: make the second page read-only");
@@ -200,9 +171,9 @@ fn per_page_current_copies_and_boundary() {
     assert!(nest.check_access(first, PAGE_SIZE, Access::WRITE));
     assert!(!nest.check_access(second, PAGE_SIZE, Access::WRITE));
     assert!(nest.check_access(second, PAGE_SIZE, Access::READ));
-    assert!(space.memory.copy_out(b"left", BASE));
+    assert!(space.copy_out(b"left", VirtAddr::wrap(BASE)));
     let mut bytes = [0u8; 4];
-    assert!(space.memory.copy_in(&mut bytes, BASE + PAGE_SIZE));
+    assert!(space.copy_in(&mut bytes, VirtAddr::wrap(BASE + PAGE_SIZE)));
     assert_eq!(&bytes, b"\0\0\0\0");
     // 跨到只读页的写整段拒；只写第一页可以。
     let zeros = [0u8; SPAN];
@@ -213,7 +184,7 @@ fn per_page_current_copies_and_boundary() {
     // 上限收窄之外不能加宽；架构属性不受改权影响。
     assert_eq!(
         nest.set_access(
-            select(view.view(), first, SPAN),
+            select(&view, first, SPAN),
             Access::READ | Access::WRITE | Access::EXECUTE,
         ),
         Err(NestError::WidenDenied)
@@ -222,27 +193,29 @@ fn per_page_current_copies_and_boundary() {
     assert!(flags.contains(PteFlags::U | PteFlags::R | PteFlags::A | PteFlags::D));
     assert!(!flags.contains(PteFlags::W));
     // 派生按请求给的 current / ceiling，不继承源页权限。
-    let derived = space
-        .memory
-        .view_record(
-            view.view(),
-            0,
-            SPAN,
-            PAGE_SIZE,
-            Access::READ | Access::EXECUTE,
-            Access::READ,
-            None,
-        )
-        .expect("nest: derived read-only view");
-    for range in derived.view().active().expect("nest: derived active") {
+    let derived = support::derive(
+        &space,
+        &view,
+        0,
+        SPAN,
+        PAGE_SIZE,
+        Access::READ | Access::EXECUTE,
+        Access::READ,
+        None,
+    )
+    .expect("nest: derived read-only view");
+    for range in derived.active().expect("nest: derived active") {
         assert_eq!(range.current, Access::READ);
         assert_eq!(range.ceiling, Access::READ | Access::EXECUTE);
     }
-    assert!(nest.check_access(derived.address(), PAGE_SIZE, Access::READ));
-    assert!(!nest.check_access(derived.address(), PAGE_SIZE, Access::WRITE));
+    assert!(nest.check_access(derived.initial_start(), PAGE_SIZE, Access::READ));
+    assert!(!nest.check_access(derived.initial_start(), PAGE_SIZE, Access::WRITE));
     nest.audit();
-    space.memory.unmap(&derived).expect("nest: release derived");
-    space.memory.unmap(&view).expect("nest: release view");
+    space
+        .nest
+        .detach(derived.whole())
+        .expect("nest: release derived");
+    space.nest.detach(view.whole()).expect("nest: release view");
 }
 
 /// 活动形状带洞：洞不发布，活动库存就是两个片段，整段重撤不会去补洞。
@@ -295,9 +268,8 @@ fn shaped_attach_keeps_holes() {
 
 /// 部分撤下只交还那一段；同一身份再撤已结算的页失败；整段只碰还欠着的段。
 fn partial_detach_returns_only_that_span() {
-    const SPAN: usize = 3 * PAGE_SIZE;
     let space = SpaceBuilder::user().build().expect("nest: user space");
-    let nest = space.memory.backend();
+    let nest = &space.nest;
     let middle = Frame::allocate().expect("nest: middle frame");
     let weak = Arc::downgrade(&middle);
     let tables = nest.table_count();
@@ -306,54 +278,36 @@ fn partial_detach_returns_only_that_span() {
         middle,
         Frame::allocate().expect("nest: frame c"),
     ];
-    let view = space
-        .memory
-        .map_frames(
-            space
-                .memory
-                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), SPAN)
-                .expect("nest: reservation"),
-            frames,
-            rw(),
-            rw(),
-        )
+    let view = support::map_frames(&space, VirtAddr::wrap(BASE), frames, rw(), rw())
         .expect("nest: map three pages");
-    let middle = select(view.view(), VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE);
+    let middle = select(&view, VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE);
     nest.detach(middle.clone()).expect("nest: partial detach");
-    assert_eq!(view.view().active().expect("nest: active").len(), 2);
+    assert_eq!(view.active().expect("nest: active").len(), 2);
     assert!(nest.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_none());
     assert_eq!(
         nest.materialize_active(middle.clone()).err(),
         Some(NestError::NoRegion)
     );
-    nest.materialize_active(view.view().whole())
+    nest.materialize_active(view.whole())
         .expect("nest: materialize only the remaining active pages");
     assert!(nest.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_none());
     // 同叶表里还有邻页，部分撤下不动表页；整段撤完才回到初始页表数。
     assert!(nest.table_count() >= 1);
     // 交还的那一段可以被新关系重新登记并挂载。
-    let reused = space
-        .memory
-        .map_frames(
-            space
-                .memory
-                .reserve(
-                    RegionId::Normal,
-                    VirtAddr::wrap(BASE + PAGE_SIZE),
-                    PAGE_SIZE,
-                )
-                .expect("nest: the detached span is reusable"),
-            vec![Frame::allocate().expect("nest: reused frame")],
-            rw(),
-            rw(),
-        )
-        .expect("nest: reuse the span");
+    let reused = support::map_frames(
+        &space,
+        VirtAddr::wrap(BASE + PAGE_SIZE),
+        vec![Frame::allocate().expect("nest: reused frame")],
+        rw(),
+        rw(),
+    )
+    .expect("nest: reuse the span");
     assert!(nest.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_some());
     assert!(Arc::ptr_eq(
         &nest
             .probe(VirtAddr::wrap(BASE + PAGE_SIZE))
             .expect("nest: reused view"),
-        reused.view()
+        &reused
     ));
     // 同一选择再撤一次：这段已经结算，不再欠它。
     assert_eq!(
@@ -364,12 +318,12 @@ fn partial_detach_returns_only_that_span() {
     );
     // 整段只处理还欠着的两段，不会去补中间那个洞。
     space
-        .memory
-        .unmap(&reused)
+        .nest
+        .detach(reused.whole())
         .expect("nest: release the reused span");
-    nest.detach(view.view().whole())
+    nest.detach(view.whole())
         .expect("nest: whole after partial");
-    assert!(!view.view().is_live());
+    assert!(!view.is_live());
     assert!(nest.probe(VirtAddr::wrap(BASE)).is_none());
     assert_eq!(nest.table_count(), tables);
     nest.audit();
@@ -382,13 +336,10 @@ fn partial_detach_returns_only_that_span() {
 
 fn reserve_installs_no_pte() {
     let space = SpaceBuilder::user().build().expect("nest: user space");
-    let nest = space.memory.backend();
+    let nest = &space.nest;
     let at = VirtAddr::wrap(BASE);
     let tables = nest.table_count();
-    let reservation = space
-        .memory
-        .reserve(RegionId::Normal, at, PAGE_SIZE)
-        .expect("nest: reserve");
+    let reservation = support::reserve(&space, at, PAGE_SIZE).expect("nest: reserve");
     // 登记只写占用表：页表没有变，也没有翻译。
     assert_eq!(nest.table_count(), tables);
     assert!(nest.probe(at).is_none());
@@ -397,35 +348,28 @@ fn reserve_installs_no_pte() {
     assert_eq!(reservation.size(), PAGE_SIZE);
     // 同一段再登记必须撞上全局重叠检查。
     assert_eq!(
-        space
-            .memory
-            .reserve(RegionId::Normal, at, PAGE_SIZE)
+        support::reserve(&space, at, PAGE_SIZE)
             .err()
             .expect("nest: overlap rejected"),
         NestError::NoRegion
     );
     space
-        .memory
+        .nest
         .release_reservation(reservation)
         .expect("nest: release");
-    let again = space
-        .memory
-        .reserve(RegionId::Normal, at, PAGE_SIZE)
-        .expect("nest: reuse after release");
+    let again = support::reserve(&space, at, PAGE_SIZE).expect("nest: reuse after release");
     space
-        .memory
+        .nest
         .release_reservation(again)
         .expect("nest: release again");
 }
 
 fn guard_split_keeps_both_spans() {
     let space = SpaceBuilder::user().build().expect("nest: user space");
-    let room = space
-        .memory
-        .allocate_high(RegionId::Normal, 3 * PAGE_SIZE)
-        .expect("nest: stack room");
+    let room =
+        support::reserve_high(&space, RegionId::Normal, 3 * PAGE_SIZE).expect("nest: stack room");
     let (guard, body) = space
-        .memory
+        .nest
         .split_reservation(room, PAGE_SIZE)
         .expect("nest: split guard");
     assert_eq!(guard.size(), PAGE_SIZE);
@@ -435,40 +379,23 @@ fn guard_split_keeps_both_spans() {
         guard.start().as_usize() + PAGE_SIZE
     );
     // 守卫页自己占一段：主体和守卫都不会把对方的跨度让出去。
-    assert!(
-        space
-            .memory
-            .reserve(RegionId::Normal, guard.start(), PAGE_SIZE)
-            .is_err()
-    );
-    assert!(
-        space
-            .memory
-            .reserve(RegionId::Normal, body.start(), body.size())
-            .is_err()
-    );
+    assert!(support::reserve(&space, guard.start(), PAGE_SIZE).is_err());
+    assert!(support::reserve(&space, body.start(), body.size()).is_err());
     // 交还守卫不影响主体。
     let guard_start = guard.start();
     space
-        .memory
+        .nest
         .release_reservation(guard)
         .expect("nest: release guard");
-    let probe = space
-        .memory
-        .reserve(RegionId::Normal, guard_start, PAGE_SIZE)
+    let probe = support::reserve(&space, guard_start, PAGE_SIZE)
         .expect("nest: guard span is reusable on its own");
     space
-        .memory
+        .nest
         .release_reservation(probe)
         .expect("nest: release probe");
-    assert!(
-        space
-            .memory
-            .reserve(RegionId::Normal, body.start(), body.size())
-            .is_err()
-    );
+    assert!(support::reserve(&space, body.start(), body.size()).is_err());
     space
-        .memory
+        .nest
         .release_reservation(body)
         .expect("nest: release body");
 }
@@ -546,11 +473,11 @@ fn top_page_exact_and_split() {
 
 fn detached_selection_and_closed_space() {
     let space = SpaceBuilder::user().build().expect("nest: user space");
-    let nest = space.memory.backend();
+    let nest = &space.nest;
     let at = VirtAddr::wrap(BASE);
     let frame = Frame::allocate().expect("nest: frame");
     let view = frame_view(&space, BASE, frame);
-    let page = select(&view.view(), at, PAGE_SIZE);
+    let page = select(&view, at, PAGE_SIZE);
     nest.detach(page.clone()).expect("nest: detach the page");
     // 已撤下的选择不再成立：不半撤、也不重放。
     assert_eq!(
@@ -559,17 +486,14 @@ fn detached_selection_and_closed_space() {
             .expect("nest: stale selection rejected"),
         NestError::NoRegion
     );
-    assert!(view.view().active().expect("nest: active").is_empty());
+    assert!(view.active().expect("nest: active").is_empty());
     // 整笔关系的重试路径交还占用（这里已经没有活动区间）。
-    space.memory.unmap(&view).expect("nest: whole retry");
+    space.nest.detach(view.whole()).expect("nest: whole retry");
     drop(view);
     let free = nest
         .reserve(Placement::exact(RegionId::Normal, at, PAGE_SIZE).expect("nest: exact"))
         .expect("nest: released span is reusable");
-    space
-        .memory
-        .release_reservation(free)
-        .expect("nest: release");
+    space.nest.release_reservation(free).expect("nest: release");
     nest.close().expect("nest: close the space");
     // 关闭之后不再接受新挂载。
     let reservation = nest
@@ -578,8 +502,13 @@ fn detached_selection_and_closed_space() {
     let frame = Frame::allocate().expect("nest: frame");
     assert_eq!(
         space
-            .memory
-            .map_frames(reservation, vec![frame], rw(), rw())
+            .nest
+            .attach(
+                reservation,
+                support::frames_source(vec![frame]).expect("nest: source"),
+                rw(),
+                rw()
+            )
             .err()
             .expect("nest: closed space rejects new views"),
         NestError::NoRegion
@@ -588,13 +517,13 @@ fn detached_selection_and_closed_space() {
 
 fn access_failure_keeps_the_relation_open() {
     let space = SpaceBuilder::user().build().expect("nest: user space");
-    let nest = space.memory.backend();
+    let nest = &space.nest;
     let at = VirtAddr::wrap(BASE);
     let frame = Frame::allocate().expect("nest: frame");
     let view = frame_view(&space, BASE, frame);
-    identity::fail_next_shootdown(space.memory.asid());
+    identity::fail_next_shootdown(space.nest.asid());
     assert_eq!(
-        nest.set_access(select(view.view(), at, PAGE_SIZE), Access::READ)
+        nest.set_access(select(&view, at, PAGE_SIZE), Access::READ)
             .err()
             .expect("nest: access sync fails"),
         NestError::Shootdown
@@ -602,24 +531,23 @@ fn access_failure_keeps_the_relation_open() {
     // 权限已经改了、活动关系还在，也没有进入 Closing。
     assert!(nest.has_pending_invalidation());
     assert_eq!(
-        view.view().active().expect("nest: active")[0].current,
+        view.active().expect("nest: active")[0].current,
         Access::READ
     );
-    assert!(view.view().is_live());
+    assert!(view.is_live());
     nest.retry_invalidation().expect("nest: settle access");
     let (_, flags) = nest.translate(at).expect("nest: translation");
     assert!(flags.contains(PteFlags::R | PteFlags::V));
     assert!(!flags.contains(PteFlags::W));
-    space.memory.unmap(&view).expect("nest: release");
+    space.nest.detach(view.whole()).expect("nest: release");
 }
 
 fn kernel_space_is_pinned() {
     let team = crate::core::work::unit::team::kernel().expect("kernel team");
-    assert!(team.space.memory.asid().is_kernel());
+    assert!(team.space.nest.asid().is_kernel());
     assert_eq!(
         team.space
-            .memory
-            .backend()
+            .nest
             .close()
             .err()
             .expect("kernel space is pinned"),
@@ -631,24 +559,23 @@ fn large_leaf_splits_on_access_change() {
     // 留出一段不属于 RAM 的借用区间：用例只核对 PTE，不碰数据。
     const PA: usize = 0x4000_0000;
     let space = SpaceBuilder::user().build().expect("nest: user space");
-    let nest = space.memory.backend();
+    let nest = &space.nest;
     let at = VirtAddr::wrap(BASE);
     let region = unsafe { BorrowedRegion::new(PhysAddr::from_raw(PA), MEGA) }
         .expect("nest: reserved interval");
     let reservation = nest
         .reserve(Placement::exact(RegionId::Normal, at, MEGA).expect("nest: large placement"))
         .expect("nest: reserve the large span");
-    let view = space
-        .memory
-        .attach_static(
-            reservation,
-            region,
-            0,
-            MEGA,
-            rw(),
-            PteFlags::A | PteFlags::D | PteFlags::U,
-        )
-        .expect("nest: attach the large span");
+    let view = support::attach_static(
+        &space,
+        reservation,
+        region,
+        0,
+        MEGA,
+        rw(),
+        PteFlags::A | PteFlags::D | PteFlags::U,
+    )
+    .expect("nest: attach the large span");
     assert_eq!(nest.leaf_span(at), Some(MEGA));
     assert_eq!(
         nest.translate(at + MEGA - 1)
@@ -656,7 +583,7 @@ fn large_leaf_splits_on_access_change() {
             .0,
         PhysAddr::from_raw(PA + MEGA - 1)
     );
-    nest.set_access(select(view.view(), at + PAGE_SIZE, PAGE_SIZE), Access::READ)
+    nest.set_access(select(&view, at + PAGE_SIZE, PAGE_SIZE), Access::READ)
         .expect("nest: split the large leaf");
     assert_eq!(nest.leaf_span(at + PAGE_SIZE), Some(PAGE_SIZE));
     assert_eq!(
@@ -679,14 +606,14 @@ fn large_leaf_splits_on_access_change() {
             .contains(PteFlags::W)
     );
     space
-        .memory
-        .unmap(&view)
+        .nest
+        .detach(view.whole())
         .expect("nest: release the large span");
 }
 
 fn noncontiguous_frames_translate_per_page() {
     let space = SpaceBuilder::user().build().expect("nest: user space");
-    let nest = space.memory.backend();
+    let nest = &space.nest;
     let mut owned = vec![
         Frame::allocate().expect("nest: frame a"),
         Frame::allocate().expect("nest: frame b"),
@@ -700,18 +627,14 @@ fn noncontiguous_frames_translate_per_page() {
     let middle_held = Arc::strong_count(&middle);
     assert!(high.physical_address() - low.physical_address() >= 2 * PAGE_SIZE);
     unsafe { ::core::ptr::write_volatile(low.as_mut_ptr(), 0x5a) };
-    let view = space
-        .memory
-        .map_frames(
-            space
-                .memory
-                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), 2 * PAGE_SIZE)
-                .expect("nest: reservation"),
-            vec![low.clone(), high.clone()],
-            rw(),
-            rw(),
-        )
-        .expect("nest: map two frames");
+    let view = support::map_frames(
+        &space,
+        VirtAddr::wrap(BASE),
+        vec![low.clone(), high.clone()],
+        rw(),
+        rw(),
+    )
+    .expect("nest: map two frames");
     assert_eq!(
         nest.translate(VirtAddr::wrap(BASE))
             .expect("nest: first page")
@@ -725,7 +648,6 @@ fn noncontiguous_frames_translate_per_page() {
         PhysAddr::from_raw(high.physical_address())
     );
     let listed = view
-        .view()
         .frames_in(VirtAddr::wrap(BASE), 2 * PAGE_SIZE)
         .expect("nest: published frames");
     assert_eq!(listed.len(), 2);
@@ -752,11 +674,11 @@ fn noncontiguous_frames_translate_per_page() {
     assert_eq!(Arc::strong_count(&high), 3);
     assert_eq!(Arc::strong_count(&middle), middle_held);
     nest.audit();
-    space.memory.unmap(&view).expect("nest: release");
+    space.nest.detach(view.whole()).expect("nest: release");
     // 撤销只撤 PTE 与发布记录：来源槽仍在，直到关系本身被丢弃。
     assert_eq!(Arc::strong_count(&low), 2);
     assert_eq!(nest.view_count(), 1);
-    space.memory.backend().audit();
+    space.nest.audit();
     drop(view);
     drop(space);
     assert_eq!(Arc::strong_count(&low), 1);
@@ -769,29 +691,24 @@ fn noncontiguous_frames_translate_per_page() {
 
 fn lazy_page_is_published_one_at_a_time() {
     let space = SpaceBuilder::user().build().expect("nest: user space");
-    let nest = space.memory.backend();
-    let view = space
-        .memory
-        .map_lazy(
-            space
-                .memory
-                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), 2 * PAGE_SIZE)
-                .expect("nest: reservation"),
-            rw(),
-            rw(),
-        )
-        .expect("nest: lazy map");
+    let nest = &space.nest;
+    let view = support::map_lazy(
+        &space,
+        support::reserve(&space, VirtAddr::wrap(BASE), 2 * PAGE_SIZE).expect("nest: reservation"),
+        rw(),
+        rw(),
+    )
+    .expect("nest: lazy map");
     assert!(nest.translate(VirtAddr::wrap(BASE)).is_none());
     assert!(nest.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_none());
-    nest.materialize_active(select(view.view(), VirtAddr::wrap(BASE), PAGE_SIZE))
+    nest.materialize_active(select(&view, VirtAddr::wrap(BASE), PAGE_SIZE))
         .expect("nest: materialize one page");
     assert!(nest.translate(VirtAddr::wrap(BASE)).is_some());
     // 只物化一页：邻页仍是缺口。
     assert!(nest.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_none());
-    assert_eq!(view.view().frame_count(), 1);
+    assert_eq!(view.frame_count(), 1);
     // 强持账：这一页此刻由 Flat 来源槽与本关系发布记录各持一份。
     let listed = view
-        .view()
         .frames_in(VirtAddr::wrap(BASE), PAGE_SIZE)
         .expect("nest: published page");
     assert_eq!(listed.len(), 1);
@@ -799,7 +716,7 @@ fn lazy_page_is_published_one_at_a_time() {
     assert_eq!(Arc::strong_count(&listed[0].1), 3);
     let weak = Arc::downgrade(&listed[0].1);
     drop(listed);
-    space.memory.unmap(&view).expect("nest: release");
+    space.nest.detach(view.whole()).expect("nest: release");
     // 撤销只撤 PTE 与发布记录：来源槽仍在，直到关系本身被丢弃。
     assert_eq!(weak.strong_count(), 1);
     drop(view);

@@ -1,8 +1,7 @@
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::address::{PageCount, PageOffset, VirtAddr};
+use crate::core::memory::address::{PageCount, PageOffset};
 use crate::core::memory::flat::FlatRange;
 use crate::core::memory::nest::NestError;
 
@@ -71,25 +70,6 @@ impl ViewRange {
                 (start, start + (count.get() * PAGE_SIZE - 1))
             }
         }
-    }
-
-    /// 本选择窗口内的活动片段（含端点、地址升序）。
-    ///
-    /// 派生编排显式地要“源活动 ∩ 窗口”：这里把交集当结果返回，不是核心操作
-    /// 对已关闭页的静默过滤。
-    pub(crate) fn active_fragments(&self) -> Result<Vec<(VirtAddr, usize)>, NestError> {
-        let (lo, hi) = self.window();
-        let active = self.view().active()?;
-        let mut fragments = Vec::new();
-        fragments
-            .try_reserve(active.len())
-            .map_err(|_| NestError::OutOfMemory)?;
-        for range in active {
-            if let Some((lo, hi)) = range.intersection(lo, hi) {
-                fragments.push((VirtAddr::from_raw(lo), hi - lo + 1));
-            }
-        }
-        Ok(fragments)
     }
 
     /// 源在本选择内的子范围：强持同一来源、不复制数据。

@@ -4,15 +4,15 @@ use env::{DebugCall, EnvCall};
 
 use crate::core::memory::address::VirtAddr as KVirt;
 use crate::core::work::record::trace::{self, EnvEvent, EventKind};
-use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::core::work::unit::space::Space;
 use crate::core::work::unit::task::TaskIdent;
+use crate::machine::switcher::context::{Gprs, TrapContext};
 
 mod chrono;
 mod control;
 mod debug;
 pub(crate) mod mail;
-mod memory;
+pub(in crate::entry) mod memory;
 mod outcome;
 pub(crate) mod pie;
 pub(crate) mod resources;
@@ -20,10 +20,10 @@ mod room;
 pub(crate) mod tole;
 mod unit;
 
-use outcome::{ret_err, Outcome};
+use outcome::{Outcome, ret_err};
 
 fn instr_len(space: &Space, sepc: KVirt) -> usize {
-    let b0 = space.memory.instruction_byte(sepc.as_usize()).unwrap_or(0b11);
+    let b0 = space.instruction_byte(sepc).unwrap_or(0b11);
     if b0 & 0b11 == 0b11 { 4 } else { 2 }
 }
 

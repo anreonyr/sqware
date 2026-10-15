@@ -3,11 +3,13 @@
 use alloc::sync::Arc;
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::nest::{Access, NestError, RegionId, View, ViewRange};
 use crate::core::memory::address::{PageCount, PageOffset, VirtAddr};
+use crate::core::memory::nest::{Access, NestError, RegionId, View, ViewRange};
+use crate::core::work::unit::space::{Space, SpaceBuilder};
 use crate::core::work::unit::tally;
-use crate::core::work::unit::space::{Mapping, Space, SpaceBuilder};
 use crate::core::work::unit::team::TeamBuilder;
+
+use super::support;
 
 /// 一段页对齐窗口在某个关系上的身份选择。
 fn select(view: &Arc<View>, start: VirtAddr, size: usize) -> ViewRange {
@@ -19,24 +21,19 @@ fn select(view: &Arc<View>, start: VirtAddr, size: usize) -> ViewRange {
     .expect("task: selection")
 }
 
-fn own_pages(space: &Space, start: VirtAddr, size: usize, access: Access) -> Mapping {
+fn own_pages(space: &Space, start: VirtAddr, size: usize, access: Access) -> Arc<View> {
     use crate::core::memory::flat::Frame;
     use alloc::vec::Vec;
-    let reservation = space
-        .memory
-        .reserve(RegionId::Normal, start, size)
-        .expect("reserve owned pages");
     let mut frames = Vec::new();
     frames
-        .try_reserve_exact(size / crate::core::memory::PAGE_SIZE)
+        .try_reserve_exact(size / PAGE_SIZE)
         .expect("owned frame list");
-    for _ in 0..size / crate::core::memory::PAGE_SIZE {
+    for _ in 0..size / PAGE_SIZE {
         frames.push(crate::tag!(Pole, Frame::allocate().expect("owned frame")));
     }
-    space
-        .memory
-        .map_frames(reservation, frames, access, access)
-        .expect("map owned pages")
+    // 帧先备齐，再登记占用：来源准备失败不留无人持有的地址。
+    let reservation = support::reserve(space, start, size).expect("reserve owned pages");
+    support::attach_frames(space, reservation, frames, access, access).expect("map owned pages")
 }
 
 fn stage_only(
@@ -49,19 +46,15 @@ fn stage_only(
     meta.reserve_record().expect("reserve Pole record");
     child.reserve_staging(1).expect("reserve staged record");
     let source = meta.window(0, meta.size()).expect("Pole source window");
-    let reservation = child
+    let reservation =
+        support::reserve(&child.space, start, meta.size()).expect("reserve staged range");
+    let view = child
         .space
-        .memory
-        .reserve(RegionId::Normal, start, meta.size())
-        .expect("reserve staged range");
-    let mapping = child
-        .space
-        .memory
-        .attach_range(reservation, source, access, access)
+        .nest
+        .attach(reservation, source, access, access)
         .expect("attach staged map");
-    let view = mapping.view().clone();
     assert!(
-        meta.record(token, &child.space, mapping, Some(child.id), false)
+        meta.record(token, &child.space, view.clone(), Some(child.id), false)
             .is_ok()
     );
     child.push_staging(crate::core::work::unit::team::Staging {
@@ -75,7 +68,7 @@ fn stage_only(
 pub fn preparation() {
     let space = SpaceBuilder::user().build().unwrap();
     space
-        .memory
+        .nest
         .attach_region(
             crate::core::memory::nest::RegionId::Normal,
             0x4000_0000,
@@ -84,7 +77,7 @@ pub fn preparation() {
         .unwrap();
     let team = TeamBuilder::new(space).spawn().unwrap();
     let counts = tally::counts();
-    let tables = team.space.memory.backend().table_count();
+    let tables = team.space.nest.table_count();
     for _ in 0..4 {
         let prepared = team
             .task()
@@ -95,17 +88,17 @@ pub fn preparation() {
         assert!(team.tasks.members.lock().is_empty());
         assert!(team.tasks.held.lock().is_empty());
         drop(prepared);
-        assert_eq!(team.space.memory.backend().table_count(), tables);
+        assert_eq!(team.space.nest.table_count(), tables);
         assert_eq!(tally::counts(), counts);
     }
     for stage in 1..=4 {
         crate::core::work::unit::task::fail_preparation_at(stage);
         assert!(matches!(team.task().prepare(), Err(NestError::OutOfMemory)));
         assert_eq!(tally::counts(), counts);
-        assert_eq!(team.space.memory.backend().table_count(), tables);
+        assert_eq!(team.space.nest.table_count(), tables);
         assert!(team.tasks.members.lock().is_empty());
     }
-    let maps = team.space.memory.backend().view_count();
+    let maps = team.space.nest.view_count();
     for stage in 1..=2 {
         crate::core::work::unit::task::fail_invalidation_at(stage);
         assert!(matches!(team.task().prepare(), Err(NestError::Shootdown)));
@@ -113,53 +106,47 @@ pub fn preparation() {
         assert!(team.tasks.members.lock().is_empty());
         // 已发布的那一段由巢的清理责任收尾：重试前后都不留残留。
         team.space
-            .memory
+            .nest
             .retry_invalidation()
             .expect("prepare: recover failed installation");
-        assert_eq!(team.space.memory.backend().view_count(), maps);
-        assert_eq!(team.space.memory.backend().table_count(), tables);
+        assert_eq!(team.space.nest.view_count(), maps);
+        assert_eq!(team.space.nest.table_count(), tables);
         let prepared = team.task().prepare().unwrap();
         drop(prepared);
-        assert_eq!(team.space.memory.backend().view_count(), maps);
-        assert_eq!(team.space.memory.backend().table_count(), tables);
+        assert_eq!(team.space.nest.view_count(), maps);
+        assert_eq!(team.space.nest.table_count(), tables);
     }
-    let expected = team
-        .space
-        .memory
-        .allocate_low(
-            crate::core::memory::nest::RegionId::Kernel,
-            crate::core::memory::PAGE_SIZE,
-        )
-        .unwrap();
+    let expected = support::reserve_low(
+        &team.space,
+        crate::core::memory::nest::RegionId::Kernel,
+        PAGE_SIZE,
+    )
+    .unwrap();
     let first_frame = expected.start();
-    team.space.memory.release_reservation(expected).unwrap();
+    team.space.nest.release_reservation(expected).unwrap();
     crate::core::work::unit::task::fail_preparation_at(3);
     crate::core::work::unit::task::fail_rollback_fence();
     assert!(matches!(team.task().prepare(), Err(NestError::OutOfMemory)));
     assert_eq!(tally::counts(), counts);
-    let reserved = team
-        .space
-        .memory
-        .allocate_low(
-            crate::core::memory::nest::RegionId::Kernel,
-            crate::core::memory::PAGE_SIZE,
-        )
-        .unwrap();
+    let reserved = support::reserve_low(
+        &team.space,
+        crate::core::memory::nest::RegionId::Kernel,
+        PAGE_SIZE,
+    )
+    .unwrap();
     assert_ne!(reserved.start(), first_frame);
-    team.space.memory.release_reservation(reserved).unwrap();
-    team.space.memory.retry_invalidation().unwrap();
-    let reused = team
-        .space
-        .memory
-        .allocate_low(
-            crate::core::memory::nest::RegionId::Kernel,
-            crate::core::memory::PAGE_SIZE,
-        )
-        .unwrap();
+    team.space.nest.release_reservation(reserved).unwrap();
+    team.space.nest.retry_invalidation().unwrap();
+    let reused = support::reserve_low(
+        &team.space,
+        crate::core::memory::nest::RegionId::Kernel,
+        PAGE_SIZE,
+    )
+    .unwrap();
     assert_eq!(reused.start(), first_frame);
-    team.space.memory.release_reservation(reused).unwrap();
-    assert_eq!(team.space.memory.backend().table_count(), tables);
-    assert_eq!(team.space.memory.backend().view_count(), maps);
+    team.space.nest.release_reservation(reused).unwrap();
+    assert_eq!(team.space.nest.table_count(), tables);
+    assert_eq!(team.space.nest.view_count(), maps);
     assert!(matches!(
         team.task().stack(usize::MAX).prepare(),
         Err(NestError::NoRegion)
@@ -179,7 +166,7 @@ pub fn construction() {
     scheduler::init().expect("scheduler init");
     let parent_space = SpaceBuilder::supervisor().build().unwrap();
     parent_space
-        .memory
+        .nest
         .attach_region(
             RegionId::Normal,
             PAGE_SIZE,
@@ -196,7 +183,7 @@ pub fn construction() {
     caller.adopt(child.clone()).unwrap();
     child
         .space
-        .memory
+        .nest
         .attach_region(
             RegionId::Normal,
             PAGE_SIZE,
@@ -209,11 +196,10 @@ pub fn construction() {
         PAGE_SIZE,
         Access::READ | Access::EXECUTE,
     );
-    assert_eq!(code.view().initial_range().0, VirtAddr::wrap(0x10000));
+    assert_eq!(code.initial_range().0, VirtAddr::wrap(0x10000));
     let (_, code_flags) = child
         .space
-        .memory
-        .backend()
+        .nest
         .translate(VirtAddr::wrap(0x10000))
         .expect("owned entry mapping");
     assert!(code_flags.contains(PteFlags::R | PteFlags::X));
@@ -231,10 +217,7 @@ pub fn construction() {
             PAGE_SIZE,
             Access::READ | Access::WRITE,
         );
-        let frames = input
-            .view()
-            .frames_in(input.address(), PAGE_SIZE)
-            .unwrap();
+        let frames = input.frames_in(input.initial_start(), PAGE_SIZE).unwrap();
         frame_weak.push(
             frames
                 .iter()
@@ -253,12 +236,12 @@ pub fn construction() {
         let token = root.token();
         pend::insert(&caller, root).unwrap();
         meta.commit_source();
-        let (open_va, _) = pole::open(&meta, token, &parent.space, Access::READ | Access::WRITE).unwrap();
+        let (open_va, _) =
+            pole::open(&meta, token, &parent.space, Access::READ | Access::WRITE).unwrap();
         assert!(
             parent
                 .space
-                .memory
-                .backend()
+                .nest
                 .translate(VirtAddr::wrap(open_va))
                 .is_some()
         );
@@ -268,8 +251,7 @@ pub fn construction() {
         assert!(
             parent
                 .space
-                .memory
-                .backend()
+                .nest
                 .translate(VirtAddr::wrap(open_va))
                 .is_none()
         );
@@ -287,7 +269,7 @@ pub fn construction() {
         roots.push(token);
     }
     let counts = tally::counts();
-    let tables = child.space.memory.backend().table_count();
+    let tables = child.space.nest.table_count();
     for (entry, stack, expected) in [
         (0, 0, UnitFail::BadEntry),
         (0x10001, 0, UnitFail::BadEntry),
@@ -299,7 +281,7 @@ pub fn construction() {
         assert!(!child.ready());
         assert_eq!(child.default_entry(), 0);
         assert_eq!(tally::counts(), counts);
-        assert_eq!(child.space.memory.backend().table_count(), tables);
+        assert_eq!(child.space.nest.table_count(), tables);
         for token in &roots {
             assert!(pend::locate(&caller, *token).is_some());
         }
@@ -310,7 +292,7 @@ pub fn construction() {
         Err(UnitFail::OoM)
     ));
     assert_eq!(tally::counts(), counts);
-    assert_eq!(child.space.memory.backend().table_count(), tables);
+    assert_eq!(child.space.nest.table_count(), tables);
     assert!(!child.ready());
     assert_eq!(child.default_entry(), 0);
     assert_eq!(child.staged_len(), 2);
@@ -340,20 +322,31 @@ pub fn construction() {
     for va in [VirtAddr::wrap(0x20000), VirtAddr::wrap(0x21000)] {
         let (_, flags) = child
             .space
-            .memory
-            .backend()
+            .nest
             .translate(va)
             .expect("published staged map");
         assert!(flags.contains(PteFlags::R));
         assert_eq!(flags.contains(PteFlags::W), va == VirtAddr::wrap(0x21000));
     }
-    assert!(!child.space.memory.validate_write(0x20000, PAGE_SIZE));
-    assert!(child.space.memory.validate_write(0x21000, PAGE_SIZE));
+    assert!(
+        !child
+            .space
+            .validate_access(VirtAddr::wrap(0x20000), PAGE_SIZE, Access::WRITE)
+    );
+    assert!(
+        child
+            .space
+            .validate_access(VirtAddr::wrap(0x21000), PAGE_SIZE, Access::WRITE)
+    );
     drop(stage_maps);
     for weak_frames in &frame_weak {
         assert!(weak_frames.iter().all(|weak| weak.upgrade().is_some()));
     }
-    assert!(child.space.memory.validate_write(0x21000, PAGE_SIZE));
+    assert!(
+        child
+            .space
+            .validate_access(VirtAddr::wrap(0x21000), PAGE_SIZE, Access::WRITE)
+    );
     assert!(child.release_held(&task));
     drop(task);
     drop(child);
@@ -375,7 +368,7 @@ pub fn cancellation() {
     use env::{Mark, Permission};
     let parent_space = SpaceBuilder::supervisor().build().unwrap();
     parent_space
-        .memory
+        .nest
         .attach_region(
             RegionId::Normal,
             PAGE_SIZE,
@@ -392,7 +385,7 @@ pub fn cancellation() {
     caller.adopt(child.clone()).unwrap();
     child
         .space
-        .memory
+        .nest
         .attach_region(
             RegionId::Normal,
             PAGE_SIZE,
@@ -406,8 +399,7 @@ pub fn cancellation() {
         Access::READ | Access::WRITE,
     );
     let frames = input
-        .view()
-        .frames_in(input.address(), 3 * PAGE_SIZE)
+        .frames_in(input.initial_start(), 3 * PAGE_SIZE)
         .unwrap();
     let weak_frames: Vec<Weak<crate::core::memory::flat::Frame>> = frames
         .iter()
@@ -434,18 +426,16 @@ pub fn cancellation() {
         Permission::FETCH | Permission::VEST | Permission::ONLY,
     )
     .unwrap();
-    assert!(!child.space.memory.validate_write(at.as_usize(), PAGE_SIZE));
+    assert!(!child.space.validate_access(at, PAGE_SIZE, Access::WRITE));
     child
         .space
-        .memory
-        .backend()
+        .nest
         .set_access(select(&staged_map, at + PAGE_SIZE, PAGE_SIZE), Access::READ)
         .unwrap();
     assert!(
         child
             .space
-            .memory
-            .backend()
+            .nest
             .set_access(
                 select(&staged_map, at + PAGE_SIZE, PAGE_SIZE),
                 Access::READ | Access::WRITE,
@@ -461,20 +451,13 @@ pub fn cancellation() {
     child.cancel_staging().unwrap();
     assert_eq!(tally::counts(), counts);
     assert_eq!(meta.reserved(), 0);
-    assert!(child.space.memory.backend().translate(at).is_none());
+    assert!(child.space.nest.translate(at).is_none());
     let remaining = pend::locate(&caller, token).unwrap().permission();
     assert_eq!(remaining, Permission::FETCH | Permission::ONLY);
-    let (view, _) = pole::open(
-        &meta,
-        token,
-        &parent.space,
-        Access::READ,
-    )
-    .unwrap();
+    let (view, _) = pole::open(&meta, token, &parent.space, Access::READ).unwrap();
     let (_, view_flags) = parent
         .space
-        .memory
-        .backend()
+        .nest
         .translate(VirtAddr::wrap(view))
         .expect("read-only Pole view");
     assert!(!view_flags.contains(PteFlags::W));
@@ -491,13 +474,16 @@ pub fn cancellation() {
 }
 
 pub fn branch_control() {
-    use crate::core::work::unit::copies::Origin;
     use crate::core::memory::nest::RegionId;
+    use crate::core::work::unit::copies::Origin;
     use crate::core::work::unit::task::{Task, TaskExitCause, TaskState, TaskWeak};
     use alloc::sync::Arc;
     fn team(parent: Option<&Arc<Task>>) -> Arc<crate::core::work::unit::team::Team> {
         let space = SpaceBuilder::user().build().unwrap();
-        space.memory.advance_region(RegionId::Normal, 0x4000_0000).unwrap();
+        space
+            .nest
+            .advance_region(RegionId::Normal, 0x4000_0000)
+            .unwrap();
         let builder = TeamBuilder::new(space);
         match parent {
             Some(parent) => builder.sire(TaskWeak::stored(Arc::downgrade(parent), Origin::Sire)),
@@ -529,12 +515,14 @@ pub fn branch_control() {
     assert!(Arc::ptr_eq(&peer.clan(later.id).unwrap(), &later));
     let target = crate::core::work::unit::join::observe(&peer, grandchild.ident.id.into()).unwrap();
     assert_eq!(
-        crate::core::work::unit::join::JoinWait::new(target, peer.ident.id, true, env::Wait::POLL).poll(),
+        crate::core::work::unit::join::JoinWait::new(target, peer.ident.id, true, env::Wait::POLL)
+            .poll(),
         Err(env::UnitFail::Denied)
     );
     let target = crate::core::work::unit::join::observe(&peer, later.id.into()).unwrap();
     assert_eq!(
-        crate::core::work::unit::join::JoinWait::new(target, peer.ident.id, true, env::Wait::POLL).poll(),
+        crate::core::work::unit::join::JoinWait::new(target, peer.ident.id, true, env::Wait::POLL)
+            .poll(),
         Err(env::UnitFail::Denied)
     );
     assert!(record.pending(main.ident.id) && record.pending(member.ident.id));

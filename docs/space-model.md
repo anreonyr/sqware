@@ -204,8 +204,9 @@ Trace 的环与可选 sink 使用同一次发布。OOM 不发布环，也不留�
 `machine/image` 仅定义链接器边界及启动栈；共享虚拟地址窗口仍在 `machine/layout`。
 两者不全量再导出同名事实。地址类型保留在 memory。
 
-内核内用例位于 `kernel/tests/health`。白盒用例通过受控路径（`Memory::backend()`）取得裸
-`Nest`，没有为迁移测试公开生产字段；登记仍由 `kernel/tests/embedded.rs` 完成。
+内核内用例位于 `kernel/tests/health`。PR 2 时白盒用例通过受控路径（`Memory::backend()`）取得裸
+`Nest`；PR 4 删掉该 facade 后测试直接读 `space.nest`，没有为迁移测试公开生产字段。
+登记仍由 `kernel/tests/embedded.rs` 完成。
 Pend 与 Trace 的宿主套件通过 `#[path]` 编译生产实现，运行时必须显式指定宿主 target。
 `kernel/tests/frame-runs` 同样按 `include!` 夹入生产的活动区间与帧分段三份源文件，
 只补叶子依赖，不镜像分段算法。`crates/alloc-probe` 被 workspace 排除，但直接 include
@@ -334,9 +335,10 @@ core/memory/nest/
   reservation.rs        Reservation（带 generation）
   cleanup.rs            清理链上的一环：一笔已消费、待收尾的关系
 core/work/unit/space/memory.rs
-                        Memory：只持 Arc<Nest> 的外层薄组合
+                        Memory：只持 Arc<Nest> 的外层薄组合（PR 4 已删除）
 core/work/unit/space/mapping.rs
                         Mapping：线外兼容名，只持 Arc<View>；核心不认识它
+                        （PR 4 已删除：借出句柄直接就是 Arc<View>）
 kernel/tests/health/nest.rs / nest_failure.rs / depend.rs
                         原语、失效失败与锁序自检用例
 ```
@@ -419,5 +421,55 @@ Pole 直接持 FlatRange；Grant 授权、活跃 View 与 Input 关闭责任分�
   没有全树格式化。
 
 详细失败责任与剩余迁移入口见 `docs/memory-flat-nest.md` 的 PR 3 节。
-Memory facade / 形状测试桥及六处来源准备失败的占用交还责任必须由 PR 4 收口；
-新 ABI / TLS 包装、System 独立保留和真实 IOMMU / DMAC 尚未实施。
+Memory facade / 形状测试桥及六处来源准备失败的占用交还责任已由 PR 4 收口
+（见下文 PR 4 归位验收）；新 ABI / TLS 包装、System 独立保留和
+真实 IOMMU / DMAC 尚未实施。
+
+## PR 4 删除迁移层验收
+
+`Memory` 整型与 `space/memory.rs`、`Mapping` 单 Arc 空壳与 `space/mapping.rs` 一并退出；
+`Space` 直接持 `Arc<Nest>`，只保留五个用户访问组合
+（`user_range` / `copy_in` / `copy_out` / `validate_access` / `instruction_byte`）
+与 `kind` / `life` 两个稳定属性，没有任何一对一转发到 `Nest` 的方法。
+
+```text
+core/work/unit/space/
+  space.rs              Space：Arc<Nest> + Arc<Life>，以及用户半边的访问组合
+  builder.rs            SpaceBuilder：建 Nest、并把内核跳板复制进新空间
+  mod.rs                Space / SpaceBuilder 的导出
+entry/call/memory.rs    basic/exact 尺寸、定点区间、选址、旧 VA+字节撤销、
+                        旧 Mprotect 口径与 wire 错误折叠（全在本文件内）
+entry/boot/mod.rs       启动静态挂载组合：attach_exact / map_borrowed
+kernel/tests/health/support.rs
+                        健康面的组合夹具：来源准备 → 选址 → 挂载
+```
+
+- 来源准备与选址、挂载全在各自调用者：Task 栈 / 外壳页、capsule 三段、
+  启动布局、Pole 的 Open / Mmap、entry 的 Allocate / Mmap。
+- 失败责任统一为先完成全部可失败准备再 `reserve`；确需先占位的失败显式交还
+  那一笔仍 live 的占用，不给 `Reservation` 加 `Drop`，也不新增 owner / guard 类型。
+- 本轮核心调整包括失败责任、提交准备顺序与查询可见性：
+错的事实是“谁承接/归还那笔已交出的 `Reservation`”（`Reservation` 没有 `Drop`，
+而 `attach` / `attach_shaped` / `View::new` 里在收下它之后仍有属性位检查、
+`try_reserve`、构造校验与 `Arc` 分配四处可能失败），以及 `commit` 把发布记录容量
+排在 PTE 写入之后（失败时按“未发布”去交还仍带 PTE 的跨度）。
+于是：
+
+- `nest/view/mod.rs`：`View::new` 构造失败不再丢凭证（并直接返回 `Arc`）；
+- `nest/mod.rs`：`attach` / `attach_shaped` 入口 `check_owner`，未发布的失败一律
+  按**真属主**归还（`give_back_unpublished` / `abandon`），`commit` 把
+  `view.state.published` 容量与 `pending_views` / 几何准备一起提到任何 PTE 写入之前；
+- `nest/view/range.rs`：只被已删派生桥调用的 `active_fragments` 随桥退出
+  （`ViewRange::source()` 仍由核心的 `materialize_active` 使用，保留）；
+- 纯查询可见性放宽，无语义改动：`ActiveRange::intersection` 与 `Reservation::id`
+  到 `pub(crate)`，供健康面直调真实交集算术 / 断言新 generation。
+- 旧 wire 编号 / 返回 / 权限 / 错误码、ONLY·VEST staging、构造域与 Spawn 原子消费、
+  CreationRegistry 的 `Weak<View>` 身份均不变；`system-fault` 仍以基线签名失败。
+
+实际读数与残留见 `docs/memory-flat-nest.md` 的 PR 4 节（健康轮 50 + 哨兵 1、
+accept / product 各 1 通过、system-fault 退出 101、格式块 146 → 60）。
+健康面夹具调真实 entry 入口（不再复制线外 policy），模块名与用例名为
+`memory.rs` / `memory_placement` / `memory_view_identity` / `memory_access_wire` /
+`memory_source_sharing`。
+合回后的非目标文件错置与冲突已按 HEAD 恢复并逐字节核对；
+父工作区随后独立重跑全部列明检查，未将隔离工作区的结果冒充集成验证。

@@ -55,7 +55,7 @@ impl Reservation {
     }
 
     /// 占用的 generation。
-    pub(in crate::core::memory::nest) fn id(&self) -> usize {
+    pub(crate) fn id(&self) -> usize {
         self.id
     }
 

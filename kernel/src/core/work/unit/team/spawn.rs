@@ -7,7 +7,6 @@ use crate::core::memory::address::VirtAddr as KVirt;
 use crate::core::memory::nest::NestError;
 use crate::core::work::mail::pole::PoleOperation;
 use crate::core::work::pend::{self, Permission};
-use crate::core::work::unit::space::Memory;
 use crate::core::work::unit::task::Task;
 
 use super::Team;
@@ -38,10 +37,11 @@ pub(crate) fn spawn(
     } else {
         entry
     };
+    // 入口的前两个字节都要取得到：取不到就拒收。
+    let entry = KVirt::from_raw(entry_va);
     if !entry_va.is_multiple_of(2)
-        || !Memory::user_range(entry_va, 2)
-        || target.space.memory.instruction_byte(entry_va).is_none()
-        || target.space.memory.instruction_byte(entry_va + 1).is_none()
+        || target.space.instruction_byte(entry).is_none()
+        || target.space.instruction_byte(entry + 1).is_none()
     {
         return Err(UnitFail::BadEntry);
     }

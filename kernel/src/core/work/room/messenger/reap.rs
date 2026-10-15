@@ -2,6 +2,7 @@ use alloc::sync::Arc;
 
 use env::{NOTE_MAX, TaskId};
 
+use crate::core::memory::address::VirtAddr;
 use crate::core::work::record::ledger;
 use crate::core::work::record::trace::{self, EventKind, RoomEvent};
 use crate::core::work::room::chain::Chain;
@@ -127,7 +128,7 @@ fn note_out<'a>(
         return "";
     }
     let n = len.min(NOTE_MAX);
-    if !space.memory.copy_in(&mut buf[..n], va) {
+    if !space.copy_in(&mut buf[..n], VirtAddr::wrap(va)) {
         crate::putln!(
             "exit tid={} reason={reason:#x} note=<unreadable {len} bytes at {va:#x}>",
             tid.get()
@@ -168,7 +169,7 @@ fn bury() {
         wipe(WakeKey::Task { id: z.ident.id });
         wipe(WakeKey::Pies { task: z.ident.id });
         if Arc::strong_count(&z.ident.team.space) == 1 {
-            wipe_space(z.ident.team.space.memory.asid());
+            wipe_space(z.ident.team.space.nest.asid());
         }
         z.ident.team.prune_tasks();
         let _pruned = crate::core::work::room::scheduler::roster::prune_dead();

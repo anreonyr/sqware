@@ -1,7 +1,7 @@
 use alloc::sync::{Arc, Weak};
 
 use crate::core::memory::nest::{Access, View};
-use crate::core::work::unit::space::{Mapping, Space};
+use crate::core::work::unit::space::Space;
 use env::{PieToken, TeamId};
 
 use super::relation::Relation;
@@ -46,13 +46,13 @@ impl HeldMap {
     }
 
     pub(super) fn placed(
-        mapping: Mapping,
+        view: Arc<View>,
         space: &Arc<Space>,
         token: Option<PieToken>,
         relation: Relation,
     ) -> Self {
         Self {
-            view: mapping.view().clone(),
+            view,
             token,
             placement: Some(Arc::downgrade(space)),
             relation,

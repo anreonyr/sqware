@@ -95,26 +95,26 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn manager_api_placement() {
-        kernel::entry::check::manager_api::placement();
+    fn memory_placement() {
+        kernel::entry::check::memory::placement();
     }
 
     #[cfg(debug_assertions)]
     #[test]
-    fn manager_api_receipt() {
-        kernel::entry::check::manager_api::receipt();
+    fn memory_view_identity() {
+        kernel::entry::check::memory::view_identity();
     }
 
     #[cfg(debug_assertions)]
     #[test]
-    fn manager_api_access_wire() {
-        kernel::entry::check::manager_api::access_wire();
+    fn memory_access_wire() {
+        kernel::entry::check::memory::access_wire();
     }
 
     #[cfg(debug_assertions)]
     #[test]
-    fn manager_api_sharing() {
-        kernel::entry::check::manager_api::sharing();
+    fn memory_source_sharing() {
+        kernel::entry::check::memory::source_sharing();
     }
 
     #[cfg(debug_assertions)]

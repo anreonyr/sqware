@@ -6,11 +6,11 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::address::{PhysAddr, VirtAddr};
-use crate::core::memory::flat::Frame;
-use crate::core::memory::nest::{Access, NestError, RegionId};
+use crate::core::memory::address::{PageCount, PageIndex, PhysAddr, VirtAddr};
+use crate::core::memory::flat::{Flat, Frame};
+use crate::core::memory::nest::{Access, Nest, NestError, Placement, RegionId};
 use crate::core::work::unit::life::Life;
-use crate::core::work::unit::space::{Memory, Space};
+use crate::core::work::unit::space::Space;
 use crate::core::work::unit::team::{Team, kernel};
 use crate::machine::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
 use crate::machine::switcher::context::TrapContext;
@@ -39,13 +39,13 @@ pub(crate) fn fail_invalidation_at(stage: usize) {
     FAIL_INVALIDATION.store(stage, Ordering::Relaxed);
 }
 
-fn invalidation_checkpoint(_stage: usize, _memory: &Memory) {
+fn invalidation_checkpoint(_stage: usize, _nest: &Arc<Nest>) {
     #[cfg(debug_assertions)]
     if FAIL_INVALIDATION
         .compare_exchange(_stage, 0, Ordering::Relaxed, Ordering::Relaxed)
         .is_ok()
     {
-        crate::core::memory::nest::identity::fail_next_shootdown(_memory.asid());
+        crate::core::memory::nest::identity::fail_next_shootdown(_nest.asid());
     }
 }
 
@@ -75,7 +75,7 @@ fn write_args(space: &Space, at: VirtAddr, args: &[usize]) {
     while done < args.len() {
         let va = at + done * size_of::<usize>();
         let pa = space
-            .memory
+            .nest
             .physical_at(va)
             .expect("stack page materialized before args write");
         let page_rest = PAGE_SIZE - (va.as_usize() % PAGE_SIZE);
@@ -139,7 +139,10 @@ impl TaskBuilder {
             .stack
             .max(1)
             .checked_next_multiple_of(PAGE_SIZE)
-            .filter(|size| size.checked_add(crate::machine::layout::TASK_STACK_GUARD).is_some())
+            .filter(|size| {
+                size.checked_add(crate::machine::layout::TASK_STACK_GUARD)
+                    .is_some()
+            })
             .ok_or(NestError::NoRegion)?;
         let id = next_id()?;
 
@@ -149,52 +152,43 @@ impl TaskBuilder {
             frame: None,
             guard: None,
         };
-        let slot = self.team.space.memory.allocate_high(
+        let nest = &self.team.space.nest;
+        // 栈主体页先备齐，再登记占用：来源准备失败不留无人持有的地址。
+        let mut indexed = Vec::new();
+        indexed
+            .try_reserve_exact(stack_size / PAGE_SIZE)
+            .map_err(|_| NestError::OutOfMemory)?;
+        for page in 0..stack_size / PAGE_SIZE {
+            indexed.push((PageIndex::new(page), Frame::allocate()?));
+        }
+        let count = PageCount::new(indexed.len()).ok_or(NestError::NotAligned)?;
+        let source = Flat::from_frames(count, &indexed)?.whole();
+        let slot = nest.reserve(Placement::highest(
             RegionId::Normal,
             stack_size + crate::machine::layout::TASK_STACK_GUARD,
-        )?;
-        let (guard, body) = self
-            .team
-            .space
-            .memory
-            .split_reservation(slot, crate::machine::layout::TASK_STACK_GUARD)?;
+        )?)?;
+        let (guard, body) =
+            nest.split_reservation(slot, crate::machine::layout::TASK_STACK_GUARD)?;
         memory.guard = Some(guard);
         let stack_body_top = body.start().as_usize() + body.size();
-        let mut frames = Vec::new();
-        if frames.try_reserve_exact(stack_size / PAGE_SIZE).is_err() {
-            self.team.space.memory.release_reservation(body)?;
-            return Err(NestError::OutOfMemory);
-        }
-        for _ in 0..stack_size / PAGE_SIZE {
-            match Frame::allocate() {
-                Ok(frame) => frames.push(frame),
-                Err(error) => {
-                    self.team.space.memory.release_reservation(body)?;
-                    return Err(NestError::from(error));
-                }
-            }
-        }
         let rw = Access::READ | Access::WRITE;
-        invalidation_checkpoint(1, &self.team.space.memory);
-        memory.stack = Some(self.team.space.memory.map_frames(body, frames, rw, rw)?);
+        invalidation_checkpoint(1, nest);
+        memory.stack = Some(nest.attach(body, source, rw, rw)?);
         preparation_checkpoint(1)?;
 
-        let mut frame_pages = Vec::new();
-        frame_pages
-            .try_reserve_exact(1)
-            .map_err(|_| NestError::OutOfMemory)?;
         let frame = Frame::allocate()?;
         let frame_pa = PhysAddr::from_raw(frame.physical_address());
-        frame_pages.push(frame);
-        let reservation = self.team.space.memory.allocate_low(RegionId::Kernel, PAGE_SIZE)?;
+        let mut indexed = Vec::new();
+        indexed
+            .try_reserve_exact(1)
+            .map_err(|_| NestError::OutOfMemory)?;
+        indexed.push((PageIndex::ZERO, frame));
+        let source = Flat::from_frames(PageCount::new(1).expect("one frame"), &indexed)?.whole();
+        let reservation =
+            nest.reserve(Placement::lowest(RegionId::Kernel, PAGE_SIZE, PAGE_SIZE)?)?;
         let frame_va = reservation.start();
-        invalidation_checkpoint(2, &self.team.space.memory);
-        memory.frame = Some(self.team.space.memory.map_frames(
-            reservation,
-            frame_pages,
-            rw,
-            rw,
-        )?);
+        invalidation_checkpoint(2, nest);
+        memory.frame = Some(nest.attach(reservation, source, rw, rw)?);
         preparation_checkpoint(2)?;
 
         let count = self.args.len();
@@ -204,14 +198,14 @@ impl TaskBuilder {
         }
         let sp = VirtAddr::wrap(args_at & !0xF);
 
-        let satp = self.team.space.memory.satp();
+        let satp = self.team.space.nest.satp();
         let spp = self.team.space.kind().spp();
         let frame = unsafe { &mut *(frame_pa.as_usize() as *mut TrapContext) };
         unsafe {
             let ktc = kernel()
                 .expect("kernel team not initialized")
                 .space
-                .memory
+                .nest
                 .physical_at(HART_FRAME_BASE)
                 .expect("kernel frame not mapped")
                 .as_usize() as *const TrapContext;
@@ -249,7 +243,7 @@ impl TaskBuilder {
         };
         #[cfg(debug_assertions)]
         if FAIL_ROLLBACK_FENCE.swap(false, Ordering::Relaxed) {
-            crate::core::memory::nest::identity::fail_next_shootdown(self.team.space.memory.asid());
+            crate::core::memory::nest::identity::fail_next_shootdown(self.team.space.nest.asid());
         }
         preparation_checkpoint(3)?;
         let life = Life::try_new().map_err(|_| NestError::OutOfMemory)?;
