@@ -7,17 +7,18 @@ use env::PieToken;
 use crate::core::work::unit::task::Task;
 use crate::machine::sync::SpinLock;
 
-use super::CreationRegistry;
+use super::HoldTable;
 use super::pie::Pie;
 
 /// 一个任务的能力账本：登记表（`serial`）下挂它持有的 pie、它替子任务记住的
-/// 父子对（`heirs`）与在造的登记（`creations`）；`version` 是乐观校验用的抄本号。
+/// 父子对（`heirs`）与来源引用（`references`）；
+/// `version` 是乐观校验用的抄本号。
 pub(crate) struct Pend {
     serial: SpinLock<()>,
     pub(crate) version: AtomicUsize,
     pub(crate) pies: SpinLock<Vec<Pie>>,
     pub(crate) heirs: SpinLock<Vec<(PieToken, Weak<Task>, PieToken)>>,
-    pub(crate) creations: CreationRegistry,
+    pub(crate) references: HoldTable,
 }
 
 impl Pend {
@@ -27,7 +28,7 @@ impl Pend {
             version: AtomicUsize::new(0),
             pies: SpinLock::new(Vec::new()),
             heirs: SpinLock::new(Vec::new()),
-            creations: CreationRegistry::new(),
+            references: HoldTable::new(),
         }
     }
 

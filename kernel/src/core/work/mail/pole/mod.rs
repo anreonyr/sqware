@@ -13,6 +13,7 @@ use crate::core::memory::address::{PageCount, PageOffset, PhysAddr};
 use crate::core::memory::flat::{BorrowedRegion, Flat, FlatError, FlatRange};
 use crate::core::memory::nest::{Access, Nest, NestError, Placement, RegionId, View};
 use crate::core::work::grant::Grant;
+use crate::core::work::pend::SourceAuthorization;
 use crate::core::work::room::messenger::{self, Handoff, WakeKey};
 use crate::core::work::unit::life::Life;
 use crate::core::work::unit::space::Space;
@@ -33,6 +34,9 @@ pub(crate) use pole_operation::PoleOperation;
 /// 该 token 下的关系自带 token，所以撤销边不丢。
 pub struct PoleMeta {
     source: FlatRange,
+    /// 这份来源的授权记录：从已有来源创建时就是那一份（根 Grant 接手），
+    /// 否则为 `None`。撤销时由它收回名下关系。
+    authorization: SpinLock<Option<Arc<SourceAuthorization>>>,
     maps: SpinLock<Vec<HeldMap>>,
     authorities: SpinLock<Vec<Authority>>,
     live: AtomicBool,
@@ -58,6 +62,7 @@ impl PoleMeta {
         authorities.try_reserve_exact(1).map_err(|_| PieFail::OoM)?;
         Arc::try_new(Self {
             source,
+            authorization: SpinLock::new(None),
             maps: SpinLock::new(maps),
             authorities: SpinLock::new_level(Level::L3, authorities),
             live: AtomicBool::new(true),
@@ -71,33 +76,17 @@ impl PoleMeta {
         .map_err(|_| PieFail::OoM)
     }
 
-    /// 从一段完整、已发布的现有映射建立输入来源。
-    ///
-    /// 来源范围归 Pole 持有；原映射作为该 token 下的活跃关系保留，
-    /// 于是它被关闭后 RAM 仍由来源范围保留。
-    pub(crate) fn from_mapping(
-        space: &Arc<Space>,
-        view: Arc<View>,
+    /// 从一份**完整来源范围**建立 Pole：不造 keeper / canonical 来源视图，
+    /// 真实关系由调用方（创建事务）决定什么时候登进来。
+    pub(crate) fn from_source(
+        source: FlatRange,
+        size: usize,
         owner: TaskId,
     ) -> Result<Arc<Self>, PieFail> {
-        let (start, size) = view.initial_range();
-        if size == 0 || view.frame_count() != size / PAGE_SIZE {
+        if source.page_count().checked_bytes() != Some(size) {
             return Err(PieFail::Denied);
         }
-        let ranges = view.active().map_err(pie_map_error)?;
-        let mut covered = 0;
-        for range in ranges {
-            if start.as_usize().checked_add(covered) != Some(range.start.as_usize()) {
-                return Err(PieFail::Denied);
-            }
-            covered += range.size.get();
-        }
-        if covered != size {
-            return Err(PieFail::Denied);
-        }
-        let meta = Self::new(view.source(), size, owner)?;
-        meta.add(view, space, None, Relation::Input);
-        Ok(meta)
+        Self::new(source, size, owner)
     }
 
     /// 接管输入映射的关闭责任。
@@ -116,6 +105,16 @@ impl PoleMeta {
     /// 授权的来源范围。普通 clone 只是强持同一 `Flat`，不产生独立 Hold。
     pub(crate) fn source(&self) -> FlatRange {
         self.source.clone()
+    }
+
+    /// 这份 Pole 的来源授权记录；旧路径建出来的 Pole 没有。
+    pub(crate) fn authorization(&self) -> Option<Arc<SourceAuthorization>> {
+        self.authorization.lock().clone()
+    }
+
+    /// 把一份已有的来源授权接到这个 Pole 上：根 Grant 接手，一处权威。
+    pub(crate) fn attach_source(&self, authorization: &Arc<SourceAuthorization>) {
+        *self.authorization.lock() = Some(authorization.clone());
     }
     /// 授权范围内的一段页对齐子范围；越界或非页对齐都拒。
     pub(crate) fn window(&self, offset: usize, size: usize) -> Result<FlatRange, PieFail> {
@@ -225,8 +224,18 @@ impl PoleMeta {
             .any(|entry| entry.mapped() && entry.live())
     }
 
-    pub(crate) fn reserve_record(&self) -> Result<(), PieFail> {
-        self.maps.lock().try_reserve(1).map_err(|_| PieFail::OoM)
+    pub(crate) fn reserve_records(&self, count: usize) -> Result<(), PieFail> {
+        self.maps
+            .lock()
+            .try_reserve(count)
+            .map_err(|_| PieFail::OoM)
+    }
+
+    /// 把一段已有关系关联到根 Grant：创建事务的 Input 交接。
+    ///
+    /// 它成为该 token 下的活跃关系——`open` 会复用它，撤销也关它。
+    pub(crate) fn adopt_input(&self, token: PieToken, space: &Arc<Space>, view: Arc<View>) {
+        self.add(view, space, Some(token), Relation::Input);
     }
 
     fn add(
@@ -280,23 +289,36 @@ impl PoleMeta {
             .retain(|entry| !entry.staged_for(token, team));
     }
 
-    fn close_token(&self, token: PieToken) -> Result<(), PieFail> {
+    pub(crate) fn has_maps(&self) -> bool {
+        !self.maps.lock().is_empty()
+    }
+
+    pub(crate) fn close_maps(&self, token: Option<PieToken>) -> Result<(), PieFail> {
         loop {
-            let mut entry = {
+            let entry = {
                 let mut maps = self.maps.lock();
-                let index = maps.iter().position(|entry| entry.closable(token));
+                let index = maps
+                    .iter()
+                    .position(|entry| token.is_none_or(|token| entry.closable(token)));
                 match index {
                     Some(index) => maps.remove(index),
                     None => return Ok(()),
                 }
             };
-            if let Some(weak) = entry.placement.take() {
-                if let Some(space) = weak.upgrade() {
-                    if let Err(error) = space.nest.detach(entry.view.whole()) {
-                        entry.placement = Some(weak);
-                        self.maps.lock().push(entry);
-                        return Err(pie_map_error(error));
+            if let Some(space) = entry.placement.as_ref().and_then(Weak::upgrade) {
+                let result = (|| {
+                    space.nest.retry_invalidation()?;
+                    if space.nest.contains_reservation(entry.view.identity()) {
+                        space.nest.detach(entry.view.whole())?;
                     }
+                    Ok::<_, NestError>(())
+                })();
+                if let Err(error) = result {
+                    self.maps.lock().push(entry);
+                    return Err(pie_map_error(error));
+                }
+                if !space.nest.contains_reservation(entry.view.identity()) {
+                    space.retire_view(entry.view.identity());
                 }
             }
         }
@@ -306,19 +328,47 @@ impl PoleMeta {
         loop {
             let entry = {
                 let mut maps = self.maps.lock();
-                let index = maps.iter().position(|entry| entry.closable(token));
-                match index {
+                match maps.iter().position(|entry| entry.closable(token)) {
                     Some(index) => maps.remove(index),
-                    None => return,
+                    None => break,
                 }
             };
             if let Some(weak) = entry.placement {
                 if let Some(space) = weak.upgrade() {
+                    let id = entry.view.identity();
                     let _ = space.nest.dispose(entry.view);
+                    if !space.nest.contains_reservation(id) {
+                        space.retire_view(id);
+                    }
                 }
             }
         }
     }
+}
+
+/// 这条关系能不能代表**整份来源**被复用。
+///
+/// 来源窗口必须与 Pole 整窗一致（同一 Flat 的同一段），活动区间必须从起点连续
+/// 覆盖到末尾：Unseal 前允许同源多个 Attach（slice、中间有洞），那些关系仍归撤销
+/// 清理，但不能顶替整窗去复用——否则会把 slice 的第 1 页当成源 0 页，或报整长
+/// 却只有几个 PTE。
+fn covers_source(meta: &PoleMeta, entry: &HeldMap) -> bool {
+    let view = &entry.view;
+    if !view.source().same_range(&meta.source) {
+        return false;
+    }
+    let (start, size) = view.initial_range();
+    let Ok(active) = view.active() else {
+        return false;
+    };
+    let mut covered = 0usize;
+    for range in active {
+        if range.start.as_usize() != start.as_usize() + covered {
+            return false;
+        }
+        covered += range.size.get();
+    }
+    covered == size
 }
 
 fn pie_map_error(error: NestError) -> PieFail {
@@ -344,7 +394,11 @@ impl Drop for PoleMeta {
             }
             if let Some(weak) = entry.placement {
                 if let Some(space) = weak.upgrade() {
+                    let id = entry.view.identity();
                     let _ = space.nest.dispose(entry.view);
+                    if !space.nest.contains_reservation(id) {
+                        space.retire_view(id);
+                    }
                 }
             }
         }
@@ -387,7 +441,11 @@ pub(crate) fn open(
         let maps = meta.maps.lock();
         maps.iter()
             .find(|entry| {
-                entry.holds(token) && entry.opened() && entry.placed_in(space) && entry.live()
+                entry.holds(token)
+                    && entry.opened()
+                    && entry.placed_in(space)
+                    && entry.live()
+                    && covers_source(meta, entry)
             })
             .map(|entry| entry.view.clone())
     };
@@ -395,7 +453,7 @@ pub(crate) fn open(
         narrow_view(&space.nest, &view, access).map_err(pie_map_error)?;
         return Ok((view.initial_range().0.as_usize(), meta.size()));
     }
-    meta.reserve_record()?;
+    meta.reserve_records(1)?;
     // 来源已在手上：先选址登记，再按来源范围挂载，不经任何 kernel / canonical 视图。
     let source = meta.source();
     let size = source
@@ -424,7 +482,7 @@ pub(crate) fn open(
 
 pub(crate) fn shut(meta: &Arc<PoleMeta>, token: PieToken) -> Result<(), PieFail> {
     let _operation = PoleOperation::acquire(meta).ok_or(PieFail::Busy)?;
-    meta.close_token(token)
+    meta.close_maps(Some(token))
 }
 
 pub(crate) fn narrow(meta: &Arc<PoleMeta>, token: PieToken, access: Access) -> Result<(), PieFail> {

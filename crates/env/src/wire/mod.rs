@@ -22,13 +22,17 @@
 //! [`ProgramKind`](crate::ProgramKind) 在 [`call`](crate::abi::call)。这是**刻意**的：本仓的
 //! 口径是"非法位校验**只有一处**"（上面那一句），故三个 impl 并排住这里，而不是各回各家。
 
+pub mod flat_reference;
 pub mod frompair;
 pub mod handle;
 pub mod pie_kind;
 pub mod program_kind;
+pub mod view_id;
 
+pub use flat_reference::FlatReference;
 pub use frompair::{FromPair, FromTriple};
 pub use handle::{Mark, PieToken, TaskId, TeamId, VirtAddr};
+pub use view_id::ViewId;
 
 /// 字段 ↔ usize 的契约。
 pub mod field;

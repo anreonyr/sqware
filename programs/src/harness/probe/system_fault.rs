@@ -121,7 +121,7 @@ pub fn unit() {
     });
     for (role, slot) in [(1, &status.operator), (2, &status.identity)] {
         let state = status.clone();
-        let body: Box<dyn FnOnce(usize) + Send> = Box::new(move |_| {
+        let body: Box<dyn FnOnce() + Send> = Box::new(move || {
             if mode == role {
                 execution::room::reap(env::EXIT_OK, Some("system-fault: injected task exit"));
             }

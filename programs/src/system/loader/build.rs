@@ -94,7 +94,9 @@ pub(super) fn load(loader: &mut Loader, image: Image<'_>, sire: env::TaskId) -> 
                 token,
                 0,
                 region.flags,
+                env::ViewControl::SpaceMembers,
             )
+            .map(|_| ())
             .map_err(memory_fail)?;
             if let Some(mut source) = source.take() {
                 if region.flags & 4 != 0 {
@@ -113,7 +115,9 @@ pub(super) fn load(loader: &mut Loader, image: Image<'_>, sire: env::TaskId) -> 
                 PieToken::NONE,
                 0,
                 region.flags,
+                env::ViewControl::SpaceMembers,
             )
+            .map(|_| ())
             .map_err(memory_fail)?;
         }
     }

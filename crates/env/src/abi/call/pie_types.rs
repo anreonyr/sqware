@@ -1,5 +1,5 @@
 //! Parameters shared by capability creation and queries.
-use crate::{Decode, Mark, Permission, PieKind, PieToken, TaskId, VirtAddr, Wire};
+use crate::{Decode, FlatReference, Mark, Permission, PieKind, PieToken, TaskId, Wire};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HoleLimits {
@@ -32,8 +32,8 @@ pub enum UnsealArgs {
         limits: HoleLimits,
     },
     Pole {
-        addr: VirtAddr,
-        size: usize,
+        /// 要交接的**完整来源范围**（一份引用）；不再是 VA。
+        reference: FlatReference,
         shared: bool,
     },
     Nole,
@@ -59,7 +59,7 @@ impl Wire for UnsealArgs {
                 limits.max_messages,
                 limits.max_bytes,
             ],
-            Self::Pole { addr, size, shared } => [1, addr.get(), size, shared as usize, 0],
+            Self::Pole { reference, shared } => [1, reference.get(), 0, 0, shared as usize],
             Self::Nole => [2, 0, 0, 0, 0],
             Self::Tole { shared } => [3, shared as usize, 0, 0, 0],
         };
@@ -87,9 +87,8 @@ impl Wire for UnsealArgs {
                     limits,
                 })
             }
-            [1, addr, size, shared @ 0..=1, 0] => Ok(Self::Pole {
-                addr: VirtAddr::new(addr),
-                size,
+            [1, reference, 0, 0, shared @ 0..=1] => Ok(Self::Pole {
+                reference: FlatReference::new(reference),
                 shared: shared != 0,
             }),
             [2, 0, 0, 0, 0] => Ok(Self::Nole),

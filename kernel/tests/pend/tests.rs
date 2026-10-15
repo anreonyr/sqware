@@ -639,8 +639,7 @@ fn creation_and_conditions_reject_invalid_wire_values() {
     for args in [
         UnsealArgs::hole(Mark::new(u64::MAX)),
         UnsealArgs::Pole {
-            addr: env::VirtAddr::new(0x4100_0000),
-            size: 4096,
+            reference: env::FlatReference::from_bytes(&7usize.to_le_bytes()).unwrap(),
             shared: false,
         },
         UnsealArgs::Nole,

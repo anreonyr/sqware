@@ -503,7 +503,16 @@ fn elf() {
     assert_eq!(&data[2..6], &[0x13, 0, 0, 0]);
     assert!(data[..2].iter().chain(&data[6..]).all(|&byte| byte == 0));
     assert!(
-        execution::memory::map(TeamId::new(0), 0, size, source, 0, 6).is_err(),
+        execution::memory::map(
+            TeamId::new(0),
+            0,
+            size,
+            source,
+            0,
+            6,
+            env::ViewControl::Caller,
+        )
+        .is_err(),
         "copy: shared source can be widened"
     );
     env::pie::shut(page).unwrap();

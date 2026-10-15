@@ -110,6 +110,11 @@ impl View {
         (self.initial_start(), self.initial_size())
     }
 
+    /// 这段关系在占用表里的身份（generation）；新 ABI 的 `ViewId` 就是它。
+    pub(crate) fn identity(&self) -> usize {
+        self.reservation.id()
+    }
+
     /// 认住它的那个 Nest；已关闭的 Nest 不算。
     pub fn owner(&self) -> Option<Arc<super::Nest>> {
         let nest = self.reservation.nest()?;

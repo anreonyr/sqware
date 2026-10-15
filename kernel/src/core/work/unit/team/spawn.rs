@@ -59,6 +59,10 @@ pub(crate) fn spawn(
         let mut operations = Vec::new();
         let mut retired = Vec::new();
         let mut leases = Vec::new();
+        let mut sources = Vec::new();
+        sources
+            .try_reserve(staged.items.len())
+            .map_err(|_| UnitFail::OoM)?;
         operations
             .try_reserve(staged.items.len())
             .map_err(|_| UnitFail::OoM)?;
@@ -70,6 +74,15 @@ pub(crate) fn spawn(
             .map_err(|_| UnitFail::OoM)?;
         for item in staged.items.iter() {
             operations.push(PoleOperation::acquire(&item.meta).ok_or(UnitFail::Busy)?);
+            let source = item.meta.authorization().ok_or(UnitFail::Denied)?;
+            let (meta, token) = source.root().ok_or(UnitFail::Denied)?;
+            if token != item.token || !Arc::ptr_eq(&meta, &item.meta) {
+                return Err(UnitFail::Denied);
+            }
+            if sources.iter().any(|held| Arc::ptr_eq(held, &source)) {
+                return Err(UnitFail::Denied);
+            }
+            sources.push(source);
         }
         let closed = caller.pend.lock();
         if !pend::live(caller) {
@@ -94,7 +107,40 @@ pub(crate) fn spawn(
             {
                 return Err(UnitFail::Denied);
             }
+            let record = target
+                .space
+                .views
+                .locate(item.view.identity())
+                .ok_or(UnitFail::Denied)?;
+            if !record
+                .view()
+                .is_some_and(|view| Arc::ptr_eq(view, &item.view))
+                || !Arc::ptr_eq(
+                    &record.source,
+                    &item.meta.authorization().ok_or(UnitFail::Denied)?,
+                )
+            {
+                return Err(UnitFail::Denied);
+            }
+            if record.scope == env::ViewControl::Caller {
+                prepared
+                    .track_control(&target.space, item.view.identity())
+                    .map_err(map_err)?;
+            }
         }
+        for (index, source) in sources.iter().enumerate() {
+            if let Err(error) = source.pause_publish() {
+                for paused in &sources[..index] {
+                    paused.resume_publish();
+                }
+                return Err(if error == env::PieFail::Busy {
+                    UnitFail::Busy
+                } else {
+                    UnitFail::Denied
+                });
+            }
+        }
+        let receiver = prepared.id();
         let result = prepared
             .publish(|| {
                 for item in staged.items.drain(..) {
@@ -102,6 +148,8 @@ pub(crate) fn spawn(
                         .iter()
                         .position(|p| p.token() == item.token)
                         .expect("staged root");
+                    target.space.views.hand_over(item.view.identity(), receiver);
+                    caller.release_control(item.view.identity());
                     let pie = pies.remove(index);
                     pie.invalidate();
                     caller
@@ -117,6 +165,11 @@ pub(crate) fn spawn(
                 target.set_default_entry(entry_va);
             })
             .map_err(map_err);
+        if result.is_err() {
+            for source in &sources {
+                source.resume_publish();
+            }
+        }
         drop(pies);
         drop(closed);
         drop(staged);

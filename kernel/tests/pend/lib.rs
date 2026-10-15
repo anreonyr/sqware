@@ -2,6 +2,21 @@
 #![feature(allocator_api)]
 extern crate alloc;
 
+#[path = "../../src/core/memory/address/count.rs"]
+mod count;
+#[path = "../../src/core/memory/address/index.rs"]
+mod index;
+#[path = "../../src/core/memory/address/offset.rs"]
+mod offset;
+#[path = "../../src/machine/sync/serial.rs"]
+mod serial;
+#[path = "fixture/flat.rs"]
+pub(crate) mod flat_fixture;
+#[path = "fixture/space.rs"]
+pub(crate) mod space_fixture;
+#[path = "fixture/pole.rs"]
+mod pole_fixture;
+
 mod core {
     pub(crate) use crate::{memory, work};
 }
@@ -10,10 +25,11 @@ mod machine {
 }
 
 mod lock {
+    pub(crate) use crate::serial::next_id;
     pub struct SpinLock<T>(std::sync::Mutex<T>);
     unsafe impl<T> Sync for SpinLock<T> {}
     impl<T> SpinLock<T> {
-        pub fn new(value: T) -> Self {
+        pub const fn new(value: T) -> Self {
             Self(std::sync::Mutex::new(value))
         }
         pub fn lock(&self) -> std::sync::MutexGuard<'_, T> {
@@ -42,7 +58,11 @@ mod lock {
     }
 }
 mod memory {
+    pub const PAGE_SIZE: usize = 4096;
+    pub(crate) use crate::flat_fixture as flat;
+
     pub mod address {
+        pub use crate::{count::PageCount, index::PageIndex, offset::PageOffset};
         #[derive(Clone, Copy, PartialEq, Eq)]
         pub struct VirtAddr(usize);
         impl VirtAddr {
@@ -138,6 +158,9 @@ mod work {
             pub fn reserved(&self) -> usize {
                 self.reserved.load(Ordering::Relaxed)
             }
+            pub fn stage_for(&self, team: usize) {
+                self.reserved.store(team, Ordering::Relaxed);
+            }
         }
         pub struct Operation(Arc<OperationState>);
         impl Drop for Operation {
@@ -178,18 +201,8 @@ mod work {
         }
         meta!(HoleMeta);
         meta!(NoleMeta);
-        meta!(PoleMeta);
         meta!(ToleMeta);
-        impl PoleMeta {
-            pub fn withdraw(&self, _: env::PieToken) {}
-            pub fn release_grant(&self, _: env::PieToken) {}
-            pub fn stage_for(&self, team: usize) {
-                self.control.reserved.store(team, Ordering::Relaxed);
-            }
-            pub fn register_grant(&self, _: env::PieToken, _: alloc::sync::Arc<crate::core::work::grant::Grant>) -> Result<(), env::PieFail> {
-                Ok(())
-            }
-        }
+        pub use crate::pole_fixture::PoleMeta;
         #[derive(Clone)]
         pub enum Mail {
             Hole(Arc<HoleMeta>),
@@ -322,6 +335,7 @@ mod work {
         }
     }
     pub mod unit {
+        pub(crate) use crate::space_fixture as space;
         pub mod task {
             use crate::pend::Pend;
             use crate::machine::sync::SpinLock;
@@ -389,6 +403,7 @@ mod work {
                 pub fn life(&self) -> Weak<()> {
                     Arc::downgrade(&self.life)
                 }
+                pub fn close_controls(&self) {}
                 pub fn clan(&self, _: env::TeamId) -> Option<Arc<Team>> {
                     None
                 }
@@ -408,3 +423,5 @@ pub use work::commit;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod source_tests;

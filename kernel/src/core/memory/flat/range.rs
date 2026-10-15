@@ -30,6 +30,15 @@ impl FlatRange {
         self.count
     }
 
+    /// 是不是**同一份来源上的同一段窗口**（Flat 身份与坐标都一致）。
+    ///
+    /// 用来判断一段关系能不能代表整份来源——子范围/切片都不能。
+    pub(crate) fn same_range(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.flat, &other.flat)
+            && self.index == other.index
+            && self.count == other.count
+    }
+
     /// 相对偏移选择子范围。
     pub fn range(&self, offset: PageOffset, count: PageCount) -> Result<Self, FlatError> {
         let end = offset

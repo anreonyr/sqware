@@ -1,5 +1,6 @@
+use super::cached::Cached;
 use super::image::elf;
-use super::source::{Cached, Source};
+use super::source::Source;
 use alloc::vec::Vec;
 use env::PieToken;
 
@@ -36,7 +37,7 @@ impl Cache {
         }
         while self.pages + pages > self.limit {
             let old = self.entries.remove(0);
-            self.pages -= old.source.mapping.unwrap().1 / env::PAGE_SIZE;
+            self.pages -= old.source.mapping.as_ref().unwrap().size() / env::PAGE_SIZE;
         }
         self.pages += pages;
         self.entries.push(Cached {

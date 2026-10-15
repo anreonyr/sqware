@@ -6,8 +6,11 @@ mod lazy;
 mod once;
 pub(crate) mod reentrant;
 mod rw;
+mod serial;
 pub(crate) mod spin;
 mod trap;
+
+pub(crate) use serial::next_id;
 
 macro_rules! depend_enter {
     ($lock:expr) => {{

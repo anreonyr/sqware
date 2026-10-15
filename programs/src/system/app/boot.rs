@@ -35,7 +35,7 @@ pub fn spawn(
         let state = (*status).clone();
         let version = (*epoch).clone();
         let bell = signal.clone();
-        let body: Box<dyn FnOnce(usize) + Send> = Box::new(move |_| {
+        let body: Box<dyn FnOnce() + Send> = Box::new(move || {
             let role = if operator { "operator" } else { "identity" };
             let result = if operator {
                 operator::run(state.clone()).map_err(|error| alloc::format!("{error:?}"))

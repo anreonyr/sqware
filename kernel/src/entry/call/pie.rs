@@ -1,13 +1,13 @@
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 use env::{
-    HoleLimits, Mark, PieCall, PieFail, PieInfo, PieToken, ReleaseMode, TaskId, UnsealArgs,
-    VirtAddr,
+    FlatReference, HoleLimits, Mark, PieCall, PieFail, PieInfo, PieToken, ReleaseMode, TaskId,
+    UnsealArgs, VirtAddr,
 };
 
-use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::address::VirtAddr as KVirt;
-use crate::core::memory::nest::{Access, Nest, View};
+use crate::core::memory::nest::Access;
 use crate::core::work::mail::{self, Mail, pole::PoleOperation};
 use crate::core::work::pend::{self, Need, Permission, PieSnapshot, clear_heir};
 use crate::core::work::room::conductor::current;
@@ -32,7 +32,7 @@ pub(crate) fn dispatch(frame: &mut TrapContext, call: PieCall, ident: Arc<TaskId
     match call {
         PieCall::Unseal { args } => match args {
             UnsealArgs::Hole { mark, limits } => unseal_hole(frame, mark, limits),
-            UnsealArgs::Pole { addr, size, shared } => unseal_pole(frame, addr, size, shared),
+            UnsealArgs::Pole { reference, shared } => unseal_pole(frame, reference, shared),
             UnsealArgs::Nole => unseal_nole(frame),
             UnsealArgs::Tole { shared } => unseal_tole(frame, shared),
         },
@@ -143,51 +143,103 @@ fn pole_checkpoint(_stage: usize) -> Result<(), PieFail> {
 
 pub(crate) fn create_pole(
     task: &Arc<crate::core::work::unit::task::Task>,
-    addr: crate::core::memory::address::VirtAddr,
-    size: usize,
+    reference: FlatReference,
     shared: bool,
 ) -> Result<PieToken, PieFail> {
-    let task_space = task.ident.team.space.clone();
-    let view = view_at(&task_space.nest, addr, size).ok_or(PieFail::Denied)?;
-    let creation = task.pend.creations.claim(&view)?;
-    pole_checkpoint(1)?;
-    let meta = mail::pole::PoleMeta::from_mapping(&task_space, view, task.ident.id)?;
-    pole_checkpoint(2)?;
-    let mut permission = Permission::FETCH | Permission::STORE | Permission::VEST;
-    if !shared {
-        permission |= Permission::ONLY;
+    let _serial = task.pend.lock();
+    if !pend::live(task) {
+        return Err(PieFail::Dead);
     }
-    let pie = pend::Pie::try_new(Mail::Pole(meta.clone()), Mark::NONE, permission, None)?;
-    let token = pie.token();
-    pole_checkpoint(3)?;
-    pend::insert(task, pie)?;
-    meta.commit_source();
-    creation.commit();
-    Ok(token)
+    let hold = task
+        .pend
+        .references
+        .get(reference.get())
+        .ok_or(PieFail::Denied)?;
+    let authorization = hold.source().clone();
+    // 只能从**私有根**铸新根：子 Pie / Pole 派生 / 借用都不产生新根资格。
+    let source = authorization.own_range().ok_or(PieFail::Denied)?;
+    let (offset, count) = hold.window();
+    if !authorization.private_owner(task.ident.id)
+        || hold.retains()
+        || hold.branch().is_some()
+        || offset.get() != 0
+        || count != source.page_count()
+    {
+        return Err(PieFail::Denied);
+    }
+    // 一次性创建资格：单次 claim，竞争方 Busy、已消费 Denied。
+    authorization.claim()?;
+    let result = (|| {
+        pole_checkpoint(1)?;
+        let size = source
+            .page_count()
+            .checked_bytes()
+            .ok_or(PieFail::NotAligned)?;
+        let meta = mail::pole::PoleMeta::from_source(source.clone(), size, task.ident.id)?;
+        let mut permission = Permission::FETCH | Permission::STORE | Permission::VEST;
+        if !shared {
+            permission |= Permission::ONLY;
+        }
+        let pie = pend::Pie::try_new(Mail::Pole(meta.clone()), Mark::NONE, permission, None)?;
+        let token = pie.token();
+        let mut inputs = Vec::new();
+        for space in authorization.spaces()? {
+            let entries = space.views.owned_by(&authorization)?;
+            inputs
+                .try_reserve(entries.len())
+                .map_err(|_| PieFail::OoM)?;
+            for (_, entry) in entries {
+                if let Some(view) = entry.view() {
+                    inputs.push((space.clone(), view.clone()));
+                }
+            }
+        }
+        meta.reserve_records(inputs.len())?;
+        task.pend
+            .pies
+            .lock()
+            .try_reserve(1)
+            .map_err(|_| PieFail::OoM)?;
+        pole_checkpoint(2)?;
+
+        let _commit = crate::core::work::commit();
+        let _publication = authorization.begin_withdraw()?;
+        if !pend::live(task) || !authorization.private_owner(task.ident.id) {
+            return Err(PieFail::Denied);
+        }
+        pole_checkpoint(3)?;
+        meta.attach_source(&authorization);
+        authorization.adopt(&meta, token, pie.grant().clone())?;
+        let transition = (|| {
+            pole_checkpoint(4)?;
+            for (space, view) in inputs {
+                meta.adopt_input(token, &space, view);
+            }
+            pole_checkpoint(5)?;
+            let mut pies = task.pend.pies.lock();
+            assert!(pies.len() < pies.capacity(), "reserved root Pie slot");
+            meta.commit_source();
+            authorization.consume();
+            pies.push(pie);
+            pend::changed(task);
+            Ok(token)
+        })();
+        if transition.is_err() {
+            authorization.restore_private(source.clone());
+        }
+        transition
+    })();
+    if result.is_err() {
+        authorization.release_claim();
+    }
+    result
 }
 
-/// 按线外 VA + 字节跨度取一段已有关系：候选由 VA 给出，身份以 `View` 为准。
-pub(in crate::entry) fn view_at(nest: &Nest, start: KVirt, size: usize) -> Option<Arc<View>> {
-    if size == 0 || start.offset() != 0 || !size.is_multiple_of(PAGE_SIZE) {
-        return None;
-    }
-    let view = nest.probe(start)?;
-    (view.initial_range() == (start, size) && view.is_live()).then_some(view)
-}
-
-fn unseal_pole(frame: &mut TrapContext, addr: VirtAddr, size: usize, shared: bool) {
+fn unseal_pole(frame: &mut TrapContext, reference: FlatReference, shared: bool) {
     let result = current()
         .running_task()
         .ok_or(PieFail::Denied)
-        .and_then(|task| {
-            create_pole(
-                &task,
-                crate::core::memory::address::VirtAddr::wrap(addr.get()),
-                size,
-                shared,
-            )
-            .map(|token| token.get())
-        });
+        .and_then(|task| create_pole(&task, reference, shared).map(|token| token.get()));
     answer(frame, result);
 }
 
@@ -225,19 +277,25 @@ fn seal(frame: &mut TrapContext, token: PieToken) {
     let r = (|| -> Result<usize, PieFail> {
         let me = current().running_task().ok_or(PieFail::Denied)?;
         let pie = pend::locate(&me, token).ok_or(PieFail::Denied)?;
-        if !pie.alive() {
+        let pole = pie.mail().pole();
+        if !pie.alive() && !pole.as_ref().is_some_and(|meta| meta.has_maps()) {
             return Err(PieFail::Dead);
         }
         if pie.owner() != Some(me.ident.id) {
             return Err(PieFail::Denied);
         }
-        let pole = pie.mail().pole();
         let _operation = if let Some(p) = &pole {
+            if p.reserved() != 0 {
+                return Err(PieFail::Busy);
+            }
             Some(PoleOperation::acquire(p).ok_or(PieFail::Busy)?)
         } else {
             None
         };
         pie.mail().seal();
+        if let Some(pole) = pole {
+            pole.close_maps(None)?;
+        }
         Ok(0)
     })();
     answer(frame, r);

@@ -1,4 +1,4 @@
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 
@@ -8,6 +8,7 @@ use crate::core::work::record::trace::{self, EventKind, RoomEvent};
 use crate::core::work::room::scheduler;
 use crate::core::work::unit::copies::Origin;
 use crate::core::work::unit::life::Life;
+use crate::core::work::unit::space::Space;
 use crate::core::work::unit::tally;
 use crate::core::work::unit::team::{MAX_MEMBERS, Member};
 use crate::machine::sync::SpinLock;
@@ -20,9 +21,22 @@ pub(crate) struct PreparedTask {
     life: Arc<Life>,
     state: Arc<SpinLock<TaskState>>,
     slot: Option<Arc<MaybeUninit<Task>>>,
+    controls: Vec<(Weak<Space>, usize)>,
 }
 
 impl PreparedTask {
+    pub(crate) fn id(&self) -> env::TaskId {
+        self.ident.id
+    }
+
+    pub(crate) fn track_control(&mut self, space: &Arc<Space>, id: usize) -> Result<(), NestError> {
+        self.controls
+            .try_reserve(1)
+            .map_err(|_| NestError::OutOfMemory)?;
+        self.controls.push((Arc::downgrade(space), id));
+        Ok(())
+    }
+
     pub(crate) fn new(
         ident: Arc<TaskIdent>,
         life: Arc<Life>,
@@ -34,6 +48,7 @@ impl PreparedTask {
             life,
             state,
             slot: Some(slot),
+            controls: Vec::new(),
         }
     }
 
@@ -87,6 +102,7 @@ impl PreparedTask {
                     state: self.state.clone(),
                     pend: Pend::new(),
                     heir: SpinLock::new(Vec::new()),
+                    controls: SpinLock::new(core::mem::take(&mut self.controls)),
                 });
             let task = unsafe { slot.assume_init() };
             let mut member = member;

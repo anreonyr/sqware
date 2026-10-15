@@ -20,7 +20,7 @@ pub(crate) struct PieSnapshot {
 }
 
 impl PieSnapshot {
-    #[cfg(test)]
+    /// 这一枚 Pie 的 Grant：持有它的调用方据此知道自己的分支在哪条撤销边上。
     pub(crate) fn grant(&self) -> &Arc<Grant> {
         &self.grant
     }

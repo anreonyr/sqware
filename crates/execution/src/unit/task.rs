@@ -106,11 +106,15 @@ unsafe fn release<T>(slot: usize) {
 // Private to tasks minted by this runtime in its own Team: observation authority
 // cannot be revoked. Denied here means the terminal member has been pruned,
 // so it permits freeing its heap slot, never inventing a successful T or reason.
-fn finished(task: TaskId) -> bool {
-    match env_task::join_task(task, Wait::POLL) {
+pub(super) fn finished(task: TaskId) -> bool {
+    let done = match env_task::join_task(task, Wait::POLL) {
         Ok(done) => done,
         Err(error) => error.source == env::UnitFail::Denied,
+    };
+    if done {
+        tls::reap_task(task);
     }
+    done
 }
 fn sweep() {
     let mut pending = DETACHED.with(core::mem::take);
@@ -247,15 +251,7 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
         unsafe { Box::from_raw(ptr as *mut Box<dyn FnOnce() + Send>) };
     holder();
     sweep();
-    // **TLS 块必须在退场前归还**：它是内核给的**一整页**（`memory::allocate` 按页
-    // 取整），而内核不认它是谁的——`bury` 只归还 `TaskIdent` 上记着的那两个 Span
-    // （栈 / trap 帧），故不还就每任务漏一页。
-    //
-    // 实测（64M，同一启动内 `churn` 连跑两遍，静息水位应当回到同一处）：
-    // 不还时 `held` 6046 → 9244、`walk` 6899 → 3501（**同一份工作量，水位上台阶**
-    // = 真漏）；补上这一行后见同档复测。这页是 `tls::alloc` 自己领的，故由
-    // `tls::free` 自己对还——用的是用户态既有原语 `MemoryCall::Deallocate`，
-    // 不需要任何新 ABI。
+    // 正常退出提前 Detach；异常退出由内核结清 Caller 映射，终态回收本地 TLS 登记。
     tls::deallocate();
     crate::room::reap(env::EXIT_OK, None)
 }

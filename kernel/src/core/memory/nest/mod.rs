@@ -38,7 +38,7 @@ pub use kind::SpaceKind;
 pub use reservation::Reservation;
 pub use view::{Access, ActiveRange, View};
 
-pub(crate) use address::{Placement, RegionId};
+pub(crate) use address::{Placement, PlacementAt, RegionId};
 pub(crate) use view::ViewRange;
 
 use address::Occupancy;
@@ -234,6 +234,10 @@ impl Nest {
         !self.state.lock().invalidation.is_clean()
     }
 
+    pub(crate) fn contains_reservation(&self, id: usize) -> bool {
+        self.occupancy.lock().has_id(id)
+    }
+
     #[cfg(debug_assertions)]
     pub(crate) fn pending_views(&self) -> Result<Vec<Arc<View>>, NestError> {
         let state = self.state.lock();
@@ -242,29 +246,6 @@ impl Nest {
             .try_reserve(state.pending_views.len())
             .map_err(|_| NestError::OutOfMemory)?;
         views.extend(state.pending_views.iter().cloned());
-        Ok(views)
-    }
-
-    /// 与 `[start, start + size)` 相交的活关系，每个只出现一次。
-    pub(crate) fn views_in(
-        &self,
-        start: VirtAddr,
-        size: usize,
-    ) -> Result<Vec<Arc<View>>, NestError> {
-        let active = self.active_ranges()?;
-        let end = start.as_usize().saturating_add(size);
-        let mut views = Vec::new();
-        views
-            .try_reserve(active.len())
-            .map_err(|_| NestError::OutOfMemory)?;
-        for (view, range) in active {
-            if range.start.as_usize() < end
-                && range.end() >= start.as_usize()
-                && !views.iter().any(|held| Arc::ptr_eq(held, &view))
-            {
-                views.push(view);
-            }
-        }
         Ok(views)
     }
 

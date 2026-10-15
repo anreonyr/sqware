@@ -119,8 +119,38 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn memory_lifecycle() {
+        kernel::entry::check::syscall::lifecycle();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_retention() {
+        kernel::entry::check::syscall::retention();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_attach_detach_access() {
+        kernel::entry::check::syscall::attach_detach_access();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_gate_interleaving() {
+        kernel::entry::check::syscall::gate_interleaving();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn pole_mapping_and_creation_authority() {
         kernel::entry::check::pole::lifecycle();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn pole_source_window_and_active_shape() {
+        kernel::entry::check::pole::source_window_and_active_shape();
     }
 
     #[cfg(debug_assertions)]
@@ -133,6 +163,24 @@ mod tests {
     #[test]
     fn memory_pole_source_wire() {
         kernel::entry::check::syscall::memory_pole();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_control_and_task_death() {
+        kernel::entry::check::syscall::control_and_death();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_branch_revocation_and_retention() {
+        kernel::entry::check::syscall::branches_and_retention();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_preparation_failures() {
+        kernel::entry::check::syscall::preparation_failures();
     }
 
     #[cfg(debug_assertions)]

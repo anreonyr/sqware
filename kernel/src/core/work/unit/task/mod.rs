@@ -16,6 +16,7 @@ use crate::machine::sync::SpinLock;
 use state::Step;
 
 mod builder;
+mod control;
 mod ident;
 pub(super) mod life;
 mod prepared;
@@ -42,6 +43,7 @@ pub struct Task {
     pub(crate) state: Arc<SpinLock<TaskState>>,
     pub(crate) pend: Pend,
     pub(crate) heir: SpinLock<Vec<Arc<Team>>>,
+    controls: SpinLock<Vec<(Weak<crate::core::work::unit::space::Space>, usize)>>,
 }
 
 unsafe impl Send for Task {}

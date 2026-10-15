@@ -27,7 +27,7 @@
 //! 都不校验。有契约依据的取值（如 `(PieToken, Permission)` 从 v1 取位）不设防，
 //! 因为那个截断**就是**那条契约本身。
 
-use super::{PieToken, TaskId, TeamId, VirtAddr};
+use super::{FlatReference, PieToken, TaskId, TeamId, ViewId, VirtAddr};
 use crate::abi::permission::Permission;
 
 /// 由内核回写的 `(a0, a1)` 还原「域 Ret 载荷」的契约（R3 蒸馏）。
@@ -80,6 +80,19 @@ impl FromPair for (usize, usize) {
 impl FromPair for (VirtAddr, usize) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (VirtAddr(v0), v1)
+    }
+}
+
+impl FromPair for FlatReference {
+    fn from_pair(v0: usize, _v1: usize) -> Self {
+        FlatReference::new(v0)
+    }
+}
+
+/// `Attach` 的返回：`(关系句柄, 视图起点)`——`a0` 是身份、`a1` 是地址。
+impl FromPair for (ViewId, VirtAddr) {
+    fn from_pair(v0: usize, v1: usize) -> Self {
+        (ViewId::new(v0), VirtAddr(v1))
     }
 }
 

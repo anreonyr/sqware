@@ -412,9 +412,7 @@ pub fn references() {
     let rw = crate::core::memory::nest::Access::READ | crate::core::memory::nest::Access::WRITE;
     let view =
         super::support::attach_frames(space, reservation, alloc::vec![frame], rw, rw).unwrap();
-    let page = crate::core::work::mail::pole::PoleMeta::from_mapping(space, view, caller.ident.id)
-        .unwrap();
-    page.commit_source();
+    let (page_token, page) = super::support::source_pole(&caller, space, &view, true);
     let bit0 = env::Bit::FIRST;
     let bit1 = env::Bit::wrap(1);
     crate::core::work::mail::pole::ring(&page, bit0).unwrap();
@@ -426,6 +424,7 @@ pub fn references() {
         !page.ready(bit0) && page.ready(bit1),
         "重复清位幂等且不影响另一位"
     );
+    pend::release(&caller, page_token).unwrap();
     drop(page);
     let local = Source::Mail {
         pie: root_token,

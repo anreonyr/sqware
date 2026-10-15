@@ -1,8 +1,10 @@
 extern crate self as env;
 
 pub use abi::{
-    Bit, MailCondition, MailFail, MailResult, Mark, Oversize, Permission, PieFail, PieInfo, PieKind,
-    MemoryFail, MemoryResult, PAGE_SIZE, PieResult, PieToken, PullOutcome, ReleaseMode, Source, TaskId, UnsealArgs, VirtAddr, Wait, make_fail,
+    AcquireSource, Allocation, Bit, FlatReference, MailCondition, MailFail, MailResult, Mark,
+    MemoryFail, MemoryResult, Oversize, PAGE_SIZE, Permission, PieFail, PieInfo, PieKind,
+    PieResult, PieToken, PullOutcome, ReleaseMode, Source, TaskId, UnsealArgs, VirtAddr, Wait,
+    make_fail,
 };
 
 pub mod chrono {
@@ -20,9 +22,9 @@ pub mod pie {
     pub fn unseal(args: crate::UnsealArgs) -> PieResult<PieToken> {
         match args {
             crate::UnsealArgs::Hole { mark, .. } => hole_token(mark),
-            crate::UnsealArgs::Pole { addr, size, shared } => {
+            crate::UnsealArgs::Pole { reference, shared } => {
                 let token = token();
-                record(Event::Pole(addr.get(), size, shared, token));
+                record(Event::Pole(reference.get(), shared, token));
                 if crate::test_backend::fail(Op::Unseal) {
                     Err(make_fail(PieFail::Denied))
                 } else {
@@ -160,7 +162,9 @@ pub mod mail {
     }
     pub fn wait(token: PieToken, condition: MailCondition, within: Wait) -> MailResult<bool> {
         record(Event::Wait(token, condition, within));
-        if let Wait::AtMost(ms) = within { crate::test_backend::advance(ms as u64 * 1_000_000); }
+        if let Wait::AtMost(ms) = within {
+            crate::test_backend::advance(ms as u64 * 1_000_000);
+        }
         Ok(false)
     }
     pub fn ring(_: PieToken, _: crate::Bit) -> MailResult<()> {
@@ -172,23 +176,23 @@ pub mod mail {
 }
 
 pub mod memory {
-    use crate::{MemoryFail, MemoryResult, VirtAddr, make_fail};
     use crate::test_backend::{self, Event, Op};
-    pub fn allocate(size: usize) -> MemoryResult<VirtAddr> {
-        test_backend::record(Event::Allocate(size));
-        if test_backend::fail(Op::Allocate) {
+    use crate::{AcquireSource, FlatReference, MemoryFail, MemoryResult, PieToken, make_fail};
+    pub fn acquire(source: AcquireSource, retention: PieToken) -> MemoryResult<FlatReference> {
+        assert_eq!(retention, PieToken::NONE);
+        let AcquireSource::Allocation(allocation) = source else {
+            panic!("unexpected source")
+        };
+        test_backend::record(Event::Acquire(allocation.size));
+        if test_backend::fail(Op::Acquire) {
             Err(make_fail(MemoryFail::OoM))
         } else {
-            Ok(VirtAddr::new(0x4000))
+            Ok(FlatReference::from_bytes(&7usize.to_le_bytes()).unwrap())
         }
     }
-    pub fn deallocate(addr: VirtAddr, size: usize) -> MemoryResult<()> {
-        test_backend::record(Event::Deallocate(addr.get(), size));
-        if test_backend::busy(Op::Deallocate) {
-            Err(make_fail(MemoryFail::Busy))
-        } else {
-            Ok(())
-        }
+    pub fn release(reference: FlatReference) -> MemoryResult<()> {
+        test_backend::record(Event::ReleaseReference(reference.get()));
+        Ok(())
     }
 }
 
@@ -199,8 +203,7 @@ pub mod test_backend {
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum Op {
-        Allocate,
-        Deallocate,
+        Acquire,
         Unseal,
         Release,
         Seal,
@@ -210,9 +213,9 @@ pub mod test_backend {
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub enum Event {
-        Allocate(usize),
-        Deallocate(usize, usize),
-        Pole(usize, usize, bool, PieToken),
+        Acquire(usize),
+        ReleaseReference(usize),
+        Pole(usize, bool, PieToken),
         Starve,
         Unseal(PieToken, Mark),
         Release(PieToken),
@@ -268,8 +271,12 @@ pub mod test_backend {
         STATE.with(|s| s.borrow_mut().messages.push_back((bytes.to_vec(), from)));
     }
 
-    pub fn now() -> u64 { STATE.with(|state| state.borrow().now) }
-    pub fn advance(ns: u64) { STATE.with(|state| state.borrow_mut().now += ns); }
+    pub fn now() -> u64 {
+        STATE.with(|state| state.borrow().now)
+    }
+    pub fn advance(ns: u64) {
+        STATE.with(|state| state.borrow_mut().now += ns);
+    }
     pub fn token() -> PieToken {
         STATE.with(|s| {
             let mut state = s.borrow_mut();

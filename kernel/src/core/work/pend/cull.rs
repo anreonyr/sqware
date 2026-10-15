@@ -212,6 +212,11 @@ pub(super) fn cull(
                 } else {
                     None
                 };
+                let authorization = pole.as_ref().and_then(|meta| meta.authorization());
+                let _publication = authorization
+                    .as_ref()
+                    .map(|source| source.begin_withdraw())
+                    .transpose()?;
                 for (holder, token) in nodes.iter().rev() {
                     if let Some(pie) = take(holder, *token) {
                         removed.push(pie);
@@ -255,6 +260,10 @@ pub(crate) fn doom(task: &Arc<Task>) {
     let tokens = {
         let _pend = task.pend.lock();
         super::changed(task);
+        // 这个 Task 的来源引用走到尽头：本表清空，未消费的一次性资格随最后一份引用结束。
+        // 关系不由这里拆——那是来源 Grant 原有责任，走 Pole / Nest 的清理链，
+        // 不让这张表把同步失败吞掉。
+        task.pend.references.clear();
         let mut tokens = Vec::new();
         let pies = task.pend.pies.lock();
         if tokens.try_reserve(pies.len()).is_ok() {
@@ -262,6 +271,7 @@ pub(crate) fn doom(task: &Arc<Task>) {
         }
         tokens
     };
+    task.close_controls();
     seal_owned(task);
     for token in tokens {
         loop {

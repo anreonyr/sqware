@@ -62,7 +62,10 @@ pub use self::control::{ControlCall, ControlCallRet, ControlFail, ControlResult}
 pub use self::debug::{DBCN_MAX, DebugCall, DebugCallRet, DebugFail, DebugResult};
 pub use self::mail::{AwaitReply, Bit, MailCondition, Oversize, PullOutcome, Source};
 pub use self::mail::{MailCall, MailCallRet, MailFail, MailResult};
-pub use self::memory::{MemoryCall, MemoryCallRet, MemoryFail, MemoryResult};
+pub use self::memory::{
+    AcquireSource, Allocation, MemoryCall, MemoryCallRet, MemoryFail, MemoryResult, Placement,
+    PlacementAt, PlacementError, ReferenceRange, ViewControl, ViewSelection,
+};
 pub use self::pie::{PieCall, PieCallRet, PieFail, PieResult};
 pub use self::pie_types::{HoleLimits, PieInfo, ReleaseMode, UnsealArgs};
 pub use self::room::{NOTE_MAX, RoomCall, RoomCallRet, RoomFail, RoomResult};

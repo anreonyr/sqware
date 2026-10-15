@@ -205,7 +205,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 resolved: ok,
             }));
             if ok {
-                return frame as *mut TrapContext;
+                return resume(frame as *mut TrapContext);
             }
             let tid = running.id.get();
             let cause_bits = scause::read().bits();
@@ -253,15 +253,18 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         "trap stack corrupted on hart {me} after handler"
     );
 
-    asid::occupy(Asid::from_raw(unsafe { (*next).user_satp.asid() }));
+    resume(next)
+}
 
+fn resume(next: *mut TrapContext) -> *mut TrapContext {
+    asid::occupy(Asid::from_raw(unsafe { (*next).user_satp.asid() }));
     next
 }
 
 fn quit(ident: Option<Identity>, reason: usize) -> *mut TrapContext {
     messenger::set_exit_reason(reason);
     drop(ident);
-    messenger::quit() as *mut TrapContext
+    resume(messenger::quit() as *mut TrapContext)
 }
 
 fn kill_fault(ident: Option<Identity>) -> *mut TrapContext {

@@ -511,17 +511,18 @@ fn cache_clear() {
 }
 
 fn image_bytes() -> alloc::vec::Vec<u8> {
+    const IMAGE_BASE: u64 = 0x1_0000;
     let mut bytes = alloc::vec![0; 4100];
     bytes[..7].copy_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1, 1]);
     for (at, value) in [(16, 2u16), (18, 243), (52, 64), (54, 56), (56, 1)] {
         bytes[at..at + 2].copy_from_slice(&value.to_le_bytes());
     }
     bytes[20..24].copy_from_slice(&1u32.to_le_bytes());
-    bytes[24..32].copy_from_slice(&0x4000u64.to_le_bytes());
+    bytes[24..32].copy_from_slice(&IMAGE_BASE.to_le_bytes());
     bytes[32..40].copy_from_slice(&64u64.to_le_bytes());
     bytes[64..68].copy_from_slice(&1u32.to_le_bytes());
     bytes[68..72].copy_from_slice(&5u32.to_le_bytes());
-    for (offset, value) in [(8, 4096u64), (16, 0x4000), (32, 4), (40, 4), (48, 4096)] {
+    for (offset, value) in [(8, 4096u64), (16, IMAGE_BASE), (32, 4), (40, 4), (48, 4096)] {
         bytes[64 + offset..72 + offset].copy_from_slice(&value.to_le_bytes());
     }
     bytes[4096..].copy_from_slice(&[0x6f, 0, 0, 0]);

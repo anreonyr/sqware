@@ -1,15 +1,18 @@
 mod build;
 mod cache;
+mod cached;
 mod image;
 mod mapping;
 mod service;
 mod source;
+mod spawn;
 mod task;
 
 pub(crate) use build::{Source, snapshot};
 pub(crate) use image::Image;
 pub(crate) use service::release_image;
 pub(crate) use service::{entry, faces, frame, install, shutdown, watch};
+pub(crate) use spawn::Spawn;
 pub(crate) use task::Unit;
 
 use cache::Cache;
@@ -19,12 +22,6 @@ const CACHE_PAGES: usize = 256;
 
 pub(crate) struct Loader {
     cache: Cache,
-}
-
-pub(crate) struct Spawn<'a> {
-    pub sire: env::TaskId,
-    pub args: &'a [usize],
-    pub stack: usize,
 }
 
 pub(super) fn fail(source: env::UnitFail) -> erra::Error<env::UnitFail> {

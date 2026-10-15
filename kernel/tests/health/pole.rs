@@ -17,6 +17,97 @@ fn held_pages() -> usize {
     frame_occupied() - block_occupied()
 }
 
+/// Unseal 前同源可以有多个 Attach（含 slice）。Open 只能复用**整窗且活动完整**
+/// 的那一条：slice 不能顶替整窗，否则会把第 1 页当成源 0 页、或报整长却只有几个 PTE。
+/// 原 slice 关系仍归撤销清理。
+pub fn source_window_and_active_shape() {
+    use crate::core::memory::address::{PageCount, PageOffset};
+    use crate::core::memory::flat::FlatRange;
+    use crate::core::work::pend::SourceAuthorization;
+
+    fn reference_of(raw: usize) -> env::FlatReference {
+        match env::MemoryCall::from_wire((2usize << 32) | 6, &[raw, 0, 0, 0, 0, 0]).unwrap() {
+            env::MemoryCall::Release { reference } => reference,
+            other => panic!("unexpected release: {other:?}"),
+        }
+    }
+
+    let space = SpaceBuilder::user().build().unwrap();
+    let team = TeamBuilder::new(space).spawn().unwrap();
+    let caller = team.task().hold().unwrap();
+    let rw = Access::READ | Access::WRITE;
+    let frames: alloc::vec::Vec<_> = (0..4).map(|_| Frame::allocate().unwrap()).collect();
+    let source: FlatRange = super::support::frames_source(frames.clone()).unwrap();
+    // 先 Attach 中间两页：同一份来源的 slice，不是整窗。
+    let middle = source
+        .range(PageOffset::new(1), PageCount::new(2).unwrap())
+        .unwrap();
+    let reservation =
+        super::support::reserve_low(&team.space, RegionId::Normal, 2 * PAGE_SIZE).unwrap();
+    let slice = team
+        .space
+        .nest
+        .attach(reservation, middle, Access::all(), rw)
+        .unwrap();
+
+    // 这份来源的引用（整窗 4 页），并把 slice 也登在同一份来源名下。
+    let authorization =
+        SourceAuthorization::new(source.clone(), Access::all(), caller.ident.id).unwrap();
+    authorization.remember_space(&team.space).unwrap();
+    let id = caller
+        .pend
+        .references
+        .insert(
+            authorization.clone(),
+            PageOffset::ZERO,
+            PageCount::new(4).unwrap(),
+            Access::all(),
+            None,
+            None,
+        )
+        .unwrap();
+    team.space
+        .views
+        .claim(
+            slice.identity(),
+            &team.space,
+            caller.ident.id,
+            env::ViewControl::Caller,
+            authorization,
+            None,
+        )
+        .unwrap();
+    team.space.views.commit(slice.identity(), slice.clone());
+
+    let token = create_pole(&caller, reference_of(id), true).unwrap();
+    let snapshot = pend::locate(&caller, token).unwrap();
+    let meta = snapshot.mail().pole().unwrap();
+
+    // Open 必须给整份来源：4 页、PA 次序对得上，不能拿那 2 页 slice 顶替。
+    let (address, size) = pole::open(&meta, token, &team.space, rw).unwrap();
+    assert_eq!(size, 4 * PAGE_SIZE);
+    assert!(
+        team.space
+            .validate_access(VirtAddr::wrap(address), 4 * PAGE_SIZE, Access::READ)
+    );
+    for (index, frame) in frames.iter().enumerate() {
+        assert_eq!(
+            team.space
+                .nest
+                .physical_at(VirtAddr::wrap(address + index * PAGE_SIZE))
+                .unwrap()
+                .as_usize(),
+            frame.physical_address(),
+            "source page {index}"
+        );
+    }
+    // slice 不是被复用的那一条，但它仍归这份来源：撤销时一并关掉。
+    assert!(team.space.nest.translate(slice.initial_start()).is_some());
+    pend::release(&caller, token).unwrap();
+    assert!(team.space.nest.translate(VirtAddr::wrap(address)).is_none());
+    assert!(team.space.nest.translate(slice.initial_start()).is_none());
+}
+
 pub fn lifecycle() {
     let before = TABLE_LIVE.load(Ordering::Relaxed);
     let space = SpaceBuilder::user().build().unwrap();
@@ -31,7 +122,6 @@ pub fn lifecycle() {
         super::support::reserve_low(&team.space, RegionId::Normal, PAGE_SIZE).unwrap();
     let frame = Frame::allocate().unwrap();
     let weak = Arc::downgrade(&frame);
-    let prepared = caller.pend.creations.prepare().unwrap();
     let input = super::support::attach_frames(
         &team.space,
         reservation,
@@ -40,7 +130,8 @@ pub fn lifecycle() {
         rw,
     )
     .unwrap();
-    prepared.commit(&input);
+    // 新 ABI：Pole 从一份**来源引用**创建（完整范围 + 一次性资格都在它身上）。
+    let reference = super::support::source_reference(&caller, &team.space, &input);
     let start = input.initial_start();
     let physical = team.space.nest.physical_at(start).unwrap();
     let original = input.active().unwrap()[0].current.bits();
@@ -52,28 +143,37 @@ pub fn lifecycle() {
     let kernel_tables = kernel.nest.table_count();
     let frames = held_pages();
     let kernel_views = kernel.nest.view_count();
-    for stage in 1..=3 {
+    for stage in 1..=5 {
         fail_pole_at(stage);
         assert_eq!(
-            create_pole(&caller, start, PAGE_SIZE, true),
+            create_pole(&caller, reference, true),
             Err(env::PieFail::OoM)
         );
         assert!(caller.pend.pies.lock().is_empty());
         // 失败的创建不留占：输入映射仍是调用方那一段，占用、帧账与内核 VA 都不涨。
         assert!(Arc::ptr_eq(&team.space.nest.probe(start).unwrap(), &input));
         assert_eq!(input.active().unwrap()[0].current.bits(), original);
-        let _lease = caller.pend.creations.claim(&input).unwrap();
+        // 资格回退仍可用（同源可重试）。
+        let authorization = caller
+            .pend
+            .references
+            .get(reference.get())
+            .unwrap()
+            .source()
+            .clone();
+        assert!(authorization.claim().is_ok());
+        authorization.release_claim();
         assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), tables);
         assert_eq!(held_pages(), frames);
         assert_eq!(kernel.nest.view_count(), kernel_views);
     }
     // 保留 RAM 不占额外 kernel Resource VA：成功创建前后内核 Nest 的关系与表页都不变。
-    let token = create_pole(&caller, start, PAGE_SIZE, true).unwrap();
+    let token = create_pole(&caller, reference, true).unwrap();
     assert_eq!(kernel.nest.view_count(), kernel_views);
     assert_eq!(kernel.nest.table_count(), kernel_tables);
     assert_eq!(held_pages(), frames);
     assert_eq!(
-        create_pole(&caller, start, PAGE_SIZE, true),
+        create_pole(&caller, reference, true),
         Err(env::PieFail::Denied)
     );
     let snapshot = pend::locate(&caller, token).unwrap();
@@ -137,7 +237,7 @@ pub fn lifecycle() {
         physical
     );
     assert_eq!(
-        create_pole(&recipient, VirtAddr::wrap(shared), PAGE_SIZE, true),
+        create_pole(&recipient, reference, true),
         Err(env::PieFail::Denied)
     );
     pend::reduce(&caller, token, Permission::FETCH | Permission::VEST).unwrap();
@@ -182,7 +282,7 @@ pub fn lifecycle() {
             .validate_access(VirtAddr::wrap(again), PAGE_SIZE, Access::WRITE)
     );
     assert_eq!(
-        create_pole(&caller, VirtAddr::wrap(again), PAGE_SIZE, true),
+        create_pole(&caller, reference, true),
         Err(env::PieFail::Denied)
     );
     let (again_peer, _) = pole::open(&meta, token, &peer.space, Access::READ).unwrap();

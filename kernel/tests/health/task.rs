@@ -43,16 +43,31 @@ fn stage_only(
     access: Access,
     start: VirtAddr,
 ) -> alloc::sync::Arc<crate::core::memory::nest::View> {
-    meta.reserve_record().expect("reserve Pole record");
+    meta.reserve_records(1).expect("reserve Pole record");
     child.reserve_staging(1).expect("reserve staged record");
     let source = meta.window(0, meta.size()).expect("Pole source window");
     let reservation =
         support::reserve(&child.space, start, meta.size()).expect("reserve staged range");
+    let id = reservation.id();
+    let authorization = meta.authorization().expect("source authorization");
+    child
+        .space
+        .views
+        .claim(
+            id,
+            &child.space,
+            meta.owner(),
+            env::ViewControl::Caller,
+            authorization,
+            Some(token),
+        )
+        .expect("staged identity");
     let view = child
         .space
         .nest
         .attach(reservation, source, access, access)
         .expect("attach staged map");
+    child.space.views.commit(id, view.clone());
     assert!(
         meta.record(token, &child.space, view.clone(), Some(child.id), false)
             .is_ok()
@@ -157,12 +172,12 @@ pub fn preparation() {
 pub fn construction() {
     use crate::core::memory::PAGE_SIZE;
     use crate::core::memory::nest::table::PteFlags;
-    use crate::core::work::mail::{Mail, pole};
+    use crate::core::work::mail::pole;
     use crate::core::work::room::scheduler;
     use crate::core::work::{pend, unit::team};
     use alloc::sync::{Arc, Weak};
     use alloc::vec::Vec;
-    use env::{Mark, Permission, UnitFail};
+    use env::{Permission, UnitFail};
     scheduler::init().expect("scheduler init");
     let parent_space = SpaceBuilder::supervisor().build().unwrap();
     parent_space
@@ -225,17 +240,8 @@ pub fn construction() {
                 .collect(),
         );
         drop(frames);
-        let meta = pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id).unwrap();
-        let root = pend::Pie::try_new(
-            Mail::Pole(meta.clone()),
-            Mark::NONE,
-            Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
-            None,
-        )
-        .expect("pie allocation");
-        let token = root.token();
-        pend::insert(&caller, root).unwrap();
-        meta.commit_source();
+        let (token, meta) = support::source_pole(&caller, &parent.space, &input, false);
+        drop(input);
         let (open_va, _) =
             pole::open(&meta, token, &parent.space, Access::READ | Access::WRITE).unwrap();
         assert!(
@@ -318,6 +324,47 @@ pub fn construction() {
     );
     for token in roots {
         assert!(pend::locate(&caller, token).is_none());
+        let call = env::MemoryCall::Acquire {
+            source: env::AcquireSource::Source {
+                token,
+                offset: 0,
+                count: 1,
+            },
+            retention: env::PieToken::NONE,
+        };
+        let frame = unsafe {
+            &mut *(caller.ident.frame_pa.as_usize()
+                as *mut crate::machine::switcher::context::TrapContext)
+        };
+        for (at, value) in call.pack().into_iter().enumerate() {
+            frame
+                .gpr
+                .set_x(crate::machine::switcher::context::Gprs::A0 + at, value);
+        }
+        frame
+            .gpr
+            .set_x(crate::machine::switcher::context::Gprs::A7, call.slot());
+        assert!(crate::entry::call::dispatch(frame, caller.ident.clone()).is_some());
+        assert_eq!(
+            frame.gpr.x(crate::machine::switcher::context::Gprs::A0) as isize,
+            env::MemoryFail::Denied.code(),
+            "the consumed sender token cannot acquire another source hold"
+        );
+    }
+    for view in &stage_maps {
+        let entry = child.space.views.locate(view.identity()).unwrap();
+        assert_eq!(entry.controller, task.ident.id);
+        assert!(entry.branch.is_none());
+        assert!(entry.source.own_range().is_none());
+        assert!(!entry.source.branch_check(None, Access::READ));
+        assert_eq!(
+            entry
+                .source
+                .enter_publish(view.identity(), None, Access::READ),
+            Err(env::PieFail::Denied),
+            "ONLY delivery does not restore source publication or creation"
+        );
+        assert_eq!(entry.source.claim(), Err(env::PieFail::Denied));
     }
     for va in [VirtAddr::wrap(0x20000), VirtAddr::wrap(0x21000)] {
         let (_, flags) = child
@@ -361,11 +408,11 @@ pub fn construction() {
 pub fn cancellation() {
     use crate::core::memory::PAGE_SIZE;
     use crate::core::memory::nest::table::PteFlags;
-    use crate::core::work::mail::{Mail, pole};
+    use crate::core::work::mail::pole;
     use crate::core::work::pend;
     use alloc::sync::{Arc, Weak};
     use alloc::vec::Vec;
-    use env::{Mark, Permission};
+    use env::Permission;
     let parent_space = SpaceBuilder::supervisor().build().unwrap();
     parent_space
         .nest
@@ -406,17 +453,8 @@ pub fn cancellation() {
         .map(|(_, frame)| Arc::downgrade(frame))
         .collect();
     drop(frames);
-    let meta = pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id).unwrap();
-    let root = pend::Pie::try_new(
-        Mail::Pole(meta.clone()),
-        Mark::NONE,
-        Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
-        None,
-    )
-    .expect("pie allocation");
-    let token = root.token();
-    pend::insert(&caller, root).unwrap();
-    meta.commit_source();
+    let (token, meta) = support::source_pole(&caller, &parent.space, &input, false);
+    drop(input);
     pole::shut(&meta, token).unwrap();
     let at = VirtAddr::wrap(0x20000);
     let staged_map = stage_only(&child, &meta, token, Access::READ | Access::WRITE, at);

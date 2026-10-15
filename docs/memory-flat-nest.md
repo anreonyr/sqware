@@ -636,3 +636,207 @@ SHA256 前缀：`nest/mod.rs 0fac4616cd88`、`nest/view/mod.rs eba3e61f4140`、
 `health/nest_failure.rs af8b2c1efe57`、`health/memory.rs 8f6586036621`。
 记录级限制仍包括：boot 常量经预校验后的 Exact 构造没有专项失败注入；
 内存用例中只对合法输入自算尺寸的期望值不代替 wire 溢出验证。
+
+## PR 5：迁移 ABI、来源授权与 Rust 包装（实现、验证与审查）
+
+本节是**未提交的迁移检查点**：新五操作及生产包装已经有实现，
+旧五变体、dispatch、VA 字节适配与 `CreationRegistry` 已删除。
+健康面和宿主 Pend 的等价测试已迁移，固定版本已通过独立功能/生命周期与命名/层次审查；
+验证与审查均不替代远端提交核对。
+
+### 用户新指令（覆盖原兼容条款）
+
+**不保留旧 `MemoryCall`**：`Allocate` / `Deallocate` / `Mmap` / `Munmap` / `Mprotect`
+五个变体与其 dispatch 分支、旧 VA 来源桥、旧创建资格桥全部最终退出；
+所有生产包装 / heap / TLS / loader / resource / 测试迁到新五操作。
+`MemoryCall` 只承载 `Acquire` / `Release` / `Attach` / `Detach` / `SetAccess`，
+仍用**显式槽 5–9**；旧 0–4 明确解码为 Unknown / 拒绝，**不重排、不 alias**。
+因此没有“旧字节规范化”生产 helper，历史 ABI 固定用例改成“旧槽拒、新槽往返”。
+
+### 已落地的线协议（现行）
+
+- 5 `Acquire { source: AcquireSource, retention: PieToken } -> FlatReference`；
+  6 `Release { reference: FlatReference } -> ()`；
+  7 `Attach { range: VirtAddr, team, placement: VirtAddr, access, control: ViewControl } -> (ViewId, VirtAddr)`；
+  8 `Detach { team, view: ViewId, selection: ViewSelection } -> ()`；
+  9 `SetAccess { team, view, selection, access } -> ()`。
+- `Attach` 五字：`range` 与 `placement` 分别是**指向定长描述的只读用户指针**，
+  各从**调用者**的地址空间读一次快照；`control` 单独一格。不再把控制塞进 Placement，
+  也不动 A0–A5 宽度。
+- `ViewControl::{Caller, SpaceMembers}`：逐映射的显式选择。`SpaceMembers` 只允许
+  **来源与目标域授权都已通过**的 `Attach` 发起者选择，只绑定这一条目标 Space 控制记录；
+  它不是“同 Space 自动全控”，不给源所有权/资格/独立 Hold 任何授权，
+  也不给其它 View 加权限。kernel 不代选（`team != 0` 不自动变 `SpaceMembers`）。
+- `ReferenceRange`（`WORDS = 3`）与 `Placement`（`WORDS = 3`）各有自己的定长 codec；
+  前者用 [`Wire`] 的同一份布局（`encode` / `decode` 都走 `pack` / `unpack`，不重写第二份）。
+  两者实现 `Field`，`WIDTH = 24`，字节口径固定为 LE；内核按这份宽度快照，不另写长度。
+- 类型：`AcquireSource`、`Allocation`、`Placement`、`PlacementAt`、`ReferenceRange`、
+  `ViewControl`、`ViewSelection`（一型一文件），`FlatReference` / `ViewId` 在 wire 中立域各自成文件，
+  `MemoryFail` 独立 `memory/error.rs`。
+- 宿主证据：`cargo test -p env --target x86_64-unknown-linux-gnu --offline` 23 过
+  （旧槽 0–4 对零载荷、全高位及旧 Mmap 载荷均为 `BadSlot`，新槽 5–9 逐一往返、
+  `ViewControl` 两支与非法值、`Placement` 往返与
+  零/非 2 的幂/高位对齐构造不 panic、范围 checked、固定字节布局与 signed 身份域）。
+
+### 已落地的内核功能（真实入口，已跑）
+
+- `SourceAuthorization` 已接入编译模块（`pend/allocation/source_authorization.rs`）：
+  一份来源授权 = 范围 + 上限 + 一次性创建资格 + 私有/根 Grant 相位；
+  它与引用表、创建资格、事务同处工作层。
+- per-Task **引用表**（`hold_table.rs`）：句柄号**全局单调**、永不复用、
+  超符号上界运行时明确失败；表自己按 id 找——跨 Task 的同数字不成立。
+- `Acquire` / `Release` 已实现（`entry/call/memory.rs`）：
+  新 `Allocation` 建来源持有 + 一份未消费资格；`Reference` 子范围 clone **共享**同一份
+  授权记录（同一来源/上限/撤销依赖），不复制资格；`Release` 只摘本表那一格，
+  不 Detach、不分配，授权失效也不妨碍清自己的句柄。
+- `retention != NONE` 的独立保留授权只认**内核铸的** Nole 真对象
+  （`NoleMeta::mint_retention()`；`try_new` 造的是可自造的普通 Nole，不算），
+  还要求调用者持有它自己那枚活的 Pie。
+- Task 尽头：`cull::doom` 清空本任务引用表（引用结清、未消费资格结束）；
+  关系不由这张表拆，留给来源 Grant / Pole / Nest 的清理链。
+- `ViewRegistry` 有发布前占位的 `claim`、不分配的 `commit` 与 `cancel`；
+  `Attach` / `Detach` / `SetAccess` 已从真实 trap 路径执行过。
+- Pole 的创建入口改收完整来源引用，不再从 VA 导出创建资格；
+  `resource::raw::pole` 已使用 Acquire → Unseal → Release。
+
+### 交接与退出清理
+
+- foreign 安装已接回 VEST、readonly、ONLY、exclusive、整窗、无活别名与 staging 判据。
+  ONLY 的成功 Spawn 原子消费发送者 Pie，移交映射 controller；scope/ceiling 不扩大。
+- 交付范围限于已建立的 CPU 映射与控制权，不铸接收者的新来源能力或独立保留。
+  `SourceAuthorization` 永久保留 Root/range=None，资格保持已消费，旧引用不能恢复私有归属。
+- Spawn 先用短 gate 原子暂停新发布；在途未空即 Busy。publish 期间不持 gate，
+  失败仅在原 Grant 仍活时恢复发布，成功永久关闭旧发布权。
+- Task 的反向弱索引只定位其 Caller 控制记录，不承担地址或来源权威。
+  死亡清理在表锁外消费 View；SpaceMembers 不因 issuer 退出被误清。
+  退休判据为 Nest 的实际 Reservation generation；同步未结清不交还 VA。
+- Rust `Reference` / `View` 是显式 release/close 的控制记录，失败保留本地句柄；
+  映射归 Space，临时 Rust View 的 drop 不隐式 Detach。堆与 TLS 使用预留元数据；
+  TLS 本地记录在 native 终态后回收，不把私有控制权交给另一个 Task。
+- 原三条宿主资格判据已迁为来源身份绑定、失败回退、已消费不可复原，
+  另覆盖独立保留不延长资格及身份耗尽不回绕；Pend 宿主共 37 passed。
+
+### 实际验证与限制
+
+| 检查 | 结果 |
+|---|---|
+| workspace build/check dev + release | 通过；dev 无告警，release 的 kernel 有 7 项 unused 诊断/保留入口告警 |
+| kernel all-targets dev/release，默认与 semihosting | 通过 |
+| programs all-targets dev/release | 通过 |
+| `nu scripts/qtest.nu --package kernel` | 58 passed + 缺 initrd 的 scene 哨兵 1 failed，退出 101 |
+| accept / product / system-fault | 各 1 passed；去掉临时诊断与 eager 实验后分别 10.29s / 5.33s / 13.30s |
+| env / Pend / frame-runs / trace / console-line | 23 / 37 / 9 / 2+2 / 5 passed |
+| execution heap / unit，resource capability | 6 / 1 / 16 passed |
+| alloc-probe | 默认宿主 C 编译失败；加 `CFLAGS=-std=gnu17` 后串行库 6 passed；无默认特性串行 6+4 passed；all-targets 检查通过 |
+| `cargo fmt --all -- --check` | 退出 1，58 块既有格式债，未全树重排 |
+| `git diff --check` | 通过 |
+
+alloc-probe 的默认并行库测试另有 4 passed / 2 failed（共享台面的预算/守恒判据相互干扰）；
+串行与 C 标准覆盖是不同检查，不把默认命令失败写成通过。未改动该探针或 vendor C。
+workspace 的裸机全树 `--all-targets` 也不能代替分包矩阵：`stream` 的 std 测试不能编到
+`riscv64gc-unknown-none-elf`；上表使用实际支持的 workspace 与分包构建方式。
+
+本轮真实入口覆盖：五个 Pole 失败检查点；四个准备失败（不为无分配 Release 伪造 OOM）；
+双子 Grant 撤一留一及真实 cull 遇在途 Busy；普通/独立保留的 Frame 生命周期差异；
+live View 在场时最后普通引用释放后资格永久结束；同 Space 控制不授来源权；
+Caller 退出与共享映射存活。仍不声称已验证真实 IOMMU/DMAC、硬件隔离、多 hart 所有交错。
+
+### 并发堆暴露的 ASID 返回遗漏
+
+`system-fault` 入口先执行真实 Talc 并发堆验收。迁移到惰性来源后，成功缺页路径的提前
+return 跳过了 ASID 租约恢复：hart 已回用户态，记录却仍为 kernel，后续 shootdown 可能漏掉它，
+导致不同分配之间的数据污染。trap 返回统一经 `resume` 恢复目标 ASID；并发堆及完整
+system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验均未保留，期限和断言未放宽。
+另外修正两处手工启动 closure 的真实类型为 trampoline 所要求的 `FnOnce()`，不再错转
+`FnOnce(usize)` 的 vtable。
+
+### 来源授权的内部口径
+
+- **真实范围归谁**：授权记录只在**私有阶段**强持整段来源（`range: Option<FlatRange>`）；
+  交给根 Grant 时 `adopt` 把范围**转出**，此后真实范围在 Pole 手里。
+- **普通引用不永久 pin 来源**：`Hold` 只记相对授权的页坐标，用得着时向授权解析
+  （`Hold::resolve`）：私有阶段解自己的，已接管就向 Pole 要并要求那枚 Grant 仍活。
+  撤销后普通句柄既不能挂载，也不再强持物理源；**只有带独立保留的那一份**
+  在取得时把这段范围解下来自己强持，因而能跨 Driver 撤销继续持同一批帧。
+- **资格结束是显式语义**：授权记录上有一个普通引用的成员计数（不是 `Arc` 强计数），
+  最后一份普通引用解除时**显式消费**那份未消费的一次性资格。接上 View 登记后
+  仍有人持着授权记录，资格该结束还是结束；独立保留不计入普通引用成员。
+- 私有来源记录保存真实 owner；`SpaceMembers` 控制权不能换成来源权。
+  `Acquire(View)` 必须另核私有 owner 或调用者持有的活分支 Grant，
+  失效或已移除 token 返回失败，不通过 `expect` 触发内核 panic。
+- `Acquire(Reference)` 的切片必须落在输入 Hold 自己的窗口内，而非整份来源内；
+  `create_pole` 拒绝子窗口、Grant 分支和独立保留输入。
+- **保留 cap 命名**：`NoleMeta::retains()` / `mint_retention()`（不再用 `detached`，
+  那是 `Detach` 的映射语义）；铸造厂是内核的真入口，把 cap 实际发给
+  System / IOMMU 属 PR6。
+- `Phase` 单独成文件（一型一文件）。
+- 上述新增边界已有实现与 release 编译证据，仍待迁完健康面后的真实入口反例验收。
+
+### 运行时元数据与宿主证据
+
+- Heap 显式选择 `SpaceMembers`，TLS 使用 `Caller`；身份登记使用静态预留槽，
+  表满在 Acquire / Attach 前失败，不递归调用同一 GlobalAlloc。
+- 映射责任分为在用、欠清理、在途关闭、已结清；在途槽不能被复用。
+  引用的待释放责任另记 owner，只由该 Task 重试；两笔责任都结清后才腾槽。
+- 扫描只主张仍为 Owed 的项，按地址归还的查找与主张同锁完成；
+  旧扫描不能撤下已复用的新 Live 映射，失败回写也不恢复已释放的引用。
+- `cargo test --manifest-path crates/execution/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline`
+  最近实跑 **6 passed**：原 pooling/alignment/realloc/failure/cross-task-free 断言保留，
+  新增表满/在途、Detach 失败重试与引用 owner、Live-only pending、陈旧扫描与回写交错。
+  夹具使用真实 System 分配区，并按宿主线程区分引用表 owner，不释放伪造地址。
+- 这些证明的是运行时状态协议，不代替真实内核授权、TLS 退出和多 hart 撤销验收。
+- 旧五操作删除前的父工作树 `accept` 已实跑 1 passed（10.39s）。
+  删除后健康面尚未编译通过，不能把那次场景结果当最终树验收。
+
+### 下一步必须钉住的事实（已有合同的检查点）
+
+- `AcquireSource::View` / `Acquire(Source{Pole})`：来自子 Pie 的引用必须保**该子
+  Grant/token 的撤销边与上限**，登记也登在该子 token 下——不能因为同 Flat、
+  共享根资格就统一用 `SourceAuthorization` 里的根 token。否则子 Pie revoke 扫子 token
+  时找不到新 View，成逃逸。根资格 / 私有→根的转移事实可以共享；不同 Grant 分支的
+  授权不是同一事实，不可偷合。需要正反测试：同源下根与两个子 Grant，撤一支只关该支。
+- 接 View 后的资格测试：仍有 live View 时最后一份普通引用释放后，
+  重 Acquire / View 数据仍可用，但资格不得复活。
+
+### 发布与关闭的线性化点（不照抄“PTE 后再读一次 alive”）
+反例：`Attach` 写 PTE → 读 Grant 仍活 → `Revoke` 关闭 Grant 并扫描已登记关系
+（本 View 还没登记）并成功返回 → `Attach` 再插入登记 ⇒ 撤销后逃逸一个 View。
+
+因此：
+
+1. `Attach` 在**写任何 PTE 之前**，在目标 Space 的控制记录里插入一条 *in-flight* 条目
+  （携带本次占用的 generation、来源授权与精确 ViewId），容量先备齐，使这一步之后不再失败。
+2. `enter_publish(id, branch, access)` 在短 gate 下验证当下分支权限并登记在途；
+   `cull` 在移出 Pie / invalidate Grant 之前经 `begin_withdraw` 取同一 gate。
+   在途未空则返回 Busy；不能先报告撤销完成，再漏掉迟来的发布。
+3. gate 不跨 `Nest::attach`、detach 或远端同步。映射在锁外建立，提交后才解除在途；
+   失败先保留/交还对应的占用与清理责任，再结清。
+4. 分支 record 容量由已有 `PoleOperation` 租约串行；Space 的注册槽实际占位，
+   不靠单独 `Vec::try_reserve` 假装并发提交不会分配。
+5. 这些是当前实现规则，真实 Revoke / Seal / 在途 Attach 的交错和创建交接仍需整体验收，
+   手动调用 gate 的健康例不替代真实撤销链测试。
+
+### 独立审查记录
+
+- namer 与 reviewer 均逐一核对 11 个生产 pin，基于集成后的真实未提交文件实审，
+  不拿旧隔离树或 worker 的测试读数代替检查；两者结论均无实现阻塞项。
+- 嵌套 `execution/tests/unit/target/` 已补 `/target/` 忽略，提交仅暂存明确的源码范围，
+  不以 `git add -A` 收入产物。
+- ONLY 的 A′ 语义已明确：成功永不恢复旧发布权；发送者 root token 已摘除并失效，
+  其后真实 Acquire 返回 Denied。交付页继续可用，controller 属于接收者，
+  但不授予来源再派生或创建资格。健康面另断言 Root/range=None、不恢复发布与资格。
+- 坐标查询不按根 permission 统一过滤，操作点单独核分支授权；
+  否则会误伤同源下独立的子 Grant。
+- 非阻塞跟踪：描述符失败词汇细分、引用成员计数失衡防护、失效 Weak 压缩、
+  旧 Pie/Mail 其它编号源的界限统一、少量诊断查询及保留 cap 工厂在 release 未使用。
+  不用饱和减法掩盖计数违例，不将清理错误改成静默 `let _ = release`。
+- `fresh caller reference cleanup` 的 expect 是对“刚取得、同 Task、无分配 Release”
+  不变量的显式检查，不是错误重试；正常失败路径会清理这份引用，
+  意外违反不变量时用户任务 fail-fast，由内核 Task 退出清理，不能表述成内核 panic。
+
+### 本轮一并带上的基线修复
+
+`programs/src/harness/probe/loader.rs::image_bytes` 的入口与 `PT_LOAD` VA
+从 `0x4000` 改成与 `programs/link.ld` 一致的 `IMAGE_BASE = 0x1_0000`
+（低于 `IMAGE_BASE` 的真实失败是 `MemoryFail::NoRegion`，不是 IPC 超时；
+修 fixture 后 system-fault 真实场景通过）。本项只改该夹具的三行事实。

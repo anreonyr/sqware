@@ -16,6 +16,9 @@ pub struct NoleMeta {
     life: Arc<Life>,
     ring: SpinLock<bool>,
     owner: TaskId,
+    /// 这是**内核铸的**一枚（不是用户 `Unseal(Nole)` 自造的那一枚）。
+    /// 它是“独立保留授权”的真对象身份，不靠 `owner` 数字 / `Mark` / 权限位单独证明。
+    retention: bool,
 }
 
 impl NoleMeta {
@@ -24,7 +27,28 @@ impl NoleMeta {
         Self::try_new(owner).expect("nole allocation failed")
     }
 
-    pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
+    /// 内核铸的保留授权 Nole：只有经这扇门造出来的对象 `retains()` 为真。
+    /// 这是内核的**真铸造厂**（不是调试期的假正面）；把 cap 实际发给
+    /// System / IOMMU 的硬件侧属 PR6。
+    pub(crate) fn mint_retention(owner: TaskId) -> Arc<Self> {
+        Self::try_build(owner, true).expect("nole allocation failed")
+    }
+
+    /// 是否为内核认可的保留授权对象。
+    pub(crate) fn retains(&self) -> bool {
+        self.retention
+    }
+
+    pub(crate) fn try_new(
+        owner: TaskId,
+    ) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
+        Self::try_build(owner, false)
+    }
+
+    fn try_build(
+        owner: TaskId,
+        retention: bool,
+    ) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
         let life = Life::try_new()?;
         Arc::try_new(Self {
             state: SpinLock::new_level(Level::L3, Liveness::Live),
@@ -32,6 +56,7 @@ impl NoleMeta {
             life,
             ring: SpinLock::new_level(Level::L3, false),
             owner,
+            retention,
         })
         .map_err(|_| crate::core::memory::nest::NestError::OutOfMemory)
     }

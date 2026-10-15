@@ -4,16 +4,42 @@ use crate::core::memory::address::VirtAddr;
 use crate::core::memory::nest::{Access, Nest, SpaceKind};
 use crate::core::work::unit::life::Life;
 
+use super::ViewRegistry;
+
 /// 一个团队的地址空间：CPU 翻译（`Nest`）加一条生命周期线。
 ///
 /// 来源准备与选址组合由调用方显式给出；这里只保留“本空间的用户半边”这一条
 /// 访问纪律：地址窗口与页表权限同时成立才放行。
+/// `views` 是新 ABI 的**控制授权记录**，不是页槽副本。
 pub struct Space {
     pub(crate) nest: Arc<Nest>,
     pub(super) life: Arc<Life>,
+    pub(crate) views: ViewRegistry,
 }
 
 impl Space {
+    fn release_controller(id: usize, entry: &super::ViewEntry) {
+        if entry.scope == env::ViewControl::Caller
+            && let Some(task) = crate::core::work::room::scheduler::roster::muster(entry.controller)
+                .and_then(|task| task.upgrade())
+        {
+            task.release_control(id);
+        }
+    }
+
+    pub(crate) fn retire_view(&self, id: usize) {
+        if let Some(entry) = self.views.locate(id) {
+            self.views.retire(id);
+            Self::release_controller(id, &entry);
+        }
+    }
+
+    pub(crate) fn reap_views(&self) {
+        while let Some((id, entry)) = self.views.take_settled(&self.nest) {
+            Self::release_controller(id, &entry);
+        }
+    }
+
     pub fn kind(&self) -> SpaceKind {
         self.nest.kind()
     }

@@ -180,7 +180,14 @@ impl Team {
     pub(crate) fn cancel_staging(&self) -> Result<(), NestError> {
         let mut staged = StagingLease::hold(self);
         while let Some(item) = staged.items.last() {
-            self.space.nest.detach(item.view.whole())?;
+            self.space.nest.retry_invalidation()?;
+            let id = item.view.identity();
+            if self.space.nest.contains_reservation(id) {
+                self.space.nest.detach(item.view.whole())?;
+            }
+            if !self.space.nest.contains_reservation(id) {
+                self.space.retire_view(id);
+            }
             item.meta.detach_staging(item.token, self.id);
             let owner = item.meta.owner();
             let token = item.token;

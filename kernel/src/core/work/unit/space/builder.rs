@@ -10,7 +10,7 @@ use crate::core::memory::nest::{
 use crate::core::work::unit::life::Life;
 use crate::core::work::unit::team;
 
-use super::space::Space;
+use super::{Space, ViewRegistry};
 
 /// 建一个空间。
 pub struct SpaceBuilder {
@@ -49,6 +49,7 @@ impl SpaceBuilder {
         let space = Space {
             nest,
             life: Life::try_new()?,
+            views: ViewRegistry::new(),
         };
         if !self.kernel {
             let source = team::kernel().expect("kernel team not initialized");

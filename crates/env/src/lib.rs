@@ -29,15 +29,16 @@ pub mod wire;
 
 pub use abi::call::memory::PAGE_SIZE;
 pub use abi::call::{
-    AwaitReply, Bit, ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail,
-    ControlResult, DBCN_MAX, DebugCall, DebugCallRet, DebugFail, DebugResult, DispatchFail,
-    EnvCall, HoleLimits, MailCall, MailCallRet, MailCondition, MailFail, MailResult, MemoryCall,
-    MemoryCallRet, MemoryFail, MemoryResult, NOTE_MAX, Oversize, PieCall, PieCallRet, PieFail,
-    PieInfo, PieResult, PullOutcome, ReleaseMode, RoomCall, RoomCallRet, RoomFail, RoomResult,
-    Source, UnitCall, UnitCallRet, UnitFail, UnitResult, UnsealArgs,
+    AcquireSource, Allocation, AwaitReply, Bit, ChronoCall, ChronoCallRet, ControlCall,
+    ControlCallRet, ControlFail, ControlResult, DBCN_MAX, DebugCall, DebugCallRet, DebugFail,
+    DebugResult, DispatchFail, EnvCall, HoleLimits, MailCall, MailCallRet, MailCondition, MailFail,
+    MailResult, MemoryCall, MemoryCallRet, MemoryFail, MemoryResult, NOTE_MAX, Oversize, PieCall,
+    PieCallRet, PieFail, PieInfo, PieResult, Placement, PlacementAt, PlacementError, PullOutcome,
+    ReferenceRange, ReleaseMode, RoomCall, RoomCallRet, RoomFail, RoomResult, Source, UnitCall,
+    UnitCallRet, UnitFail, UnitResult, UnsealArgs, ViewControl, ViewSelection,
 };
 /// **每格一个精确签名的入口**（`#[derive(Envcall)]` 生成，一域一个模块）：
-/// `env::memory::allocate(size)`、`env::pie::seal(token)`、`env::room::park(millis)`…
+/// `env::memory::acquire(source, retention)`、`env::pie::seal(token)`、`env::room::park(millis)`…
 /// 载荷类型就是那一格的契约；标 `#[infallible]` 的格不返 `Result`。
 pub use abi::call::{
     chrono::chrono, control::control, debug::debug, mail::mail, memory::memory, pie::pie,
@@ -55,7 +56,9 @@ pub use mold::Frame;
 pub use mold::WireCodes;
 pub use wire::pie_kind::PieKind;
 pub use wire::program_kind::ProgramKind;
-pub use wire::{Decode, FromPair, Mark, PieToken, TaskId, TeamId, VirtAddr, Wire};
+pub use wire::{
+    Decode, FlatReference, FromPair, Mark, PieToken, TaskId, TeamId, ViewId, VirtAddr, Wire,
+};
 
 pub use ledger::entry::{ENTRY_LEN, Entry};
 pub use ledger::name::{Call, NAME_LEN, Name, Page, Trap};

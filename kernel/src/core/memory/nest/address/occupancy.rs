@@ -181,7 +181,7 @@ impl Occupancy {
         self.slots
             .try_reserve(1)
             .map_err(|_| NestError::OutOfMemory)?;
-        let id = next_id();
+        let id = next_id()?;
         self.slots.insert(
             at,
             Slot {
@@ -225,8 +225,8 @@ impl Occupancy {
             .try_reserve(1)
             .map_err(|_| NestError::OutOfMemory)?;
         let right = start + left_size;
-        let left_id = next_id();
-        let right_id = next_id();
+        let left_id = next_id()?;
+        let right_id = next_id()?;
         let region = self.slots[at].region;
         self.slots[at] = Slot {
             start,
@@ -425,9 +425,7 @@ impl Occupancy {
     }
 }
 
-fn next_id() -> usize {
+fn next_id() -> Result<usize, NestError> {
     static NEXT: AtomicUsize = AtomicUsize::new(1);
-    let id = NEXT.fetch_add(1, Ordering::Relaxed);
-    assert_ne!(id, 0, "address reservation identities exhausted");
-    id
+    crate::machine::sync::next_id(&NEXT).ok_or(NestError::OutOfMemory)
 }

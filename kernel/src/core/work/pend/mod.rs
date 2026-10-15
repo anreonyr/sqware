@@ -13,7 +13,7 @@ mod narrow;
 mod need;
 mod pie;
 
-pub(crate) use allocation::CreationRegistry;
+pub(crate) use allocation::{HoldTable, SourceAuthorization};
 pub(crate) use ledger::Pend;
 pub(crate) use need::Need;
 
