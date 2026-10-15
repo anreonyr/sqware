@@ -1,0 +1,22 @@
+/dts-v1/;
+/ {
+    #address-cells = <2>;
+    #size-cells = <2>;
+    model = "device-type-exactness";
+
+    pci@40000000 {
+        device_type = "pci";
+        #address-cells = <3>; #size-cells = <2>;
+        ranges = <0x02000000 0x0 0x40000000 0x0 0x40000000 0x0 0x10000000>;
+    };
+    pcie@41000000 {
+        device_type = "pcie";
+        #address-cells = <3>; #size-cells = <2>;
+        ranges = <0x02000000 0x0 0x41000000 0x0 0x41000000 0x0 0x10000000>;
+    };
+    bridge@42000000 {
+        device_type = "pci-something";
+        #address-cells = <3>; #size-cells = <2>;
+        ranges = <0x02000000 0x0 0x42000000 0x0 0x42000000 0x0 0x10000000>;
+    };
+};

@@ -5,11 +5,13 @@ use core::cell::UnsafeCell;
 
 use crate::core::memory::PAGE_SIZE;
 
+use super::custody::Custody;
 use super::error::FlatError;
 
 #[derive(Debug)]
 pub struct Frame {
     page: Box<UnsafeCell<[u8; PAGE_SIZE]>, &'static dyn Allocator>,
+    custody: Custody,
 }
 
 impl Frame {
@@ -19,7 +21,16 @@ impl Frame {
                 .map_err(|_| FlatError::OutOfMemory)?
                 .assume_init()
         });
-        Arc::try_new(Self { page }).map_err(|_| FlatError::OutOfMemory)
+        Arc::try_new(Self {
+            page,
+            custody: Custody::new(),
+        })
+        .map_err(|_| FlatError::OutOfMemory)
+    }
+
+    /// 这份帧的迁移托管：只有 `Sole` 能开始移交。
+    pub(super) fn custody(&self) -> &Custody {
+        &self.custody
     }
 
     pub fn physical_address(&self) -> usize {

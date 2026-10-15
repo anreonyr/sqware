@@ -108,7 +108,7 @@ fn retained_source_and_live_record_cannot_extend_creation_qualification() {
             PageOffset::ZERO,
             count,
             Access::READ,
-            root.own_range(),
+            root.own_range().map(|range| range.reside().unwrap()),
             None,
         )
         .unwrap();

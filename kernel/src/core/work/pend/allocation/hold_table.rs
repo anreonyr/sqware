@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::AtomicUsize;
 
 use crate::core::memory::address::{PageCount, PageOffset};
-use crate::core::memory::flat::FlatRange;
+use crate::core::memory::flat::Residency;
 use crate::core::memory::nest::Access;
 use crate::machine::sync::SpinLock;
 use env::PieFail;
@@ -41,7 +41,7 @@ impl HoldTable {
         offset: PageOffset,
         count: PageCount,
         ceiling: Access,
-        retained: Option<FlatRange>,
+        retained: Option<Residency>,
         branch: Option<(env::PieToken, Arc<crate::core::work::grant::Grant>)>,
     ) -> Result<usize, PieFail> {
         let mut holds = self.holds.lock();

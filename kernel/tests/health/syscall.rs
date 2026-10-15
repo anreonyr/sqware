@@ -784,6 +784,377 @@ fn reference(raw: usize) -> env::FlatReference {
     }
 }
 
+/// 借来的设备区也能**按子窗口**取：引导期给的授权记录让持有者只要自己那一小段。
+///
+/// 这就是 BAR 那一格的真实通路：不需要把整段 aperture（或整段 ECAM）攞进本域。
+pub fn device_window() {
+    use crate::core::memory::flat::Frame;
+    use crate::core::work::mail::pole;
+    use crate::core::work::pend::SourceAuthorization;
+    use env::{AcquireSource, Mark, MemoryFail, PieToken, ReferenceRange};
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let user = Caller::new(false);
+    let task = &user.task;
+    let frame = Frame::allocate().expect("frame");
+    let physical = frame.physical_address();
+    let meta = pole::region(physical, 2 * PAGE_SIZE, task.ident.id).expect("region");
+    let pie = pend::Pie::try_new(
+        Mail::Pole(meta.clone()),
+        Mark::NONE,
+        Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
+        None,
+    )
+    .expect("pie");
+    let token = pie.token();
+    task.pend.pies.lock().push(pie);
+    let authorization =
+        SourceAuthorization::new(meta.source(), Access::all(), task.ident.id).expect("authority");
+    meta.attach_source(&authorization);
+    assert!(
+        authorization
+            .adopt(&meta, token, meta.grant(token).expect("grant"))
+            .is_ok()
+    );
+
+    // 越出这段区的窗口先拒。
+    let outside = user.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token,
+            offset: 2,
+            count: 1,
+        },
+        retention: PieToken::NONE,
+    }));
+    assert_eq!(outside, MemoryFail::NoRegion.code());
+
+    let hold = user.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token,
+            offset: 1,
+            count: 1,
+        },
+        retention: PieToken::NONE,
+    }));
+    assert!(hold > 0, "window acquire: {hold}");
+    let scratch = user.allocate(PAGE_SIZE);
+    let range = ReferenceRange::new(reference(hold as usize), 0, 1).expect("range");
+    write_words(&user, scratch, &[range.reference.get(), 0, 1]);
+    write_words(&user, scratch + 32, &[0, 0, PAGE_SIZE]);
+    let (id, at) = user.pair(EnvCall::Memory(MemoryCall::Attach {
+        range: VirtAddr::new(scratch),
+        team: env::TeamId::new(0),
+        placement: VirtAddr::new(scratch + 32),
+        access: 6,
+        control: env::ViewControl::Caller,
+    }));
+    assert!(id > 0, "window attach: {id}");
+    assert_eq!(at % PAGE_SIZE, 0);
+    assert_eq!(
+        user.team
+            .space
+            .nest
+            .physical_at(KVirt::wrap(at))
+            .expect("mapped page")
+            .as_usize(),
+        physical + PAGE_SIZE,
+        "the window keeps its own coordinates inside the borrowed region"
+    );
+    // 借用区只开 MMIO 读写：执行映射要拒。
+    assert_eq!(
+        user.pair(EnvCall::Memory(MemoryCall::Attach {
+            range: VirtAddr::new(scratch),
+            team: env::TeamId::new(0),
+            placement: VirtAddr::new(scratch + 32),
+            access: 6 | 8,
+            control: env::ViewControl::Caller,
+        }))
+        .0,
+        MemoryFail::Denied.code(),
+        "a device window does not hand out execute mappings"
+    );
+    // 清除这一格：自己建的那张映射由自己拆，不留给任务尽头。
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Detach {
+            team: env::TeamId::new(0),
+            view: view_handle(id as usize),
+            selection: env::ViewSelection::Whole,
+        })),
+        0
+    );
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(hold as usize),
+        })),
+        0
+    );
+    assert_eq!(user.team.space.nest.physical_at(KVirt::wrap(at)), None);
+}
+
+/// Traverse exports only a retained window under current authority.
+///
+/// 三条判据：保留那一份给得出对得上真帧的起址；普通引用一律拒；
+/// 两次取到的起址是同两页（同一批帧，不是每次另发一份）。
+pub fn traverse_pages() {
+    use crate::core::work::mail::nole::NoleMeta;
+    use env::{AcquireSource, Allocation, Mark, MemoryFail, PieToken, ReferenceRange};
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let user = Caller::new(false);
+    let task = &user.task;
+    let acquire =
+        |source, retention| user.call(EnvCall::Memory(MemoryCall::Acquire { source, retention }));
+    let ordinary = acquire(
+        AcquireSource::Allocation(Allocation::new(2 * PAGE_SIZE, PAGE_SIZE).unwrap()),
+        PieToken::NONE,
+    );
+    assert!(ordinary > 0, "acquire allocation");
+    let window = ReferenceRange::new(reference(ordinary as usize), 0, 2).unwrap();
+    let scratch = user.allocate(PAGE_SIZE);
+
+    // 普通引用拒：物理坐标不随不带保留的引用走（连不带 cap 的那一路也拒）。
+    write_words(&user, scratch, &[ordinary as usize, 0, 2]);
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: PieToken::NONE,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        MemoryFail::Denied.code(),
+        "an ordinary hold has no physical coordinates to give"
+    );
+
+    let trusted = {
+        let pie = pend::Pie::try_new(
+            Mail::Nole(NoleMeta::mint_retention(task.ident.id).expect("retention cap")),
+            Mark::NONE,
+            Permission::FETCH | Permission::STORE | Permission::VEST,
+            None,
+        )
+        .expect("pie");
+        let token = pie.token();
+        task.pend.pies.lock().push(pie);
+        token
+    };
+    let retained = acquire(AcquireSource::Reference(window), trusted);
+    assert!(retained > 0, "kernel-minted retention authorizes");
+
+    // 有活 cap，但引用是**普通**那一枚：仍然拒。
+    // （上面两条走的是 cap 那一关，“这条”走的是 retained 那一关。）
+    write_words(&user, scratch, &[ordinary as usize, 0, 2]);
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: trusted,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        MemoryFail::Denied.code(),
+        "a live cap does not lend an ordinary reference physical coordinates"
+    );
+    let hold = task.pend.references.get(retained as usize).expect("hold");
+    let exported = hold.resolve().expect("retained source");
+    let pages = hold
+        .resolve()
+        .expect("retained range")
+        .materialize()
+        .expect("materialize")
+        .page_count()
+        .get();
+    assert_eq!(pages, 2);
+    write_words(&user, scratch, &[retained as usize, 0, 2]);
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: PieToken::NONE,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        MemoryFail::Denied.code(),
+        "provenance alone is not a live authority: the call must present the cap"
+    );
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: trusted,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        0,
+        "a live retention cap plus this task's own retained window answers"
+    );
+    let mut bytes = [0u8; 16];
+    assert!(
+        user.team
+            .space
+            .copy_in(&mut bytes, KVirt::wrap(scratch + 64))
+    );
+    let list = [
+        usize::from_ne_bytes(bytes[..8].try_into().unwrap()),
+        usize::from_ne_bytes(bytes[8..].try_into().unwrap()),
+    ];
+    assert!(
+        list.iter().all(|address| address % PAGE_SIZE == 0),
+        "physical starts are page aligned: {list:?}"
+    );
+    let frames: alloc::vec::Vec<_> = hold
+        .resolve()
+        .unwrap()
+        .materialized_frames()
+        .unwrap()
+        .into_iter()
+        .map(|(_, frame)| frame.physical_address())
+        .collect();
+    assert_eq!(
+        list.to_vec(),
+        frames,
+        "the answers are those very frames, not a fresh set"
+    );
+
+    // 别的一枚 cap（属主是别人）不能替它开门。
+    let foreign = {
+        let pie = pend::Pie::try_new(
+            Mail::Nole(NoleMeta::mint_retention(env::TaskId::new(0x1234)).expect("cap")),
+            Mark::NONE,
+            Permission::FETCH | Permission::STORE | Permission::VEST,
+            None,
+        )
+        .expect("pie");
+        let token = pie.token();
+        task.pend.pies.lock().push(pie);
+        token
+    };
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: foreign,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        MemoryFail::Denied.code(),
+        "the cap must be the calling task's own"
+    );
+
+    // 输出跑到末尾未映射的那一页：整段先验后拷，前缀哨兵不动。
+    let edge = scratch + PAGE_SIZE - 4;
+    assert!(user.team.space.copy_out(b"KEEP", KVirt::wrap(edge)));
+    write_words(&user, scratch, &[retained as usize, 0, 2]);
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: trusted,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(edge),
+        })),
+        MemoryFail::Denied.code(),
+        "an output that runs off the mapped page is refused whole"
+    );
+    let mut sentinel = [0u8; 4];
+    assert!(user.team.space.copy_in(&mut sentinel, KVirt::wrap(edge)));
+    assert_eq!(&sentinel, b"KEEP", "no half list before the failure");
+
+    // 出口那一步注入失败：前缀哨兵不动、引用还在。
+    assert!(user.team.space.copy_out(b"KEEP", KVirt::wrap(scratch + 64)));
+    write_words(&user, scratch, &[retained as usize, 0, 2]);
+    crate::entry::call::memory::fail_prepare_at(11);
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: trusted,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        MemoryFail::OoM.code(),
+        "a preparation failure must not write half the table"
+    );
+    let mut held_sentinel = [0u8; 4];
+    assert!(
+        user.team
+            .space
+            .copy_in(&mut held_sentinel, KVirt::wrap(scratch + 64))
+    );
+    assert_eq!(
+        &held_sentinel, b"KEEP",
+        "prefix untouched after the injected failure"
+    );
+    assert!(task.pend.references.get(retained as usize).is_some());
+    write_words(&user, scratch, &[retained as usize, 0, 2]);
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: trusted,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        0,
+        "the same call succeeds once the checkpoint is consumed"
+    );
+
+    // 描述里的越界窗口：checked 口径先拒（offset + count 溢出）。
+    write_words(&user, scratch, &[retained as usize, usize::MAX, 2]);
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: trusted,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        MemoryFail::NotAligned.code(),
+        "a descriptor whose window overflows checked coordinates is refused"
+    );
+    // 格式认得但落在这份持有之外：拒。
+    write_words(&user, scratch, &[retained as usize, 3, 1]);
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: trusted,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        MemoryFail::NoRegion.code(),
+        "a window past the hold is refused"
+    );
+
+    // 保留的是**子范围**时，导出的就是子范围那一页。
+    let tail = acquire(
+        AcquireSource::Reference(ReferenceRange::new(reference(ordinary as usize), 1, 1).unwrap()),
+        trusted,
+    );
+    assert!(tail > 0, "retained sub-window: {tail}");
+    write_words(&user, scratch, &[tail as usize, 0, 1]);
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: trusted,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        0
+    );
+    let mut one = [0u8; 8];
+    assert!(user.team.space.copy_in(&mut one, KVirt::wrap(scratch + 64)));
+    assert_eq!(
+        usize::from_ne_bytes(one),
+        frames[1],
+        "a retained sub-window answers that page's own frame"
+    );
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(tail as usize),
+        })),
+        0
+    );
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(retained as usize),
+        })),
+        0
+    );
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(ordinary as usize),
+        })),
+        0
+    );
+    assert!(
+        exported.is_pinned(),
+        "the retained snapshot still owns its residency"
+    );
+    drop(hold);
+    assert!(
+        !exported.is_pinned(),
+        "Traverse success and failure must not leak a hidden residency"
+    );
+}
+
 /// 新五操作里的 `Acquire` / `Release`：来源持有、clone、释放与资格寿命。
 pub fn lifecycle() {
     use crate::core::memory::flat::allocator::statistics::{block_occupied, frame_occupied};

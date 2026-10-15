@@ -62,7 +62,7 @@ pub(super) fn pages(offset: usize, count: usize) -> Result<(), Decode> {
 
 /// 内存调用（class 2；trace 事件名 `MemoryEvent` 同词）。
 ///
-/// 操作号显式为 5–9；已退役的 0–4 不再解码，也不作为新操作的别名。
+/// 操作号为 5–9、11；10 留给 Transfer，0–4 已退役。
 #[derive(Envcall)]
 #[call(class = 2, fail = MemoryFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -108,5 +108,16 @@ pub enum MemoryCall {
         view: ViewId,
         selection: ViewSelection,
         access: u64,
+    },
+    /// 遍历本 Task 的驻留引用窗口，输出每页一个小端 u64 PA。
+    /// `range` 指向定长 ReferenceRange；`out` 须提供 count * 8 个可写字节。
+    /// 当场验证活保留授权；Fresh 可物化，Missing 不得清零恢复。
+    /// PA 只在驻留持有有效期间使用，不构成设备访问授权。
+    #[slot(11)]
+    #[ret(())]
+    Traverse {
+        retention: PieToken,
+        range: VirtAddr,
+        out: VirtAddr,
     },
 }

@@ -9,4 +9,8 @@ pub enum FlatError {
     NotAligned,
     #[error("page selection falls outside the source range")]
     OutOfRange,
+    #[error("the page carrier has been moved out")]
+    Missing,
+    #[error("the page slot is held by another use")]
+    Busy,
 }

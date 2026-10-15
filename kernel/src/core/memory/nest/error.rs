@@ -23,15 +23,22 @@ pub enum NestError {
     Shootdown,
     #[error("kernel address space has permanent lifetime")]
     Pinned,
+    #[error("the page carrier has been moved out")]
+    Missing,
+    #[error("the page slot is held by another use")]
+    Busy,
 }
 
 /// 物理来源失败折入地址空间失败码：`OutOfRange` 对应用户可见的"没有所属区域"。
+/// `Missing` 与 `Busy` 各留自己的身份，不折成别的失败掩盖。
 impl From<FlatError> for NestError {
     fn from(error: FlatError) -> Self {
         match error {
             FlatError::OutOfMemory => NestError::OutOfMemory,
             FlatError::NotAligned => NestError::NotAligned,
             FlatError::OutOfRange => NestError::NoRegion,
+            FlatError::Missing => NestError::Missing,
+            FlatError::Busy => NestError::Busy,
         }
     }
 }

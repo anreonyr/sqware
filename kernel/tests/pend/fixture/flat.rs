@@ -2,6 +2,10 @@ use alloc::sync::Arc;
 
 use crate::memory::address::{PageCount, PageIndex, PageOffset};
 
+#[path = "residency.rs"]
+mod residency;
+pub use residency::Residency;
+
 #[derive(Clone)]
 pub struct FlatRange {
     identity: Arc<()>,
@@ -24,6 +28,10 @@ impl FlatRange {
 
     pub fn page_count(&self) -> PageCount {
         self.count
+    }
+
+    pub fn reside(&self) -> Result<Residency, ()> {
+        Ok(Residency::new(self.clone()))
     }
 
     pub fn range(&self, offset: PageOffset, count: PageCount) -> Result<Self, ()> {

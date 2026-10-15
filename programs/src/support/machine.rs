@@ -41,7 +41,7 @@ impl Machine {
         let plic = Plic::of(&self.fdt);
         let mut out: Vec<Device> = Vec::new();
         for node in self.fdt.all_nodes() {
-            if exempt(node.name) {
+            if exempt(node.name) || platform_window(node) {
                 continue;
             }
             let Some(class) = node
@@ -85,10 +85,28 @@ impl Machine {
     }
 }
 
-/// **内核不给门闩的那两族**（照抄 `kernel/src/platform/devices.rs::exempt`）
+/// **内核不给门闩的那两族**（与 `kernel/src/entry/boot/devices.rs::exempt` 同一条规矩：
+/// 名字词干 `memory` / `clint`）。**这一边只多不少**：本模块另外还要挡平台窗口。
 fn exempt(name: &str) -> bool {
     let stem = name.split('@').next().unwrap_or(name);
     matches!(stem, "memory" | "clint")
+}
+
+/// **平台窗口不进设备账**（按身份认，不按名字）：
+/// - `riscv,iommu`——System 用来隔断外访存的入口。把它的写权当设备发出去，
+///   被隔离方就能自己解除隔离；
+/// - `device_type = pci` 的宿主桥——那段 ECAM 能改 BAR 与设备配置。
+///
+/// 内核那一侧**照旧铸它们的门闩**（System 要从自己的引导账里拿到），
+/// 两边不是同一条职责，故不是同一份 `exempt`：那一边多给，这一边少发。
+fn platform_window(node: fdt::node::FdtNode) -> bool {
+    let iommu = node
+        .compatible()
+        .is_some_and(|compatible| compatible.all().any(|name| name == "riscv,iommu"));
+    let pci = node
+        .property("device_type")
+        .is_some_and(|property| property.value.starts_with(b"pci"));
+    iommu || pci
 }
 
 /// 节点的**首段有效 `reg`** 的起址（零址 / 零长不算一段区）

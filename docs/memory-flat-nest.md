@@ -981,3 +981,9 @@ reviewer 的范围异议仍保留：生产组合目前不登记设备工作范�
 本阶段是经过真实内核对象验证、已接入生命周期的机制；真实产品接线及
 data/descriptor/DDT/页表/三类队列的硬件闭环必须在 PR7 完成。
 在真实接线审查通过前不把这个机制检查点单独推送为 PR6 完成。
+
+## 追加：Transfer / Traverse
+
+物理页迁移与 PA 出口采用 `Transfer / Traverse`；追加顺序、驻留保证、
+ABI 槽号及安全验收门见 [实施计划](memory-transfer-traverse.md)。
+这不把原 PR7 的真实硬件接线或产品验收自动标记为完成。

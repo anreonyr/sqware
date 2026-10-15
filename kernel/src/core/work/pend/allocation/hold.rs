@@ -11,7 +11,7 @@
 use alloc::sync::Arc;
 
 use crate::core::memory::address::{PageCount, PageOffset};
-use crate::core::memory::flat::FlatRange;
+use crate::core::memory::flat::{FlatRange, Residency};
 use crate::core::memory::nest::Access;
 use crate::core::work::grant::Grant;
 use env::PieToken;
@@ -25,7 +25,7 @@ pub(crate) struct Hold {
     count: PageCount,
     ceiling: Access,
     /// 独立保留：自己强持这一段已经解好的范围。
-    retained: Option<FlatRange>,
+    retained: Option<Residency>,
     /// 这份引用是从**哪条 Grant 分支**取得的（Pole 的哪一枚 Pie）。
     /// 撤销边与上限都按这一条算，不因同 Flat、共享根资格就并到根上去。
     branch: Option<(PieToken, Arc<Grant>)>,
@@ -38,7 +38,7 @@ impl Hold {
         offset: PageOffset,
         count: PageCount,
         ceiling: Access,
-        retained: Option<FlatRange>,
+        retained: Option<Residency>,
         branch: Option<(PieToken, Arc<Grant>)>,
     ) -> Self {
         Self {
@@ -89,7 +89,7 @@ impl Hold {
     /// 于是未经保留的引用在撤销后既不能挂载也不再 pin 住来源。
     pub(crate) fn resolve(&self) -> Option<FlatRange> {
         if let Some(range) = &self.retained {
-            return Some(range.clone());
+            return Some(range.range().clone());
         }
         if let Some((_, grant)) = &self.branch {
             grant.permission()?;

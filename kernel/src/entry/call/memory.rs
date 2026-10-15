@@ -77,6 +77,11 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             selection,
             access,
         } => set_access(team, view, selection, access, ident),
+        MemoryCall::Traverse {
+            retention,
+            range,
+            out,
+        } => traverse(retention, range, out, ident),
         MemoryCall::Attach { .. } => unreachable!("Attach answers a pair"),
     }
 }
@@ -383,6 +388,66 @@ fn attach(
     Ok((id, address))
 }
 
+/// Traverse requires both current authority and a live residency.
+///
+/// 凭据是**当场拿得出的那枚真保留授权**：只看这份引用“是怎么来的”不够——
+/// provenance 只说明存活，不自动赋物理坐标。两层都要过：
+/// 活保留 cap（`require_retention`）＋ 这份引用本身就是 cap 登记出来的 retained 引用。
+/// 整张表先物化齐了才写出去——失败不在调用者缓冲里留半张。
+fn traverse(
+    retention: PieToken,
+    range_at: env::VirtAddr,
+    out: env::VirtAddr,
+    ident: &Arc<TaskIdent>,
+) -> Result<usize, MemoryFail> {
+    let task = caller(ident).ok_or(MemoryFail::Denied)?;
+    require_retention(&task, retention)?;
+    let space = ident.team.space.clone();
+    let bytes =
+        read_snapshot::<{ env::ReferenceRange::WIDTH }>(&space, KVirt::wrap(range_at.get()))?;
+    let range = env::ReferenceRange::fetch(&bytes).ok_or(MemoryFail::NotAligned)?;
+    // 引用表下只取一份合法持有快照，随后立刻放锁：物化与写缓冲都不带着资源表锁做。
+    let hold = {
+        let _serial = task.pend.lock();
+        task.pend
+            .references
+            .get(range.reference.get())
+            .ok_or(MemoryFail::Denied)?
+    };
+    if !hold.retains() {
+        return Err(MemoryFail::Denied);
+    }
+    let count = PageCount::new(range.count).ok_or(MemoryFail::NotAligned)?;
+    let source = hold
+        .resolve()
+        .ok_or(MemoryFail::Denied)?
+        .range(PageOffset::new(range.offset), count)
+        .map_err(|_| MemoryFail::NoRegion)?;
+    let pages = source.materialize().map_err(MemoryFail::from)?;
+    let mut list = alloc::vec::Vec::new();
+    list.try_reserve_exact(count.get())
+        .map_err(|_| MemoryFail::OoM)?;
+    for index in 0..count.get() {
+        let address = pages
+            .physical(PageOffset::new(index))
+            .map_err(MemoryFail::from)?;
+        list.push(address.as_usize() as u64);
+    }
+    let mut bytes = alloc::vec::Vec::new();
+    bytes
+        .try_reserve_exact(count.get() * 8)
+        .map_err(|_| MemoryFail::OoM)?;
+    for address in list {
+        bytes.extend_from_slice(&address.to_le_bytes());
+    }
+    // 整张表都备好了才提出口：此处失败不碰调用者缓冲，保留仍在。
+    prepare_checkpoint(11)?;
+    if !space.copy_out(&bytes, KVirt::wrap(out.get())) {
+        return Err(MemoryFail::Denied);
+    }
+    Ok(0)
+}
+
 /// 按目标域与号取回控制登记；号本身不授予任何东西。
 fn with_view<T>(
     team: env::TeamId,
@@ -575,7 +640,7 @@ fn acquire(
                 None
             } else {
                 require_retention(&task, retention)?;
-                Some(range)
+                Some(range.reside()?)
             };
             (
                 hold.source().clone(),
@@ -616,7 +681,8 @@ fn acquire(
                 Some(
                     meta.source()
                         .range(offset, count)
-                        .map_err(|_| MemoryFail::NoRegion)?,
+                        .map_err(|_| MemoryFail::NoRegion)?
+                        .reside()?,
                 )
             };
             (
@@ -677,7 +743,7 @@ fn acquire(
                 None
             } else {
                 require_retention(&task, retention)?;
-                Some(source)
+                Some(source.reside()?)
             };
             Ok((authorization, offset, count, ceiling, retained, branch))
         })?,
@@ -739,6 +805,10 @@ impl From<NestError> for MemoryFail {
             NestError::WidenDenied => MemoryFail::WidenDenied,
             NestError::Shootdown => MemoryFail::Busy,
             NestError::Pinned => MemoryFail::Denied,
+            // 承载已移出：折成既有的“没有所属区域”，不给新线上码，
+            // 也不当可无限重试的 Busy。
+            NestError::Missing => MemoryFail::NoRegion,
+            NestError::Busy => MemoryFail::Busy,
             NestError::NotMapped | NestError::DramOverlap => MemoryFail::Denied,
         }
     }

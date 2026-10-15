@@ -72,6 +72,24 @@ pub fn set_access(
     env::memory::set_access(team, view, selection, access)
 }
 
+/// 把一份**独立保留**持有那一页窗口的稳定物理页起址读出来（每页一个 8 字节小端字）。
+///
+/// `retention` 是调用者当前活着的真保留授权，内核当场核过；
+/// `range` 是调用者自己的那枚 retained 引用窗口。`out` 必须正好装下描述里的页数，
+/// 不够或多了都当场拒，不猜一个截断的长度。
+pub fn traverse(retention: PieToken, range: ReferenceRange, out: &mut [u64]) -> MemoryResult<()> {
+    if out.len() != range.count {
+        return Err(env::make_fail(MemoryFail::NotAligned));
+    }
+    let mut range_bytes = [0; ReferenceRange::WIDTH];
+    range.store(&mut range_bytes);
+    env::memory::traverse(
+        retention,
+        VirtAddr::new(range_bytes.as_ptr() as usize),
+        VirtAddr::new(out.as_mut_ptr() as usize),
+    )
+}
+
 /// 便利分配的前半：Acquire → Attach。返回 `(地址, 关系句柄, 仍持有的那份引用)`。
 ///
 /// 拿到关系之后**必须**把那份引用解掉；解失败就把它记在调用方自己的元数据里

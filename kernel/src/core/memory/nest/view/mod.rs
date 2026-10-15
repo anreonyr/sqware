@@ -10,9 +10,9 @@ use alloc::vec::Vec;
 
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::address::{PageCount, PageOffset, VirtAddr};
-use crate::core::memory::flat::FlatRange;
 #[cfg(debug_assertions)]
 use crate::core::memory::flat::Frame;
+use crate::core::memory::flat::{FlatRange, Residency};
 use crate::core::memory::nest::NestError;
 use crate::core::memory::nest::reservation::Reservation;
 use crate::core::memory::nest::table::PteFlags;
@@ -31,6 +31,11 @@ pub struct View {
     pub(in crate::core::memory::nest) reservation: Reservation,
     pub(in crate::core::memory::nest) attrs: PteFlags,
     pub(in crate::core::memory::nest) state: SpinLock<ViewState>,
+    /// 整窗驻留：从构造校验之后直到本关系最终 Drop，这一段都排除迁移。
+    ///
+    /// 它只在生命周期上起作用（由 `Residency` 自己的 `Drop` 解除），字段本身不需要读。
+    #[allow(dead_code)]
+    residency: Residency,
 }
 
 impl core::fmt::Debug for View {
@@ -83,10 +88,16 @@ impl View {
         }
         let nest = reservation.nest();
         let identity = reservation.id();
+        // 校验都过了才驻留：被拒的关系不留驻留；此后直到最终 Drop，这一段都不可迁移。
+        let residency = match source.reside() {
+            Ok(residency) => residency,
+            Err(error) => return Err(reject(NestError::from(error))),
+        };
         match Arc::try_new(Self {
             reservation,
             attrs,
             state: SpinLock::new_level(Level::View, ViewState::new(active, source)),
+            residency,
         }) {
             Ok(view) => Ok(view),
             Err(_) => {

@@ -83,10 +83,19 @@ fn memory_slots_reject_the_retired_five_and_keep_explicit_lifecycle_slots() {
         (7, [0x4000, 7, 0x5000, 10, 1, 0]),
         (8, [3, 9, 0, 0, 0, 0]),
         (9, [3, 9, 1, 1, 2, 10]),
+        (11, [99, 0x6000, 0x7000, 0, 0, 0]),
     ] {
         assert_eq!(decode(slot, regs).slot(), (2usize << 32) | slot);
     }
-    assert!(MemoryCall::from_wire((2usize << 32) | 10, &[0; 6]).is_err());
+    // Transfer stays reserved until its safety and authority paths are implemented.
+    assert_eq!(
+        MemoryCall::from_wire((2usize << 32) | 10, &[0; 6]),
+        Err(Decode::BadSlot)
+    );
+    assert_eq!(
+        MemoryCall::from_wire((2usize << 32) | 12, &[0; 6]),
+        Err(Decode::BadSlot)
+    );
 }
 
 #[test]
@@ -135,6 +144,17 @@ fn acquire_carries_the_source_and_the_optional_reservation() {
     assert!(MemoryCall::from_wire((2usize << 32) | 5, &[0, 4096, 3000, 0, 0, 0]).is_err());
     // 第五格（来源载荷的末位）只许为零的那几支：多一位即非法。
     assert!(MemoryCall::from_wire((2usize << 32) | 5, &[1, 7, 1, 2, 1, 0]).is_err());
+}
+
+#[test]
+fn traverse_encodes_authority_window_and_output_without_an_implicit_length() {
+    let call = MemoryCall::Traverse {
+        retention: env::PieToken::from_bytes(&99usize.to_le_bytes()).unwrap(),
+        range: env::VirtAddr::new(0x6000),
+        out: env::VirtAddr::new(0x7001),
+    };
+    assert_eq!(call.pack(), [99, 0x6000, 0x7001, 0, 0, 0]);
+    assert_eq!(decode(11, call.pack()), call);
 }
 
 #[test]

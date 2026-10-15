@@ -17,8 +17,12 @@ mod held_cell;
 #[cfg(debug_assertions)]
 mod held_set;
 mod level;
+#[cfg(debug_assertions)]
+pub(crate) mod verdict;
 
 pub use level::Level;
+#[cfg(debug_assertions)]
+pub(crate) use verdict::{peer, strict};
 
 #[cfg(debug_assertions)]
 pub use error::DepInitError;
@@ -125,13 +129,24 @@ pub(crate) fn check(addr: usize, level: Option<Level>, caller: usize) {
     let Some(held) = held() else {
         return;
     };
-    if held.contains(addr) {
-        report("recursive acquisition", addr, caller);
+    let entries = held.slots.iter().map(|slot| (slot.addr, slot.level));
+    if let Err(why) = strict(entries, addr, level) {
+        report(why, addr, caller);
     }
-    if let Some(lv) = level
-        && held.max_level().is_some_and(|m| lv <= m)
-    {
-        report("lock-order level violation", addr, caller);
+}
+
+/// 有序同级对：第二把锁只允许取在同一级上，且先取的那把正是已持的这一把、地址更大。
+///
+/// 普通 `check` 的判据不变（严格递增、拒递归）；这条只服务于显式声明的
+/// `Level::Flat` 对，且同级只能成对、不能成链。
+#[cfg(debug_assertions)]
+pub(crate) fn check_peer(addr: usize, lower: usize, level: Option<Level>, caller: usize) {
+    let Some(held) = held() else {
+        return;
+    };
+    let entries = held.slots.iter().map(|slot| (slot.addr, slot.level));
+    if let Err(why) = peer(entries, addr, lower, level) {
+        report(why, addr, caller);
     }
 }
 

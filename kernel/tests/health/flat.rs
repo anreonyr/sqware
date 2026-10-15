@@ -56,7 +56,7 @@ pub fn accept() {
     let frames_before = statistics::frame_occupied() - statistics::block_occupied();
     let kinds_before = statistics::kinds();
 
-    let cases: [(&str, fn()); 12] = [
+    let cases: [(&str, fn()); 15] = [
         ("acquire", acquire_is_a_logical_source),
         ("materialize", materialize_resolves_the_same_page),
         ("sub-range", sub_range_keeps_source_identity),
@@ -78,6 +78,9 @@ pub fn accept() {
         ("partial unmap", partial_unmap_leaves_no_published_hole),
         ("flat alias", one_frame_under_two_indexes),
         ("map alias", aliased_frames_retire_independently),
+        ("residency windows", super::residency::ranges),
+        ("retained snapshot", super::residency::retained_snapshot),
+        ("borrowed residency", super::residency::borrowed),
     ];
     let mut off = Vec::new();
     for (name, run) in cases {
@@ -474,6 +477,10 @@ fn partial_materialize_keeps_successful_slots() {
             .map_err(|error| *error)
     );
     drop(outcome);
+    crate::expect!(
+        !whole.is_pinned(),
+        "flat: failed materialize releases its residency"
+    );
     held.truncate(held.len() - HEADROOM);
     let placed = slots(&whole);
     crate::expect!(
@@ -490,6 +497,10 @@ fn partial_materialize_keeps_successful_slots() {
     crate::expect!(
         matches!(whole.materialize(), Err(FlatError::OutOfMemory)),
         "flat: a retry while the pool is held still fails"
+    );
+    crate::expect!(
+        !whole.is_pinned(),
+        "flat: failed retry must not accumulate residencies"
     );
     held.truncate(held.len() - HEADROOM);
     let again = slots(&whole);
@@ -521,6 +532,10 @@ fn partial_materialize_keeps_successful_slots() {
         "flat: completing the range keeps the already-materialized page"
     );
     drop(pages);
+    crate::expect!(
+        !prefix.is_pinned(),
+        "flat: final Pages drop settles its residency"
+    );
     drop(prefix);
     drop(again);
     drop(placed);

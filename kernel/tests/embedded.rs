@@ -125,8 +125,32 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn boot_pci_ranges_windows() {
+        kernel::entry::check::boot_devices::accept();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn memory_retention() {
         kernel::entry::check::syscall::retention();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_traverse() {
+        kernel::entry::check::syscall::traverse_pages();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_transfer_slots() {
+        kernel::entry::check::transfer::accept();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_device_window() {
+        kernel::entry::check::syscall::device_window();
     }
 
     #[cfg(debug_assertions)]

@@ -60,6 +60,26 @@ impl<T: ?Sized> SpinLock<T> {
         SpinLockGuard::new(self, trap)
     }
 
+    /// 共持同级对的第二把：只在已持 `lower` 的前提下取，且按地址序在 `lower` 之后。
+    ///
+    /// 只给 `sync` 子树里的 `with_pair` 用：它不对外，所以没人能拿了第二把守卫
+    /// 又先放低锁，把闭包里那对守卫的生命周期拆开。
+    #[inline(never)]
+    pub(super) fn lock_ordered<U>(&self, lower: &SpinLock<U>) -> SpinLockGuard<'_, T> {
+        let caller = crate::machine::sync::depend_enter!(self);
+        let trap = unsafe { TrapGuard::save() };
+        crate::machine::sync::depend_check_peer!(self, lower, caller);
+
+        while self.locked.swap(true, Ordering::Acquire) {
+            crate::machine::stop::hush();
+            ::core::hint::spin_loop();
+        }
+        self.caller.store(caller, Ordering::Relaxed);
+        crate::machine::sync::depend_acquire!(self, caller);
+
+        SpinLockGuard::new(self, trap)
+    }
+
     #[allow(dead_code)]
     #[inline(never)]
     pub fn try_lock(&self) -> Option<SpinLockGuard<'_, T>> {

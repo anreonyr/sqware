@@ -24,6 +24,7 @@ pub use crate::core::work::room::conductor::tests::acceptance as scheduler;
 pub use crate::entry::boot::error::accept as boot_errors;
 
 pub mod backtrace;
+pub mod boot_devices;
 pub mod depend;
 pub mod flat;
 pub mod frame;
@@ -35,6 +36,7 @@ pub mod nest_failure;
 pub mod pagetable;
 pub mod permit;
 pub mod pole;
+pub mod residency;
 #[allow(dead_code)]
 #[path = "../../../programs/src/system/supply/retention/mod.rs"]
 pub(crate) mod retention_core;
@@ -44,6 +46,7 @@ pub mod stress;
 mod support;
 pub mod syscall;
 pub mod task;
+pub mod transfer;
 
 pub fn run() {
     #[cfg(debug_assertions)]
