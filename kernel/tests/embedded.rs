@@ -179,6 +179,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn external_retention_orders_real_frames_and_isolation() {
+        kernel::entry::check::syscall::external_retention();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn memory_preparation_failures() {
         kernel::entry::check::syscall::preparation_failures();
     }

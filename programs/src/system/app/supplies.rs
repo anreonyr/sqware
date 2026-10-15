@@ -1,7 +1,8 @@
 use crate::boot::Accounts;
 use crate::system::control::unit::Service;
 use crate::system::control::unit::start::Error;
-use env::{Mark, Name, Page, Permission, Wait};
+use crate::system::supply::retention::{DeviceRange, Failure, Holds, Registration};
+use env::{Call, Mark, Name, Page, Permission, Wait};
 use system_api::supply::{Key, LeaseId, LeaseIds, State};
 
 struct Provider {
@@ -50,6 +51,7 @@ pub struct Supplies {
     pub(super) accounts: Accounts,
     providers: alloc::vec::Vec<Provider>,
     leases: alloc::vec::Vec<LeaseOwner>,
+    pub(crate) retention: Holds,
     source_authority: Option<env::PieToken>,
     inventory_roots: alloc::vec::Vec<env::PieToken>,
 }
@@ -266,11 +268,31 @@ impl Supplies {
             accounts,
             providers,
             leases: alloc::vec::Vec::new(),
+            retention: Holds::new(),
             source_authority: Some(source_authority),
             inventory_roots,
         };
         result.register(source)?;
         Ok(result)
+    }
+
+    pub(crate) fn retain_memory(
+        &mut self,
+        range: DeviceRange,
+        source: env::AcquireSource,
+    ) -> Result<usize, Failure> {
+        let authority = self
+            .accounts
+            .token(Name::Call(Call::Retain))
+            .ok_or(Failure::Denied)?;
+        self.retention.register(
+            Registration {
+                range,
+                source,
+                retention: authority,
+            },
+            &mut super::retention::References,
+        )
     }
 
     pub fn register(&mut self, source: crate::system::supply::Source) -> Result<(), &'static str> {

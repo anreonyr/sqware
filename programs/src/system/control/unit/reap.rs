@@ -6,6 +6,7 @@ use env::{Wait, unit};
 pub(crate) fn sweep(
     control: ::schedule::Res<Control>,
     mut jobs: ::schedule::ResMut<crate::system::assembly::Jobs>,
+    mut supplies: ::schedule::ResMut<crate::system::app::supplies::Supplies>,
 ) -> Result<::schedule::Progress, crate::system::app::Fault> {
     let gone: Vec<_> = control
         .table
@@ -13,12 +14,13 @@ pub(crate) fn sweep(
         .filter(|row| !jobs.contains(&row.name))
         .filter_map(|row| match row.slot {
             Slot::Live { task, .. } if unit::join_task(task, Wait::POLL).unwrap_or(true) => {
-                Some(row.name.clone())
+                Some((row.name.clone(), task))
             }
             _ => None,
         })
         .collect();
-    for name in gone {
+    for (name, task) in gone {
+        supplies.retention.offline(task);
         // Natural exit uses the same recoverable cleanup as an explicit retirement.
         if jobs.submit_lifecycle(name, Action::Ruin).is_err() {
             return Ok(::schedule::Progress::Pending);

@@ -35,6 +35,9 @@ pub mod nest_failure;
 pub mod pagetable;
 pub mod permit;
 pub mod pole;
+#[allow(dead_code)]
+#[path = "../../../programs/src/system/supply/retention/mod.rs"]
+pub(crate) mod retention_core;
 pub mod shell;
 pub mod spare;
 pub mod stress;

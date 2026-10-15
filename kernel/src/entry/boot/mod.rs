@@ -161,13 +161,13 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
         operation: ResourceOperation::Freeze,
         source: e.into_parts().0,
     })?;
-    let ledger_len =
-        crate::entry::boot::resources::ledger::size(resources.len()).map_err(|source| {
-            BootError::Resources {
-                operation: ResourceOperation::LedgerSize,
-                source,
-            }
-        })?;
+    let ledger_len = crate::entry::boot::resources::ledger::size(
+        resources.len() + crate::entry::boot::resources::RETENTION_ENTRIES,
+    )
+    .map_err(|source| BootError::Resources {
+        operation: ResourceOperation::LedgerSize,
+        source,
+    })?;
     let (ledger_pa, ledger_bytes) = crate::entry::boot::resources::ledger::block();
     let ledger = map_borrowed(
         &team.space.nest,
@@ -200,6 +200,20 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
             operation: ResourceOperation::Grant,
             source: e.into_parts().0,
         })?;
+    // 可信控制者那一枚独立保留授权：只在这里铸、只发给这一个任务，
+    // 与上面那批具名资源同走账本一条路。
+    let mut entries = entries;
+    entries
+        .try_reserve(crate::entry::boot::resources::RETENTION_ENTRIES)
+        .map_err(|_| BootError::Bootstrap(NestError::OutOfMemory))?;
+    entries.push(
+        crate::entry::boot::resources::grant_retention(&bootstrap).map_err(|source| {
+            BootError::Resources {
+                operation: ResourceOperation::Grant,
+                source,
+            }
+        })?,
+    );
     crate::entry::boot::resources::ledger::write(&entries).map_err(|source| {
         BootError::Resources {
             operation: ResourceOperation::WriteLedger,

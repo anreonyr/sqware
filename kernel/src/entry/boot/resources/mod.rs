@@ -6,10 +6,12 @@ pub(crate) mod ledger;
 mod failure;
 mod frozen;
 mod registry;
+mod retention;
 
 use failure::Failure;
 pub(crate) use frozen::Frozen;
 pub(crate) use registry::Registry;
+pub(crate) use retention::{ENTRIES as RETENTION_ENTRIES, grant as grant_retention};
 
 pub(crate) type RegisterError = Failure<(Name, Pie)>;
 pub(crate) type FreezeError = Failure<Registry>;

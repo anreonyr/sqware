@@ -840,3 +840,144 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
 从 `0x4000` 改成与 `programs/link.ld` 一致的 `IMAGE_BASE = 0x1_0000`
 （低于 `IMAGE_BASE` 的真实失败是 `MemoryFail::NoRegion`，不是 IPC 超时；
 修 fixture 后 system-fault 真实场景通过）。本项只改该夹具的三行事实。
+
+## PR 6：System 独立保留与故障隔离路径（实现、验证与限制）
+
+基线 `master = 75ef237326461a0a29dce1191240de82b623057b`（PR5 已推 `origin/master`）。
+本轮不动旧 ABI：`MemoryCall` 仍是槽 5–9，`Acquire{source, retention}` 的 `retention`
+就是 PR5 那枚**内核铸的**独立保留授权。
+
+### 冻结合同
+
+- System 在自己那张 pend 表里持**经过独立授权**的 `FlatReference`；原服务 / Driver /
+  Pole / Pie 怎么销都不撤这一份。**没有**另建 Detached Registry、没有新 RPC、
+  没有第二份设备状态。
+- 保留必须在**硬件可达地址/配置发布之前**登记；记录设备范围、控制者、隔离权限、
+  `FlatReference`、登记状态；不存旧 IOVA / 传输进度，不进 `Flat`、不进 UnitFile。
+- 正常关闭：可信 IOMMU 同步确认后结清；故障：System 自己隔离后整批结清。
+  登记 / 发布 / 关闭在同一段范围上串行，关闭一开始就禁新登记与新发布。
+- 暂时失败**保留记录并重试清理**，不恢复旧业务；隔离能力不以那一头还活着为前提
+  （不向已死的 DMAC 发停止请求）。
+- 设备服务自然退出**先离线**；独立持有不随普通 supply / identity 清理提前结清；
+  无关 Task 的资源不全冻。
+
+### 内核侧（交付那一条路）
+
+- `env::ledger::name::Call` 增一格 `Retain`（class 1 / item 2）：授权
+  `MemoryCall::Acquire` 的独立保留形式，不新增调用号。
+- `NoleMeta::mint_retention` 改为可失败（不再在引导期 `expect`）。
+- 新增 `entry::boot::resources::retention::grant(target)`：在**引导装配那一处**为收件任务
+  铸这一枚真对象（owner 就是它），并作为账目行交给账本。交付是**推**的——没有请求面，
+  于是没有“第一个来问的就给它”这条路；`retention::ENTRIES = 1` 明写进账本尺寸。
+  任务号在 `hold()` 后才存在，因此这一项在普通 `Frozen::grant` 后铸造；
+  `ledger::write` 对全部账目统一检查 `Entry::valid()`。
+- `require_retention` 的判据不变：内核铸的 `retains()` 对象 + 活的 Pie + `VEST` +
+  **owner 就是调用者**。普通自造 Nole、`Mark`、任务数字、只有 `FETCH/STORE/VEST`
+  都造不出授权；同一枚 cap 转给别人之后，别人也过不了 owner 那一关。
+
+### System 侧（`programs/src/system/supply/retention/`）
+
+`Supplies.retention` 唯一拥有设备范围及其引用，不是独立的 `Resources` 项，
+没有 `Supplies.held → Registry` 移交。`Scope` 保存真实设备隔离范围的
+`DeviceRange`（基址、长度）、控制者 Task、可信组成安装的平台控制对象、
+阶段与该范围全部 `FlatReference`。不存旧 IOVA / 传输进度。
+
+| 操作 | 单一效果 |
+|---|---|
+| `attach` | 绑定范围、控制者、独立平台控制对象；拒绝范围重叠与 provider 范围不符 |
+| `register` | 先准备元数据，再以真实保留 cap 执行 Acquire；成功后无后续可失败登记 |
+| `publish` | 只能发布已登记引用；执行回调前先保守标记可能可达，部分失败进入故障关闭 |
+| `offline` | 立即关闭该控制者所有范围的发布闸；**不宣告设备已停** |
+| `close(Normal)` | 关闸，要求可信平台完成正常同步、失效及在途访问排空 |
+| `close(Fault)` | 关闸，要求 System 独立平台入口完成整个范围的隔离及停止确认 |
+| `retry` | 平台确认后才 Release；释放失败只重试释放，不重复隔离、不重开业务 |
+
+`Platform` 的两个停止入口都是有界进展步骤。`Pending`、隔离超时或其他错误
+原样保留引用；一个范围失败不冻结其他范围。缺少 provider 时禁止发布；
+未发布的登记在关闭后可直接结清。已经关闭的范围即使结清也不允许自动重新 attach。
+
+不存在由 `Phase` 自算外部可达性的接口。CPU Pie 撤销、TaskGone、`VEST` 位、
+仅写软件状态都不构成设备停止证明。平台实现属于可信组成，不接受设备服务
+提交一个布尔值或伪造确认。本阶段只提供实际有状态模拟实现，真实寄存器实现属 PR7。
+
+### 接进真实 System 的那几手
+
+- `Supplies::retain_memory` 从本 Task 的引导账取得保留 cap，在硬件范围内登记
+  任意经过来源授权的页窗口；数据、描述符、DDT、页表、三类队列共用这一条规则，
+  不按设备清单条数限制一个范围的工作内存数量。
+- 删除旧候选对 `machine/inventory` 描述页的重复 pin，描述符交付不冒充硬件发布。
+  PR7 的真实硬件建立处必须经 `register → publish`，本阶段没有启用 DMA。
+- `control/unit/reap.rs`：设备服务自然退出时**先离线**（不再接受新发布）。
+- `control/lifecycle/ruin.rs`：新增 `retention` 一步，**排在 `supply` / `identity` 之后、
+  `reclaim` 之前**；`pre` 在停止 Task 前先离线。独立持有不随普通供给/身份清理提前结清；
+  这一手不向已经走了的服务要任何东西，独立平台没确认就保留并报告占用。
+- 帧计划：`retention.close`（`settling` 起关闸）与 `retention.sweep`（控制者已经走了的
+  那些由 System 自己隔离/结清，下一帧接着来）。
+- 关闭计划：`retention.reclaim`。仍有占用时 yield 并返回 `Pending`，保持 System 存活；
+  不允许退出 System 后被 pend 清理越过设备停止判据。
+
+### 实际验证
+
+以下是父线程返工后的实跑结果；旧候选测试结果不作验收证据：
+
+| 检查 | 结果 |
+|---|---|
+| workspace dev/release、kernel all-targets semihosting release、programs all-targets release | 通过；programs 最新 dev 10 项未接入 PR7 硬件建立处的 dead-code 诊断，kernel release 6 项既有诊断，不称无告警 |
+| `cargo test -p env --target x86_64-unknown-linux-gnu --offline` | 23 passed；既有 signals 未用 Wire import 告警 |
+| 新 retention 宿主套件 | 6 passed |
+| `nu scripts/qtest.nu --package kernel` | **59 passed** + 缺 initrd 的 `scene` 哨兵 1 failed，退出 101 |
+| `--scene accept` / `product` / `system-fault` | 签名归并后复跑各 1 passed，10.28s / 5.33s / 13.40s |
+| programs/tests 全部 31 套 | 265 passed；初跑 system-shape 17/18，修正签名后 18/18；未删或放宽结构断言 |
+| `cargo fmt --all -- --check` | 退出 1，58 块既有格式债；只格式化本次相关文件 |
+| `git diff --check` | 通过 |
+
+结构门会计入 receiver：`attach` 接唯一实际 `Scope`、`register` 接三字段
+`Registration` 载荷，`publish` 只接全局单调 id，去掉重复传递的设备范围。
+没有用放宽“最多三参数”断言来制造通过。
+
+### 宿主与原生的独立访问证据
+
+宿主直接导入生产 `Holds`，外部访问者持有独立的 active / pending / timeout 状态，
+只持 RAM 的 Weak，不从保留账的 Phase 推断可达性。验证源强持丢失后继续真实写 RAM、
+超时与在途访问阻止回收、正常同步与故障隔离、Release 失败只重试释放、
+部分发布失败、关闭禁登记/发布、缺 provider 不执行发布、不同范围分别进展。
+
+新增原生 `external_retention_orders_real_frames_and_isolation`：
+用同一份生产 `Holds`、真实内核调用和引导铸造 cap 登记 7 个独立页窗口。
+来源 Task doom 与普通 pend 清理先完成，CPU 映射已不存在，死亡通知尚未交付，
+独立访问者仍经相同 Frame 物理地址逐页写入并读回。
+丢失/重复通知不释放，隔离超时仍可写且记录保留；
+平台关闭访问后才结清，全部 Frame Weak 失效，验证没有其他 CPU View 偷偷 pin 住页。
+
+### 内核侧的反向与保留证据
+
+- `resource_registration_and_revocation`：
+  引导那一枚 cap 只对**铸给它的那张表**授权（`Acquire{Reference, retention=cap}` 成功），
+  同一枚 cap `accord` 给别人之后别人 `Denied`；本用例取过的每一份引用逐格结清。
+- `memory_branch_revocation_and_retention`：来源那一枚被摘掉之后，**独立保留仍持同一批帧**；
+  对已经不在表里的来源再做一次 release 报 `Denied`（重复/迟到的通知不动保留）。
+- `memory_retention`：普通自造 Nole 不授权；内核铸的那一枚才授权，且保留自己强持范围。
+
+### 限制与未做（不宣称已验证的东西）
+
+- **真实 IOMMU / DMAC 寄存器仍未启用**（属 PR7）；没有以模拟结果宣称真实硬件已隔离。
+  当前原生和宿主模拟都有独立、有状态且真的执行访存/停止的正面，不是 `VEST`
+  橡皮章，也不是永远 `Denied` 的假 cap。普通产品场景没有启用任何硬件外访存范围。
+- PR7 必须安装独立平台控制者，把真实数据/描述符/表/队列逐段登记后才发布。
+  IOMMU Off + busy 的数据隔离与 CQ/FQ/PQ 各自 on/busy 的控制页停用分别确认；
+  仅清 CPU PTE、仅屏蔽 IRQ、仅写 Offline、切 Bare 都不能满足 `Platform` 合同。
+- 保留 cap 是**按收件任务铸的**（owner 判据）：System 不能把它转授给第二位控制者当作
+  保留权用；这是合同要的“只给明确可信控制者”，不是当前实现的缺口。
+- 多 hart 交错、真实撤销与在途发布的整机竞态仍不在本轮证据里。
+
+### 同组独立审查与范围保留
+
+原 worker 两次连接服务失败后封存，父线程接管返工；同组 namer 与 reviewer
+均实读父 checkout，机制、所有权与停止确认规则通过。reviewer 独立复跑
+宿主 6/6、原生 59 + 哨兵 1，发现并复现结构门超参失败；随后修正接口而非断言。
+
+reviewer 的范围异议仍保留：生产组合目前不登记设备工作范围、不安装 `Platform`，
+故不能把本阶段独立提交描述为产品保留/隔离已闭环，也不能描述为无保留批准。
+本阶段是经过真实内核对象验证、已接入生命周期的机制；真实产品接线及
+data/descriptor/DDT/页表/三类队列的硬件闭环必须在 PR7 完成。
+在真实接线审查通过前不把这个机制检查点单独推送为 PR6 完成。

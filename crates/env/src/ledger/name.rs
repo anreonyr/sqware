@@ -18,6 +18,8 @@ pub enum Trap {
 pub enum Call {
     Build,
     Doom,
+    /// Authorizes the independently retained form of MemoryCall::Acquire.
+    Retain,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Page {
@@ -49,6 +51,7 @@ impl Field for Name {
             Self::Trap(Trap::PageFault) => (0, 1, 0),
             Self::Call(Call::Build) => (1, 0, 0),
             Self::Call(Call::Doom) => (1, 1, 0),
+            Self::Call(Call::Retain) => (1, 2, 0),
             Self::Page(Page::Dtb) => (2, 0, 0),
             Self::Page(Page::Initrd) => (2, 1, 0),
             Self::Page(Page::Region(base)) => (2, 2, base),
@@ -69,6 +72,7 @@ impl Field for Name {
             (0, 1, 0) => Some(Self::Trap(Trap::PageFault)),
             (1, 0, 0) => Some(Self::Call(Call::Build)),
             (1, 1, 0) => Some(Self::Call(Call::Doom)),
+            (1, 2, 0) => Some(Self::Call(Call::Retain)),
             (2, 0, 0) => Some(Self::Page(Page::Dtb)),
             (2, 1, 0) => Some(Self::Page(Page::Initrd)),
             (2, 2, base) if base != 0 => Some(Self::Page(Page::Region(base))),

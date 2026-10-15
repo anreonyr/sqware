@@ -22,6 +22,9 @@ pub(crate) fn size(count: usize) -> Result<usize, PieFail> {
     Ok(len)
 }
 pub(crate) fn write(entries: &[Entry]) -> Result<usize, PieFail> {
+    if entries.iter().any(|entry| !entry.valid()) {
+        return Err(PieFail::Denied);
+    }
     let len = size(entries.len())?;
     let count = u32::try_from(entries.len()).map_err(|_| PieFail::OoM)?;
     let out = unsafe { &mut *BLOCK.0.get() };

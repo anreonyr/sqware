@@ -19,6 +19,10 @@ use crate::entry::report::backtrace::StackReader;
 use crate::machine::mode;
 use crate::machine::switcher::context::{Gprs, TrapContext};
 
+#[path = "retention/mod.rs"]
+mod external_retention;
+pub use external_retention::accept as external_retention;
+
 struct Caller {
     team: Arc<Team>,
     task: Arc<Task>,
@@ -1246,9 +1250,10 @@ pub fn branches_and_retention() {
     );
 
     let cap = pend::Pie::try_new(
-        Mail::Nole(crate::core::work::mail::nole::NoleMeta::mint_retention(
-            right.task.ident.id,
-        )),
+        Mail::Nole(
+            crate::core::work::mail::nole::NoleMeta::mint_retention(right.task.ident.id)
+                .expect("retention cap"),
+        ),
         Mark::NONE,
         Permission::FETCH | Permission::VEST,
         None,
@@ -1279,6 +1284,16 @@ pub fn branches_and_retention() {
     assert!(
         source_frame.upgrade().is_some(),
         "independent retention keeps the frame"
+    );
+    // 来源那一枚已经从表里摘掉：同一手上再来一遍（重复/迟到的通知）也不动保留。
+    assert_eq!(
+        pend::release(&owner.task, root),
+        Err(env::PieFail::Denied),
+        "a repeated release of the gone source reports, not silent"
+    );
+    assert!(
+        source_frame.upgrade().is_some(),
+        "late and repeated notifications never release the retained frame"
     );
     assert!(
         right
@@ -1496,7 +1511,7 @@ pub fn retention() {
     // 内核铸的那一枚：对象本身是凭证，于是同一份来源可以拿到独立保留。
     let trusted = {
         let pie = pend::Pie::try_new(
-            Mail::Nole(NoleMeta::mint_retention(task.ident.id)),
+            Mail::Nole(NoleMeta::mint_retention(task.ident.id).expect("retention cap")),
             Mark::NONE,
             Permission::FETCH | Permission::STORE | Permission::VEST,
             None,
@@ -1968,6 +1983,59 @@ pub fn resource_registration() {
     let entries = registry.freeze().unwrap().grant(&system.task).unwrap();
     assert_eq!(entries.len(), 4);
     assert!(entries.iter().all(env::Entry::valid));
+    // 引导那一枚独立保留授权：与上面那批同走一条交付路，只发给这一个任务。
+    let cap = crate::entry::boot::resources::grant_retention(&system.task).unwrap();
+    assert_eq!(cap.name(), Name::Call(Call::Retain));
+    assert_eq!(cap.kind(), env::PieKind::Nole);
+    let acquire = |caller: &Caller, source, retention| {
+        caller.call(EnvCall::Memory(MemoryCall::Acquire { source, retention }))
+    };
+    let allocation =
+        || env::AcquireSource::Allocation(env::Allocation::new(PAGE_SIZE, PAGE_SIZE).unwrap());
+    let source = acquire(&system, allocation(), env::PieToken::NONE);
+    assert!(source > 0, "ordinary acquire: {source}");
+    let window = env::ReferenceRange::new(reference(source as usize), 0, 1).unwrap();
+    let held = acquire(&system, env::AcquireSource::Reference(window), cap.token());
+    assert!(
+        held > 0,
+        "the trusted controller's own cap authorizes: {held}"
+    );
+    // 同一枚 cap 转到别人手里也不授权：保留只认铸给谁的那一个 owner。
+    let shared = PieToken::mint(
+        pend::accord(
+            &system.task,
+            cap.token(),
+            &Arc::downgrade(&service.task),
+            Permission::FETCH | Permission::VEST,
+            Mark::NONE,
+        )
+        .unwrap(),
+    );
+    assert!(pend::locate(&service.task, shared).is_some());
+    let service_source = acquire(&service, allocation(), env::PieToken::NONE);
+    assert!(service_source > 0);
+    let window = env::ReferenceRange::new(reference(service_source as usize), 0, 1).unwrap();
+    assert_eq!(
+        acquire(&service, env::AcquireSource::Reference(window), shared),
+        env::MemoryFail::Denied.code(),
+        "a handed-on retention cap is not the holder's own"
+    );
+    for (caller, handle) in [
+        (&system, source),
+        (&system, held),
+        (&service, service_source),
+    ] {
+        assert_eq!(
+            caller.call(EnvCall::Memory(MemoryCall::Release {
+                reference: reference(handle as usize),
+            })),
+            0
+        );
+        assert!(
+            caller.task.pend.references.get(handle as usize).is_none(),
+            "every handle this case took is settled"
+        );
+    }
     let token = entries
         .iter()
         .find(|e| e.name() == Name::Call(Call::Build))

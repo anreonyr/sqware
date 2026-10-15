@@ -28,10 +28,12 @@ impl NoleMeta {
     }
 
     /// 内核铸的保留授权 Nole：只有经这扇门造出来的对象 `retains()` 为真。
-    /// 这是内核的**真铸造厂**（不是调试期的假正面）；把 cap 实际发给
-    /// System / IOMMU 的硬件侧属 PR6。
-    pub(crate) fn mint_retention(owner: TaskId) -> Arc<Self> {
-        Self::try_build(owner, true).expect("nole allocation failed")
+    /// 这是内核的**真铸造厂**（不是调试期的假正面）；收货方由引导交付那一处指定，
+    /// 普通请求调不到这一格。
+    pub(crate) fn mint_retention(
+        owner: TaskId,
+    ) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
+        Self::try_build(owner, true)
     }
 
     /// 是否为内核认可的保留授权对象。

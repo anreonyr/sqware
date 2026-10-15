@@ -34,6 +34,7 @@ pub fn lifecycle(hooks: ActivationHooks) -> Result<Vec<(Key, Plan<Fail>)>, Build
     ruin.system("namespace", work::ruin::post)?;
     ruin.system("supply", work::ruin::release_supply)?;
     ruin.system("identity", work::ruin::retire_identity)?;
+    ruin.system("retention", work::ruin::settle_retention)?;
     ruin.system("reclaim", work::ruin::finalize)?;
     Ok(alloc::vec![
         (Key::Mint, mint.build()?),
