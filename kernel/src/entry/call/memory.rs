@@ -127,6 +127,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             };
             let mut private = false;
             let mut limit = access;
+            let mut window = None;
             if let Some((pie, meta)) = &source {
                 if !pie.alive() || !meta.owned() || meta.reserved() != 0 {
                     return Err(MemoryFail::Denied);
@@ -139,10 +140,8 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                     return Err(MemoryFail::Denied);
                 }
                 super::pie::usable(pie).map_err(|_| MemoryFail::Denied)?;
-                Memory::frame_offset(offset)?;
-                if offset.checked_add(size).is_none_or(|end| end > meta.size()) {
-                    return Err(MemoryFail::NotAligned);
-                }
+                // 授权窗口在来源范围上切：越界与跨页偏移都不放行。
+                window = Some(meta.window(offset, size).map_err(|_| MemoryFail::NotAligned)?);
                 if team_id.get() == 0 {
                     if access.contains(Access::EXECUTE) {
                         return Err(MemoryFail::Denied);
@@ -182,19 +181,16 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 Some(KVirt::wrap(at.get()))
             };
             let mapping = match &source {
-                Some((_, meta)) => {
-                    let canonical = meta.canonical_view().ok_or(MemoryFail::Denied)?;
-                    space
-                        .memory
-                        .view_record(
-                            &canonical,
-                            offset,
-                            size,
-                            crate::core::memory::PAGE_SIZE,
-                            limit,
-                            access,
-                            at,
-                        )?
+                Some(_) => {
+                    // 旧共享路径先结算待办失效，再按授权窗口选址挂载。
+                    space.memory.retry_invalidation()?;
+                    space.memory.map_range(
+                        window.ok_or(MemoryFail::Denied)?,
+                        crate::core::memory::PAGE_SIZE,
+                        at,
+                        limit,
+                        access,
+                    )?
                 }
                 None => space.memory.allocate_lazy_bytes(size, limit, access, at)?,
             };

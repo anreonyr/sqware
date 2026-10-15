@@ -48,8 +48,9 @@ VA 占用、关系索引，以及待失效与退休资源。`core/memory/nest` �
 预留下来，只用于“已经消费但还没收尾”的关系。普通区间在构造时接入；
 `attach_region` 配置已有边界，镜像装载后的 `advance_region` 单调抬高分配下界。
 内核 Nest 的 `RegionId::Resource` 范围为
-`[mode.lower() + DRAM.base + DRAM.size, TRAP_STACK_BASE)`，内核 keeper 和 device 大区
-映射从此区域选址；`RegionId::Kernel` 限于 64 MiB 的 frame-context 窗口；没有动态窗口的
+`[mode.lower() + DRAM.base + DRAM.size, TRAP_STACK_BASE)`，供显式内核映射选址；
+Pole 保留 RAM 或借用设备区间不占此窗口。
+`RegionId::Kernel` 限于 64 MiB 的 frame-context 窗口；没有动态窗口的
 启动固定跨度记在 `RegionId::Static` 下。Nest 执行地址范围、U 位和 supervisor 策略检查；
 目标团队选择、授权、构造租约及通知仍在工作层。`backend()` 仅在 debug 构建中供白盒核验
 使用，生产调用不借出 Nest。
@@ -73,8 +74,9 @@ Team 持有共享 Space；任务发布与 Pole 私有映射交付仍由 Team 的
 
 - `allocate` 申请已物化存储，初始权限由 Access 给出，权限上限为 R/W/X。物理帧保持既有的清零分配。
 - `allocate_lazy` 保留地址与权限范围，按既有缺页或派生路径物化；它仍可能在元数据或清理节点分配时以 OOM 失败。
-- `view` 从已有凭证建立共享存储的另一段地址映射，是可失败操作，不由 Clone 隐式分配。
-- 三条 Layout 入口都在内部取整大小并满足首地址对齐；请求大小不必由使用者按页取整，超对齐不会新增大页机制。
+- `map_range` 从已持有的 FlatRange 选址并挂载，长度由来源决定；普通生产消费者不再从
+  活跃 View 推导来源。`view` 只保留为 PR 4 待迁移的形状测试桥。
+- Layout 入口在内部取整大小并满足首地址对齐；请求大小不必由使用者按页取整，超对齐不会新增大页机制。
 - `protect_range` 先检查完整覆盖与权限上限，再按既有顺序逐段 `set_access`。当前权限可在上限内调整，上限本身只能收窄。
 
 旧 wire 字节入口与 Layout 入口共用实现，保留不能表示为 Layout 的合法机器字尺寸及原失败码。Allocate 仍是 eager；无来源的 Mmap 仍是 lazy。Mmap 拒绝 W+X，Mprotect 仍允许 R/W/X 同时存在，不将两者的授权规则混成一条。
@@ -93,7 +95,16 @@ PTE 齐全，旧匿名 `Mmap` 不预物化。`set_access` 只在上限内改当�
 
 ## Pole 与授权
 
-Pole 的唯一映射记录集合是 `Vec<HeldMap>`。每项关联实际 `Arc<View>`、可选 token/`Arc<Grant>`、可选的 `Weak<Space>` 放置位置，以及 Input、Keeper、Authority、Open、View 或 Staged 关系。创建 Pole 时从完整、已物化的现有 Mapping 建立输入映射，并在内核 Nest 中派生 keeper 关系；打开时从仍存活的规范来源派生目标 Space 的关系。Pole 不持有裸 Frame，不维护单独的 `source_map` 字段，也不在放置项里另存 reservations（占用在 `View` 里）。来源通过集合中的 live Keeper 或 live placement 选择。
+Pole 直接持有唯一 `FlatRange` 来源，长度从来源派生。`Vec<Authority>` 关联 token 与
+`Arc<Grant>`；`Vec<HeldMap>` 只记录实际 `Arc<View>`、token、`Weak<Space>` 放置以及
+Input、Open、View 或 Staged 关系。创建时保留完整已物化 Mapping 的来源，Input
+仍承担原有交接与关闭责任，但不再派生 kernel keeper。全部 View 关闭不解除合法来源；
+Open 与 Mmap 从授权来源窗口显式建立新关系，不用 canonical View 寻找物理来源。
+放置项不另存 Reservation，占用仍归 View。
+
+`owned()` 只读 Managed 的完整物化状态，Borrowed 不算自有 RAM；该查询不物化、不分配。
+因此既有 Mmap(Pole) 的 RAM 限制不变；设备区域仍以借用来源经 Pie Open 建立普通 CPU View，
+不清零、不按 RAM 回收，也不为单纯持有占内核 VA。
 
 `Grant` 原子保存权限位；Pie 与快照共享同一个 Grant。权限收窄用原子比较交换，失效将其清零；快照不会延长已失效授权。Pole 的操作 lease 序列化创建、打开、撤销和交付；同一时刻已有 lease 时相关操作以 Busy 失败。
 
@@ -123,6 +134,9 @@ Nest 关联让树关闭或销毁后的旧 `View` 无法操作新 Nest。
 递增次序取得；debug 构建会检测递归获取、倒序和跟踪容量越界。锁与其守卫分别定义，守卫
 作为锁的子模块访问私有字段。持锁集长度由 `Vec::len()` 给出，不另存一份计数；8 个槽是初始
 容量，不是不可扩展的上限。
+
+Pole 的授权集合与事件 ring 各用 `Level::L3`，两者不共持；
+授权集合与实际 View 集合分别准备和访问，不嵌套取得同级锁。
 
 ASID shootdown 总是刷新本 hart。远端 kernel shootdown 依据 `ONLINE` 原子位图，用户地址空间 shootdown 依据各 hart 当前 ASID lease。次级 hart 在启动入口发布 online 位（Release），shootdown 侧用 Acquire 读取；切换地址空间时 ASID lease 也以 Release 写、Acquire 读。这样 kernel 映射修改会覆盖已 online 的 hart，即使其当前 lease 不是该 kernel ASID。
 
@@ -380,3 +394,30 @@ kernel/tests/health/nest.rs / nest_failure.rs / depend.rs
 未随本轮闭环（保持原状）：`system-fault` 的 Loader 超时按上文仍未验收；
 `--scene product` 未在本轮重跑（本轮只跑了任务要求的 `accept`）；
 semihosting 外层 JSONL/fs 仍未做整机导出验收。
+
+## PR 3 来源消费者验收
+
+Pole 直接持 FlatRange；Grant 授权、活跃 View 与 Input 关闭责任分别记录，
+不再为 RAM 持有或设备借用创建 keeper。普通 Open / Mmap 只消费授权来源，
+原 wire 编码、错误码、ONLY / VEST、构造域与 Spawn 原子消费不变。
+来源状态判定不隐式物化，也不把 MMIO 放宽成旧 Mmap 可以接受的自有 RAM。
+
+主工作区检查：
+
+- workspace、kernel all-targets、semihosting 的 dev / release 以及 programs all-targets 通过。
+- 健康轮 51 例：50 passed、缺 initrd 的 scene 哨兵 1 failed，退出 101；
+  锁序自检与新增 Pole 来源 / MMIO wire 用例实际通过。独立 reviewer 得到相同结果。
+- accept、product 默认退出场景各 1 passed；system-fault 仍在 Loader 首次构造返回
+  Denied(6)，继而超时、服务级联，签名与 PR 3 前相同，未宣称通过或修改超时门槛。
+- 宿主 frame-runs 9、Pend 35、Trace 默认 / semihosting 各 2、console-line 5、
+  env 13、resource capability 16、alloc-probe 库 6 + 多线程 4 通过；
+  alloc-probe all-targets 检查通过。env 的既有 unused Wire 警告仍在。
+- 新增断言包括不额外占 kernel VA / 表页、Shut / Revoke / 根 Release 关闭多处 View、
+  全 View 关闭后来源可重挂、借用内容不变与不回 RAM、权限和偏移错误码；
+  一页 Allocate / Deallocate 帧表净零与重复 Deallocate 拒绝。
+- `git diff --check` 通过；格式检查 146 个 Diff 块，基线 154，只处理本轮修改范围，
+  没有全树格式化。
+
+详细失败责任与剩余迁移入口见 `docs/memory-flat-nest.md` 的 PR 3 节。
+Memory facade / 形状测试桥及六处来源准备失败的占用交还责任必须由 PR 4 收口；
+新 ABI / TLS 包装、System 独立保留和真实 IOMMU / DMAC 尚未实施。

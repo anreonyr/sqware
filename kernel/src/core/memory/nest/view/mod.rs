@@ -133,7 +133,7 @@ impl View {
         ViewRange::pages(self, offset, count)
     }
 
-    pub(in crate::core::memory::nest) fn source(&self) -> FlatRange {
+    pub(crate) fn source(&self) -> FlatRange {
         self.state.lock().source.clone()
     }
 

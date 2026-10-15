@@ -48,7 +48,7 @@ fn stage_only(
 ) -> alloc::sync::Arc<crate::core::memory::nest::View> {
     meta.reserve_record().expect("reserve Pole record");
     child.reserve_staging(1).expect("reserve staged record");
-    let source = meta.canonical_view().expect("canonical Pole view");
+    let source = meta.window(0, meta.size()).expect("Pole source window");
     let reservation = child
         .space
         .memory
@@ -57,8 +57,8 @@ fn stage_only(
     let mapping = child
         .space
         .memory
-        .derive_into(reservation, &source, 0, access, access)
-        .expect("derive staged map");
+        .attach_range(reservation, source, access, access)
+        .expect("attach staged map");
     let view = mapping.view().clone();
     assert!(
         meta.record(token, &child.space, mapping, Some(child.id), false)

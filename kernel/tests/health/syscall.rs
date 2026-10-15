@@ -7,15 +7,15 @@ use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::address::{PageCount, PageOffset, VirtAddr as KVirt};
 use crate::core::memory::nest::table::PteFlags;
 use crate::core::memory::nest::{Access, RegionId};
-use crate::machine::mode;
-use crate::entry::report::backtrace::StackReader;
-use crate::machine::switcher::context::{Gprs, TrapContext};
-use crate::entry::call as envcall;
 use crate::core::work::mail::{Mail, hole, pole};
 use crate::core::work::pend::{self, Need, Permission};
 use crate::core::work::unit::space::SpaceBuilder;
 use crate::core::work::unit::task::Task;
 use crate::core::work::unit::team::{Team, TeamBuilder};
+use crate::entry::call as envcall;
+use crate::entry::report::backtrace::StackReader;
+use crate::machine::mode;
+use crate::machine::switcher::context::{Gprs, TrapContext};
 
 struct Caller {
     team: Arc<Team>,
@@ -215,6 +215,10 @@ pub fn abi_and_privilege() {
 }
 
 pub fn memory() {
+    use crate::core::memory::flat::allocator::statistics::{block_occupied, frame_occupied};
+    use crate::core::memory::nest::table::TABLE_LIVE;
+    use core::sync::atomic::Ordering;
+
     crate::core::work::room::scheduler::init().expect("scheduler init");
     let user = Caller::new(false);
     let zero = user.allocate(0);
@@ -224,6 +228,23 @@ pub fn memory() {
             size: 0
         })),
         0
+    );
+    let frames = frame_occupied() - block_occupied();
+    let tables = TABLE_LIVE.load(Ordering::Relaxed);
+    let page = user.allocate(PAGE_SIZE);
+    let release = MemoryCall::Deallocate {
+        addr: VirtAddr::new(page),
+        size: PAGE_SIZE,
+    };
+    assert_eq!(user.call(EnvCall::Memory(release)), 0);
+    assert_eq!(frame_occupied() - block_occupied(), frames);
+    assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), tables);
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Deallocate {
+            addr: VirtAddr::new(page),
+            size: PAGE_SIZE,
+        })),
+        env::MemoryFail::Denied.code()
     );
     let at = user.allocate(2 * PAGE_SIZE);
     let before = user
@@ -607,6 +628,140 @@ pub fn capability() {
     drop(operation);
     pole::shut(&pole, token).unwrap();
     assert!(!user.team.space.memory.validate_read(at, size));
+}
+
+/// 线上 Mmap 的来源路径：Pole 授权、来源窗口、关闭后重挂与借用来源的拒绝。
+///
+/// 装载器的真实次序是「先 shut 掉 token 的全部 View，再从 Pole 来源 Mmap」，
+/// 所以这里按同一次序验证，不靠任何 keeper / canonical 关系。
+pub fn memory_pole() {
+    use crate::core::memory::flat::Frame;
+    use crate::entry::call::pie::create_pole;
+    use env::{MemoryFail, TeamId};
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let user = Caller::new(false);
+    let size = PAGE_SIZE;
+    let source = user.allocate(size);
+    let token = create_pole(&user.task, KVirt::wrap(source), size, true).unwrap();
+    let snapshot = pend::locate(&user.task, token).unwrap();
+    let meta = snapshot.mail().pole().unwrap();
+    let physical = user
+        .team
+        .space
+        .memory
+        .backend()
+        .physical_at(KVirt::wrap(source))
+        .unwrap();
+    let map = |pole: env::PieToken, offset: usize, flags: u64| {
+        user.call(EnvCall::Memory(MemoryCall::Mmap {
+            team: TeamId::new(0),
+            pole,
+            offset,
+            flags,
+            at: VirtAddr::new(0),
+            size,
+        }))
+    };
+
+    // 关闭全部 View 之后来源仍在：装载器就是从这一步开始 Mmap 的。
+    pole::shut(&meta, token).unwrap();
+    assert!(!user.team.space.memory.validate_read(source, size));
+    let at = map(token, 0, 6);
+    assert!(at > 0, "pole mmap after shut was rejected: {at}");
+    assert!(user.team.space.memory.validate_read(at as usize, size));
+    assert!(user.team.space.memory.validate_write(at as usize, size));
+    assert_eq!(
+        user.team
+            .space
+            .memory
+            .backend()
+            .physical_at(KVirt::wrap(at as usize)),
+        Some(physical)
+    );
+
+    // 非页对齐偏移与越界窗口都拒，且不换码。
+    assert_eq!(map(token, 1, 6), MemoryFail::NotAligned.code() as isize);
+    assert_eq!(map(token, size, 6), MemoryFail::NotAligned.code() as isize);
+
+    // 收窄授权上限：写请求拒，只读请求仍成立且交付只读关系。
+    pend::reduce(&user.task, token, Permission::FETCH | Permission::VEST).unwrap();
+    assert_eq!(map(token, 0, 6), MemoryFail::Denied.code() as isize);
+    let readonly = map(token, 0, 2);
+    assert!(readonly > 0, "readonly pole mmap was rejected: {readonly}");
+    assert!(
+        user.team
+            .space
+            .memory
+            .validate_read(readonly as usize, size)
+    );
+    assert!(
+        !user
+            .team
+            .space
+            .memory
+            .validate_write(readonly as usize, size)
+    );
+
+    // 借用（设备）来源不算自有 RAM：旧共享授权拒绝，设备访问走 Pie Open。
+    let frame = Frame::allocate().unwrap();
+    let borrowed = pole::region(frame.physical_address(), size, user.task.ident.id).unwrap();
+    let pie = pend::Pie::try_new(
+        Mail::Pole(borrowed.clone()),
+        env::Mark::NONE,
+        Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
+        None,
+    )
+    .unwrap();
+    let device = pie.token();
+    user.task.pend.pies.lock().push(pie);
+    assert_eq!(map(device, 0, 2), MemoryFail::Denied.code() as isize);
+    let (va, _) = pole::open(&borrowed, device, &user.team.space, Access::READ).unwrap();
+    assert!(user.team.space.memory.validate_read(va, size));
+
+    // 构造中的队伍：没有 VEST 不接，有 VEST 才按定点地址交付来源页。
+    let build = pend::Pie::try_new(
+        Mail::Nole(crate::entry::call::resources::get().build.clone()),
+        env::Mark::NONE,
+        Permission::FETCH | Permission::VEST,
+        None,
+    )
+    .unwrap();
+    user.task.pend.pies.lock().push(build);
+    let child = TeamId::new(user.call(EnvCall::Unit(UnitCall::Build {
+        kind: ProgramKind::User,
+        sire: user.task.ident.id,
+    })) as usize);
+    assert!(
+        user.task.clan(child).is_some(),
+        "built team is not a clan of the caller"
+    );
+    let mint = |pole: env::PieToken, at: usize, flags: u64| {
+        user.call(EnvCall::Memory(MemoryCall::Mmap {
+            team: child,
+            pole,
+            offset: 0,
+            flags,
+            at: VirtAddr::new(at),
+            size,
+        }))
+    };
+    let fresh = user.allocate(size);
+    let owned = create_pole(&user.task, KVirt::wrap(fresh), size, true).unwrap();
+    pend::reduce(&user.task, owned, Permission::FETCH | Permission::STORE).unwrap();
+    assert_eq!(
+        mint(owned, 0x4000_0000, 2),
+        MemoryFail::Denied.code() as isize
+    );
+    let staged = mint(token, 0x4000_0000, 2);
+    assert!(
+        staged > 0,
+        "vest pole mmap into a constructing team: {staged}"
+    );
+    assert_eq!(user.call(EnvCall::Unit(UnitCall::Oust { team: child })), 0);
+
+    drop(snapshot);
+    drop(meta);
 }
 
 pub fn resource_registration() {

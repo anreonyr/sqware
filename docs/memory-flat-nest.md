@@ -4,7 +4,8 @@
 
 PR 1 已完成：完整物理来源模型及旧 CPU 映射路径的来源适配。
 PR 2 已完成：Nest 的地址占用、翻译关系、失效与退休回收。
-新 ABI、Pole 来源消费者清理、System 独立保留和设备服务仍属后续阶段。
+PR 3 已完成：Pole 直接持授权来源，普通来源消费者不再经过 keeper。
+新 ABI、迁移 facade 删除、System 独立保留和设备服务仍属后续阶段。
 
 执行基线为 `master`，`03eabbde92586a6d6cf398d9a7a0b20e17b099c5`。
 开始验证时工作区干净。仓库内没有 `AGENT.md` 或 `AGENTS.md`。
@@ -349,3 +350,92 @@ debug / release 构建均通过。真实锁序检测在公共 init 中启用，
 `health/nest_failure.rs: 839b80c6abc9`。
 多 hart 并发和其它元数据 OOM 路径仍未专项覆盖；
 新 ABI、Pole 改持 Flat / 去 keeper、System / IOMMU / DMAC 仍属后续 PR。
+
+## PR 3：来源消费者
+
+PR 3 基线为 `f690fd054b3aa6a8402441b4163ffbc8e9b4a7ad`。
+前面 PR 1 / PR 2 的 keeper 描述是各自检查点记录，本节描述当前实现。
+
+### 功能、状态与失败责任
+
+- `PoleMeta.source` 是唯一授权来源范围；来源长度从该范围派生，不再镜像存储。
+  `Authority` 只关联 token 与 Grant；`HeldMap` 只记录实际 View、token、放置与关系种类。
+  keeper 与 canonical 来源选择退出生产调用图；来源保留不占内核 Resource VA。
+- `owned()` 只读 Managed 的整段物化状态，不分配、不物化、不用 Arc 数量判授权。
+  Borrowed 不算 owned：旧 Mmap(Pole) 仍拒绝设备区间，合法 Pie Open 仍可显式挂载。
+- 首份 Grant 关联 Input；提交前创建失败不接管 Input 的关闭责任，
+  提交后 Input、Open、共享 View 与 Staged 继续受对应 Grant 撤销约束。
+  Shut 失败保留原关系供重试；消费式清理失败由 Nest 接管，来源与 VA 禁复用责任不丢失。
+- `map_range` 接收已有 FlatRange，再选址并挂载；普通挂载和显式活动形状挂载最终仍归
+  Nest 的同一提交规则。惰性来源先建立再占位，缺页仍只物化并发布一页。
+  来源页槽、关系活动形状与 PTE 发布状态仍是独立事实。
+- 启动、Task 栈、trap frame、loader、内核临时访问与 TLS 调用链保留旧 ABI。
+  不为已经正确的 Flat/Nest 组合机械新增入口或重写行为。
+
+授权集合和事件 ring 各用 `Level::L3`，不同时持有；View 集合不嵌套持有授权锁。
+开启锁序检测的健康轮包含相应创建、打开、收窄、关闭、撤销和 staging 路径。
+
+### 行为证据
+
+新增设备区域消费与 wire Mmap(Pole) 健康用例，覆盖：
+
+- 创建 RAM Pole 前后 kernel Nest 的 View、表页与数据页账不增加；
+  三个创建失败检查点保持 Input、创建资格与原 PTE，最终来源仍可回收。
+- 全部 CPU View 关闭后仍从合法来源重新挂载并得到原 PA。
+  同一 token 的多处 Open 经 Shut、Revoke 或根 Release 后全部撤下。
+  撤销后的局部强引用仍可保留来源，最后引用消失后才回收。
+- MMIO 接入不清零、不取得 RAM 数据帧、不占 kernel VA；
+  Mmap 拒绝同一借用来源，而 Open 合法且内容保持。
+- wire 检查无 STORE 拒写、跨构造域无 VEST 拒绝、有 VEST 成功；
+  偏移非页对齐与越界仍返回原 NotAligned，ONLY/staging/Spawn 原子消费保持。
+- 原 ABI 的一页 Allocate → Deallocate 后帧减块读数与 TABLE_LIVE 回到基线，
+  同址同长第二次 Deallocate 返回 Denied。这不是实际 TLS 线程退出测试。
+
+### 实际验证与限制
+
+父工作区执行了以下检查；reviewer 另行独立运行 all-targets 编译和健康轮，
+同样得到 50 项通过与缺 initrd 哨兵失败。
+
+| 实际检查 | 结果 |
+|---|---|
+| workspace dev/release、kernel all-targets dev/release、semihosting dev/release | 通过 |
+| programs all-targets | 通过 |
+| `nu scripts/qtest.nu --package kernel` | 51 例，50 passed；缺 initrd 的 scene 1 failed，退出 101 |
+| `nu scripts/qtest.nu --package kernel --scene accept` | 1 passed |
+| `nu scripts/qtest.nu --package kernel --scene product` | 1 passed |
+| `nu scripts/qtest.nu --package kernel --scene system-fault` | 退出 101，与 PR 3 前的 Loader Denied / 超时签名相同 |
+| frame-runs / Pend / Trace 默认与 semihosting / console-line 宿主测试 | 9 / 35 / 2 + 2 / 5 passed |
+| env / resource capability 宿主测试 | 13 / 16 passed；env 的既有 unused Wire 警告仍在 |
+| alloc-probe 宿主 all-targets、无默认特性测试 | 检查通过，库 6 + 多线程 4 passed |
+| `git diff --check`，使用从 HEAD 初始化的独立索引 | 通过 |
+| `cargo fmt --all -- --check` | 退出 1，146 个 Diff 块；PR 3 基线 154，未全树重排 |
+
+`system-fault` 的首个失败仍为 `programs/src/harness/probe/loader.rs:361`
+返回 Denied(6)，随后 `:306` 与 `:190` 超时及服务级联；不是缺镜像哨兵，
+不能称整机故障场景通过。product 的本轮证据是默认 EOF 退出场景，
+不是登录或 Shell 交互脚本验收。
+
+closure 线程有显式 TLS 释放路径，但未动态验证线程净零；
+ELF bootstrap TLS 当前随 Team/Space 关闭回收，不声称按 Task 净零。
+bootstrap TLS 出口和包装失败责任留 PR 5 的运行时 ABI 迁移收口。
+其它元数据 OOM 和多 hart 并发没有专项强制覆盖。
+
+### PR 4 必须接走的迁移责任
+
+`Memory::view` / `view_record` / `derive_into` / `project` 等仅为形状与副作用测试桥，
+PR 4 迁移等价测试后删除，不能以只有测试调用为由删掉保洞断言。
+`attach_range` / `attach_range_shaped` / `map_range` 是唯一临时来源适配入口；
+facade 删除时由调用方直接组合来源准备、Nest reserve 与 attach。
+
+旧的 `map_frames`、`map_lazy`、`map_borrowed`、`attach_static`、
+`map_boot_frames`、`project` 仍有“先取得无 Drop 的 Reservation，
+随后来源或元数据准备以 `?` 失败”的占用责任缺口；PR 4 必须在迁移调用者时统一解决，
+不能靠给 Reservation 加隐式释放或新通用 owner 掩盖。
+本轮 `allocate_lazy_core` 已改为先建立来源再占位。
+创建资格仍由 pend 的真实 View 身份维护，旧 wire 编码没有改变。
+
+最终命名与行为 spot 均通过；行为 reviewer 独立复跑健康轮、差异与格式检查，
+得到相同的 50 + 哨兵 1、差异干净和 146 个格式块。
+封存 SHA256 前缀：`pole/mod.rs 2ecb4e32605f`、
+`space/memory.rs 40df188cdeed`、`health/pole.rs 7e46c3c1aad9`、
+`health/syscall.rs 5f8377b36923`。

@@ -125,6 +125,18 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn pole_device_region_borrow_and_access() {
+        kernel::entry::check::pole::region();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_pole_source_wire() {
+        kernel::entry::check::syscall::memory_pole();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn heap_starts_after_image_bss() {
         kernel::entry::check::pagetable::image_dynamic_region();
     }

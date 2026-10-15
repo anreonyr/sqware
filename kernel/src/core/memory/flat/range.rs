@@ -60,6 +60,11 @@ impl FlatRange {
         self.flat.materialized(self.index, self.count)
     }
 
+    /// 该范围是否已是 Managed 的完整物化结果；借用来源不算。只读，不物化。
+    pub(crate) fn fully_materialized(&self) -> Result<bool, FlatError> {
+        self.flat.fully_materialized(self.index, self.count)
+    }
+
     pub(crate) fn is_borrowed(&self) -> bool {
         self.flat.is_borrowed()
     }

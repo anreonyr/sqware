@@ -174,6 +174,36 @@ impl Flat {
         Ok(out)
     }
 
+    /// 该窗口是否已是 Managed 的完整物化结果；借用来源没有物化页槽，不算。
+    ///
+    /// 只读快照：不物化、不分配。页槽按页号严格递增且唯一，
+    /// 因此首尾两页都在窗口内就说明整窗连续覆盖。
+    pub(super) fn fully_materialized(
+        &self,
+        index: PageIndex,
+        count: PageCount,
+    ) -> Result<bool, FlatError> {
+        let end = index
+            .get()
+            .checked_add(count.get())
+            .ok_or(FlatError::OutOfRange)?;
+        if end > self.page_count.get() {
+            return Err(FlatError::OutOfRange);
+        }
+        let guard = self.source.lock();
+        let FlatSource::Managed(slots) = &*guard else {
+            return Ok(false);
+        };
+        let first = slots.partition_point(|(slot, _)| slot.get() < index.get());
+        if slots.len() - first < count.get() {
+            return Ok(false);
+        }
+        Ok(
+            slots[first].0.get() == index.get()
+                && slots[first + count.get() - 1].0.get() == end - 1,
+        )
+    }
+
     pub(super) fn physical_at(&self, page: PageIndex) -> Result<PhysAddr, FlatError> {
         if page.get() >= self.page_count.get() {
             return Err(FlatError::OutOfRange);

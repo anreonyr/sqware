@@ -1,20 +1,24 @@
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::address::VirtAddr;
 use crate::core::memory::flat::Frame;
+use crate::core::memory::flat::allocator::statistics::{block_occupied, frame_occupied};
 use crate::core::memory::nest::table::{PteFlags, TABLE_LIVE};
-use crate::core::memory::nest::{Access, RegionId, identity};
-use crate::entry::call::pie::{create_pole, fail_pole_at};
-use crate::core::work::mail::pole;
+use crate::core::memory::nest::{Access, NestError, RegionId, identity};
+use crate::core::work::mail::{Mail, pole};
 use crate::core::work::pend::{self, Permission};
-use crate::core::work::unit::{
-    space::SpaceBuilder,
-    team::TeamBuilder,
-};
+use crate::core::work::unit::{space::SpaceBuilder, team::TeamBuilder};
+use crate::entry::call::pie::{create_pole, fail_pole_at};
+use ::core::sync::atomic::Ordering;
 use alloc::sync::Arc;
 use alloc::vec;
 
+/// 实际持有的整页读数：帧池取给块池的整页由 `block_occupied` 单记。
+fn held_pages() -> usize {
+    frame_occupied() - block_occupied()
+}
+
 pub fn lifecycle() {
-    let before = TABLE_LIVE.load(::core::sync::atomic::Ordering::Relaxed);
+    let before = TABLE_LIVE.load(Ordering::Relaxed);
     let space = SpaceBuilder::user().build().unwrap();
     let team = TeamBuilder::new(space).spawn().unwrap();
     let caller = team.task().hold().unwrap();
@@ -38,9 +42,16 @@ pub fn lifecycle() {
         .unwrap();
     prepared.commit(input.view());
     let start = input.address();
+    let physical = team.space.memory.backend().physical_at(start).unwrap();
     let original = input.view().active().unwrap()[0].current.bits();
-    let kernel = crate::core::work::unit::team::kernel().unwrap().space.clone();
-    let tables = TABLE_LIVE.load(::core::sync::atomic::Ordering::Relaxed);
+    let kernel = crate::core::work::unit::team::kernel()
+        .unwrap()
+        .space
+        .clone();
+    let tables = TABLE_LIVE.load(Ordering::Relaxed);
+    let kernel_tables = kernel.memory.backend().table_count();
+    let frames = held_pages();
+    let kernel_views = kernel.memory.backend().view_count();
     for stage in 1..=3 {
         fail_pole_at(stage);
         assert_eq!(
@@ -48,30 +59,22 @@ pub fn lifecycle() {
             Err(env::PieFail::OoM)
         );
         assert!(caller.pend.pies.lock().is_empty());
+        // 失败的创建不留占：输入映射仍是调用方那一段，占用、帧账与内核 VA 都不涨。
         assert!(Arc::ptr_eq(
             &team.space.memory.backend().probe(start).unwrap(),
             input.view()
         ));
         assert_eq!(input.view().active().unwrap()[0].current.bits(), original);
         let _lease = caller.pend.creations.claim(input.view()).unwrap();
-        assert_eq!(
-            TABLE_LIVE.load(::core::sync::atomic::Ordering::Relaxed),
-            tables
-        );
+        assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), tables);
+        assert_eq!(held_pages(), frames);
+        assert_eq!(kernel.memory.backend().view_count(), kernel_views);
     }
-    identity::fail_next_shootdown(kernel.memory.asid());
-    assert_eq!(
-        create_pole(&caller, start, PAGE_SIZE, true),
-        Err(env::PieFail::Busy)
-    );
-    assert!(caller.pend.pies.lock().is_empty());
-    kernel.memory.retry_invalidation().unwrap();
-    assert_eq!(
-        TABLE_LIVE.load(::core::sync::atomic::Ordering::Relaxed),
-        tables
-    );
-    assert_eq!(input.view().active().unwrap()[0].current.bits(), original);
+    // 保留 RAM 不占额外 kernel Resource VA：成功创建前后内核 Nest 的关系与表页都不变。
     let token = create_pole(&caller, start, PAGE_SIZE, true).unwrap();
+    assert_eq!(kernel.memory.backend().view_count(), kernel_views);
+    assert_eq!(kernel.memory.backend().table_count(), kernel_tables);
+    assert_eq!(held_pages(), frames);
     assert_eq!(
         create_pole(&caller, start, PAGE_SIZE, true),
         Err(env::PieFail::Denied)
@@ -82,6 +85,49 @@ pub fn lifecycle() {
     assert_eq!(pole::open(&meta, token, &team.space, rw).unwrap(), first);
     assert_eq!(first.0, start.as_usize());
     assert!(meta.opened(input.view()));
+    // 同一个 token 在另一个队伍里再开一段：撤销要能把两处都关掉。
+    let in_peer = pole::open(&meta, token, &peer.space, rw).unwrap();
+    let peer_view = peer
+        .space
+        .memory
+        .backend()
+        .probe(VirtAddr::wrap(in_peer.0))
+        .unwrap();
+    assert!(meta.opened(&peer_view));
+    drop(peer_view);
+    // 关闭的同步失败：关系与关闭责任都留在 Pole，占用禁复用，同身份重试才收尾。
+    identity::fail_next_shootdown(team.space.memory.asid());
+    assert_eq!(pole::shut(&meta, token), Err(env::PieFail::Busy));
+    assert!(team.space.memory.backend().has_pending_invalidation());
+    assert_eq!(
+        team.space
+            .memory
+            .reserve(RegionId::Normal, start, PAGE_SIZE)
+            .err(),
+        Some(NestError::NoRegion)
+    );
+    assert!(weak.upgrade().is_some());
+    team.space.memory.retry_invalidation().unwrap();
+    pole::shut(&meta, token).unwrap();
+    assert!(team.space.memory.backend().translate(start).is_none());
+    assert!(
+        peer.space
+            .memory
+            .backend()
+            .translate(VirtAddr::wrap(in_peer.0))
+            .is_none()
+    );
+    // 全部 View 关掉之后来源仍在：同一授权还能重新挂载，并交付同一物理页。
+    let (reopened, _) = pole::open(&meta, token, &team.space, rw).unwrap();
+    assert!(team.space.memory.validate_read(reopened, PAGE_SIZE));
+    assert_eq!(
+        team.space
+            .memory
+            .backend()
+            .physical_at(VirtAddr::wrap(reopened))
+            .unwrap(),
+        physical
+    );
     let child = env::PieToken::mint(
         pend::accord(
             &caller,
@@ -93,6 +139,7 @@ pub fn lifecycle() {
         .unwrap(),
     );
     let (shared, _) = pole::open(&meta, child, &peer.space, rw).unwrap();
+    let (shared_local, _) = pole::open(&meta, child, &team.space, rw).unwrap();
     let peer_map = peer
         .space
         .memory
@@ -107,7 +154,7 @@ pub fn lifecycle() {
             .translate(VirtAddr::wrap(shared))
             .unwrap()
             .0,
-        team.space.memory.backend().translate(start).unwrap().0
+        physical
     );
     assert_eq!(
         create_pole(&recipient, VirtAddr::wrap(shared), PAGE_SIZE, true),
@@ -120,7 +167,7 @@ pub fn lifecycle() {
             .space
             .memory
             .backend()
-            .translate(start)
+            .translate(VirtAddr::wrap(reopened))
             .unwrap()
             .1
             .contains(PteFlags::W)
@@ -130,19 +177,53 @@ pub fn lifecycle() {
     pend::revoke(&caller, &Arc::downgrade(&recipient), child).unwrap();
     assert!(meta.readonly());
     assert!(meta.exclusive());
-    assert!(peer.space.memory.backend().translate(VirtAddr::wrap(shared)).is_none());
+    assert!(
+        team.space
+            .memory
+            .backend()
+            .translate(VirtAddr::wrap(shared_local))
+            .is_none()
+    );
+    assert!(
+        peer.space
+            .memory
+            .backend()
+            .translate(VirtAddr::wrap(shared))
+            .is_none()
+    );
     pole::shut(&meta, token).unwrap();
     assert!(weak.upgrade().is_some());
-    assert!(team.space.memory.backend().translate(start).is_none());
-    let (reopened, _) = pole::open(&meta, token, &team.space, Access::READ).unwrap();
-    assert!(team.space.memory.validate_read(reopened, PAGE_SIZE));
-    assert!(!team.space.memory.validate_write(reopened, PAGE_SIZE));
+    assert!(
+        team.space
+            .memory
+            .backend()
+            .translate(VirtAddr::wrap(reopened))
+            .is_none()
+    );
+    let (again, _) = pole::open(&meta, token, &team.space, Access::READ).unwrap();
+    assert!(team.space.memory.validate_read(again, PAGE_SIZE));
+    assert!(!team.space.memory.validate_write(again, PAGE_SIZE));
     assert_eq!(
-        create_pole(&caller, VirtAddr::wrap(reopened), PAGE_SIZE, true),
+        create_pole(&caller, VirtAddr::wrap(again), PAGE_SIZE, true),
         Err(env::PieFail::Denied)
     );
+    let (again_peer, _) = pole::open(&meta, token, &peer.space, Access::READ).unwrap();
     pend::release(&caller, token).unwrap();
     assert!(!snapshot.alive());
+    assert!(
+        team.space
+            .memory
+            .backend()
+            .translate(VirtAddr::wrap(again))
+            .is_none()
+    );
+    assert!(
+        peer.space
+            .memory
+            .backend()
+            .translate(VirtAddr::wrap(again_peer))
+            .is_none()
+    );
     drop(snapshot);
     drop(meta);
     drop(input);
@@ -164,8 +245,92 @@ pub fn lifecycle() {
     drop(caller);
     drop(team);
     drop(kernel);
+    assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), before);
+}
+
+/// 设备区域：借用凭证代替存储保留，不清零、不按 RAM 回收、不占内核 VA。
+pub fn region() {
+    let space = SpaceBuilder::user().build().unwrap();
+    space
+        .memory
+        .attach_region(
+            RegionId::Normal,
+            0x4000_0000,
+            crate::machine::mode::upper().as_usize(),
+        )
+        .unwrap();
+    let team = TeamBuilder::new(space).spawn().unwrap();
+    let caller = team.task().hold().unwrap();
+    let kernel = crate::core::work::unit::team::kernel()
+        .unwrap()
+        .space
+        .clone();
+    let kernel_views = kernel.memory.backend().view_count();
+    let kernel_tables = kernel.memory.backend().table_count();
+    let tables = TABLE_LIVE.load(Ordering::Relaxed);
+
+    // 借来一页真实 RAM 当设备区间：先写模式，再看它经来源与 CPU 访问后是否原样。
+    let frame = Frame::allocate().unwrap();
+    let weak = Arc::downgrade(&frame);
+    let physical = frame.physical_address();
+    let pattern = vec![0xA5u8; PAGE_SIZE];
+    unsafe {
+        ::core::ptr::copy_nonoverlapping(pattern.as_ptr(), frame.as_mut_ptr(), PAGE_SIZE);
+    }
+    let held = held_pages();
+
+    let meta = pole::region(physical, PAGE_SIZE, caller.ident.id).unwrap();
+    // 接入设备区间不占内核 VA、不动表页、也不从 RAM 取页。
+    assert_eq!(kernel.memory.backend().view_count(), kernel_views);
+    assert_eq!(kernel.memory.backend().table_count(), kernel_tables);
     assert_eq!(
-        TABLE_LIVE.load(::core::sync::atomic::Ordering::Relaxed),
-        before
+        held_pages(),
+        held,
+        "flat: a borrowed device region takes no RAM frame"
     );
+
+    let pie = pend::Pie::try_new(
+        Mail::Pole(meta.clone()),
+        env::Mark::NONE,
+        Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
+        None,
+    )
+    .unwrap();
+    let token = pie.token();
+    pend::insert(&caller, pie).unwrap();
+    // 借用来源不算自有 RAM：旧共享授权看的正是这个判据。
+    assert!(!meta.owned());
+
+    // CPU 访问显式建立普通 View：PA 就是借来的那一页，内容没有被清零。
+    let (at, _) = pole::open(&meta, token, &team.space, Access::READ).unwrap();
+    assert_eq!(
+        team.space
+            .memory
+            .backend()
+            .physical_at(VirtAddr::wrap(at))
+            .unwrap()
+            .as_usize(),
+        physical
+    );
+    let mut seen = vec![0u8; PAGE_SIZE];
+    assert!(team.space.memory.copy_in(&mut seen, at));
+    assert!(seen.iter().all(|byte| *byte == 0xA5));
+
+    // 关闭 View 之后来源仍在：借来的存储仍归调用方，没被当 RAM 回收。
+    pole::shut(&meta, token).unwrap();
+    assert!(weak.upgrade().is_some());
+    assert_eq!(
+        unsafe { ::core::ptr::read_volatile(physical as *const u8) },
+        0xA5,
+        "flat: borrowed storage is not reclaimed as RAM"
+    );
+    assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), tables);
+
+    drop(meta);
+    drop(frame);
+    assert!(weak.upgrade().is_none());
+    assert!(team.release_held(&caller));
+    drop(caller);
+    drop(team);
+    drop(kernel);
 }

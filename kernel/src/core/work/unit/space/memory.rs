@@ -8,7 +8,7 @@ use env::MemoryFail;
 
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::address::{PageCount, PageIndex, PageOffset, PhysAddr, VirtAddr};
-use crate::core::memory::flat::{Allocation, BorrowedRegion, Flat, Frame};
+use crate::core::memory::flat::{Allocation, BorrowedRegion, Flat, FlatRange, Frame};
 use crate::core::memory::nest::table::PteFlags;
 use crate::core::memory::nest::{
     Access, ActiveRange, Asid, FaultKind, Nest, NestError, Placement, RegionId, Reservation,
@@ -93,6 +93,60 @@ impl Memory {
             return Err(MemoryFail::NotAligned);
         }
         Ok(())
+    }
+
+    /// 唯一临时来源挂载入口（整段活动形状）：把一段已持有的来源范围挂成普通 `View`。
+    ///
+    /// 来源必须先准备好（物化或借用凭证都在调用方手里）；
+    /// 挂载失败的占用交还责任按 `Nest` 的划分：提交失败交还，已发布失败进清理链。
+    ///
+    /// 删除条件：PR4 删掉本层时，调用方直接组合 `Nest::reserve` 与 `Nest::attach`。
+    pub(crate) fn attach_range(
+        &self,
+        reservation: Reservation,
+        source: FlatRange,
+        ceiling: Access,
+        current: Access,
+    ) -> Result<Mapping, NestError> {
+        Ok(Mapping::new(self.nest.attach(
+            reservation,
+            source,
+            ceiling,
+            current,
+        )?))
+    }
+
+    /// 同一入口的显式活动形状：启动固定跨度与派生投影给出自己的属性与形状。
+    pub(crate) fn attach_range_shaped(
+        &self,
+        reservation: Reservation,
+        source: FlatRange,
+        attrs: PteFlags,
+        active: &[ActiveRange],
+    ) -> Result<Mapping, NestError> {
+        Ok(Mapping::new(self.nest.attach_shaped(
+            reservation,
+            source,
+            attrs,
+            active,
+        )?))
+    }
+
+    /// 从一段已持有的来源范围选址并挂载：长度由来源范围决定。
+    pub(crate) fn map_range(
+        &self,
+        source: FlatRange,
+        align: usize,
+        at: Option<VirtAddr>,
+        ceiling: Access,
+        current: Access,
+    ) -> Result<Mapping, NestError> {
+        let size = source
+            .page_count()
+            .checked_bytes()
+            .ok_or(NestError::NotAligned)?;
+        let reservation = self.place(size, align, at)?;
+        self.attach_range(reservation, source, ceiling, current)
     }
 
     pub fn user_range(addr: usize, size: usize) -> bool {
@@ -237,12 +291,8 @@ impl Memory {
         source.materialize().map_err(NestError::from)?;
         self.nest.retry_invalidation()?;
         let reservation = self.place(size, align, at)?;
-        Ok(Mapping::new(self.nest.attach(
-            reservation,
-            source,
-            Access::all(),
-            access,
-        )?))
+        self.attach_range(reservation, source, Access::all(), access)
+            .map_err(MemoryFail::from)
     }
 
     fn allocate_lazy_core(
@@ -253,18 +303,15 @@ impl Memory {
         current: Access,
         at: Option<VirtAddr>,
     ) -> Result<Mapping, MemoryFail> {
-        self.nest.retry_invalidation()?;
-        let reservation = self.place(size, align, at)?;
+        // 先备好来源，再取占用：来源失败不留下无人接管的地址。
         let source =
             Flat::acquire(Allocation::new(size / PAGE_SIZE, PAGE_SIZE).map_err(NestError::from)?)
                 .map_err(NestError::from)?
                 .whole();
-        Ok(Mapping::new(self.nest.attach(
-            reservation,
-            source,
-            limit,
-            current,
-        )?))
+        self.nest.retry_invalidation()?;
+        let reservation = self.place(size, align, at)?;
+        self.attach_range(reservation, source, limit, current)
+            .map_err(MemoryFail::from)
     }
 
     #[allow(dead_code)]
@@ -308,6 +355,9 @@ impl Memory {
 
     /// 从一段已有关系派生目标关系：源活动与请求窗口的交就是目标的活动形状，
     /// 空洞不被重发布；保留只物化/发布源活动片段的旧副作用。占用由调用方选定。
+    ///
+    /// PR4 前保留的旧派生桥：Pole 已改从自身来源范围挂载，这里暂时没有生产调用。
+    #[allow(dead_code)]
     pub(crate) fn derive_into(
         &self,
         reservation: Reservation,
@@ -404,12 +454,7 @@ impl Memory {
             &indexed,
         )?
         .whole();
-        Ok(Mapping::new(self.nest.attach(
-            reservation,
-            source,
-            ceiling,
-            current,
-        )?))
+        self.attach_range(reservation, source, ceiling, current)
     }
 
     pub(crate) fn map_lazy(
@@ -420,12 +465,7 @@ impl Memory {
     ) -> Result<Mapping, NestError> {
         let source =
             Flat::acquire(Allocation::new(reservation.size() / PAGE_SIZE, PAGE_SIZE)?)?.whole();
-        Ok(Mapping::new(self.nest.attach(
-            reservation,
-            source,
-            ceiling,
-            current,
-        )?))
+        self.attach_range(reservation, source, ceiling, current)
     }
 
     pub(crate) unsafe fn map_borrowed(
@@ -443,12 +483,7 @@ impl Memory {
             }
         };
         let source = Flat::from_region(region)?.whole();
-        Ok(Mapping::new(self.nest.attach(
-            reservation,
-            source,
-            ceiling,
-            current,
-        )?))
+        self.attach_range(reservation, source, ceiling, current)
     }
 
     /// 启动静态挂载：按 `Exact` 登记真实占用，再按给定属性挂上既有帧。
@@ -479,12 +514,7 @@ impl Memory {
         )?
         .whole();
         let active = [ActiveRange::new(start, size, access, access)?];
-        Ok(Mapping::new(self.nest.attach_shaped(
-            reservation,
-            source,
-            attrs,
-            &active,
-        )?))
+        self.attach_range_shaped(reservation, source, attrs, &active)
     }
 
     /// 启动静态挂载：把调用方仍保留的物理区间按给定属性挂到已有保留上。
@@ -503,12 +533,7 @@ impl Memory {
             PageCount::new(size / PAGE_SIZE).ok_or(NestError::NotAligned)?,
         )?;
         let active = [ActiveRange::new(start, size, access, access)?];
-        Ok(Mapping::new(self.nest.attach_shaped(
-            reservation,
-            source,
-            attrs,
-            &active,
-        )?))
+        self.attach_range_shaped(reservation, source, attrs, &active)
     }
 
     /// 启动静态挂载：登记 `Exact` 真实占用后借用调用方保留的物理区间。
@@ -542,8 +567,7 @@ impl Memory {
         let access = Access::from_pte(flags);
         let attrs = flags & (PteFlags::U | PteFlags::G | PteFlags::A | PteFlags::D);
         let active = [ActiveRange::new(TRAMPOLINE, PAGE_SIZE, access, access)?];
-        self.nest
-            .attach_shaped(reservation, source_range, attrs, &active)?;
+        self.attach_range_shaped(reservation, source_range, attrs, &active)?;
         Ok(())
     }
 
