@@ -1,4 +1,4 @@
-//! 一次无映射移交的短事务：两端页槽在同一个临界区里进入在途态。
+//! 一次移交的短事务：两端页槽在同一个临界区里进入在途态。
 //!
 //! 事务只改页槽，不复制数据、不分配数据帧、不碰 PTE/TLB。
 //! 守卫活着的时候两端就一直是那个在途态：源头是 `Moving`（自己强持原 `Frame`），
@@ -69,15 +69,15 @@ impl Transaction {
         let target = target.flat().clone();
         if same {
             let mut state = source.state.lock();
-            source_ready(&source, &state, source_page)?;
-            let was_missing = target_ready(&target, &state, target_page)?;
+            source_ready(&state, source_page)?;
+            let was_missing = target_ready(&state, target_page)?;
             reserve(&mut state, target_page)?;
             claim_source(&mut state, source_page, id)?;
             claim_target(&mut state, target_page, id, was_missing);
         } else {
             with_pair(&source.state, &target.state, |from, to| {
-                source_ready(&source, from, source_page)?;
-                let was_missing = target_ready(&target, to, target_page)?;
+                source_ready(from, source_page)?;
+                let was_missing = target_ready(to, target_page)?;
                 reserve(to, target_page)?;
                 claim_source(from, source_page, id)?;
                 claim_target(to, target_page, id, was_missing);
@@ -98,6 +98,29 @@ impl Transaction {
     pub(in crate::core::memory) fn commit(mut self) {
         self.settle();
         self.committed = true;
+    }
+
+    /// 源槽此刻强持的那个承载：只读提取，不改归属、不放独占。
+    ///
+    /// 调用方拿它核对“撤下来的那一页正是本次要移交的同一份帧”，
+    /// 而不是再存一份 PA 或第二个归属权威。
+    pub(in crate::core::memory) fn carrier(&self) -> Arc<Frame> {
+        let state = self.source.state.lock();
+        let FlatSource::Managed(slots) = &state.source else {
+            unreachable!("the source was a plain acquired source when it was claimed")
+        };
+        let (at, present) = slot::spot(slots, self.source_page);
+        assert!(present, "a claimed source slot keeps its seat");
+        match &slots[at].1 {
+            Slot::Moving { frame, transaction } => {
+                assert!(
+                    *transaction == self.id,
+                    "the source slot belongs to this transaction"
+                );
+                frame.clone()
+            }
+            _ => panic!("a claimed source slot stays Moving"),
+        }
     }
 
     /// 两端在同一临界区里结算：`Moving → Missing`，`Reserved → Resident`。
@@ -147,9 +170,13 @@ fn next_transaction() -> Result<usize, TransferError> {
     crate::machine::sync::next_id(&NEXT).ok_or(TransferError::OutOfMemory)
 }
 
-/// 两端共同的来源资格：普通 `acquire` 建立的 RAM 来源。
-fn plain_origin(flat: &Flat, state: &FlatState) -> Result<(), TransferError> {
-    if flat.imported || !matches!(state.source, FlatSource::Managed(_)) {
+/// 两端共同的来源资格：这一份来源还允许迁移。
+///
+/// 资格是来源自己的**永久**状态，不靠“现在有没有关系压着它”现算：导入、借用，
+/// 以及任何一次内核或全局发布都会把它整份置假——全局条目对 ASID 定向失效免疫，
+/// 旧 TLB 无从确认，而关联退场并不能证明它没了。
+fn plain_origin(state: &FlatState) -> Result<(), TransferError> {
+    if !state.transferable {
         return Err(TransferError::NotTransferable);
     }
     Ok(())
@@ -160,9 +187,9 @@ fn pinned(state: &FlatState, page: PageIndex) -> bool {
     state.is_pinned(page, PageCount::new(1).expect("one page"))
 }
 
-/// 源端：普通来源、无驻留，且这一页真的是空闲的承载。
-fn source_ready(flat: &Flat, state: &FlatState, page: PageIndex) -> Result<(), TransferError> {
-    plain_origin(flat, state)?;
+/// 源端：来源仍可迁、无驻留，且这一页真的是空闲的承载。
+fn source_ready(state: &FlatState, page: PageIndex) -> Result<(), TransferError> {
+    plain_origin(state)?;
     if pinned(state, page) {
         return Err(TransferError::Busy);
     }
@@ -180,11 +207,11 @@ fn source_ready(flat: &Flat, state: &FlatState, page: PageIndex) -> Result<(), T
     }
 }
 
-/// 目标端：普通来源、无驻留，且这一页是空的（Fresh 或 `Missing` 墓碑）。
+/// 目标端：来源仍可迁、无驻留，且这一页是空的（Fresh 或 `Missing` 墓碑）。
 ///
 /// 返回值是“目标原本是不是墓碑”：回退时要原样还回去，不能把墓碑抹成 Fresh。
-fn target_ready(flat: &Flat, state: &FlatState, page: PageIndex) -> Result<bool, TransferError> {
-    plain_origin(flat, state)?;
+fn target_ready(state: &FlatState, page: PageIndex) -> Result<bool, TransferError> {
+    plain_origin(state)?;
     if pinned(state, page) {
         return Err(TransferError::Busy);
     }

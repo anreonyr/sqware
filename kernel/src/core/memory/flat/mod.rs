@@ -46,25 +46,23 @@ use state::FlatState;
 /// 物化时机由调用方组合决定，来源本身不携带 eager / lazy 策略。
 pub struct Flat {
     page_count: PageCount,
-    /// 由 `from_frames` 导入建立的来源：不是普通 `acquire` 来源，不能参与迁移。
-    imported: bool,
     state: SpinLock<FlatState>,
 }
 
 impl Flat {
-    /// 建立 RAM 逻辑来源；不提前物化。
+    /// 建立 RAM 逻辑来源；不提前物化。这种来源是可迁移的。
     pub fn acquire(allocation: Allocation) -> Result<Arc<Self>, FlatError> {
         Self::new(
             allocation.page_count(),
             FlatSource::Managed(Vec::new()),
-            false,
+            true,
         )
     }
 
     /// 可信内部接入合法既有帧：不清零、不改变 PA 或内容。
     ///
     /// 输入必须按页号严格递增；越界、重复与乱序都是 `OutOfRange`。
-    /// 接入的帧同时被登记为“已在别处”：它们不再参与迁移。
+    /// 接入的帧同时被登记为“已在别处”：它们不再参与迁移；这份来源自己也不可迁移。
     pub fn from_frames(
         page_count: PageCount,
         frames: &[(PageIndex, Arc<Frame>)],
@@ -82,13 +80,13 @@ impl Flat {
             previous = Some(page);
             slots.push((*index, Slot::Resident(frame.clone())));
         }
-        let flat = Self::new(page_count, FlatSource::Managed(slots), true)?;
+        let flat = Self::new(page_count, FlatSource::Managed(slots), false)?;
         // 可失败的构造都过了，最后才登记托管：导入是永久效果，重复登记是幂等的。
         custody::register(frames.iter().map(|(_, frame)| frame.custody()))?;
         Ok(flat)
     }
 
-    /// 保留外部借用物理区间：不分配数据页、不清零、不按 RAM 回收。
+    /// 保留外部借用物理区间：不分配数据页、不清零、不按 RAM 回收；也不可迁移。
     pub fn from_region(region: Arc<BorrowedRegion>) -> Result<Arc<Self>, FlatError> {
         let page_count = PageCount::new(region.size() / PAGE_SIZE).ok_or(FlatError::OutOfRange)?;
         Self::new(page_count, FlatSource::Borrowed(region), false)
@@ -97,14 +95,21 @@ impl Flat {
     fn new(
         page_count: PageCount,
         source: FlatSource,
-        imported: bool,
+        transferable: bool,
     ) -> Result<Arc<Self>, FlatError> {
         Arc::try_new(Self {
             page_count,
-            imported,
-            state: SpinLock::new_level(Level::Flat, FlatState::new(source)),
+            state: SpinLock::new_level(Level::Flat, FlatState::new(source, transferable)),
         })
         .map_err(|_| FlatError::OutOfMemory)
+    }
+
+    /// 这份来源永久失去迁移资格：已经有一处内核或全局映射压在它上面。
+    ///
+    /// 不可恢复，而且与读取它的那次资格检查共用同一把状态锁：
+    /// “检查过资格”与“之后才发布全局映射”不会交错成半个结论。
+    pub(super) fn mark_untransferable(&self) {
+        self.state.lock().transferable = false;
     }
 
     /// 来源声明的逻辑页总数。

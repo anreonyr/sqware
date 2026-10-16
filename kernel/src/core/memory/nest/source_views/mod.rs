@@ -18,10 +18,10 @@ use super::super::flat::FlatRange;
 use super::NestError;
 use super::View;
 
-mod clearance;
+mod pressing;
 mod record;
 
-pub(crate) use clearance::Clearance;
+use pressing::Pressing;
 use record::Record;
 
 /// 全核唯一的一份关联：单链头，每条一个关系。
@@ -36,10 +36,12 @@ fn registry() -> &'static SourceViews {
     })
 }
 
-/// 把链走一遗：死项当场退场（清它只靠弱计数，不升级），活项重建；
+/// 把链走一遍：死项当场退场（清它只靠弱计数，不升级），活项重建；
 /// `keep` 对每个活项调用一次（不取锁、不分配）。
+///
+/// 重建保持相对次序：一次查询不该顺手动别人登记的先后。翻转只用指针，不分配。
 fn rebuild(head: &mut Option<Box<Record>>, mut keep: impl FnMut(&Record)) {
-    let mut live: Option<Box<Record>> = None;
+    let mut flipped: Option<Box<Record>> = None;
     let mut cursor = head.take();
     while let Some(mut node) = cursor {
         cursor = node.next.take();
@@ -47,10 +49,21 @@ fn rebuild(head: &mut Option<Box<Record>>, mut keep: impl FnMut(&Record)) {
             continue;
         }
         keep(&node);
-        node.next = live.take();
-        live = Some(node);
+        node.next = flipped.take();
+        flipped = Some(node);
     }
-    *head = live;
+    *head = reverse(flipped);
+}
+
+/// 原地翻转一条链（正向拼回）——只用指针，不分配。
+fn reverse(mut chain: Option<Box<Record>>) -> Option<Box<Record>> {
+    let mut out: Option<Box<Record>> = None;
+    while let Some(mut node) = chain {
+        chain = node.next.take();
+        node.next = out.take();
+        out = Some(node);
+    }
+    out
 }
 
 /// 关系退场：它那一条从链上摘下并释放。在 `View::drop` 里调用：
@@ -120,30 +133,33 @@ pub(crate) fn views_over(source: &FlatRange) -> Result<Vec<Arc<View>>, NestError
     Ok(views)
 }
 
-/// 枚举压在这份来源上的全部关系，裁决 `page` 能不能安全撤下/移交。
+/// 枚举压在这份来源 `page` 上的全部活关系。
 ///
-/// 只在 `views_over` 内部持索引锁：裁决本身不持任何 core 锁，
-/// 全部强引用快照也在这里放开（退场的那一份可能回调索引）。
-pub(crate) fn clearance(source: &FlatRange, page: PageIndex) -> Result<Clearance, NestError> {
-    let mut blocked = false;
-    for view in &views_over(source)? {
-        let Some(address) = pressing_page(view, source, page) else {
+/// 每一条都连同它认住的地址空间与这一页在它窗口里的虚拟页一起交出：
+/// 调用方不必自己推窗口偏移。`views_over` 的强引用纪律同样适用——
+/// 返回的快照必须在**不持任何 core 锁**的区域里放掉。
+///
+/// `nest` 为 `None` 的那一条是失联属主：它照样出现在结果里，不在这里被跳过。
+pub(crate) fn pressings_over(
+    source: &FlatRange,
+    page: PageIndex,
+) -> Result<Vec<Pressing>, NestError> {
+    let candidates = views_over(source)?;
+    let mut pressings = Vec::new();
+    pressings
+        .try_reserve(candidates.len())
+        .map_err(|_| NestError::OutOfMemory)?;
+    for view in candidates {
+        let Some(address) = pressing_page(&view, source, page) else {
             continue;
         };
-        let Some(nest) = view.reservation.nest() else {
-            return Ok(Clearance::Unreachable);
-        };
-        // 撤页也按 Nest → View 持锁；形状与同步状态不能拼接自不同时间点。
-        let state = nest.state.lock();
-        if !state.invalidation.is_clean() || view.overlaps(address.as_usize(), address.as_usize()) {
-            blocked = true;
-        }
+        pressings.push(Pressing {
+            nest: view.reservation.nest(),
+            view,
+            address,
+        });
     }
-    Ok(if blocked {
-        Clearance::Blocked
-    } else {
-        Clearance::Clear
-    })
+    Ok(pressings)
 }
 
 /// 这段关系把来源 `source` 上的 `page` 放在哪个虚拟页上；不是它的窗口就没有。

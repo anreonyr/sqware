@@ -178,6 +178,14 @@ impl View {
         !attrs.intersects(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X)
     }
 
+    /// 这段关系的叶子是不是全局条目。
+    ///
+    /// 全局条目对 ASID 定向的 `sfence.vma` 免疫，所以“按本关系自己的 ASID 兑失效”
+    /// 不能作为它已经不再压着某个物理页的证据。
+    pub(crate) fn is_global(&self) -> bool {
+        self.attrs.contains(PteFlags::G)
+    }
+
     #[cfg(debug_assertions)]
     pub fn frames_in(
         &self,

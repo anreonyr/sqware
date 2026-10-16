@@ -8,14 +8,18 @@ pub(super) struct FlatState {
     pub source: FlatSource,
     pub residencies: Vec<ResidencyEntry>,
     pub next_residency: usize,
+    /// 这份来源是否还允许迁移。普通 `acquire` 建立时为真；导入/借用，
+    /// 以及任何一次内核或全局发布都把它永久置假。
+    pub transferable: bool,
 }
 
 impl FlatState {
-    pub fn new(source: FlatSource) -> Self {
+    pub fn new(source: FlatSource, transferable: bool) -> Self {
         Self {
             source,
             residencies: Vec::new(),
             next_residency: 1,
+            transferable,
         }
     }
 

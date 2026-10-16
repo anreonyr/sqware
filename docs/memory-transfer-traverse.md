@@ -481,3 +481,109 @@ Moving 阶段可能仍存在旧 PTE，但 Frame 始终强持在源槽并仍归�
 （10.41s / 5.29s / 13.45s），kernel all-targets semihosting release check
 通过（33 组诊断），相关格式检查通过。该原子替换可以本地封存，未推送；
 逐页撤销、大页拆分、跨 Nest 同步失败回退及 T4 等待/授权仍未完成，slot 10 仍关闭。
+
+### 后续 T4 等待与结果合同（已确认，尚未实现）
+
+- 等待 key 按 View 聚合，包含空间 ASID 与 ViewId。接受同一关系上不同页的
+  等待者一起醒后重查，不做逐页整窗扫描。空间清理须匹配该内部 key。
+- 元数据准备必须在双 Flat 锁内、任何 Moving/Reserved 写入之前完成；
+  Flat 事务仅接纯 core 准备回调，候选快照同时覆盖两端，只收 Weak。
+  锁阶 Flat → 来源关联允许，Flat → View 禁止；只能先收完整上界，
+  占槽后在无 core 锁时按不可变来源窗口过滤、去重，沿用已备容量。
+- 准备失败没有槽变化，无通知责任。占槽后的失败会回退，也必须交还同一份
+  受影响关系清单；不能因 unpublish 返回错误而丢掉回退通知。
+- 核心执行结果使用单独结果载荷：迁移结果与 `Vec<Weak<View>>` 两条通道，
+  不新增集合包装或泛化 ClaimFailure。载荷只表达 core 关系事实，不依赖 Room。
+  `must_use` 不强制通知顺序；entry 的单一消费路径及测试负责先释放 caller.pend，
+  再整链通知，最后取迁移结果答 syscall。不得在中间 `.result?` 丢弃清单。
+- 通知逐项升级引用、取 key，先释放 View/Nest 强引用再进入 Room 提交边界，
+  防止最后一个 Nest 的析构把 shootdown 带入 COMMIT。已登记条件等待可用现有
+  `signal` 整链放行；谓词重查保证不依赖无人等待时预存的单比特 beacon。
+- 条件等待的核心只读口必须区分 Fresh 与 Missing：Fresh/Resident 可回到常规缺页，
+  Moving/Reserved/Missing 才继续等待，越界单独失败。不使用
+  `physical_at().is_ok()` 作为谓词，否则 Reserved 回退到 Fresh 会永久睡死。
+  COMMIT 内只短读身份、权限及可物化性，不调完整 resolve_fault/materialize/shootdown。
+- TaskGone 复用既有 `doom::pop_waiter`：按任务身份遍历 site 分片脱链并回收等待票，
+  不依赖共享空间销毁或未来页面事件，不新增按 Task 的第二套 wipe/generation。
+
+必须覆盖回退通知、Fresh 回退后晚到等待者、同 View 多等待者一次通知、
+共享 Team 中单 Task 退出脱链，以及通知在管理串行锁外的真实顺序。
+这些合同不计作已实现的 T4 能力。
+
+### T3 逐页撤销初次检查点
+
+已集成 worker 检查点 `e3bc2e57-d43b-4b5d-995c-f3e8d89f431a.8662087`：
+占槽后枚举来源页的全部候选关系，先排除失联/内核属主，再逐 Nest 结清旧失效、
+准备单页几何与退休元数据、撤 PTE/published 并确认本次失效，最后才提交归属。
+失败由 RAII 回退两端；已经确认撤掉的 PTE 不回填，失败 Nest 继续持退休责任。
+不退占用、不改活动形状、身份、VA、权限或架构属性。
+
+新增/更新的原生矩阵包含两 Nest 三关系、切片与活动洞、整页内容与同 Frame/PA、
+前一 Nest 已确认后的第二 Nest 同步失败、准备失败、目标 Missing 回退和按需重发。
+worker 自验健康面 64 passed + 缺 initrd 哨兵 1 failed，三个景各 1 passed。
+父代理在初次集成树实跑 all-targets semihosting dev check 通过，
+健康面同为 64 passed + 哨兵 1 failed（退出 101，5.48s），env 24 passed、
+workspace release check 通过（kernel 35 组、programs 10 组未使用诊断）。
+这些读数不代表以下安全/覆盖问题已批准：
+
+- Frame 身份应在撤 PTE 前、同一 Nest/View 临界区内核对；
+  撤页原语只对 memory 内部开放，并自己拒绝永久内核/全局映射。
+- 稳定索引次序不能让“连续查两次”冒充两种候选顺序，永久拒绝测试须明确覆盖
+  两种注册次序，并核对没有先撤普通映射。
+- 现有大页原语用例先做了逐页改权，目标已被拆成小叶，不能据此声称新撤页序列
+  从大叶起步已验。要求新增新建 2 MiB 叶后直接拆单 4 KiB/撤页/邻居不变的原语用例。
+  普通 acquire 页形成大叶的 Transfer 端到端仍未验；“没有连续/对齐保证”
+  不是“物理上绝不可能”。
+
+父代理发现并要求修复的全局历史反例：非内核 ASID 也可由核心 attach_shaped
+建立 G 映射；当前 ASID 定向 sfence 不覆盖 G，且该关系退场后弱关联会消失。
+因此只检查当前活 G 关系不足。首版保守规则为：来源一旦进入内核 ASID 或 G
+绑定的发布提交，整份 Flat 永久失去迁移资格；资格归同一 Flat 状态锁保护，
+替代原只描述 imported 的来源资格字段，不另造历史表或可恢复开关。
+两条发布路径均须标记，初始普通 acquire 可迁移、导入/借用不可迁移；
+活关系预检及撤页原语还须各自拒绝 Kernel/G。
+该限制不禁止正常 nonglobal 来源，不把完整 DRAM 直映当成一次具体物理使用。
+一般全局映射的 detach/回收失效范围是现有机制的独立后续风险，本次不冒称已修。
+
+新 worker 仍是本阶段唯一写入者，独立 reviewer 同时审查。
+初次检查点未获批准；slot 10 仍关闭，真实多 Hart 旧 TLB 与 T4/T6 仍未完成。
+
+### T3C 集中返工检查点（通过 delta 审批）
+
+已集成 `82b959d5-b239-4399-a7d1-521566554d67.8715131`，原生迁移矩阵共 18 个子例。
+来源资格现由 FlatState.transferable 唯一维护，替代 Flat.imported：
+acquire 初始为真，导入/借用为假；Kernel/G 关系进入不可失败发布提交之前、
+短租约仍在时永久置假。资格读取与占槽受同一状态锁保护。
+不同页已先占槽、另一页才进入全局发布时，前者没有因此被全局映射，
+可以完成；之后新移交按永久标记拒绝。它不是管理授权的撤权标志。
+
+活关系全量预检、memory 内部的撤页原语还各自拒绝 Kernel/G；
+Frame 身份改在同一 Nest/View 临界区内、任何 PTE 变更前核对，
+原语不再返回事后校验用的 Frame 克隆。新增显式两种候选注册顺序、
+拒绝时普通 PTE 不变、G 关系已消失后整份来源仍失格，以及第二 Nest 定向
+准备 OOM（前者已撤、后者未动、两槽恢复、目标 Missing 保持）的用例。
+
+大叶原语用例现从全新 2 MiB 叶（level 1）开始，直接准备内部 4 KiB、预留退休表、
+在 NoAllocation 段撤页/回收，核对邻居 PA/全部属性及销毁后的表净零。
+worker 跳过 prepare_geometry 时该用例真实失败；永久资格两处发布标记关闭时，
+G 关系退场后的拒绝用例真实失败。另一次“删除 G 预检”mutation 发生在
+尚无永久标记的中间版本，不作为最终树两条冗余防线各自独立承重的证据。
+最终树不通过测试 hook 绕过资格来制造覆盖。
+
+父代理对最终集成树实际运行：
+
+| 检查 | 结果 |
+|---|---|
+| kernel all-targets semihosting offline dev check | 通过，无诊断 |
+| `nu scripts/qtest.nu --package kernel` | 64 passed + 缺 initrd 哨兵 1 failed，退出 101（6.04s） |
+| 同命令 `--scene accept` / `product` / `system-fault` | 各 1 passed（10.35s / 5.33s / 13.49s） |
+| kernel all-targets semihosting offline release check | 通过，34 组未使用诊断，未添加豁免 |
+| custody / frame-runs / Pend / trace / console-line 宿主（显式 x86_64、offline） | 3 / 9 / 37 / 2 / 5 passed |
+| 本次相关文件 `rustfmt --check --config skip_children=true` | 通过，没有全树重排 |
+
+独立 reviewer 已实跑初版并确认退休、同步、回退主链路，并只读批准集中返工：
+永久资格的默认值/同锁读写、全部发布入口、短租约与多页竞态、Frame 前置身份核对、
+锁序和析构，以及定向 OOM、两种候选次序和新大叶原语用例均已核对。
+测试中把资格拒绝误写成后置预检承重的旁白已改正；没有为覆盖冗余防线而绕过状态。
+没有把大叶原语测试算作普通 acquire 大叶迁移端到端，也没有宣称多 Hart 旧 TLB、
+T4 管理授权/缺页等待、T6 业务或真实 DMA/IOMMU 产品已完成。slot 10 仍关闭。

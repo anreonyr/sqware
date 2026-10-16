@@ -26,11 +26,15 @@ mod kind;
 mod reservation;
 pub(crate) mod source_views;
 mod state;
+mod unpublish;
 
 pub(crate) mod identity;
 pub(crate) mod synchronize;
 pub(crate) mod table;
 pub(crate) mod view;
+
+#[cfg(debug_assertions)]
+pub(crate) use unpublish::fail_unpublish_prepare;
 
 pub use error::NestError;
 pub use fault::FaultKind;
@@ -518,6 +522,12 @@ impl Nest {
                 .root
                 .prepare_range_geometry(*at, pa, *len, self.geometry)?;
         }
+        // 可失败准备到此为止：这条关系随后只进不可失败的 PTE 提交，
+        // 而短期驻留仍守着这份来源。内核地址空间与全局条目都让整份来源
+        // 永久失去迁移资格。
+        if self.asid.is_kernel() || view.is_global() {
+            view.state.lock().source.mark_untransferable();
+        }
         state.pending_views.push(view.clone());
         for run in view.state.lock().runs(start, &published) {
             let run = run?;
@@ -625,6 +635,11 @@ impl Nest {
             state
                 .root
                 .prepare_range_geometry(run.start, run.physical, run.size, self.geometry)?;
+        }
+        // 可失败准备到此为止：随后只有这一页的 PTE 提交，短期驻留仍守着这份来源。
+        // 内核地址空间与全局条目都让整份来源永久失去迁移资格。
+        if self.asid.is_kernel() || view.is_global() {
+            inner.source.mark_untransferable();
         }
         state.pending_views.push(view.clone());
         for run in inner.runs(view.initial_start(), &fresh) {

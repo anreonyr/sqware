@@ -83,6 +83,11 @@ impl FlatRange {
         self.flat.release_residency(id);
     }
 
+    /// 这份来源永久失去迁移资格（整份来源，不是这一段窗口）。
+    pub(crate) fn mark_untransferable(&self) {
+        self.flat.mark_untransferable();
+    }
+
     /// Snapshot only; ownership changes must test under the same Flat state guard.
     pub(crate) fn is_pinned(&self) -> bool {
         self.flat.is_pinned(self.index, self.count)

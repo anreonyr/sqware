@@ -21,7 +21,9 @@ pub enum NestError {
     WidenDenied,
     #[error("address-space shootdown failed")]
     Shootdown,
-    #[error("kernel address space has permanent lifetime")]
+    /// 撤不掉也确认不了：内核地址空间是进程期的，或这是一条对 ASID 定向失效
+    /// 免疫的全局条目。两者都不参与迁移。
+    #[error("this mapping cannot be withdrawn and confirmed")]
     Pinned,
     #[error("the page carrier has been moved out")]
     Missing,
