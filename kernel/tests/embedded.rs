@@ -155,6 +155,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn memory_page_fault_probe() {
+        kernel::entry::check::fault::accept();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn memory_device_window() {
         kernel::entry::check::syscall::device_window();
     }

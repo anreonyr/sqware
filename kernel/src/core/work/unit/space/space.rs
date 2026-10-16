@@ -1,7 +1,8 @@
 use alloc::sync::{Arc, Weak};
 
 use crate::core::memory::address::VirtAddr;
-use crate::core::memory::nest::{Access, Nest, SpaceKind};
+use crate::core::memory::nest::{Access, Nest, NestError, SpaceKind, View, ViewRange};
+use crate::core::work::room::messenger::{self, WakeKey};
 use crate::core::work::unit::life::Life;
 
 use super::ViewRegistry;
@@ -37,6 +38,46 @@ impl Space {
     pub(crate) fn reap_views(&self) {
         while let Some((id, entry)) = self.views.take_settled(&self.nest) {
             Self::release_controller(id, &entry);
+        }
+    }
+
+    /// 撤下一段关系；无论成败都按这段关系的整段身份放行等待者。
+    pub(crate) fn withdraw(&self, selection: ViewRange) -> Result<(), NestError> {
+        let key = self.view_key(selection.view());
+        let result = self.nest.detach(selection);
+        messenger::signal(key);
+        result
+    }
+
+    /// 接管一笔已落地关系的回收；无论成败都按它的整段身份放行等待者。
+    pub(crate) fn dispose(&self, view: Arc<View>) -> Result<(), NestError> {
+        let key = self.view_key(&view);
+        let result = self.nest.dispose(view);
+        messenger::signal(key);
+        result
+    }
+
+    /// 改选择窗口的当前权限；无论成败都按它的整段身份放行等待者。
+    pub(crate) fn access(&self, selection: ViewRange, access: Access) -> Result<(), NestError> {
+        let key = self.view_key(selection.view());
+        let result = self.nest.set_access(selection, access);
+        messenger::signal(key);
+        result
+    }
+
+    /// 收窄选择窗口的权限；无论成败都按它的整段身份放行等待者。
+    pub(crate) fn narrow(&self, selection: ViewRange, ceiling: Access) -> Result<(), NestError> {
+        let key = self.view_key(selection.view());
+        let result = self.nest.narrow(selection, ceiling);
+        messenger::signal(key);
+        result
+    }
+
+    /// 这段关系整段的等待位：空间 ASID 与关系身份一起定它。
+    fn view_key(&self, view: &Arc<View>) -> WakeKey {
+        WakeKey::View {
+            space: self.nest.asid(),
+            view: view.identity(),
         }
     }
 

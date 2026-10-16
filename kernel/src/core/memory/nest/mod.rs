@@ -21,6 +21,7 @@ mod address;
 mod cleanup;
 mod error;
 mod fault;
+mod fault_outcome;
 mod index;
 mod kind;
 mod reservation;
@@ -38,6 +39,7 @@ pub(crate) use unpublish::fail_unpublish_prepare;
 
 pub use error::NestError;
 pub use fault::FaultKind;
+pub use fault_outcome::FaultOutcome;
 pub use identity::Asid;
 pub use kind::SpaceKind;
 pub use reservation::Reservation;
@@ -1386,71 +1388,87 @@ impl Nest {
         state.root.leaf_span_geometry(address, self.geometry)
     }
 
-    /// 用户页错误的完整处置：先还清待办的失效，再按 PTE 与活动库存判定。
+    /// 用户页错误的纯一致探针：只读当前的身份、活动权限、承载与硬件条目。
     ///
-    /// `true` 表示这次访存已经能继续；`false` 交给入口按原样杀任务。
-    /// 命中但权限不足直接判死；命中惰性区间才物化一页，再翻译一次确认。
+    /// 直取 `Nest → View → Flat` 三层状态，不推进失效、不物化、不分配、不新造
+    /// 页状态，因此可以在 work 的提交边界内作为条件等待的谓词跑一次。
+    /// 待结算的失效先归到 `Materialize`：那份失效一旦真的未确认，旧 PTE 就不是
+    /// “已经可用”的证据，也不能据此把一个已经退场的关系判死。
+    /// 承载先于 PTE 看：`Fresh`/`Resident`/有效借用再看条目，满足才是 `Resolved`；
+    /// `Missing`/`Moving`/`Reserved` 一律 `Wait`，不因旧 PTE 还在就绕过等待；
+    /// 身份消失或活动权限不容纳这次访问是 `Invalid`。
+    pub(crate) fn probe_fault(&self, address: VirtAddr, kind: FaultKind) -> FaultOutcome {
+        let state = self.state.lock();
+        if !state.invalidation.is_clean() {
+            return FaultOutcome::Materialize;
+        }
+        let Some(view) = state.index.find(address.as_usize()) else {
+            return FaultOutcome::Invalid;
+        };
+        let inner = view.state.lock();
+        let Some(range) = inner.range_at(address.as_usize()) else {
+            return FaultOutcome::Invalid;
+        };
+        if !satisfies_access(range.current, kind) {
+            return FaultOutcome::Invalid;
+        }
+        let page = address.page_align();
+        let offset = PageOffset::new(view.page_index(page));
+        match inner.source.can_materialize(offset) {
+            Ok(true) => {}
+            // 承载已移走，或正被一次移交持有/预留：只能等。
+            Ok(false) => return FaultOutcome::Wait(view.identity()),
+            Err(_) => return FaultOutcome::Invalid,
+        }
+        if let Ok((_, flags)) = state.root.walk_ref_geometry(page, self.geometry)
+            && satisfies(flags, kind)
+        {
+            return FaultOutcome::Resolved;
+        }
+        FaultOutcome::Materialize
+    }
+
+    /// 用户页错误的完整解析：先结清待办失效，再按纯探针的结论物化并发布，
+    /// 最后重新纯探一次交回结论。全程在 work 的提交边界之外。
+    ///
+    /// 与并发移交撞上的竞态（`Busy`/`Missing`/关系已退场）折回一次纯重探，
+    /// 交回 `Wait`/`Materialize`/`Invalid`；真实资源失败（分配耗尽、同步失败）
+    /// 以 `Err` 交出来，由入口记录后终止任务，不伪装成缺页或权限错误。
     pub(crate) fn resolve_fault(
         self: &Arc<Self>,
-        addr: VirtAddr,
-        pc: usize,
+        address: VirtAddr,
         kind: FaultKind,
-    ) -> bool {
+    ) -> Result<FaultOutcome, NestError> {
         if self.has_pending_invalidation() {
-            if let Err(error) = self.retry_invalidation() {
-                log::error!("page fault waits for invalidation: {:?}", error);
-                return false;
+            self.retry_invalidation()?;
+        }
+        if let FaultOutcome::Materialize = self.probe_fault(address, kind) {
+            match self.materialize_page(address) {
+                Ok(()) => {}
+                // 并发移交或关系已退场：重探会给出真实结论，不在这里判死。
+                Err(NestError::Busy | NestError::Missing | NestError::NoRegion) => {}
+                // 真实资源失败：照实交回，入口记录后终止。
+                Err(error) => return Err(error),
             }
         }
-        if let Some((_physical, flags)) = self.translate(addr) {
-            if satisfies(flags, kind) {
-                log::info!("page fault resolved by re-walk: {:?} at {:?}", kind, addr);
-                return true;
-            }
-            log::error!("page fault permission violation: {:?} at {:?}", kind, addr);
-            return false;
-        }
-        if addr.is_user() {
-            let Some(view) = self.probe(addr) else {
-                log::error!(
-                    "unmapped or guard access: {:?} at {:?}, pc={:#x}",
-                    kind,
-                    addr,
-                    pc
-                );
-                return false;
-            };
-            let permitted = view.active().is_ok_and(|active| {
-                active.iter().any(|range| {
-                    range.start <= addr
-                        && range.end() >= addr.as_usize()
-                        && satisfies_access(range.current, kind)
-                })
-            });
-            if !permitted {
-                log::error!("lazy page permission violation: {:?} at {:?}", kind, addr);
-                return false;
-            }
-            let result = view
-                .range(
-                    PageOffset::new(view.page_index(addr.page_align())),
-                    PageCount::new(1).expect("one fault page"),
-                )
-                .and_then(|selection| self.materialize_active(selection));
-            match result {
-                Ok(()) => {
-                    return self
-                        .translate(addr)
-                        .is_some_and(|(_, flags)| satisfies(flags, kind));
-                }
-                Err(error) => {
-                    log::error!("failed to materialize page: {:?}", error);
-                    return false;
-                }
-            }
-        }
-        log::error!("kernel page fault: {:?} at {:?}, pc={:#x}", kind, addr, pc);
-        false
+        Ok(self.probe_fault(address, kind))
+    }
+
+    /// 物化并发布缺页所在的那一页；关系已消失照实报错。
+    fn materialize_page(self: &Arc<Self>, address: VirtAddr) -> Result<(), NestError> {
+        let page = address.page_align();
+        let selection = {
+            let state = self.state.lock();
+            let view = state
+                .index
+                .find(address.as_usize())
+                .ok_or(NestError::NoRegion)?;
+            view.range(
+                PageOffset::new(view.page_index(page)),
+                PageCount::new(1).expect("one fault page"),
+            )?
+        };
+        self.materialize_active(selection)
     }
 
     #[cfg(debug_assertions)]

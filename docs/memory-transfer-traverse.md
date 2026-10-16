@@ -654,3 +654,78 @@ kernel all-targets semihosting offline dev check、相关文件格式检查通�
 - execute 返回后先释放 caller.pend，再逐个消费 affected。从 Weak 升级取得
   raw Nest ASID 与 ViewId，先释放 View/Nest 强引用，再 signal 整链；
   最后才使用迁移 result，不用提前 `?` 丢弃失败回退通知。
+
+### T4B1 条件等待集成检查点（本地基础已审）
+
+已集成原 worker 的集中返工版本
+`845b2fcc-8f0f-42fd-a9f1-812beae125e8.8983332`，保留 T4A 已封存增量。
+核心探针在 Nest → View → Flat 锁序下只读判定四态；待结算失效先返回
+Materialize，由 COMMIT 外的完整解析结清。完整解析以
+`Result<FaultOutcome, NestError>` 分开返回资源失败与缺页/身份事实，
+Busy/Missing/关系已消失重探，不因移交竞态直接杀任务。
+
+Room 新增 View 聚合 key 与条件等待；COMMIT 仅覆盖谓词与登记，之后先释放
+COMMIT、再释放所持 Nest 上下文，最后才 finish_block（可能调度或进入 idle）。
+谓词还核对本次 View 身份：同 VA 已被替换为另一个 Missing 关系时不能挂到旧键。
+空间清理匹配 View key；TaskGone 仍复用既有按 Task 身份摘链的 doom::pop_waiter。
+
+Work Space 的 withdraw/dispose/access/narrow 保存 Nest 操作结果后，
+不论 Ok/Err 都 signal 整条 View 等待链；调用层统一经过这些入口，
+不把 Room 反向引入核心。信号只使用已取定的 ASID/ViewId，
+不会在 COMMIT 内升级 Weak 或析构最后一份 Nest 强引用。
+trap 的等待、重探都记 `PageFault.resolved=false`，真终止另记 FaultKilled；
+登记失败保留真实 tid。所有进入 kill/quit/run 的缺页分支先释放额外 Nest 强引用。
+
+初版虽通过健康面，父代理读码发现旧 View 键漏醒、待结算失效绕过、资源失败分类
+及等待 trace 语义问题，要求返工后再发现 kill 前强引用与登记失败 tid 问题；
+以上均已集中修改，不能把初版测试通过视为安全批准。worker 的三个 mutation
+（忽略身份、忽略待结算失效、把同步失败折 Invalid）各触发对应断言失败，已恢复。
+父代理没有重复 mutation，独立 reviewer 已核对六处集中修正。
+
+独立 reviewer 提出的 Borrowed 单核空转疑问已经双方逐项核对排除：
+普通 withdraw 在同一 Nest/View 临界区内撤 PTE 并更新 active/index，
+两者都先于可失败 shootdown；close 同样在锁内撤页并清 active/index。
+未发布安装失败不暴露关系，已发布失败交既有清理链。
+只有逐页 unpublish 故意保留 active，但借用来源在事务资格检查处就被拒绝；
+它服务的普通来源在撤页时为 Moving，提交后为 Missing，均应等待。
+因此 Borrowed 不存在“活动权限仍在、PTE 已撤、publish 空操作”的合法单核状态。
+不新增重试计数或 Borrowed 缺 PTE 兜底来掩盖该不变量；并发下残余 Materialize
+重试原指令，不承诺持续竞争下的公平性或固定次数上界。
+
+资源失败责任仍按整个 Nest 保守处理：即使待结算失效来自别页，
+完整解析无法结清时也记录真实失败后终止任务，不把它解释成本页缺少承载。
+
+父代理对六处返工后的树（最终 R1 收口前）实际运行：
+
+| 检查 | 结果 |
+|---|---|
+| kernel all-targets semihosting offline dev / release check | 通过；dev 无诊断，release 38 组未使用诊断 |
+| `nu scripts/qtest.nu --package kernel` | 65 passed + 缺 initrd 哨兵 1 failed，退出 101（5.73s） |
+| 同命令 `--scene accept` / `product` / `system-fault` | 各 1 passed（10.35s / 5.28s / 13.50s） |
+| workspace offline dev / release check | 通过；programs 10 组既有未使用诊断 |
+| custody / frame-runs / Pend / trace / console-line 宿主（显式 x86_64、offline） | 3 / 9 / 37 / 2 / 5 passed |
+| 14 个相关 Rust 文件 `rustfmt --check --config skip_children=true` | 通过；未检查两个有既有排序漂移的 messenger 模块，未全树重排 |
+
+最终 R1 收口将来源可物化性检查移至硬件条目之前，Moving 即使旧 PTE 仍在也
+保守返回 Wait；该旧 PTE 原本由 Moving 槽强持 Frame，并非无归属。
+新增已发布在途用例，先确认 Resolved，探针窗口再确认旧 PTE 尚在而纯判据为 Wait；
+Borrowed 部分撤页失败用例核对待结算两页 Materialize、再次失败返回 Shootdown、
+结清后被撤页 Invalid、邻页 Resolved，并通过 audit。健康例共九个子例，
+另有 View key 清理预热。worker 逆转检查顺序后真实命中在途已发布断言。
+
+父代理对最终收口树再跑 kernel all-targets semihosting offline dev / release
+检查（dev 无诊断，release 38 组）、三处改动文件格式检查与 diff check 通过；
+健康面 65 passed + 哨兵 1 failed，退出 101（5.50s），accept / product /
+system-fault 各 1 passed（10.39s / 5.28s / 13.44s）。
+workspace、宿主与其余文件格式结果仍为上表收口前读数。
+独立 reviewer 在父代理实际树定向复核了检查顺序、已发布在途、Borrowed 部分撤页、
+无掩盖性计数/兜底，以及借用来源无法进入迁移撤页五点，批准作为 B1 本地基础。
+该批准不包括真实 Task 等待、生产迁移入口或多 Hart 旧 TLB。
+
+新增健康例仅证明纯探针、替换身份谓词、失败同步分类、View key 空间清理与
+Space 入口等价性；不证明真实 Task 等待链。block → signal → resume、
+同 View 两等待者、Fresh 回退晚到者、共享 Team 单任务退出、管理锁外通知、
+probe 与 materialize 间的精确 Busy/Missing 交错及真实多 Hart 旧 TLB 均尚未端到端验证。
+不新建大量假 Task/Team/Space/调度器的宿主替身来替代该证据；真实场景随 T4C
+受控入口接通后验证，未满足前不发布。TransferOutcome 尚无生产消费者，
+slot 10 仍关闭。

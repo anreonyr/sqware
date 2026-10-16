@@ -339,7 +339,7 @@ fn attach(
         && let Err(error) = identity::sync_instructions()
     {
         cancel_view(&space, &caller_task, id);
-        let _ = nest.dispose(view);
+        let _ = space.dispose(view);
         authorization.leave_publish(id);
         return Err(error.into());
     }
@@ -377,7 +377,7 @@ fn attach(
     })();
     if let Err(error) = committed {
         cancel_view(&space, &caller_task, id);
-        let _ = nest.dispose(view);
+        let _ = space.dispose(view);
         authorization.leave_publish(id);
         return Err(error);
     }
@@ -513,7 +513,7 @@ fn detach(
         prepare_checkpoint(8)?;
         space.nest.retry_invalidation()?;
         if space.nest.contains_reservation(view.get()) {
-            space.nest.detach(selection(entry, choice)?)?;
+            space.withdraw(selection(entry, choice)?)?;
         }
         if !space.nest.contains_reservation(view.get()) {
             space.retire_view(view.get());
@@ -542,10 +542,7 @@ fn set_access(
     with_view(team, view, ident, |target, entry| {
         prepare_checkpoint(9)?;
         target.space.nest.retry_invalidation()?;
-        target
-            .space
-            .nest
-            .set_access(selection(entry, choice)?, access)?;
+        target.space.access(selection(entry, choice)?, access)?;
         if access.contains(Access::EXECUTE) {
             identity::sync_instructions()?;
         }

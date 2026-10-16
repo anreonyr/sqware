@@ -183,7 +183,7 @@ impl Team {
             self.space.nest.retry_invalidation()?;
             let id = item.view.identity();
             if self.space.nest.contains_reservation(id) {
-                self.space.nest.detach(item.view.whole())?;
+                self.space.withdraw(item.view.whole())?;
             }
             if !self.space.nest.contains_reservation(id) {
                 self.space.retire_view(id);

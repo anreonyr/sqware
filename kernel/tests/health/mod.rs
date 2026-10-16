@@ -26,6 +26,7 @@ pub use crate::entry::boot::error::accept as boot_errors;
 pub mod backtrace;
 pub mod boot_devices;
 pub mod depend;
+pub mod fault;
 pub mod flat;
 pub mod frame;
 pub mod hart;

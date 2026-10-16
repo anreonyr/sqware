@@ -2,9 +2,14 @@ use env::{Bit, MailCondition, PieKind, TaskId, TeamId};
 
 use crate::core::memory::nest::Asid;
 
+/// 等待位的键。
+///
+/// `View` 是内部键：同一段关系上不同页的等待者按整段一起放行，醒后各自重查；
+/// 空间清场按 ASID 一并清掉 `Space` 与 `View`。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WakeKey {
     Space { space: Asid, slot: usize },
+    View { space: Asid, view: usize },
     Hole { hole: usize, dir: MailCondition },
     Nole { id: usize },
     Pole { id: usize, bit: Bit },
@@ -29,6 +34,9 @@ impl WakeKey {
         match self {
             WakeKey::Space { space, slot } => {
                 (space.get() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ slot as u64
+            }
+            WakeKey::View { space, view } => {
+                (space.get() as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93) ^ view as u64
             }
             WakeKey::Hole { hole, dir } => {
                 (hole as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ dir.wire() as u64

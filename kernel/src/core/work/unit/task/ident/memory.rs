@@ -16,11 +16,11 @@ impl TaskMemory {
     /// 按段撤下：失败的那一段留在原地，沿用同一身份可重试。
     pub(super) fn retire(&mut self) -> Result<(), NestError> {
         if let Some(view) = &self.frame {
-            self.space.nest.detach(view.whole())?;
+            self.space.withdraw(view.whole())?;
             self.frame = None;
         }
         if let Some(view) = &self.stack {
-            self.space.nest.detach(view.whole())?;
+            self.space.withdraw(view.whole())?;
             self.stack = None;
         }
         if let Some(guard) = self.guard.take() {
@@ -33,10 +33,10 @@ impl TaskMemory {
 impl Drop for TaskMemory {
     fn drop(&mut self) {
         if let Some(view) = self.frame.take() {
-            let _ = self.space.nest.dispose(view);
+            let _ = self.space.dispose(view);
         }
         if let Some(view) = self.stack.take() {
-            let _ = self.space.nest.dispose(view);
+            let _ = self.space.dispose(view);
         }
         if let Some(guard) = self.guard.take() {
             let _ = self.space.nest.release_reservation(guard);

@@ -72,7 +72,8 @@ pub(crate) use wait::key::WakeKey;
 #[cfg(debug_assertions)]
 pub(crate) use wait::site_count;
 pub(crate) use wait::{
-    fall, forward, knock, park, park_until, redeem, signal, unforward, wait, wake, wipe, wipe_space,
+    fall, forward, knock, park, park_until, redeem, signal, unforward, wait, wait_until, wake,
+    wipe, wipe_space,
 };
 
 pub(crate) fn rip() {

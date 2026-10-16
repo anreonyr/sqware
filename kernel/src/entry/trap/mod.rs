@@ -1,13 +1,17 @@
 pub(crate) mod fault;
+pub(crate) mod fault_wait;
+
+use alloc::sync::Arc;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{scause, sepc, sie, sip, stval};
 
 use crate::core::memory::nest::identity::{self as asid, Asid};
+use crate::core::memory::nest::{FaultOutcome, Nest};
 use crate::core::work::record::trace::{self, EventKind, MemoryEvent, RoomEvent};
 use crate::core::work::room::conductor::run::run;
 use crate::core::work::room::deadline;
 use crate::core::work::room::identity::{Identity, ident};
-use crate::core::work::room::messenger::{self, redeem};
+use crate::core::work::room::messenger::{self, Handoff, WakeKey, redeem};
 use crate::machine::hart::{self, HartId};
 use crate::machine::switcher::context::TrapContext;
 use crate::putln;
@@ -190,33 +194,53 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 );
             }
             let fault = unsafe { fault::PageFault::capture() };
-            let running = ident
-                .as_ref()
-                .and_then(Identity::live)
-                .expect("user page fault without running task");
-            let ok = running
-                .team
-                .space
-                .nest
-                .resolve_fault(fault.addr, fault.pc, fault.kind);
-            trace::note(EventKind::Memory(MemoryEvent::PageFault {
-                va: fault.addr.as_usize(),
-                fault: fault.kind,
-                resolved: ok,
-            }));
-            if ok {
-                return resume(frame as *mut TrapContext);
+            // 先取定这一次错误的身份：真正终止任务前会先把 id 标量留下来。
+            let (tid, nest) = {
+                let running = ident
+                    .as_ref()
+                    .and_then(Identity::live)
+                    .expect("user page fault without running task");
+                (running.id.get(), running.team.space.nest.clone())
+            };
+            // 先纯探一次：不动页表就能判明该重试、该物化、该等还是不该续。
+            let mut outcome = nest.probe_fault(fault.addr, fault.kind);
+            if let FaultOutcome::Materialize = outcome {
+                // 完整解析在提交边界之外：结失效、物化、发布，再重探一次。
+                match nest.resolve_fault(fault.addr, fault.kind) {
+                    Ok(next) => outcome = next,
+                    // 真实资源失败：这是整份地址空间的失败，不是这一页自己失效；
+                    // 照实记录，再放掉地址空间按原样终止。
+                    Err(resource) => {
+                        log::error!(
+                            "page fault resource failure: {resource:?} at {:?} pc={:#x}",
+                            fault.addr,
+                            fault.pc
+                        );
+                        page_fault_note(&fault, false);
+                        drop(nest);
+                        return page_fault_killed(ident, tid, fault);
+                    }
+                }
             }
-            let tid = running.id.get();
-            let cause_bits = scause::read().bits();
-            let stval_bits = stval::read();
-            trace::note(EventKind::Room(RoomEvent::FaultKilled {
-                tid,
-                cause: cause_bits,
-                stval: stval_bits,
-            }));
-            putln!("user fault killed: tid={tid} cause={cause_bits} stval={stval_bits:#x}");
-            return kill_fault(ident);
+            match outcome {
+                FaultOutcome::Resolved => {
+                    page_fault_note(&fault, true);
+                    resume(frame as *mut TrapContext)
+                }
+                // 一次完整解析之后仍要物化：并发只要求重探，与重试原指令同路，
+                // 绝不与真实资源失败混同。
+                FaultOutcome::Materialize => {
+                    page_fault_note(&fault, false);
+                    resume(frame as *mut TrapContext)
+                }
+                // 承载不在（墓碑或在途）：按这段关系整段等一次，醒后重试原指令。
+                FaultOutcome::Wait(view) => page_fault_wait(ident, fault, nest, view, frame),
+                FaultOutcome::Invalid => {
+                    page_fault_note(&fault, false);
+                    drop(nest);
+                    page_fault_killed(ident, tid, fault)
+                }
+            }
         }
         Trap::Exception(other) => {
             if from_task {
@@ -259,6 +283,80 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
 fn resume(next: *mut TrapContext) -> *mut TrapContext {
     asid::occupy(Asid::from_raw(unsafe { (*next).user_satp.asid() }));
     next
+}
+
+/// 一次页错误的记录：`resolved` 只表示“这一次访存已经能继续”；
+/// 未完的等待与重探都是 `false`，真杀另由 `FaultKilled` 说明。
+fn page_fault_note(fault: &fault::PageFault, resolved: bool) {
+    trace::note(EventKind::Memory(MemoryEvent::PageFault {
+        va: fault.addr.as_usize(),
+        fault: fault.kind,
+        resolved,
+    }));
+}
+
+/// 按这段关系整段等一次承载；登记与切换都不带着调用者的强引用。
+fn page_fault_wait(
+    ident: Option<Identity>,
+    fault: fault::PageFault,
+    nest: Arc<Nest>,
+    view: usize,
+    frame: &mut TrapContext,
+) -> *mut TrapContext {
+    // 登记失败要终止任务时，身份已经交出去了：先把这一 id 标量留下来。
+    let tid = ident.as_ref().map_or(0, Identity::task_id);
+    let (space, life) = {
+        let running = ident
+            .as_ref()
+            .and_then(Identity::live)
+            .expect("user page fault without running task");
+        (running.team.space.clone(), running.team.space.life())
+    };
+    let key = WakeKey::View {
+        space: nest.asid(),
+        view,
+    };
+    let waiting = fault_wait::FaultWait::new(nest, fault.addr, fault.kind, view);
+    page_fault_note(&fault, false);
+    // 先放掉空间与身份，再进提交边界的 wait_until；等待捕获自己在其内部释放。
+    drop(space);
+    drop(ident);
+    match messenger::wait_until::<env::RoomFail, _>(
+        key,
+        life,
+        waiting,
+        fault_wait::FaultWait::ready,
+    ) {
+        Ok(Handoff::Resume(())) => resume(frame as *mut TrapContext),
+        Ok(Handoff::Switch(pa)) => pa as *mut TrapContext,
+        Err(resource) => {
+            log::error!("page fault wait could not be registered: {resource:?}");
+            page_fault_killed(None, tid, fault)
+        }
+    }
+}
+
+/// 按原样处置：记录真杀事件并终止这个任务。
+fn page_fault_killed(
+    ident: Option<Identity>,
+    tid: usize,
+    fault: fault::PageFault,
+) -> *mut TrapContext {
+    let cause_bits = scause::read().bits();
+    let stval_bits = stval::read();
+    log::error!(
+        "user page fault killed: {:?} at {:?} pc={:#x}",
+        fault.kind,
+        fault.addr,
+        fault.pc
+    );
+    trace::note(EventKind::Room(RoomEvent::FaultKilled {
+        tid,
+        cause: cause_bits,
+        stval: stval_bits,
+    }));
+    putln!("user fault killed: tid={tid} cause={cause_bits} stval={stval_bits:#x}");
+    kill_fault(ident)
 }
 
 fn quit(ident: Option<Identity>, reason: usize) -> *mut TrapContext {

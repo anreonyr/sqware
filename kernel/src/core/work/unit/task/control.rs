@@ -33,7 +33,7 @@ impl Task {
                 continue;
             }
             if let Some(view) = entry.view() {
-                let _ = space.nest.dispose(view.clone());
+                let _ = space.dispose(view.clone());
             }
             let _ = space.nest.retry_invalidation();
             space.reap_views();

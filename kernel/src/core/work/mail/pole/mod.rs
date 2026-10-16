@@ -11,7 +11,7 @@ use core::time::Duration;
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::address::{PageCount, PageOffset, PhysAddr};
 use crate::core::memory::flat::{BorrowedRegion, Flat, FlatError, FlatRange};
-use crate::core::memory::nest::{Access, Nest, NestError, Placement, RegionId, View};
+use crate::core::memory::nest::{Access, NestError, Placement, RegionId, View};
 use crate::core::work::grant::Grant;
 use crate::core::work::pend::SourceAuthorization;
 use crate::core::work::room::messenger::{self, Handoff, WakeKey};
@@ -309,7 +309,7 @@ impl PoleMeta {
                 let result = (|| {
                     space.nest.retry_invalidation()?;
                     if space.nest.contains_reservation(entry.view.identity()) {
-                        space.nest.detach(entry.view.whole())?;
+                        space.withdraw(entry.view.whole())?;
                     }
                     Ok::<_, NestError>(())
                 })();
@@ -336,7 +336,7 @@ impl PoleMeta {
             if let Some(weak) = entry.placement {
                 if let Some(space) = weak.upgrade() {
                     let id = entry.view.identity();
-                    let _ = space.nest.dispose(entry.view);
+                    let _ = space.dispose(entry.view);
                     if !space.nest.contains_reservation(id) {
                         space.retire_view(id);
                     }
@@ -395,7 +395,7 @@ impl Drop for PoleMeta {
             if let Some(weak) = entry.placement {
                 if let Some(space) = weak.upgrade() {
                     let id = entry.view.identity();
-                    let _ = space.nest.dispose(entry.view);
+                    let _ = space.dispose(entry.view);
                     if !space.nest.contains_reservation(id) {
                         space.retire_view(id);
                     }
@@ -408,11 +408,11 @@ impl Drop for PoleMeta {
 /// 把一条关系的每个活动区间的上限与当前权限都收到 `access`。
 ///
 /// 收窄是幂等的：已在同一上限上的区间重放不改变库存与 PTE。
-fn narrow_view(nest: &Arc<Nest>, view: &Arc<View>, access: Access) -> Result<(), NestError> {
+fn narrow_view(space: &Arc<Space>, view: &Arc<View>, access: Access) -> Result<(), NestError> {
     for range in view.active()? {
         let offset = (range.start.as_usize() - view.initial_start().as_usize()) / PAGE_SIZE;
         let count = PageCount::new(range.size.get() / PAGE_SIZE).ok_or(NestError::NotAligned)?;
-        nest.narrow(view.range(PageOffset::new(offset), count)?, access)?;
+        space.narrow(view.range(PageOffset::new(offset), count)?, access)?;
     }
     Ok(())
 }
@@ -450,7 +450,7 @@ pub(crate) fn open(
             .map(|entry| entry.view.clone())
     };
     if let Some(view) = reusable {
-        narrow_view(&space.nest, &view, access).map_err(pie_map_error)?;
+        narrow_view(space, &view, access).map_err(pie_map_error)?;
         return Ok((view.initial_range().0.as_usize(), meta.size()));
     }
     meta.reserve_records(1)?;
@@ -470,11 +470,11 @@ pub(crate) fn open(
         .map_err(pie_map_error)?;
     let address = view.initial_start().as_usize();
     if !meta.alive() || grant.permission().is_none() {
-        let _ = space.nest.dispose(view);
+        let _ = space.dispose(view);
         return Err(PieFail::Dead);
     }
     if let Err(view) = meta.record(token, space, view, None, true) {
-        let _ = space.nest.dispose(view);
+        let _ = space.dispose(view);
         return Err(PieFail::Dead);
     }
     Ok((address, meta.size()))
@@ -494,13 +494,17 @@ pub(crate) fn narrow(meta: &Arc<PoleMeta>, token: PieToken, access: Access) -> R
         let maps = meta.maps.lock();
         targets.try_reserve(maps.len()).map_err(|_| PieFail::OoM)?;
         for entry in maps.iter().filter(|entry| entry.placed_by(token)) {
-            if let Some(nest) = entry.view.owner() {
-                targets.push((nest, entry.view.clone()));
+            // 属主已关闭的关系与旧路径一样当场跳过，而不是把关闭折成拒绝。
+            if entry.view.owner().is_none() {
+                continue;
+            }
+            if let Some(space) = entry.placement.as_ref().and_then(Weak::upgrade) {
+                targets.push((space, entry.view.clone()));
             }
         }
     }
-    for (nest, view) in targets {
-        narrow_view(&nest, &view, access).map_err(pie_map_error)?;
+    for (space, view) in targets {
+        narrow_view(&space, &view, access).map_err(pie_map_error)?;
     }
     Ok(())
 }
