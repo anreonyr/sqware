@@ -1,21 +1,28 @@
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
+use alloc::vec::Vec;
 
 use env::wire::Field;
 use env::{AcquireSource, MemoryCall, MemoryFail, Permission, PieToken};
 
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::address::{PageCount, PageOffset, VirtAddr as KVirt};
-use crate::core::memory::flat::{Allocation, Flat, FlatError};
+use crate::core::memory::flat::{Allocation, Flat, FlatError, FlatRange};
+#[cfg(debug_assertions)]
+use crate::core::memory::nest::Asid;
 use crate::core::memory::nest::{
-    Access, Nest, NestError, Placement, PlacementAt, RegionId, ViewRange, identity,
+    Access, Nest, NestError, Placement, PlacementAt, RegionId, View, ViewRange, identity,
 };
+use crate::core::memory::transfer::{Transfer, TransferError};
 use crate::core::work::mail::Mail;
 use crate::core::work::mail::pole::PoleOperation;
-use crate::core::work::pend::SourceAuthorization;
+use crate::core::work::pend::{self, SourceAuthorization};
+use crate::core::work::room::messenger::{self, WakeKey};
 use crate::core::work::unit::space::{Space, ViewEntry};
 use crate::core::work::unit::task::{Task, TaskIdent};
 use crate::core::work::unit::team::Team;
 use crate::machine::switcher::context::TrapContext;
+#[cfg(debug_assertions)]
+use crate::machine::sync::SpinLock;
 
 use super::outcome::{answer, answer_pair};
 
@@ -82,6 +89,12 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             range,
             out,
         } => traverse(retention, range, out, ident),
+        MemoryCall::Transfer {
+            from,
+            from_page,
+            to,
+            to_page,
+        } => transfer(from, from_page, to, to_page, ident),
         MemoryCall::Attach { .. } => unreachable!("Attach answers a pair"),
     }
 }
@@ -213,8 +226,8 @@ fn attach(
     let branch = hold
         .branch()
         .map(|(token, _)| token)
-        .or_else(|| root.as_ref().map(|(_, token)| *token));
-    let pole = root.map(|(meta, _)| meta);
+        .or_else(|| root.as_ref().map(|(_, token, _)| *token));
+    let pole = root.map(|(meta, _, _)| meta);
     let grant = hold.grant().cloned().or_else(|| {
         pole.as_ref()
             .zip(branch)
@@ -718,7 +731,7 @@ fn acquire(
             let ceiling = entry
                 .view()
                 .map_or(Access::all(), |_| authorization.ceiling());
-            let branch = if let Some((meta, root_token)) = authorization.root() {
+            let branch = if let Some((meta, root_token, _)) = authorization.root() {
                 let token = entry.branch.unwrap_or(root_token);
                 let pie =
                     crate::core::work::pend::locate(&task, token).ok_or(MemoryFail::Denied)?;
@@ -781,6 +794,106 @@ fn release(reference: env::FlatReference, ident: &Arc<TaskIdent>) -> Result<usiz
         .ok_or(MemoryFail::Denied)
 }
 
+/// `Transfer`：把源窗口里的一页承载交进目标窗口的空槽。
+///
+/// 两个页号各相对**自己那份引用**的窗口：这里向引用解析窗口，页号换来源绝对
+/// 坐标只在 `Transfer::new` 里做一次，不叠加第二次偏移。
+///
+/// 两端的**管理授权**都在同一个 `caller.pend` 下核，且这个 pend 一直持到
+/// 执行结算或回退完毕：授权失效的每一处写点（doom 先清引用再关控制、
+/// cull/release/revoke、accord、Grant 收窄、入口 Seal）都要同一把 pend 串行，
+/// 所以迁移期间来源不会在脚下被撤走。这里不取另一个 Task 的 pend，
+/// 也不把 work 提交锁带进迁移或 shootdown。
+///
+/// `PoleOperation` 不是授权，这里不取它：槽的独占与逐页撤销的串行由事务与各
+/// Nest 自己的临界区负责，另取一把 Pole 租约只会把“同根两端”变成第二个失败面。
+fn transfer(
+    from: env::FlatReference,
+    from_page: usize,
+    to: env::FlatReference,
+    to_page: usize,
+    ident: &Arc<TaskIdent>,
+) -> Result<usize, MemoryFail> {
+    let caller = caller(ident).ok_or(MemoryFail::Denied)?;
+    let serial = caller.pend.lock();
+    if !pend::live(&caller) {
+        return Err(MemoryFail::Denied);
+    }
+    let source = endpoint(&caller, from)?;
+    let target = endpoint(&caller, to)?;
+    let transfer = Transfer::new(
+        source,
+        PageOffset::new(from_page),
+        target,
+        PageOffset::new(to_page),
+    )
+    .map_err(MemoryFail::from)?;
+    let outcome = transfer.execute();
+    // 已经结算或回退完毕：先放掉 pend，再把清单交给它唯一的消费者，
+    // 最后才取执行结果——中途不用 `?` 抖掉失败回退的通知。
+    drop(serial);
+    wake(outcome.affected);
+    outcome.result.map(|()| 0).map_err(MemoryFail::from)
+}
+
+/// 一端：向这份引用解析出它的窗口，同时当场核对调用者是不是那份来源的管理者。
+///
+/// 引用只在自己那张表里解析得动（伪号或已释放的旧号当场 `Denied`）；
+/// 解析不出窗口（来源已被根 Grant 接管并撤销）也是 `Denied`。
+fn endpoint(caller: &Arc<Task>, reference: env::FlatReference) -> Result<FlatRange, MemoryFail> {
+    let hold = caller
+        .pend
+        .references
+        .get(reference.get())
+        .ok_or(MemoryFail::Denied)?;
+    if !hold.source().manages(caller) {
+        return Err(MemoryFail::Denied);
+    }
+    hold.resolve().ok_or(MemoryFail::Denied)
+}
+
+/// 这次移交动过的关系的**唯一生产消费者**：把每一条变成它自己的等待位放行。
+///
+/// 顺序是合同的一部分：升级 `Weak` 取到 `(ASID, 关系身份)`，先放掉 View/Nest
+/// 强引用，再 `signal` 整链——通知不在任何关系强引用下进出。清单里已经消失的
+/// 关系没有等待者，直接跳过；`signal` 非 sticky，没有等待者时就是空放行。
+fn wake(affected: Vec<Weak<View>>) {
+    for relation in affected {
+        let Some(view) = relation.upgrade() else {
+            continue;
+        };
+        let key = view.wake_key();
+        drop(view);
+        let Some((space, view)) = key else {
+            continue;
+        };
+        #[cfg(debug_assertions)]
+        observe_wake(space, view);
+        messenger::signal(WakeKey::View { space, view });
+    }
+}
+
+#[cfg(debug_assertions)]
+static WAKE_PROBE: SpinLock<Option<fn(Asid, usize)>> = SpinLock::new(None);
+
+/// 装一个放行探针：每条关系在 `signal` **之前**调用一次。
+///
+/// 用例借它在真实的放行窗口里核对“清单真的到了消费者”与“此刻已不在
+/// `caller.pend` 之下”；置回 `None` 就拆掉。
+#[cfg(debug_assertions)]
+pub(crate) fn arm_wake_probe(probe: Option<fn(Asid, usize)>) {
+    assert!(crate::testing());
+    *WAKE_PROBE.lock() = probe;
+}
+
+#[cfg(debug_assertions)]
+fn observe_wake(space: Asid, view: usize) {
+    let probe = *WAKE_PROBE.lock();
+    if let Some(probe) = probe {
+        probe(space, view);
+    }
+}
+
 /// basic 口径的线上尺寸：最少 1 字节，向上取整到页；溢出仍是 `Denied`。
 ///
 /// 健康面（`entry::check`）直接调这几个真实入口核对线外口径，
@@ -815,5 +928,20 @@ impl From<NestError> for MemoryFail {
 impl From<FlatError> for MemoryFail {
     fn from(error: FlatError) -> Self {
         NestError::from(error).into()
+    }
+}
+
+/// 移交失败折成线上码：越界是“不在任何已声明的映射里”，分配耗尽与可重试的
+/// 未确认同步各自同轴；三格新码只描述移交自己的两种空槽与永久拒结。
+impl From<TransferError> for MemoryFail {
+    fn from(error: TransferError) -> Self {
+        match error {
+            TransferError::OutOfMemory => MemoryFail::OoM,
+            TransferError::OutOfRange => MemoryFail::NoRegion,
+            TransferError::SourceEmpty => MemoryFail::SourceEmpty,
+            TransferError::DestinationOccupied => MemoryFail::DestinationOccupied,
+            TransferError::NotTransferable => MemoryFail::NotTransferable,
+            TransferError::Busy => MemoryFail::Busy,
+        }
     }
 }

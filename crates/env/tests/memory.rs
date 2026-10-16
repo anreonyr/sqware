@@ -83,19 +83,72 @@ fn memory_slots_reject_the_retired_five_and_keep_explicit_lifecycle_slots() {
         (7, [0x4000, 7, 0x5000, 10, 1, 0]),
         (8, [3, 9, 0, 0, 0, 0]),
         (9, [3, 9, 1, 1, 2, 10]),
+        (10, [7, 1, 9, 0, 0, 0]),
         (11, [99, 0x6000, 0x7000, 0, 0, 0]),
     ] {
         assert_eq!(decode(slot, regs).slot(), (2usize << 32) | slot);
     }
-    // Transfer stays reserved until its safety and authority paths are implemented.
-    assert_eq!(
-        MemoryCall::from_wire((2usize << 32) | 10, &[0; 6]),
-        Err(Decode::BadSlot)
-    );
     assert_eq!(
         MemoryCall::from_wire((2usize << 32) | 12, &[0; 6]),
         Err(Decode::BadSlot)
     );
+}
+
+/// 移交四字内联：两个句柄与两个**各自相对自己窗口**的页号，没有描述符指针。
+/// 多出来的两字不是填充要求：它们不参与解码，写成什么都能读回。
+#[test]
+fn transfer_carries_two_page_numbers_inline() {
+    let call = MemoryCall::Transfer {
+        from: reference_of(7),
+        from_page: 1,
+        to: reference_of(9),
+        to_page: 0,
+    };
+    assert_eq!(call.pack(), [7, 1, 9, 0, 0, 0]);
+    assert_eq!(decode(10, call.pack()), call);
+
+    let mut spare = call.pack();
+    spare[4] = usize::MAX;
+    spare[5] = 3;
+    assert_eq!(decode(10, spare), call);
+
+    // 句柄与页号都按各自那一格的坐标系校验：句柄超出符号上界当场非法。
+    for raw in [isize::MAX as usize + 1, usize::MAX] {
+        assert_eq!(
+            MemoryCall::from_wire((2usize << 32) | 10, &[raw, 0, 0, 0, 0, 0]),
+            Err(Decode::Invalid)
+        );
+    }
+    // 页号本身是裸量，越界由内核按来源窗口当场拒（不是线格式的事）。
+    assert_eq!(
+        decode(10, [7, usize::MAX, 9, 1, 0, 0]).pack(),
+        [7, usize::MAX, 9, 1, 0, 0]
+    );
+}
+
+/// 移交的三格新码接在旧码之后：`-1..-7` 一位不动，可重试的仍然只有 `Busy` 那一枚。
+#[test]
+fn transfer_failures_extend_the_memory_vocabulary() {
+    use env::MemoryFail;
+    assert_eq!(MemoryFail::Denied.code(), -1);
+    assert_eq!(MemoryFail::OoM.code(), -2);
+    assert_eq!(MemoryFail::NotAligned.code(), -3);
+    assert_eq!(MemoryFail::NoRegion.code(), -4);
+    assert_eq!(MemoryFail::AlreadyMapped.code(), -5);
+    assert_eq!(MemoryFail::WidenDenied.code(), -6);
+    assert_eq!(MemoryFail::Busy.code(), -7);
+    assert!(MemoryFail::Busy.is_busy());
+    assert_eq!(MemoryFail::SourceEmpty.code(), -8);
+    assert_eq!(MemoryFail::DestinationOccupied.code(), -9);
+    assert_eq!(MemoryFail::NotTransferable.code(), -10);
+    for code in -10..=-1isize {
+        assert!(MemoryFail::of_code(code).is_some(), "code {code}");
+    }
+    assert!(MemoryFail::of_code(-11).is_none());
+    assert!(MemoryFail::of_code(0).is_none());
+    assert!(!MemoryFail::SourceEmpty.is_busy());
+    assert!(!MemoryFail::DestinationOccupied.is_busy());
+    assert!(!MemoryFail::NotTransferable.is_busy());
 }
 
 #[test]

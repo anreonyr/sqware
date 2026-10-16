@@ -1,12 +1,14 @@
 #![cfg(debug_assertions)]
 
 use alloc::sync::Arc;
+use core::sync::atomic::{AtomicBool, Ordering};
 use env::{ControlCall, DebugCall, EnvCall, MemoryCall, ProgramKind, RoomCall, UnitCall, VirtAddr};
 
 use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::address::{PageCount, PageOffset, VirtAddr as KVirt};
+use crate::core::memory::address::{PageCount, PageIndex, PageOffset, PhysAddr, VirtAddr as KVirt};
+use crate::core::memory::flat::{Flat, FlatRange};
 use crate::core::memory::nest::table::PteFlags;
-use crate::core::memory::nest::{Access, NestError, Placement, RegionId, View};
+use crate::core::memory::nest::{Access, Asid, NestError, Placement, RegionId, View};
 use crate::core::work::mail::{Mail, hole, pole};
 use crate::core::work::pend::{self, Need, Permission};
 use crate::core::work::unit::space::Space;
@@ -18,6 +20,7 @@ use crate::entry::call as envcall;
 use crate::entry::report::backtrace::StackReader;
 use crate::machine::mode;
 use crate::machine::switcher::context::{Gprs, TrapContext};
+use crate::machine::sync::SpinLock;
 
 #[path = "retention/mod.rs"]
 mod external_retention;
@@ -2763,4 +2766,795 @@ pub fn unit_scan_and_receipts() {
         );
     }
     assert_eq!(caller.call(scan(env::TeamId::new(0), 64)), 0);
+}
+
+// ---- 移交（slot 10）：入口级管理授权、两端窗口与清单的唯一消费者 ----
+
+/// 在途探针的上下文与读数：调用的那几个时刻，调用任务自己的 pend 在不在手上。
+static IN_FLIGHT_TASK: SpinLock<Option<Arc<Task>>> = SpinLock::new(None);
+static PEND_HELD_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+static WAKE_TASK: SpinLock<Option<Arc<Task>>> = SpinLock::new(None);
+static PEND_FREE_AT_WAKE: AtomicBool = AtomicBool::new(false);
+static WOKEN_KEYS: SpinLock<alloc::vec::Vec<(usize, usize)>> =
+    SpinLock::new(alloc::vec::Vec::new());
+
+/// 占槽之后、撤页之前（真实在途窗口）：这次移交正持着调用者的 pend。
+///
+/// 探针只做一次已有的 `try_lock` 局部读数，不去取同一把锁，也不跨层回调。
+fn pend_held_in_flight(_source: &FlatRange, _page: PageIndex) {
+    let task = IN_FLIGHT_TASK.lock().clone().expect("armed in-flight task");
+    PEND_HELD_IN_FLIGHT.store(task.pend.try_lock().is_none(), Ordering::Relaxed);
+}
+
+/// 每条关系在 `signal` 之前：记下它等待位的键，并看这一刻 pend 是不是已经放了。
+fn pend_free_at_wake(space: Asid, view: usize) {
+    let task = WAKE_TASK.lock().clone().expect("armed wake task");
+    PEND_FREE_AT_WAKE.store(task.pend.try_lock().is_some(), Ordering::Relaxed);
+    WOKEN_KEYS.lock().push((space.get(), view));
+}
+
+/// 一次 `Transfer`：两个引用句柄 + 各自相对的页号（四字内联，没有描述符）。
+fn transfer_call(from: usize, from_page: usize, to: usize, to_page: usize) -> EnvCall {
+    EnvCall::Memory(MemoryCall::Transfer {
+        from: reference(from),
+        from_page,
+        to: reference(to),
+        to_page,
+    })
+}
+
+/// 取一份**没物化**的私有来源引用：拿到手的每一页都是 Fresh。
+fn acquire_fresh(caller: &Caller, pages: usize) -> isize {
+    use env::{AcquireSource, Allocation, PieToken};
+    caller.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Allocation(
+            Allocation::new(pages * PAGE_SIZE, PAGE_SIZE).expect("allocation"),
+        ),
+        retention: PieToken::NONE,
+    }))
+}
+
+/// 一份引用此刻向来源解析到的窗口。
+fn window_of(caller: &Caller, handle: usize) -> FlatRange {
+    caller
+        .task
+        .pend
+        .references
+        .get(handle)
+        .expect("hold")
+        .resolve()
+        .expect("window")
+}
+
+/// 窗口里已放下承载的槽：`(相对页号, 物理起址)`；墓碑不在里面。
+fn slots_of(range: &FlatRange) -> alloc::vec::Vec<(usize, usize)> {
+    range
+        .materialized_frames()
+        .expect("slot snapshot")
+        .into_iter()
+        .map(|(offset, frame)| (offset.get(), frame.physical_address()))
+        .collect()
+}
+
+/// 窗口里第 `page` 页的承载物理起址。
+fn slot_at(range: &FlatRange, page: usize) -> usize {
+    slots_of(range)
+        .into_iter()
+        .find(|(offset, _)| *offset == page)
+        .expect("a carrier at that page")
+        .1
+}
+
+/// 窗口里第 `page` 页是不是墓碑（承载已经移出）——与“从没放过”的 Fresh 分开，
+/// 且不物化任何东西。
+fn tombstone(range: &FlatRange, page: usize) -> bool {
+    let one = range
+        .range(PageOffset::new(page), PageCount::new(1).expect("one page"))
+        .expect("page in window");
+    !one.can_materialize(PageOffset::ZERO).expect("page state") && slots_of(&one).is_empty()
+}
+
+/// 把一份私有引用的第 `page` 页物化出承载（新取来的来源全是 Fresh）。
+fn materialize_page(caller: &Caller, handle: usize, page: usize) {
+    let one = window_of(caller, handle)
+        .range(PageOffset::new(page), PageCount::new(1).expect("one page"))
+        .expect("page in window");
+    drop(one.materialize().expect("materialize the page"));
+}
+
+/// 别的任务用自己的私有来源铸一根根，并把一枚子 Pie 交给 `me`。
+///
+/// 交给 `me` 的那一枚 `sire` 非空：它不是 root token，拿它作不了主。
+fn grant_to(giver: &Caller, me: &Caller, pages: usize) -> env::PieToken {
+    use env::{Mark, Permission, PieToken};
+    let source = acquire_fresh(giver, pages);
+    assert!(source > 0, "giver source: {source}");
+    materialize_page(giver, source as usize, 0);
+    let root = crate::entry::call::pie::create_pole(&giver.task, reference(source as usize), true)
+        .expect("the giver's root grant");
+    assert_eq!(
+        giver.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(source as usize)
+        })),
+        0
+    );
+    let child = pend::accord(
+        &giver.task,
+        root,
+        &Arc::downgrade(&me.task),
+        Permission::FETCH | Permission::STORE | Permission::VEST,
+        Mark::NONE,
+    )
+    .expect("a child grant");
+    PieToken::mint(child)
+}
+
+/// 真实入口的移交成功面：两端窗口各自解析、页号只换一次、承载与整页内容一起走。
+///
+/// 覆盖：私有两端同/跨 Flat、非零窗口偏移、目标 Fresh 与 Missing 落槽、源墓碑
+/// 各自当场拒，以及根 Grant 接管之后的 Pole 来源。
+pub fn transfer_pages() {
+    use super::transfer::{fill_pattern, pattern_holds};
+    use crate::core::memory::flat::allocator::statistics::{block_occupied, frame_occupied};
+    use env::{AcquireSource, MemoryFail, PieToken, ReferenceRange};
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let user = Caller::new(false);
+    // 源 A 四页全物化（各自一个承载）；目标 B 两页都没物化（Fresh）。
+    let (_, _, a) = user.attach_alloc_reference(4 * PAGE_SIZE, 6);
+    let b = acquire_fresh(&user, 2);
+    assert!(b > 0, "fresh target: {b}");
+    let a_range = window_of(&user, a.get());
+    let b_range = window_of(&user, b as usize);
+    assert_eq!(
+        slots_of(&a_range).len(),
+        4,
+        "the source starts fully resident"
+    );
+    assert!(slots_of(&b_range).is_empty(), "the target starts fresh");
+    let pa: alloc::vec::Vec<usize> = (0..4).map(|page| slot_at(&a_range, page)).collect();
+    fill_pattern(PhysAddr::from_raw(pa[0]));
+
+    // 跨 Flat、目标 Fresh。
+    let before = frame_occupied() - block_occupied();
+    assert_eq!(
+        user.call(transfer_call(a.get(), 0, b as usize, 0)),
+        0,
+        "a resident page moves into a fresh slot"
+    );
+    assert_eq!(
+        frame_occupied() - block_occupied(),
+        before,
+        "the carrier moved; no frame was allocated or lost"
+    );
+    assert_eq!(
+        slots_of(&b_range),
+        alloc::vec![(0, pa[0])],
+        "the target seat holds the same physical start"
+    );
+    assert!(
+        pattern_holds(PhysAddr::from_raw(pa[0])),
+        "all 4096 bytes came along"
+    );
+    assert!(
+        tombstone(&a_range, 0),
+        "the source page becomes a tombstone"
+    );
+    assert_eq!(
+        user.call(transfer_call(a.get(), 0, b as usize, 1)),
+        MemoryFail::SourceEmpty.code(),
+        "a tombstone has nothing to hand over"
+    );
+
+    // 同一份来源里换槽：承载与 PA 不动，原来的槽成墓碑。
+    assert_eq!(
+        user.call(transfer_call(b as usize, 0, b as usize, 1)),
+        0,
+        "a page moves inside its own source"
+    );
+    assert_eq!(
+        slots_of(&b_range),
+        alloc::vec![(1, pa[0])],
+        "the carrier keeps its physical start at the new seat"
+    );
+    assert!(tombstone(&b_range, 0));
+
+    // 目标墓碑也照收：同一次承载落回 A 的空槽。
+    assert_eq!(
+        user.call(transfer_call(b as usize, 1, a.get(), 0)),
+        0,
+        "a tombstone target takes the carrier"
+    );
+    assert_eq!(
+        slots_of(&a_range),
+        alloc::vec![(0, pa[0]), (1, pa[1]), (2, pa[2]), (3, pa[3])],
+        "the carrier returns and the neighbours stay where they were"
+    );
+    assert!(tombstone(&b_range, 1));
+
+    // 非零窗口偏移：这段引用只覆盖 A 的第 1..3 页，页号相对**这段窗口**。
+    // 只有一次换算才能把第 2 页交出去；叠加两次就会动到第 3 页。
+    let sub = user.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Reference(ReferenceRange::new(a, 1, 2).expect("sub window")),
+        retention: PieToken::NONE,
+    }));
+    assert!(sub > 0, "a sub-window reference: {sub}");
+    let sub_range = window_of(&user, sub as usize);
+    assert_eq!(
+        sub_range.index().get(),
+        a_range.index().get() + 1,
+        "the sub-window starts at the second page"
+    );
+    assert_eq!(sub_range.page_count().get(), 2);
+    fill_pattern(PhysAddr::from_raw(pa[2]));
+    assert_eq!(
+        user.call(transfer_call(sub as usize, 1, b as usize, 0)),
+        0,
+        "the page number is relative to the reference's own window"
+    );
+    assert_eq!(
+        slots_of(&b_range),
+        alloc::vec![(0, pa[2])],
+        "exactly the second page of that window moved"
+    );
+    assert!(
+        tombstone(&a_range, 2) && !tombstone(&a_range, 1) && !tombstone(&a_range, 3),
+        "the neighbouring pages are untouched"
+    );
+
+    // 根 Grant 接管之后：整段来源由 Pole 持有，调用者表里那枚 root token 才是管理者。
+    // 只物化第一页，第二页留着 Fresh，正好当根阶段的目标槽。
+    let root_source = acquire_fresh(&user, 2);
+    materialize_page(&user, root_source as usize, 0);
+    let root_pa = slot_at(&window_of(&user, root_source as usize), 0);
+    fill_pattern(PhysAddr::from_raw(root_pa));
+    let root =
+        crate::entry::call::pie::create_pole(&user.task, reference(root_source as usize), true)
+            .expect("a private whole source becomes a root grant");
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(root_source as usize)
+        })),
+        0
+    );
+    let held = user.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token: root,
+            offset: 0,
+            count: 2,
+        },
+        retention: PieToken::NONE,
+    }));
+    assert!(
+        held > 0,
+        "the caller's own root token lends its window: {held}"
+    );
+    assert_eq!(
+        user.call(transfer_call(held as usize, 0, held as usize, 1)),
+        0,
+        "a root-managed source hands over its page"
+    );
+    assert_eq!(
+        slots_of(&window_of(&user, held as usize)),
+        alloc::vec![(1, root_pa)],
+        "the carrier lands in the fresh slot"
+    );
+    assert!(pattern_holds(PhysAddr::from_raw(root_pa)));
+
+    // 公开 `Narrow` 可达的 FETCH-only 根**仍是管理者**：管理判据不看权限位，
+    // 只看那枚 root token 自己还活、还没交出。
+    let narrow_source = acquire_fresh(&user, 2);
+    materialize_page(&user, narrow_source as usize, 0);
+    let narrow_pa = slot_at(&window_of(&user, narrow_source as usize), 0);
+    let narrow_root =
+        crate::entry::call::pie::create_pole(&user.task, reference(narrow_source as usize), true)
+            .expect("a private whole source becomes a root grant");
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(narrow_source as usize)
+        })),
+        0
+    );
+    assert_eq!(
+        pend::reduce(&user.task, narrow_root, Permission::FETCH),
+        Ok(()),
+        "the public narrow reaches a FETCH-only root"
+    );
+    let narrow_hold = user.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token: narrow_root,
+            offset: 0,
+            count: 2,
+        },
+        retention: PieToken::NONE,
+    }));
+    assert!(narrow_hold > 0, "a FETCH-only root still lends its window");
+    assert_eq!(
+        user.call(transfer_call(
+            narrow_hold as usize,
+            0,
+            narrow_hold as usize,
+            1
+        )),
+        0,
+        "a FETCH-only root still commands its own source"
+    );
+    assert_eq!(
+        slots_of(&window_of(&user, narrow_hold as usize)),
+        alloc::vec![(1, narrow_pa)],
+        "the carrier lands in the fresh slot"
+    );
+    user.team.space.nest.audit();
+    for handle in [
+        a.get(),
+        b as usize,
+        sub as usize,
+        held as usize,
+        narrow_hold as usize,
+    ] {
+        assert_eq!(
+            user.call(EnvCall::Memory(MemoryCall::Release {
+                reference: reference(handle)
+            })),
+            0
+        );
+    }
+}
+
+/// 真实入口的拒绝面：两端管理授权各自把关、失效的授权写点、可重试与永久拒结。
+pub fn transfer_refusals() {
+    use crate::core::memory::flat::Frame;
+    use crate::core::work::mail::nole::NoleMeta;
+    use crate::core::work::pend::SourceAuthorization;
+    use env::{AcquireSource, Mark, MemoryFail, Permission, PieToken, ReferenceRange};
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let user = Caller::new(false);
+    let other = Caller::new(false);
+
+    // 错误句柄：哨兵号与已经解掉的旧号都不在表里。
+    assert_eq!(
+        user.call(transfer_call(0, 0, 0, 0)),
+        MemoryFail::Denied.code(),
+        "the sentinel handle is nobody's reference"
+    );
+    let (_, _, released) = user.attach_alloc_reference(2 * PAGE_SIZE, 6);
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: released
+        })),
+        0
+    );
+    assert_eq!(
+        user.call(transfer_call(released.get(), 0, released.get(), 1)),
+        MemoryFail::Denied.code(),
+        "a released handle is gone from the table"
+    );
+
+    // 目标占位与窗口越界：两端本来就合法的调用，各自的码分开。
+    let (_, _, pair) = user.attach_alloc_reference(2 * PAGE_SIZE, 6);
+    assert_eq!(
+        user.call(transfer_call(pair.get(), 0, pair.get(), 1)),
+        MemoryFail::DestinationOccupied.code(),
+        "a target seat that holds a carrier refuses the move"
+    );
+    assert_eq!(
+        user.call(transfer_call(pair.get(), 0, pair.get(), 0)),
+        MemoryFail::DestinationOccupied.code(),
+        "the same seat on both ends is not a move"
+    );
+    assert_eq!(
+        user.call(transfer_call(pair.get(), 2, pair.get(), 1)),
+        MemoryFail::NoRegion.code(),
+        "a page past the reference window is out of range"
+    );
+
+    // 私有阶段只认真正的属主。夹具直造一份属主是**别人**的私有来源引用：
+    // 当前用户入口造不出这种引用（私有引用只生在属主自己的表里），这里把它放进本表，
+    // 管理判据不能被“表里有这一格”冒充。
+    let foreign = crate::core::memory::flat::Allocation::new(2, PAGE_SIZE).expect("allocation");
+    let foreign = Flat::acquire(foreign).expect("flat");
+    let foreign_range = foreign.whole();
+    drop(
+        foreign_range
+            .range(PageOffset::ZERO, PageCount::new(1).expect("one page"))
+            .expect("first page")
+            .materialize()
+            .expect("materialize the first page"),
+    );
+    let authorization = SourceAuthorization::new(foreign_range, Access::all(), other.task.ident.id)
+        .expect("authorization");
+    let foreign_handle = user
+        .task
+        .pend
+        .references
+        .insert(
+            authorization,
+            PageOffset::ZERO,
+            PageCount::new(2).expect("two pages"),
+            Access::all(),
+            None,
+            None,
+        )
+        .expect("insert");
+    assert_eq!(
+        user.call(transfer_call(foreign_handle, 0, foreign_handle, 1)),
+        MemoryFail::Denied.code(),
+        "the private owner, not the reference table, decides who may hand over"
+    );
+
+    // 别人铸的根交给本任务的那一枚是**子 Pie**（sire 非空）：它既不能当源端，
+    // 也不能当目标端——两端各管各的。
+    let mine = acquire_fresh(&user, 2);
+    let child = grant_to(&other, &user, 2);
+    let child_hold = user.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token: child,
+            offset: 0,
+            count: 2,
+        },
+        retention: PieToken::NONE,
+    }));
+    assert!(
+        child_hold > 0,
+        "a child grant yields a reference: {child_hold}"
+    );
+    assert_eq!(
+        user.call(transfer_call(child_hold as usize, 0, mine as usize, 0)),
+        MemoryFail::Denied.code(),
+        "the source end is checked on its own"
+    );
+    assert_eq!(
+        user.call(transfer_call(mine as usize, 0, child_hold as usize, 0)),
+        MemoryFail::Denied.code(),
+        "the target end is checked on its own"
+    );
+
+    // 已撤销：闸门的短读一读就是结论。
+    let (_, _, revocable) = user.attach_alloc_reference(2 * PAGE_SIZE, 6);
+    user.task
+        .pend
+        .references
+        .get(revocable.get())
+        .expect("hold")
+        .source()
+        .revoke()
+        .expect("nothing in flight");
+    assert_eq!(
+        user.call(transfer_call(revocable.get(), 0, revocable.get(), 1)),
+        MemoryFail::Denied.code(),
+        "a revoked source hands nothing over"
+    );
+
+    // 根已经交出去（ONLY 那一枚 Accord 给别的任务）：heir 非空，这一枚自己不再可用；
+    // 子 Pie 退场把 heir 收回之后，同一次移交又过得了管理判据。
+    let exclusive = acquire_fresh(&user, 2);
+    materialize_page(&user, exclusive as usize, 0);
+    let only =
+        crate::entry::call::pie::create_pole(&user.task, reference(exclusive as usize), false)
+            .expect("an exclusive root");
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(exclusive as usize)
+        })),
+        0
+    );
+    let exclusive_hold = user.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token: only,
+            offset: 0,
+            count: 2,
+        },
+        retention: PieToken::NONE,
+    }));
+    assert!(exclusive_hold > 0, "the exclusive root lends its window");
+    assert!(
+        pend::accord(
+            &user.task,
+            only,
+            &Arc::downgrade(&other.task),
+            Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
+            Mark::NONE,
+        )
+        .is_ok(),
+        "the root hands its exclusive grant over"
+    );
+    assert_eq!(
+        user.call(transfer_call(
+            exclusive_hold as usize,
+            0,
+            exclusive_hold as usize,
+            1
+        )),
+        MemoryFail::Denied.code(),
+        "a root already handed over is not a manager"
+    );
+
+    // 已 seal 的 Pole 不再是管理者：判据看的是 `pie.alive()`——它的 Meta 那一半
+    // （不只 Grant）——而不是“根 Grant 还能答题”。公开 `Seal` 做的正是这一下：
+    // `mail.seal()` 之后那一枚仍在表里，而它的 Grant 还没失效。
+    //
+    // 这里用**保留那一份**作两端：它自己强持范围，`Hold::resolve()` 不再向 Pole
+    // 解析，所以这条拒绝只可能来自管理判据里 Meta 那一半。
+    let sealed_source = acquire_fresh(&user, 2);
+    materialize_page(&user, sealed_source as usize, 0);
+    let sealed_root =
+        crate::entry::call::pie::create_pole(&user.task, reference(sealed_source as usize), true)
+            .expect("a private whole source becomes a root grant");
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(sealed_source as usize)
+        })),
+        0
+    );
+    let sealed_hold = user.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token: sealed_root,
+            offset: 0,
+            count: 2,
+        },
+        retention: PieToken::NONE,
+    }));
+    assert!(sealed_hold > 0, "the root token lends its window");
+    // 这一枚保留授权同样是内核铸、引导发放的 cap，用户入口拿不到。
+    let cap = {
+        let pie = pend::Pie::try_new(
+            Mail::Nole(NoleMeta::mint_retention(user.task.ident.id).expect("retention cap")),
+            Mark::NONE,
+            Permission::FETCH | Permission::STORE | Permission::VEST,
+            None,
+        )
+        .expect("pie");
+        let token = pie.token();
+        user.task.pend.pies.lock().push(pie);
+        token
+    };
+    let sealed_retained = user.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Reference(
+            ReferenceRange::new(reference(sealed_hold as usize), 0, 2).expect("window"),
+        ),
+        retention: cap,
+    }));
+    assert!(sealed_retained > 0, "a retained window: {sealed_retained}");
+    let sealed_meta = pend::locate(&user.task, sealed_root)
+        .expect("root pie")
+        .mail()
+        .pole()
+        .expect("a pole");
+    // 只调用失活步骤；不覆盖入口 Seal 的 pend 与 close_maps 编排。
+    crate::core::work::mail::pole::seal(&sealed_meta);
+    assert!(!sealed_meta.alive(), "the seal lands on the Pole itself");
+    assert!(
+        sealed_meta
+            .grant(sealed_root)
+            .is_some_and(|grant| grant.permission().is_some()),
+        "the root Grant itself still answers after the seal"
+    );
+    assert_eq!(
+        user.call(transfer_call(
+            sealed_retained as usize,
+            0,
+            sealed_retained as usize,
+            1
+        )),
+        MemoryFail::Denied.code(),
+        "a sealed Pole is not a manager even though its Grant still answers"
+    );
+
+    // 任务走到尽头：先清引用，再关控制与失活；旧句柄在同一张表里当场查不到。
+    {
+        let _commit = crate::core::work::commit();
+        other.task.state.lock().doom(None, env::ExitCause::Slay, 0);
+    }
+    pend::doom(&other.task);
+    assert_eq!(
+        user.call(transfer_call(
+            exclusive_hold as usize,
+            0,
+            exclusive_hold as usize,
+            1
+        )),
+        0,
+        "with the hand-over withdrawn the root commands again"
+    );
+    assert_eq!(
+        user.call(transfer_call(child_hold as usize, 0, mine as usize, 0)),
+        MemoryFail::Denied.code(),
+        "the other task's references are gone with it"
+    );
+
+    // 独立保留压着源页：那一页正被保留，不是空闲的承载（可重试，不是拒结）。
+    let (_, _, held_source) = user.attach_alloc_reference(2 * PAGE_SIZE, 6);
+    // 这枚保留授权是**生产真形态**（内核铸），但当前由引导资源发放、
+    // 用户入口拿不到——夹具直铸一份，才能走到下面那条判据。
+    let cap = {
+        let pie = pend::Pie::try_new(
+            Mail::Nole(NoleMeta::mint_retention(user.task.ident.id).expect("retention cap")),
+            Mark::NONE,
+            Permission::FETCH | Permission::STORE | Permission::VEST,
+            None,
+        )
+        .expect("pie");
+        let token = pie.token();
+        user.task.pend.pies.lock().push(pie);
+        token
+    };
+    let retained = user.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Reference(ReferenceRange::new(held_source, 0, 2).expect("window")),
+        retention: cap,
+    }));
+    assert!(retained > 0, "a retained sub-window: {retained}");
+    assert_eq!(
+        user.call(transfer_call(held_source.get(), 0, held_source.get(), 1)),
+        MemoryFail::Busy.code(),
+        "a residency over the source page is not an idle carrier"
+    );
+
+    // 借用来源（设备区）：承载在别处，整份来源永久不可移交——不是权限问题。
+    // 这也是生产真形态，但由引导设备/`pole::region` 接线建立；当前用户入口只能
+    // 从**自己的私有来源** `create_pole`，铸不出借用来源的根。
+    let frame = Frame::allocate().expect("frame");
+    let meta = pole::region(frame.physical_address(), 2 * PAGE_SIZE, user.task.ident.id)
+        .expect("borrowed region");
+    let pie = pend::Pie::try_new(
+        Mail::Pole(meta.clone()),
+        Mark::NONE,
+        Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
+        None,
+    )
+    .expect("pie");
+    let token = pie.token();
+    user.task.pend.pies.lock().push(pie);
+    let authorization = SourceAuthorization::new(meta.source(), Access::all(), user.task.ident.id)
+        .expect("authority");
+    meta.attach_source(&authorization);
+    assert!(
+        authorization
+            .adopt(&meta, token, meta.grant(token).expect("grant"))
+            .is_ok()
+    );
+    let borrowed = user.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token,
+            offset: 0,
+            count: 2,
+        },
+        retention: PieToken::NONE,
+    }));
+    assert!(borrowed > 0, "a borrowed window: {borrowed}");
+    assert_eq!(
+        user.call(transfer_call(borrowed as usize, 0, borrowed as usize, 1)),
+        MemoryFail::NotTransferable.code(),
+        "a borrowed source is refused for good, not as a permission failure"
+    );
+    assert_ne!(
+        MemoryFail::NotTransferable.code(),
+        MemoryFail::Denied.code()
+    );
+
+    // 调用者自己走到尽头：引用表先清空，旧句柄当场作废。
+    let doomed = Caller::new(false);
+    let (_, _, stale) = doomed.attach_alloc_reference(2 * PAGE_SIZE, 6);
+    {
+        let _commit = crate::core::work::commit();
+        doomed.task.state.lock().doom(None, env::ExitCause::Slay, 0);
+    }
+    pend::doom(&doomed.task);
+    assert_eq!(
+        doomed.call(transfer_call(stale.get(), 0, stale.get(), 1)),
+        MemoryFail::Denied.code(),
+        "a doomed caller has no reference left to hand over"
+    );
+}
+
+/// 清单的唯一消费者：真实入口里“执行时 pend 在场、放行时 pend 已放”。
+///
+/// 这里只证明这份清单**到了消费者**、键就是压着源页那段关系的等待位，
+/// 且放行发生在 pend 之外；真实的 Room 等待链（block → signal → resume）
+/// 不在本夹具的证明范围。
+pub fn transfer_wakes_relations() {
+    use crate::core::memory::nest::identity::fail_next_shootdown;
+    use env::MemoryFail;
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let user = Caller::new(false);
+    let asid = user.team.space.nest.asid();
+    *IN_FLIGHT_TASK.lock() = Some(user.task.clone());
+    *WAKE_TASK.lock() = Some(user.task.clone());
+    crate::core::memory::transfer::arm_in_flight(Some(pend_held_in_flight));
+    crate::entry::call::memory::arm_wake_probe(Some(pend_free_at_wake));
+
+    let reset = || {
+        PEND_HELD_IN_FLIGHT.store(false, Ordering::Relaxed);
+        PEND_FREE_AT_WAKE.store(false, Ordering::Relaxed);
+        WOKEN_KEYS.lock().clear();
+    };
+
+    // 源页上真压着一条关系（已发布 PTE）：它必须出现在清单里。
+    let (view, _, source) = user.attach_alloc_reference(2 * PAGE_SIZE, 6);
+    let target = acquire_fresh(&user, 2);
+    reset();
+    assert_eq!(
+        user.call(transfer_call(source.get(), 0, target as usize, 0)),
+        0,
+        "the page moves"
+    );
+    assert!(
+        PEND_HELD_IN_FLIGHT.load(Ordering::Relaxed),
+        "the caller's pend is held while the transfer executes"
+    );
+    assert!(
+        PEND_FREE_AT_WAKE.load(Ordering::Relaxed),
+        "the wake happens after the pend is released"
+    );
+    assert_eq!(
+        WOKEN_KEYS.lock().clone(),
+        alloc::vec![(asid.get(), view)],
+        "exactly the relation pressing the source page reaches the consumer"
+    );
+
+    // 失败回退：清单照旧到消费者手里——不因为结果是 Err 就把通知吞掉。
+    let (failing_view, _, failing_source) = user.attach_alloc_reference(2 * PAGE_SIZE, 6);
+    let failing_target = acquire_fresh(&user, 1);
+    reset();
+    fail_next_shootdown(asid);
+    assert_eq!(
+        user.call(transfer_call(
+            failing_source.get(),
+            0,
+            failing_target as usize,
+            0
+        )),
+        MemoryFail::Busy.code(),
+        "an unconfirmed sync is retryable"
+    );
+    assert_eq!(
+        WOKEN_KEYS.lock().clone(),
+        alloc::vec![(asid.get(), failing_view)],
+        "a failed move still names the relations it touched"
+    );
+    assert!(PEND_FREE_AT_WAKE.load(Ordering::Relaxed));
+    // 两端按原态还回：源页又都是承载，目标那一格仍空。
+    assert_eq!(
+        slots_of(&window_of(&user, failing_source.get())).len(),
+        2,
+        "the source keeps both carriers after the rollback"
+    );
+    assert!(
+        slots_of(&window_of(&user, failing_target as usize)).is_empty(),
+        "the target stays fresh after the rollback"
+    );
+    user.team
+        .space
+        .nest
+        .retry_invalidation()
+        .expect("settle the injected failure");
+    user.team.space.nest.audit();
+
+    crate::entry::call::memory::arm_wake_probe(None);
+    crate::core::memory::transfer::arm_in_flight(None);
+    *IN_FLIGHT_TASK.lock() = None;
+    *WAKE_TASK.lock() = None;
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
+        0
+    );
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: failing_source
+        })),
+        0
+    );
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(target as usize)
+        })),
+        0
+    );
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(failing_target as usize)
+        })),
+        0
+    );
 }

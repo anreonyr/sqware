@@ -75,7 +75,7 @@ pub(crate) fn spawn(
         for item in staged.items.iter() {
             operations.push(PoleOperation::acquire(&item.meta).ok_or(UnitFail::Busy)?);
             let source = item.meta.authorization().ok_or(UnitFail::Denied)?;
-            let (meta, token) = source.root().ok_or(UnitFail::Denied)?;
+            let (meta, token, _) = source.root().ok_or(UnitFail::Denied)?;
             if token != item.token || !Arc::ptr_eq(&meta, &item.meta) {
                 return Err(UnitFail::Denied);
             }

@@ -155,6 +155,24 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn memory_transfer_pages() {
+        kernel::entry::check::syscall::transfer_pages();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_transfer_refusals() {
+        kernel::entry::check::syscall::transfer_refusals();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn memory_transfer_wakes_relations() {
+        kernel::entry::check::syscall::transfer_wakes_relations();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn memory_page_fault_probe() {
         kernel::entry::check::fault::accept();
     }

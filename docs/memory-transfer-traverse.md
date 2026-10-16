@@ -482,7 +482,7 @@ Moving 阶段可能仍存在旧 PTE，但 Frame 始终强持在源槽并仍归�
 通过（33 组诊断），相关格式检查通过。该原子替换可以本地封存，未推送；
 逐页撤销、大页拆分、跨 Nest 同步失败回退及 T4 等待/授权仍未完成，slot 10 仍关闭。
 
-### 后续 T4 等待与结果合同（已确认，尚未实现）
+### 后续 T4 等待与结果合同（T3 时确认，实施记录见 T4A–T4C）
 
 - 等待 key 按 View 聚合，包含空间 ASID 与 ViewId。接受同一关系上不同页的
   等待者一起醒后重查，不做逐页整窗扫描。空间清理须匹配该内部 key。
@@ -634,7 +634,7 @@ kernel all-targets semihosting offline dev check、相关文件格式检查通�
 本检查点不包含管理授权、条件等待、生命周期通知，也不证明真实 Task 等待链、
 共享 Team 单任务退出、多 Hart 旧 TLB 或真实设备迁移。slot 10 仍关闭。
 
-### T4C 入口补充合同（尚未实现）
+### T4C 入口补充合同（实施前确认，实施记录见后）
 
 - 保持已批准的四字 Transfer 参数与相对 Hold 窗口页号。新增错误码
   `-8 SourceEmpty`、`-9 DestinationOccupied`、`-10 NotTransferable`，
@@ -727,5 +727,95 @@ Space 入口等价性；不证明真实 Task 等待链。block → signal → re
 同 View 两等待者、Fresh 回退晚到者、共享 Team 单任务退出、管理锁外通知、
 probe 与 materialize 间的精确 Busy/Missing 交错及真实多 Hart 旧 TLB 均尚未端到端验证。
 不新建大量假 Task/Team/Space/调度器的宿主替身来替代该证据；真实场景随 T4C
-受控入口接通后验证，未满足前不发布。TransferOutcome 尚无生产消费者，
-slot 10 仍关闭。
+受控入口接通后验证，未满足前不发布。B1 封存时 TransferOutcome 尚无生产消费者，
+slot 10 仍关闭；后续接通状态见 T4C 实施记录。
+
+### 真实等待场景的观测准备（场景尚未实现）
+
+父代理实跑 `nu scripts/qtest.nu --package kernel --scene product -- --features semihosting`：
+1 passed（5.33s），现有 runner 的 rest 参数已可透传 feature，无需另建运行入口。
+本轮根目录产生的 `sqware-diagnose.jsonl` 可完整逐行解析，共 45,884 行，
+含 898 个 room.wait 与 891 个 room.wake；产物已归入忽略的
+`trace/scene-product-feature-diagnose.jsonl`。这些是 product 的诊断通道证据，
+不是 Transfer 或 View 等待的端到端证据。
+
+后续场景应先移出承载再启动同 Team、共享同一 View 的故障任务，
+以已知 tid、故障 VA 和测试阶段关联事件；不能把折叠后的 key 当成唯一 View 身份。
+“即将访存”标志和固定延时都不证明入队；完成也不证明曾睡眠，
+因为回填可能早于真正访存。复用结构化导出与现有 feed-script 接口，
+由测试侧看到两名任务真实等待后才反馈放行回填；缺事件应超时失败，
+不降低断言、不新增生产观察 ABI 或 trace schema。该握手尚未实现。
+
+### T4C 管理授权与生产消费检查点（代码已审）
+
+已集成 `9743b0cc-74da-43bd-897e-1863d4dad4ff.9113018`。受控本地树现已开放
+slot 10 的真实四字 Transfer，11 Traverse 与退役 0–4 不变，错误码按前述
+`-8/-9/-10` 落位。execution 包装直接调用该 ABI，不预加来源偏移。
+
+入口在同一 caller.pend 下取得、解析两端 Hold，核验当前管理授权，
+执行到结算/回退；释放 pend 后才逐项消费 affected，先放 View/Nest 强引用再
+signal，最后答执行结果。两端均核授权，页号仅在 Transfer::new 换算一次。
+私有阶段核真实 owner；根阶段核表内真实根 token、无 sire/heir、
+Pole 弱身份与 Grant 同 Arc，以及 pie.alive（Meta 与 Grant 都活）。
+不看 FETCH/STORE/VEST/ONLY 位、不取额外 PoleOperation 租约。
+来源只在既有 Phase 中维护身份；既有 Phase 短锁克隆代替初版重复的局部 Manager。
+root() 在现有结果中携带 Grant，未新增身份 API 或管理者包装。
+
+Seal 的核验与 mail.seal 同 pend，随后在 pend 外 close_maps。
+doom 先在 pend 内清 references，才到 pend 外收控制/封来源；
+不把“taskId 相同”当成并发排除。早错管理判据不升级相位里的弱 Pole：
+临时强引用来自 pend 所保护的真实表项，不会在该窗口成为最后一份。
+另核实核心 Nest/Pressing 析构只做 core 回收及 shootdown，不进入 Room、
+work COMMIT 或别的 Task pend；本合同本就允许 pend 覆盖核心逐 Nest shootdown。
+因此不为“最后一份 Nest 可能在 pend 内析构”另加延迟容器，
+真正的 Room signal 与其 COMMIT 仍严格在 pend 外。
+
+新增三个真实 dispatch 健康例覆盖移交、拒绝与通知消费顺序，
+含私有/根、非零窗口偏移、同 Frame/PA/整页内容、Fresh/Missing 目标、
+两端管理者分别拒绝、heir、撤销/doom、retained Busy 与 Borrowed 永久拒绝。
+公开 FETCH-only 根仍可管理；非 owner 私有记录用例明确是夹具直造，
+不宣称公开 API 可达。sealed retained 用例隔离 Meta 存活判据：
+保留引用绕过普通 resolve 的 Meta 检查，Grant 仍活时依然必须 Denied。
+worker 将判据改成只看 Grant 后真实落到 Busy，已恢复。
+其余 mutation 分别命中授权、执行持 pend、通知释放 pend、
+偏移只换一次、失败回退清单与不看 VEST 位；父代理未重复这些 mutation。
+
+父代理实际验证：
+
+| 检查 | 结果 |
+|---|---|
+| 最终集成 kernel all-targets semihosting offline dev / release | 通过；dev 无诊断，release 6 组既有未使用诊断 |
+| 最终集成 `nu scripts/qtest.nu --package kernel` | 68 passed + 缺 initrd 哨兵 1 failed，退出 101（6.15s） |
+| 最终集成同命令 `--scene accept` / `product` / `system-fault` | 各 1 passed（10.39s / 5.33s / 13.50s） |
+| 最终集成 workspace offline dev / release | 通过；programs 10 组既有诊断，release 另有 kernel 6 组 |
+| 最终集成 Pend 宿主（显式 x86_64、offline） | 37 passed |
+| 集中返工前 env 宿主（显式 x86_64、offline） | 26 passed；signals 的既有 unused Wire 警告仍在 |
+| 集中返工前 execution 专用宿主台架（`crates/execution/tests/Cargo.toml`，显式 x86_64、offline） | 6 passed |
+
+父代理另试 `cargo test -p execution --target x86_64-unknown-linux-gnu --offline`，
+因 production TLS 的 RISC-V `mv ..., tp` 无法在 x86 汇编而失败；
+它不是上述专用宿主台架，不修改目标架构代码来制造通过。
+其余 custody/frame-runs/trace/console-line 的本阶段最终重跑证据来自 worker，
+父代理未重复；15 个相关 Rust 文件格式检查与 diff check 已通过。
+独立 reviewer 已审核心合同，并在父树复核 Phase 克隆及 sealed retained 新例，
+在一次性副本中独立删除 pie.alive 后真实命中 Busy 而期望 Denied。
+最后注释补丁明确了内核铸造保留 cap 与引导设备借用来源的夹具性质，
+以及 sealed retained 只直调失活步骤，不覆盖入口 Seal 的 pend/close_maps 编排。
+父代理在该注释收口后重跑 dev check、三处相关格式检查和上表健康面；
+其余景、release、宿主与 workspace 读数来自相同代码逻辑的注释收口前树。
+T4A/B1 的 38 组是当时未接线树的历史读数，不改成当前 6 组。
+父代理另跑 `cargo rustc -p kernel --lib --release --offline -- --print cfg`，
+实测不含 debug_assertions：release 场景不包含 debug-only 探针或 lockdep，
+不能用健康面自检代称 release 的同一组护栏。根 Cargo.toml 的相反注释已更正，
+没有修改 profile、打开或关闭任何检查。
+
+迁移路径的 COMMIT 约束不扩张成全仓禁止 pend → COMMIT：
+现有记录提交和 Seal 的 Mail 唤醒允许这个方向；迁移核心不持 work COMMIT
+等待 shootdown，Transfer 的 View signal 仍在 pend 外。execution transfer
+包装本阶段只有目标构建与线格式证据，尚未经过真实用户态 ecall。
+
+slot 10 在本地受控树可执行，不等于允许发布或完成 T4/T5：
+真实 Task block → signal → resume、同 View 多等待者、Fresh 回退晚到、
+共享 Team 单任务退出、多 Hart 旧 TLB、pend 跨 shootdown 的多 Hart 活性，
+以及入口 Seal 的并发编排仍未端到端验证。下一阶段用真实场景取证，
+不把当前无等待者时的消费顺序探针算作 Room 等待链证据。

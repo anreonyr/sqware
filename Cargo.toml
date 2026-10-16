@@ -9,8 +9,8 @@ exclude = [
     "crates/image",
 ]
 
-# 没有 `[profile.framework]` / `[profile.harden]`：护栏（`debug_assertions` 全集：
-# lockdep / 页表 / 空间不变量）一直在 release 档开着，没有专门的测试档去重新开它。
+# 没有 `[profile.framework]` / `[profile.harden]`。`debug_assertions` 控制的
+# lockdep / 页表 / 空间检查在 dev 档启用；release 默认关闭，除非显式启用。
 
 # **测具**那一档（探针 / 试客 / 压测台）住 `programs` 那一份 crate 里（`programs/src/harness/`）：
 # 同一张链接脚本、同一批"被内核装载的 ELF"、同一手 `programs::entry`；哪几台进哪张镜像只在

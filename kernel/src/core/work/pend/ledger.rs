@@ -35,4 +35,13 @@ impl Pend {
     pub(crate) fn lock(&self) -> crate::machine::sync::spin::SpinLockGuard<'_, ()> {
         self.serial.lock()
     }
+
+    /// 不自旋地看一眼这把串行锁在不在别人（或自己）手上。
+    ///
+    /// 自检用：判断一次真实调用（如移交）在执行/通知的某一刻还持不持这把锁，
+    /// 而不能去取同一把锁——那就是自己等自己。
+    #[cfg(debug_assertions)]
+    pub(crate) fn try_lock(&self) -> Option<crate::machine::sync::spin::SpinLockGuard<'_, ()>> {
+        self.serial.try_lock()
+    }
 }

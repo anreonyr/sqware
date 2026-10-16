@@ -273,26 +273,36 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) {
     answer(frame, r);
 }
 
+/// 使一枚 Pie 失活，连带关掉它名下已落地的关系。
+///
+/// 核验与 `mail.seal()` 必须在**同一个 pend** 里完成：与这次 Seal 抢同一份
+/// 来源的迁移、撤销都在这把 pend 下串行，否则迁移（已核过授权）会在 Seal 的
+/// 核验与失活之间把承载交出去。失活之后就放 pend——`close_maps` 要拆页、
+/// 要 shootdown，不能带着 pend 做。
 fn seal(frame: &mut TrapContext, token: PieToken) {
     let r = (|| -> Result<usize, PieFail> {
         let me = current().running_task().ok_or(PieFail::Denied)?;
-        let pie = pend::locate(&me, token).ok_or(PieFail::Denied)?;
-        let pole = pie.mail().pole();
-        if !pie.alive() && !pole.as_ref().is_some_and(|meta| meta.has_maps()) {
-            return Err(PieFail::Dead);
-        }
-        if pie.owner() != Some(me.ident.id) {
-            return Err(PieFail::Denied);
-        }
-        let _operation = if let Some(p) = &pole {
-            if p.reserved() != 0 {
-                return Err(PieFail::Busy);
+        let (pole, _operation) = {
+            let _serial = me.pend.lock();
+            let pie = pend::locate(&me, token).ok_or(PieFail::Denied)?;
+            let pole = pie.mail().pole();
+            if !pie.alive() && !pole.as_ref().is_some_and(|meta| meta.has_maps()) {
+                return Err(PieFail::Dead);
             }
-            Some(PoleOperation::acquire(p).ok_or(PieFail::Busy)?)
-        } else {
-            None
+            if pie.owner() != Some(me.ident.id) {
+                return Err(PieFail::Denied);
+            }
+            let operation = if let Some(p) = &pole {
+                if p.reserved() != 0 {
+                    return Err(PieFail::Busy);
+                }
+                Some(PoleOperation::acquire(p).ok_or(PieFail::Busy)?)
+            } else {
+                None
+            };
+            pie.mail().seal();
+            (pole, operation)
         };
-        pie.mail().seal();
         if let Some(pole) = pole {
             pole.close_maps(None)?;
         }

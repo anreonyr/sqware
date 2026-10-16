@@ -130,6 +130,16 @@ impl View {
         (!nest.is_closed()).then_some(nest)
     }
 
+    /// 这段关系等待位的那一对坐标：`(空间 ASID, 关系身份)`。
+    ///
+    /// 用**原始** Nest（关闭了也照给）：放行只看 ASID 与身份，已关闭的空间里
+    /// 没人等在这个键上，`owner()` 的“已关闭即无主”语义在这里反而会漏掉
+    /// 刚被撤下的那一段。只交出两个标量，不留 Nest 强引用。
+    pub(crate) fn wake_key(&self) -> Option<(super::Asid, usize)> {
+        let nest = self.reservation.nest()?;
+        Some((nest.asid(), self.identity()))
+    }
+
     /// 活动库存的快照。
     pub fn active(&self) -> Result<Vec<ActiveRange>, NestError> {
         let state = self.state.lock();

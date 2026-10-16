@@ -62,7 +62,7 @@ pub(super) fn pages(offset: usize, count: usize) -> Result<(), Decode> {
 
 /// 内存调用（class 2；trace 事件名 `MemoryEvent` 同词）。
 ///
-/// 操作号为 5–9、11；10 留给 Transfer，0–4 已退役。
+/// 操作号为 5–11，0–4 已退役。
 #[derive(Envcall)]
 #[call(class = 2, fail = MemoryFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -119,5 +119,16 @@ pub enum MemoryCall {
         retention: PieToken,
         range: VirtAddr,
         out: VirtAddr,
+    },
+    /// 把一份来源窗口里的一页承载交进另一份窗口的空槽（四字内联，没有描述符）。
+    /// `from_page` / `to_page` 各相对**自己那份引用**的窗口，内核当场解析成来源坐标。
+    /// 两端都要求调用者此刻是那份来源的管理者；源页成墓碑，目标槽拿到同一个承载。
+    #[slot(10)]
+    #[ret(())]
+    Transfer {
+        from: FlatReference,
+        from_page: usize,
+        to: FlatReference,
+        to_page: usize,
     },
 }

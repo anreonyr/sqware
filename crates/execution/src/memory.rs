@@ -90,6 +90,19 @@ pub fn traverse(retention: PieToken, range: ReferenceRange, out: &mut [u64]) -> 
     )
 }
 
+/// 把一份来源窗口里的一页承载交进另一份窗口的空槽。
+///
+/// 两个页号各相对**自己那份引用**的窗口；内核当场按窗口解析成来源坐标，
+/// 不在这里预加任何偏移。两边都要求当前任务此刻是那份来源的管理者。
+pub fn transfer(
+    from: FlatReference,
+    from_page: usize,
+    to: FlatReference,
+    to_page: usize,
+) -> MemoryResult<()> {
+    env::memory::transfer(from, from_page, to, to_page)
+}
+
 /// 便利分配的前半：Acquire → Attach。返回 `(地址, 关系句柄, 仍持有的那份引用)`。
 ///
 /// 拿到关系之后**必须**把那份引用解掉；解失败就把它记在调用方自己的元数据里

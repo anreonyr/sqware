@@ -20,6 +20,12 @@ pub enum MemoryFail {
     WidenDenied = -6,
     #[busy]
     Busy = -7,
+    /// 移交的源页空着：没有可交出去的承载。
+    SourceEmpty = -8,
+    /// 移交的目标槽已经压着一个承载。
+    DestinationOccupied = -9,
+    /// 这一页永久不可移交：来源不是普通来源，或它的旧映射无从核实。
+    NotTransferable = -10,
 }
 
 /// `MemoryFail` 的结果别名。

@@ -93,7 +93,7 @@ impl Hold {
         }
         if let Some((_, grant)) = &self.branch {
             grant.permission()?;
-            let (meta, _) = self.source.root()?;
+            let (meta, _, _) = self.source.root()?;
             if !meta.alive() {
                 return None;
             }

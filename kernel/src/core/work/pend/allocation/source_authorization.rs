@@ -94,7 +94,7 @@ impl SourceAuthorization {
         if let Some(range) = self.own_range() {
             return range.range(offset, count).ok();
         }
-        let (meta, _) = self.root()?;
+        let (meta, _, _) = self.root()?;
         self.permission()?;
         meta.source().range(offset, count).ok()
     }
@@ -104,7 +104,7 @@ impl SourceAuthorization {
         if let Some(range) = self.own_range() {
             return Some(range);
         }
-        self.root().map(|(meta, _)| meta.source())
+        self.root().map(|(meta, _, _)| meta.source())
     }
 
     /// 整段来源的页起点（子范围 Acquire 要把视图的坐标换成相对本来源的坐标）。
@@ -232,10 +232,59 @@ impl SourceAuthorization {
         Ok(())
     }
 
-    /// 已接手的根 Grant 与它的 token；还没接手就是 `None`。
-    pub(crate) fn root(&self) -> Option<(Arc<PoleMeta>, PieToken)> {
+    /// 这份来源是否已被撤销：**短读**一次闸门，不把闸门留到本次操作结束。
+    ///
+    /// 授权已经交出去的引用（根 Grant）看的是同一条闸门，所以迁移不需要
+    /// 另持一条锁跨整个执行：真正的串行由调用者的 pend 负责。
+    pub(crate) fn revoked(&self) -> bool {
+        *self.revoked.lock()
+    }
+
+    /// 这份来源当前的**管理者**是不是 `task`：它当场能不能替这份来源作主。
+    ///
+    /// 私有阶段只有真正的属主；交给根 Grant 之后，调用者表里那枚 **root token**
+    /// （`sire` 为空的原始一枚）必须与相位记的是同一枚，pie、Pole 与根 Grant 都还活，
+    /// 且尚未交出（`heir` 为空）——“已交出去的那一枚”照旧不可用，这里不靠 ONLY
+    /// 权限位，也不看 qualification 或 `Arc` 强引用计数。
+    ///
+    /// 相位里的 Pole 只按弱身份比对；活与同一枚都由表里那一枚 `pie` 自己给出，
+    /// 所以调用方须在同 Task 的 pend 之下调它：表不变，才有“临时强引用不会是
+    /// 最后一份”这条持有链。
+    pub(crate) fn manages(&self, task: &crate::core::work::unit::task::Task) -> bool {
+        if self.revoked() {
+            return false;
+        }
+        // 短锁里克隆相位再判：放锁之后才取 pie 表与 Grant 各自的锁，不与
+        // “先 Grant 后相位”的读法（`Hold::resolve`）撞成逆序。
+        let phase = Phase::clone(&self.phase.lock());
+        match phase {
+            Phase::Private => self.owner == task.ident.id,
+            Phase::Root { meta, token, grant } => {
+                // 表里没有那一枚：调用者不持 root token，当场不是管理者。
+                let Some(pie) = super::super::locate(task, token) else {
+                    return false;
+                };
+                pie.sire().is_none()
+                    && pie.heir().is_none()
+                    // `pie.alive()` 含这份 Mail（Pole）自己活着；它与下面“同 Arc”
+                    // 合起来就是“同一枚 Pole 且活”，不只是 Grant 还在答话。
+                    && pie.alive()
+                    && Arc::ptr_eq(pie.grant(), &grant)
+                    // 那一下克隆出的临时强引用不会是最后一份：表里这一枚 `pie` 自己
+                    // 就持着它，而这张表在调用者的 pend 之下不会变。
+                    && pie
+                        .mail()
+                        .pole()
+                        .is_some_and(|held| Weak::as_ptr(&meta) == Arc::as_ptr(&held))
+            }
+        }
+    }
+
+    /// 已接手的根 Grant、它的 token 与**根 Grant 自己的**那枚 `Grant`。
+    /// 还没接手就是 `None`。三段来自同一份相位，调用方不再各自去表里另找一遍。
+    pub(crate) fn root(&self) -> Option<(Arc<PoleMeta>, PieToken, Arc<Grant>)> {
         match &*self.phase.lock() {
-            Phase::Root { meta, token, .. } => Some((meta.upgrade()?, *token)),
+            Phase::Root { meta, token, grant } => Some((meta.upgrade()?, *token, grant.clone())),
             Phase::Private => None,
         }
     }

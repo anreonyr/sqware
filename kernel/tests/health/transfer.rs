@@ -71,16 +71,16 @@ fn names(affected: &[Weak<View>], view: &Arc<View>) -> bool {
     })
 }
 
-fn write_byte(address: PhysAddr, value: u8) {
+pub(super) fn write_byte(address: PhysAddr, value: u8) {
     unsafe { core::ptr::write_volatile(address.as_usize() as *mut u8, value) };
 }
 
-fn read_byte(address: PhysAddr) -> u8 {
+pub(super) fn read_byte(address: PhysAddr) -> u8 {
     unsafe { core::ptr::read_volatile(address.as_usize() as *const u8) }
 }
 
 /// 给整页写一个位置相关的花纹，用来逐字节比对搬运前后。
-fn fill_pattern(address: PhysAddr) {
+pub(super) fn fill_pattern(address: PhysAddr) {
     let bytes = address.as_usize() as *mut u8;
     for offset in 0..PAGE_SIZE {
         unsafe { core::ptr::write_volatile(bytes.add(offset), pattern_at(offset)) };
@@ -88,13 +88,13 @@ fn fill_pattern(address: PhysAddr) {
 }
 
 /// 整页 4096 字节是否与花纹逐字节相同。
-fn pattern_holds(address: PhysAddr) -> bool {
+pub(super) fn pattern_holds(address: PhysAddr) -> bool {
     let bytes = address.as_usize() as *const u8;
     (0..PAGE_SIZE)
         .all(|offset| unsafe { core::ptr::read_volatile(bytes.add(offset)) } == pattern_at(offset))
 }
 
-fn pattern_at(offset: usize) -> u8 {
+pub(super) fn pattern_at(offset: usize) -> u8 {
     (offset as u8).wrapping_mul(31).wrapping_add(7)
 }
 

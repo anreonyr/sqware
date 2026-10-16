@@ -9,6 +9,7 @@ use crate::core::work::grant::Grant;
 use crate::core::work::mail::pole::PoleMeta;
 use env::PieToken;
 
+#[derive(Clone)]
 pub(super) enum Phase {
     /// 还没有 Pole 接手。
     Private,
