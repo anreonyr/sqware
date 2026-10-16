@@ -287,6 +287,28 @@ impl Flat {
         Ok(expected == end)
     }
 
+    /// 这一页此刻能不能物化出承载：`Fresh` 与 `Resident` 可以；`Missing` 墓碑与
+    /// 在途的 `Moving`/`Reserved` 不行。借用来源的合法页正常可用；越界是独立错误。
+    ///
+    /// 只读短判据：不分配、不发布、不产生失效，也不新造页状态或世代。
+    pub(super) fn can_materialize(&self, page: PageIndex) -> Result<bool, FlatError> {
+        if page.get() >= self.page_count.get() {
+            return Err(FlatError::OutOfRange);
+        }
+        let guard = self.state.lock();
+        match &guard.source {
+            FlatSource::Borrowed(_) => Ok(true),
+            FlatSource::Managed(slots) => {
+                let (at, present) = slot::spot(slots, page);
+                if !present {
+                    // 缺席就是 Fresh：它本就有一份可以分配的承载。
+                    return Ok(true);
+                }
+                Ok(matches!(slots[at].1, Slot::Resident(_)))
+            }
+        }
+    }
+
     pub(super) fn physical_at(&self, page: PageIndex) -> Result<PhysAddr, FlatError> {
         if page.get() >= self.page_count.get() {
             return Err(FlatError::OutOfRange);

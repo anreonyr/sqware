@@ -83,6 +83,15 @@ impl FlatRange {
         self.flat.release_residency(id);
     }
 
+    /// 起点之内第 `offset` 页此刻能不能物化出承载：`Fresh`/`Resident` 可以，
+    /// `Missing` 与在途页不行；越界是独立错误。
+    ///
+    /// 条件等待的只读口：不能拿“物理出口成不成功”代替它——那会把 `Fresh` 与
+    /// 承载移走的墓碑混同，于是回退回 `Fresh` 的页面永远等不到。
+    pub(crate) fn can_materialize(&self, offset: PageOffset) -> Result<bool, FlatError> {
+        self.flat.can_materialize(self.page_at(offset)?)
+    }
+
     /// 这份来源永久失去迁移资格（整份来源，不是这一段窗口）。
     pub(crate) fn mark_untransferable(&self) {
         self.flat.mark_untransferable();

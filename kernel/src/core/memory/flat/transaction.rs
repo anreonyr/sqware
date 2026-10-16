@@ -7,8 +7,9 @@
 //! 没 commit 就被 Drop 的按同一笔身份原样回退两端。
 //!
 //! 同一份来源只取一次锁；不同来源按地址序共持一对（`machine::sync::with_pair`）。
-//! 可失败的步骤（两端资格、两端驻留与在途、目标槽容量、帧独占）全在任何槽被改动
-//! 之前做完；之后写槽只有断言，不返回失败。
+//! 可失败的步骤（两端资格、两端驻留与在途、目标槽容量，以及在这之后、写槽之前的
+//! 纯 core 准备回调）全在任何槽被改动之前做完；随后只有承载独占与写槽，写槽不再
+//! 返回失败。
 
 use alloc::sync::Arc;
 use core::sync::atomic::AtomicUsize;
@@ -46,12 +47,18 @@ pub(in crate::core::memory) struct Transaction {
 
 impl Transaction {
     /// 短双锁里占槽：源 `Resident → Moving`，目标 `Fresh | Missing → Reserved`。
-    pub(in crate::core::memory) fn claim(
+    ///
+    /// 两端资格、pin、页槽与目标容量这些可失败的检查全做完之后、任何 `Moving`/
+    /// `Reserved` 槽或承载独占被写之前，调一次纯 core 的 `prepare`；它自己可失败，
+    /// 失败时守卫尚未构造、也没有一格槽被改动。成功后守卫才连同 `prepare` 的载荷
+    /// 一起交出，于是占槽与它引用的元数据来自同一个临界区。
+    pub(in crate::core::memory) fn claim<C>(
         source: &FlatRange,
         source_page: PageIndex,
         target: &FlatRange,
         target_page: PageIndex,
-    ) -> Result<Self, TransferError> {
+        prepare: impl FnOnce() -> Result<C, TransferError>,
+    ) -> Result<(Self, C), TransferError> {
         assert!(
             owns(source, source_page),
             "the source page is inside its window"
@@ -67,31 +74,35 @@ impl Transaction {
         let id = next_transaction()?;
         let source = source.flat().clone();
         let target = target.flat().clone();
-        if same {
+        let carried = if same {
             let mut state = source.state.lock();
             source_ready(&state, source_page)?;
             let was_missing = target_ready(&state, target_page)?;
             reserve(&mut state, target_page)?;
+            let carried = prepare()?;
             claim_source(&mut state, source_page, id)?;
             claim_target(&mut state, target_page, id, was_missing);
+            carried
         } else {
             with_pair(&source.state, &target.state, |from, to| {
                 source_ready(from, source_page)?;
                 let was_missing = target_ready(to, target_page)?;
                 reserve(to, target_page)?;
+                let carried = prepare()?;
                 claim_source(from, source_page, id)?;
                 claim_target(to, target_page, id, was_missing);
-                Ok(())
-            })?;
-        }
-        Ok(Self {
+                Ok(carried)
+            })?
+        };
+        let transaction = Self {
             source,
             source_page,
             target,
             target_page,
             id,
             committed: false,
-        })
+        };
+        Ok((transaction, carried))
     }
 
     /// 结算并消费守卫：源成墓碑，目标拿到同一个承载；之后 Drop 不再回退。

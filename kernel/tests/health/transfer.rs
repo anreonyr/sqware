@@ -5,7 +5,7 @@
 
 #![cfg(debug_assertions)]
 
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use crate::core::memory::PAGE_SIZE;
@@ -34,6 +34,9 @@ const RIGHT_A: usize = 0x6980_0000;
 /// 在途探针要用的上下文：正在发布的那段关系与它的地址空间。
 static PUBLISHED: SpinLock<Option<(Arc<Nest>, Arc<View>, ViewRange)>> = SpinLock::new(None);
 
+/// 在途探针要用的另一份上下文：一次移交的两端窗口与各自页偏移。
+static ENDS: SpinLock<Option<(FlatRange, PageOffset, FlatRange, PageOffset)>> = SpinLock::new(None);
+
 fn one() -> PageCount {
     PageCount::new(1).expect("transfer: one page")
 }
@@ -54,7 +57,18 @@ fn transfer(
     to: &FlatRange,
     to_page: usize,
 ) -> Result<(), TransferError> {
-    Transfer::new(from.clone(), page(from_page), to.clone(), page(to_page))?.execute()
+    Transfer::new(from.clone(), page(from_page), to.clone(), page(to_page))?
+        .execute()
+        .result
+}
+
+/// 清单里有没有这一条关系（按 `Arc` 身份）。
+fn names(affected: &[Weak<View>], view: &Arc<View>) -> bool {
+    affected.iter().any(|candidate| {
+        candidate
+            .upgrade()
+            .is_some_and(|known| Arc::ptr_eq(&known, view))
+    })
 }
 
 fn write_byte(address: PhysAddr, value: u8) {
@@ -158,7 +172,7 @@ pub fn accept() {
 
     let frames_before = statistics::frame_occupied() - statistics::block_occupied();
     let kinds_before = statistics::kinds();
-    let cases: [(&str, fn()); 18] = [
+    let cases: [(&str, fn()); 22] = [
         ("within one source", moves_within_one_source),
         ("round trip", round_trip_keeps_the_carrier),
         ("two sources", moves_between_two_sources),
@@ -191,6 +205,22 @@ pub fn accept() {
         (
             "former global",
             a_withdrawn_global_relation_keeps_the_source_untransferable,
+        ),
+        (
+            "candidate preparation",
+            a_failed_candidate_preparation_changes_nothing,
+        ),
+        (
+            "failed move names both ends",
+            a_failed_move_still_names_both_ends,
+        ),
+        (
+            "both ends one relation",
+            a_relation_over_both_ends_is_named_once,
+        ),
+        (
+            "materializability",
+            can_materialize_reports_page_availability,
         ),
     ];
     let mut off = Vec::new();
@@ -1519,6 +1549,10 @@ fn out_of_memory_rolls_back() {
         placed(&seat_page).is_empty(),
         "transfer: a failed preparation must not claim the seat"
     );
+    crate::expect!(
+        seat_page.can_materialize(page(0)) == Ok(true),
+        "transfer: a failed preparation leaves no Reserved seat"
+    );
 
     // 重试：这回真的移过去，且仍是同一个承载。
     transfer(&source, 0, &seat_page, 0).expect("transfer: retry");
@@ -1533,5 +1567,346 @@ fn out_of_memory_rolls_back() {
     crate::expect!(
         read_byte(address) == 0x77,
         "transfer: content survives the retry"
+    );
+}
+
+/// 占槽前的候选准备失败：两端的槽、承载独占与关系清单都不动。
+fn a_failed_candidate_preparation_changes_nothing() {
+    let rw = Access::READ | Access::WRITE;
+    let flat = acquire(2);
+    let whole = flat.whole();
+    let source = whole.range(page(0), one()).expect("transfer: source");
+    let pages = source.materialize().expect("transfer: materialize");
+    let address = pages.physical(PageOffset::ZERO).expect("transfer: pa");
+    drop(pages);
+    let carrier = Arc::downgrade(&source.materialized_frames().expect("transfer: slots")[0].1);
+    // 一段普通关系压在源页上：这次准备确实有候选要收。
+    let space = SpaceBuilder::user().build().expect("transfer: space");
+    let view = map_slice(&space, VirtAddr::wrap(BASE), source.clone(), rw);
+    let seat = acquire(2);
+    let seat_page = seat.whole().range(page(1), one()).expect("transfer: seat");
+
+    source_views::fail_candidates();
+    let outcome = Transfer::new(source.clone(), page(0), seat_page.clone(), page(0))
+        .expect("transfer: construct")
+        .execute();
+    crate::expect!(
+        outcome.result == Err(TransferError::OutOfMemory),
+        "transfer: a candidate preparation failure is reported"
+    );
+    crate::expect!(
+        outcome.affected.is_empty(),
+        "transfer: a pre-claim failure names no relation"
+    );
+    // 两端都没动：源还是同一承载、同一 PA；目标仍空。
+    let slots = source
+        .materialized_frames()
+        .expect("transfer: source slots");
+    crate::expect!(
+        slots.len() == 1
+            && Arc::ptr_eq(
+                &slots[0].1,
+                &carrier.upgrade().expect("transfer: carrier alive")
+            ),
+        "transfer: a candidate preparation failure keeps the source carrier"
+    );
+    crate::expect!(
+        placed(&source) == alloc::vec![(0, address.as_usize())],
+        "transfer: a candidate preparation failure changes no carrier"
+    );
+    crate::expect!(
+        placed(&seat_page).is_empty(),
+        "transfer: a candidate preparation failure leaves the seat empty"
+    );
+    crate::expect!(
+        seat_page.can_materialize(page(0)) == Ok(true),
+        "transfer: a candidate preparation failure leaves no Reserved seat"
+    );
+    // 承载独占也没被留下：随后一次真实移交照样取得它。
+    transfer(&source, 0, &seat_page, 0).expect("transfer: the retry takes the carrier");
+    crate::expect!(
+        matches!(source.materialize(), Err(FlatError::Missing)),
+        "transfer: the retry moved the carrier away"
+    );
+    crate::expect!(
+        placed(&seat_page) == alloc::vec![(0, address.as_usize())],
+        "transfer: the retry lands the same carrier"
+    );
+    drop(view);
+    drop(space);
+}
+
+/// 占槽后的同步失败：两端先还原，清单仍交出两端真正动过的关系
+/// （源页上的那条，与目标端那条惰性的）。
+fn a_failed_move_still_names_both_ends() {
+    let rw = Access::READ | Access::WRITE;
+    let flat = acquire(2);
+    let whole = flat.whole();
+    let source = whole.range(page(0), one()).expect("transfer: source");
+    let outside = whole.range(page(1), one()).expect("transfer: outside");
+    for index in 0..2 {
+        let part = whole.range(page(index), one()).expect("transfer: part");
+        drop(part.materialize().expect("transfer: materialize part"));
+    }
+    let carrier_address = placed(&source)[0].1;
+
+    let left = SpaceBuilder::user().build().expect("transfer: left space");
+    let alpha = map_slice(&left, VirtAddr::wrap(BASE), source.clone(), rw);
+    // 同一份来源上还有一条压在**别的页**上的关系：它在候选里，却不是这次动过的。
+    let beta = map_slice(&left, VirtAddr::wrap(BASE + PAGE_SIZE), outside.clone(), rw);
+
+    // 目标端：一段惰性关系压着目标页（目标此刻是 Fresh，没有 PTE）。
+    let target_flat = acquire(1);
+    let target = target_flat.whole();
+    let right = SpaceBuilder::user().build().expect("transfer: right space");
+    let gamma = map_slice(&right, VirtAddr::wrap(BASE), target.clone(), rw);
+    crate::expect!(
+        right.nest.translate(VirtAddr::wrap(BASE)).is_none(),
+        "transfer: the target relation starts lazy"
+    );
+
+    fail_next_shootdown(left.nest.asid());
+    let outcome = Transfer::new(source.clone(), page(0), target.clone(), page(0))
+        .expect("transfer: construct")
+        .execute();
+    crate::expect!(
+        outcome.result == Err(TransferError::Busy),
+        "transfer: an unconfirmed sync is a retryable Busy"
+    );
+    // 两端先还原：源还是同一承载，目标仍空。
+    crate::expect!(
+        placed(&source) == alloc::vec![(0, carrier_address)],
+        "transfer: a failed sync restores the source slot"
+    );
+    crate::expect!(
+        placed(&target).is_empty(),
+        "transfer: a failed sync leaves the target empty"
+    );
+    // 清单是两端真正动过的关系：源页上的 alpha 与目标页上的 gamma，窗口外的 beta 不在。
+    crate::expect!(
+        names(&outcome.affected, &alpha),
+        "transfer: the source end is named"
+    );
+    crate::expect!(
+        names(&outcome.affected, &gamma),
+        "transfer: the lazy target end is named"
+    );
+    crate::expect!(
+        !names(&outcome.affected, &beta),
+        "transfer: a relation outside the window is not named"
+    );
+    crate::expect!(
+        outcome.affected.len() == 2,
+        "transfer: exactly the two live ends are named ({})",
+        outcome.affected.len()
+    );
+    left.nest
+        .retry_invalidation()
+        .expect("transfer: settle the failed sync");
+    let retried = Transfer::new(source.clone(), page(0), target.clone(), page(0))
+        .expect("transfer: construct retry")
+        .execute();
+    crate::expect!(
+        retried.result.is_ok()
+            && retried.affected.len() == 2
+            && names(&retried.affected, &alpha)
+            && names(&retried.affected, &gamma)
+            && !names(&retried.affected, &beta),
+        "transfer: a successful cross-source retry names exactly both ends"
+    );
+    crate::expect!(
+        source.can_materialize(page(0)) == Ok(false)
+            && placed(&target) == alloc::vec![(0, carrier_address)],
+        "transfer: the successful retry settles both slots"
+    );
+    drop(beta);
+    drop(alpha);
+    drop(gamma);
+    drop(left);
+    drop(right);
+    drop(target_flat);
+}
+
+/// 同一份来源的两页：同时盖住源页与目标页的那条关系只出现一次，
+/// 窗口之外的候选不被误当成动过的。
+fn a_relation_over_both_ends_is_named_once() {
+    let rw = Access::READ | Access::WRITE;
+    let flat = acquire(3);
+    let whole = flat.whole();
+    let source = whole.range(page(0), one()).expect("transfer: source");
+    let target = whole.range(page(1), one()).expect("transfer: target");
+    let outside = whole.range(page(2), one()).expect("transfer: outside");
+    drop(source.materialize().expect("transfer: materialize source"));
+    drop(
+        outside
+            .materialize()
+            .expect("transfer: materialize outside"),
+    );
+    let address = placed(&source)[0].1;
+
+    let space = SpaceBuilder::user().build().expect("transfer: space");
+    // 一段关系同时盖住源页与目标页（目标还是 Fresh，于是这一页是惰性的）。
+    let both = map_slice(&space, VirtAddr::wrap(BASE), slice(&whole, 0, 2), rw);
+    // 另一段只盖住窗口之外的第 2 页。
+    let outside_view = map_slice(&space, VirtAddr::wrap(BASE + 2 * PAGE_SIZE), outside, rw);
+
+    fail_next_shootdown(space.nest.asid());
+    let failed = Transfer::new(source.clone(), page(0), target.clone(), page(0))
+        .expect("transfer: construct failing same-source move")
+        .execute();
+    crate::expect!(
+        failed.result == Err(TransferError::Busy)
+            && failed.affected.len() == 1
+            && names(&failed.affected, &both)
+            && !names(&failed.affected, &outside_view),
+        "transfer: a failed same-source move names the shared relation once"
+    );
+    crate::expect!(
+        placed(&source) == alloc::vec![(0, address)]
+            && placed(&target).is_empty()
+            && target.can_materialize(page(0)) == Ok(true),
+        "transfer: the failed same-source move restores both slots"
+    );
+    space
+        .nest
+        .retry_invalidation()
+        .expect("transfer: settle the failed same-source sync");
+
+    // 失败时已撤 PTE；这次重试只结算槽与清单，不再证明一次新的撤页。
+    let outcome = Transfer::new(source.clone(), page(0), target.clone(), page(0))
+        .expect("transfer: construct")
+        .execute();
+    crate::expect!(
+        outcome.result.is_ok(),
+        "transfer: the same-source move succeeds"
+    );
+    crate::expect!(
+        outcome.affected.len() == 1 && names(&outcome.affected, &both),
+        "transfer: a relation covering both ends is named once ({})",
+        outcome.affected.len()
+    );
+    crate::expect!(
+        !names(&outcome.affected, &outside_view),
+        "transfer: a relation outside both pages is not named"
+    );
+    // 承载到了目标页；源页成墓碑；窗口之外那页没动。
+    crate::expect!(
+        placed(&target) == alloc::vec![(0, address)],
+        "transfer: the carrier lands on the target page"
+    );
+    crate::expect!(
+        matches!(source.materialize(), Err(FlatError::Missing)),
+        "transfer: the source page is a tombstone"
+    );
+    crate::expect!(
+        space.nest.translate(VirtAddr::wrap(BASE)).is_none(),
+        "transfer: the shared relation gives up the source page PTE"
+    );
+    crate::expect!(
+        space
+            .nest
+            .translate(VirtAddr::wrap(BASE + 2 * PAGE_SIZE))
+            .is_some(),
+        "transfer: the relation outside the window keeps its PTE"
+    );
+    space.nest.audit();
+    drop(outside_view);
+    drop(both);
+    drop(space);
+}
+
+/// 只读可物化性：Fresh 与 Resident 为真，在途两端与墓碑为假，越界是独立错误。
+fn can_materialize_reports_page_availability() {
+    let rw = Access::READ | Access::WRITE;
+    let flat = acquire(2);
+    let whole = flat.whole();
+    let source = whole.range(page(0), one()).expect("transfer: source");
+    let target = whole.range(page(1), one()).expect("transfer: target");
+
+    // Fresh 可以，越界是独立的错。
+    crate::expect!(
+        source
+            .can_materialize(PageOffset::ZERO)
+            .expect("transfer: fresh"),
+        "transfer: a fresh page can materialize"
+    );
+    crate::expect!(
+        matches!(whole.can_materialize(page(2)), Err(FlatError::OutOfRange)),
+        "transfer: an out-of-range page is its own error"
+    );
+    // Resident 可以。
+    drop(source.materialize().expect("transfer: materialize source"));
+    crate::expect!(
+        source
+            .can_materialize(PageOffset::ZERO)
+            .expect("transfer: resident"),
+        "transfer: a resident page can materialize"
+    );
+
+    // 一段关系压在源页上：这次移交会在撤页处失败并回退，回退后目标回到 Fresh。
+    let space = SpaceBuilder::user().build().expect("transfer: space");
+    let view = map_slice(&space, VirtAddr::wrap(BASE), source.clone(), rw);
+    *ENDS.lock() = Some((
+        source.clone(),
+        PageOffset::ZERO,
+        target.clone(),
+        PageOffset::ZERO,
+    ));
+    crate::core::memory::transfer::arm_in_flight(Some(can_materialize_ends));
+    fail_next_shootdown(space.nest.asid());
+    let outcome = Transfer::new(source.clone(), page(0), target.clone(), page(0))
+        .expect("transfer: construct")
+        .execute();
+    crate::core::memory::transfer::arm_in_flight(None);
+    *ENDS.lock() = None;
+    crate::expect!(
+        outcome.result == Err(TransferError::Busy),
+        "transfer: the injected sync failure is retryable"
+    );
+    // 回退之后：源页还是 Resident，目标页回到 Fresh，两者都可以物化。
+    crate::expect!(
+        source
+            .can_materialize(PageOffset::ZERO)
+            .expect("transfer: restored source"),
+        "transfer: a rolled-back resident page can materialize"
+    );
+    crate::expect!(
+        target
+            .can_materialize(PageOffset::ZERO)
+            .expect("transfer: restored target"),
+        "transfer: a target rolled back to fresh can materialize"
+    );
+    // 真搬走一页之后，源页成墓碑：不能再物化；目标拿到承载就可以。
+    space
+        .nest
+        .retry_invalidation()
+        .expect("transfer: settle the failed sync");
+    transfer(&source, 0, &target, 0).expect("transfer: the retry moves the carrier");
+    crate::expect!(
+        matches!(source.can_materialize(PageOffset::ZERO), Ok(false)),
+        "transfer: a moved-out page cannot materialize"
+    );
+    crate::expect!(
+        target
+            .can_materialize(PageOffset::ZERO)
+            .expect("transfer: target resident"),
+        "transfer: the target page can materialize once it holds a carrier"
+    );
+    space.nest.audit();
+    drop(view);
+    drop(space);
+}
+
+/// 在途窗口里的可物化性：两端各自那一页都还不能物化。
+fn can_materialize_ends(_source: &FlatRange, _page: PageIndex) {
+    let ends = ENDS.lock();
+    let (source, source_page, target, target_page) = ends.as_ref().expect("transfer: both ends");
+    crate::expect!(
+        matches!(source.can_materialize(*source_page), Ok(false)),
+        "transfer: an in-flight source page cannot materialize"
+    );
+    crate::expect!(
+        matches!(target.can_materialize(*target_page), Ok(false)),
+        "transfer: an in-flight target page cannot materialize"
     );
 }

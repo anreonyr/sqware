@@ -587,3 +587,70 @@ G 关系退场后的拒绝用例真实失败。另一次“删除 G 预检”mut
 测试中把资格拒绝误写成后置预检承重的旁白已改正；没有为覆盖冗余防线而绕过状态。
 没有把大叶原语测试算作普通 acquire 大叶迁移端到端，也没有宣称多 Hart 旧 TLB、
 T4 管理授权/缺页等待、T6 业务或真实 DMA/IOMMU 产品已完成。slot 10 仍关闭。
+
+### T4A 两端候选与执行结果检查点
+
+已集成 `3a29afab-ce41-4971-ab61-bc9c8ac3f56b.8785530`：
+事务在同一双 Flat 临界区中检查两端、准备目标容量与两端候选清单，
+然后才取得承载独占、写 Moving/Reserved。准备回调只收来源键与 Weak；
+不在 Flat 锁内升级 View、不逆向取 View/Nest 锁。候选是完整上界，
+占槽后在无 core 锁时按来源窗口原地过滤、按 Weak 身份去重。
+
+`TransferOutcome` 分开携带迁移结果与受影响关系。占槽前失败清单为空；
+占槽后成功或失败交还同一份清单，失败先显式析构事务完成回退。
+这一载荷尚未接入 Room 通知或 syscall，不代表等待者已经能够被唤醒。
+只读 `can_materialize` 区分 Fresh/Resident/有效 Borrowed 与
+Missing/Moving/Reserved，避免目标回退成 Fresh 后晚到等待者永久睡眠。
+
+原生迁移矩阵增至 22 个子例，新增候选准备 OOM 不改槽、失败结果覆盖两端且
+排除窗口外关系、同关系覆盖两端去重，以及可物化性（含在途与回退）检查。
+worker 的去重删除 mutation 使重复计数断言失败，已恢复；父代理没有重复该 mutation。
+
+父代理在该集成树实际运行：
+
+| 检查 | 结果 |
+|---|---|
+| kernel all-targets semihosting offline dev / release check | 通过；dev 无诊断，release 38 组未使用诊断 |
+| `nu scripts/qtest.nu --package kernel` | 64 passed + 缺 initrd 哨兵 1 failed，退出 101（5.53s） |
+| 同命令 `--scene accept` / `product` / `system-fault` | 各 1 passed（10.39s / 5.28s / 13.44s） |
+| workspace offline dev / release check | 通过；programs 10 组既有未使用诊断 |
+| custody / frame-runs / Pend / trace / console-line 宿主（显式 x86_64、offline） | 3 / 9 / 37 / 2 / 5 passed |
+| 七个相关 Rust 文件 `rustfmt --check --config skip_children=true` | 通过，没有全树重排 |
+
+独立 reviewer 已核对准备顺序、锁阶、登记与短驻留的互斥、回退和清单完整性，
+并实跑健康面与 dev/release 检查。新增四组 release 未使用诊断为候选收集、
+过滤、去重与 TransferOutcome；生产消费入口尚未接线，没有添加告警豁免。
+reviewer 在一次性副本中分别破坏准备顺序、目标候选、去重、窗口过滤、失败清单
+与可物化性，各次对应断言失败；这些是 reviewer 的实验，父代理未重复。
+
+审查后修正注释，并在既有子例中补跨 Flat 成功、同 Flat 失败的完整清单断言；
+两种准备失败增加目标 `can_materialize == true`，直接排除 Reserved 泄漏，
+不再只靠 Resident 快照与后续重试间接判断。父代理对该收口树再跑
+kernel all-targets semihosting offline dev check、相关文件格式检查通过，
+健康面仍为 64 passed + 哨兵 1 failed，退出 101（5.54s）。
+独立 reviewer 已只读核对并批准收口 delta；其他景与宿主结果为收口前读数，
+没有把仅注释/断言变化后未重跑的检查写成重跑。
+
+本检查点不包含管理授权、条件等待、生命周期通知，也不证明真实 Task 等待链、
+共享 Team 单任务退出、多 Hart 旧 TLB 或真实设备迁移。slot 10 仍关闭。
+
+### T4C 入口补充合同（尚未实现）
+
+- 保持已批准的四字 Transfer 参数与相对 Hold 窗口页号。新增错误码
+  `-8 SourceEmpty`、`-9 DestinationOccupied`、`-10 NotTransferable`，
+  旧 `-1..-7` 不动；核心 OutOfRange 对应 NoRegion，OOM 对应 OoM，
+  Busy 对应 Busy，管理授权失败对应 Denied。
+- 两端管理判据都要求 caller live 与来源未 revoked；私有阶段还要求真实 owner。
+  根阶段要求调用者表中真实根 token、PoleMeta、root Grant 同一 Arc 且仍活，
+  并要求 `heir().is_none()`（既有“交出后不可用”语义，不靠 ONLY 权限位）。
+  `root()` 扩展现有结果携带 Grant，不新增管理者包装或第二身份来源。
+- caller.pend 覆盖两端取 Hold、解析、管理核验到 execute 结算/回退；
+  不取另一个 Task 的 pend，不把 work COMMIT 带入迁移或 shootdown。
+  PoleOperation 不是授权；若使用其 try 串行化，同根只取一次，取不到返回 Busy。
+- `doom` 的安全程序序是同 pend 下先清空 references，再 close_controls/
+  seal_owned；不是“owner taskId 相同所以不能并发”。入口 Seal 须在同 pend 下
+  核验并使 mail 失活，随后释放 pend 才 close_maps，避免通知或 shootdown 带锁。
+  来源 revoked 新口只短读，不常持闸门跨 execute，不扩永久撤销 ABI。
+- execute 返回后先释放 caller.pend，再逐个消费 affected。从 Weak 升级取得
+  raw Nest ASID 与 ViewId，先释放 View/Nest 强引用，再 signal 整链；
+  最后才使用迁移 result，不用提前 `?` 丢弃失败回退通知。
