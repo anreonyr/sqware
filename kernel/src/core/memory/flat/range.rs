@@ -32,6 +32,11 @@ impl FlatRange {
         &self.flat
     }
 
+    /// 这一段窗口的来源身份：跨地址空间按来源找关系时做键。
+    pub(crate) fn source_id(&self) -> usize {
+        Arc::as_ptr(&self.flat) as usize
+    }
+
     pub fn page_count(&self) -> PageCount {
         self.count
     }
@@ -98,19 +103,23 @@ impl FlatRange {
         self.flat.is_borrowed()
     }
 
+    /// 起点之内第 `offset` 页的来源绝对页号；越界即拒。
+    pub(crate) fn page_at(&self, offset: PageOffset) -> Result<PageIndex, FlatError> {
+        if offset.get() >= self.count.get() {
+            return Err(FlatError::OutOfRange);
+        }
+        let page = self
+            .index
+            .get()
+            .checked_add(offset.get())
+            .ok_or(FlatError::OutOfRange)?;
+        Ok(PageIndex::new(page))
+    }
+
     /// 起点之内第 `offset` 页的物理地址；页槽自己的状态按自己的失败报。
     ///
     /// 物理地址是地址信息，不是持有凭证。
     pub(super) fn physical(&self, offset: PageOffset) -> Result<PhysAddr, FlatError> {
-        if offset.get() >= self.count.get() {
-            return Err(FlatError::OutOfRange);
-        }
-        let page = PageIndex::new(
-            self.index
-                .get()
-                .checked_add(offset.get())
-                .ok_or(FlatError::OutOfRange)?,
-        );
-        self.flat.physical_at(page)
+        self.flat.physical_at(self.page_at(offset)?)
     }
 }

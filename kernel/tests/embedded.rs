@@ -143,6 +143,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn memory_source_views() {
+        kernel::entry::check::source_views::accept();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn memory_transfer_slots() {
         kernel::entry::check::transfer::accept();
     }

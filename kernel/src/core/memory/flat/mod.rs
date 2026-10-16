@@ -16,7 +16,7 @@ mod residency_entry;
 mod slot;
 mod source;
 mod state;
-pub(crate) mod transfer;
+pub(in crate::core::memory) mod transaction;
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -33,7 +33,7 @@ pub use range::FlatRange;
 pub use region::BorrowedRegion;
 pub use residency::Residency;
 #[cfg(debug_assertions)]
-pub(crate) use transfer::fail_transfer_prepare;
+pub(crate) use transaction::fail_transfer_prepare;
 
 use residency_entry::ResidencyEntry;
 use slot::Slot;
@@ -139,6 +139,10 @@ impl Flat {
 
     pub(super) fn reside(&self, range: FlatRange) -> Result<Residency, FlatError> {
         let mut state = self.state.lock();
+        // 驻留要在在途事务之外取得：Moving/Reserved 的页还没有可用的承载。
+        if state.busy(range.index(), range.page_count()) {
+            return Err(FlatError::Busy);
+        }
         let next = state
             .next_residency
             .checked_add(1)
@@ -195,8 +199,12 @@ impl Flat {
         let mut at = slots.partition_point(|(slot, _)| slot.get() < page);
         while page < end {
             if slots.get(at).is_some_and(|(slot, _)| slot.get() == page) {
-                if matches!(slots[at].1, Slot::Missing) {
-                    return Err(FlatError::Missing);
+                match slots[at].1 {
+                    // 承载已移出：不补零、不新分配。
+                    Slot::Missing => return Err(FlatError::Missing),
+                    // 正被一次移交持有/预留：何时能用不由物化说了算。
+                    Slot::Moving { .. } | Slot::Reserved { .. } => return Err(FlatError::Busy),
+                    Slot::Resident(_) => {}
                 }
                 page += 1;
                 at += 1;
@@ -213,7 +221,8 @@ impl Flat {
 
     /// 窗口内已物化页槽的稀疏快照，偏移相对窗口起点。
     ///
-    /// `Missing` 是墓碑，不是承载：它不进快照。
+    /// 只有 `Resident` 是空闲的承载：`Missing` 是墓碑，`Moving`/`Reserved`
+    /// 属于在途事务，都不进快照。
     pub(super) fn materialized(
         &self,
         index: PageIndex,
@@ -300,6 +309,8 @@ impl Flat {
                     Slot::Resident(frame) => Ok(PhysAddr::from_raw(frame.physical_address())),
                     // 承载已移出：这是页槽自己的状态，不抹成“越界”。
                     Slot::Missing => Err(FlatError::Missing),
+                    // 在途事务持有/预留的页没有可交出去的物理坐标。
+                    Slot::Moving { .. } | Slot::Reserved { .. } => Err(FlatError::Busy),
                 }
             }
         }

@@ -24,6 +24,7 @@ mod fault;
 mod index;
 mod kind;
 mod reservation;
+pub(crate) mod source_views;
 mod state;
 
 pub(crate) mod identity;
@@ -445,6 +446,12 @@ impl Nest {
         let mut published: Vec<(usize, Arc<Frame>)> = Vec::new();
         let mut borrowed: Vec<(VirtAddr, usize, Access)> = Vec::new();
         let mut pages: Option<Pages> = None;
+        // 发布窗口的短期驻留：在抓承载快照**之前**取得，覆盖 PTE 写入与发布记录提交，
+        // 之后才解除。在途的移交槽会让这次驻留当场 Busy，正好与事务互斥。
+        let lease = {
+            let inner = view.state.lock();
+            inner.source.reside()?
+        };
         {
             let inner = view.state.lock();
             if inner.source.is_borrowed() {
@@ -492,6 +499,8 @@ impl Nest {
             .pending_views
             .try_reserve(1)
             .map_err(|_| NestError::OutOfMemory)?;
+        // 首条 PTE 之前登记来源↔关系：撤页要按来源枚举全部关系，不能只看用户注册表。
+        source_views::register(&view.state.lock().source, view)?;
         for run in view.state.lock().runs(start, &published) {
             let run = run?;
             state
@@ -544,6 +553,7 @@ impl Nest {
         state.index.insert(node);
         state.mark_dirty();
         drop(state);
+        drop(lease);
         self.finish_invalidation()
     }
 
@@ -585,6 +595,9 @@ impl Nest {
             PageOffset::new(first),
             PageCount::new(size / PAGE_SIZE).ok_or(NestError::NotAligned)?,
         )?;
+        // 发布窗口的短期驻留：在抓承载快照**之前**取得，覆盖 PTE 写入与发布记录提交。
+        // 在途的移交槽会让这次驻留当场 Busy，正好与事务互斥。
+        let lease = window.reside()?;
         let materialized = window.materialized_frames()?;
         let mut fresh = Vec::new();
         fresh
@@ -630,6 +643,7 @@ impl Nest {
         state.mark_dirty();
         drop(inner);
         drop(state);
+        drop(lease);
         self.finish_invalidation()
     }
 

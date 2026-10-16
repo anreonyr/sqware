@@ -12,15 +12,19 @@ use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::address::{PageCount, PageIndex, PageOffset, PhysAddr, VirtAddr};
 use crate::core::memory::flat::allocator::statistics;
 use crate::core::memory::flat::allocator::statistics::Kind;
-use crate::core::memory::flat::transfer::{Transfer, TransferError};
 use crate::core::memory::flat::{Allocation, BorrowedRegion, Flat, FlatError, FlatRange};
 use crate::core::memory::nest::identity::fail_next_shootdown;
-use crate::core::memory::nest::{Access, NestError};
+use crate::core::memory::nest::{Access, Nest, NestError, View, ViewRange};
+use crate::core::memory::transfer::{Transfer, TransferError};
 use crate::core::work::unit::space::SpaceBuilder;
+use crate::machine::sync::SpinLock;
 
 use super::support;
 
 const BASE: usize = 0x6800_0000;
+
+/// 在途探针要用的上下文：正在发布的那段关系与它的地址空间。
+static PUBLISHED: SpinLock<Option<(Arc<Nest>, Arc<View>, ViewRange)>> = SpinLock::new(None);
 
 fn one() -> PageCount {
     PageCount::new(1).expect("transfer: one page")
@@ -94,7 +98,7 @@ pub fn accept() {
 
     let frames_before = statistics::frame_occupied() - statistics::block_occupied();
     let kinds_before = statistics::kinds();
-    let cases: [(&str, fn()); 10] = [
+    let cases: [(&str, fn()); 13] = [
         ("within one source", moves_within_one_source),
         ("round trip", round_trip_keeps_the_carrier),
         ("two sources", moves_between_two_sources),
@@ -103,13 +107,25 @@ pub fn accept() {
         ("imported carrier", imported_carriers_are_not_transferable),
         ("residency", residency_blocks_both_ends),
         (
-            "mapped view",
-            a_mapped_view_pins_until_the_last_holder_drops,
+            "mapped page",
+            a_mapped_page_is_refused_until_it_is_withdrawn,
         ),
         ("oom rollback", out_of_memory_rolls_back),
         (
             "mid-window tombstone",
             a_mid_window_tombstone_is_not_a_complete_window,
+        ),
+        (
+            "in-flight refusals",
+            an_in_flight_claim_blocks_every_other_use,
+        ),
+        (
+            "tombstone rollback",
+            a_refused_move_keeps_a_tombstone_target,
+        ),
+        (
+            "unreachable precedence",
+            an_unreachable_owner_dominates_mapped_candidates,
         ),
     ];
     let mut off = Vec::new();
@@ -509,8 +525,11 @@ fn a_mid_window_tombstone_is_not_a_complete_window() {
     );
 }
 
-/// 一段已发布关系持整窗驻留：撤下、同步失败、甚至撤完之后，都要等它真正 Drop。
-fn a_mapped_view_pins_until_the_last_holder_drops() {
+/// 压在这份来源上的关系握着它窗口里的页：那些页当场 Busy。
+///
+/// 撤下其中一页并同步成功之后，那一页才可走；关系仍然握着的其他页仍然拒绝；
+/// 地址空间失联（关系比空间活得久）也永久拒绝。
+fn a_mapped_page_is_refused_until_it_is_withdrawn() {
     let flat = acquire(4);
     let whole = flat.whole();
     drop(whole.materialize().expect("transfer: materialize"));
@@ -524,12 +543,20 @@ fn a_mapped_view_pins_until_the_last_holder_drops() {
         .expect("transfer: attach");
     let seat = acquire(2);
     let seat_page = seat.range(PageIndex::ZERO, one()).expect("transfer: seat");
+    let source = whole.range(page(0), one()).expect("transfer: source");
+    let other = whole.range(page(1), one()).expect("transfer: other page");
+    let address = placed(&source)[0].1;
 
     crate::expect!(
-        transfer(&whole, 0, &seat_page, 0) == Err(TransferError::Busy),
-        "transfer: a mapped source is busy"
+        transfer(&source, 0, &seat_page, 0) == Err(TransferError::Busy),
+        "transfer: a mapped page is busy"
     );
-    // 同步失败：关系保活，驻留不解除。
+    // 同步失败：旧 PTE 还没有确认撤下，仍然拒绝。
+    let clean_before_withdraw = !space.nest.has_pending_invalidation();
+    crate::expect!(
+        clean_before_withdraw,
+        "transfer: the mapping starts with settled invalidation"
+    );
     fail_next_shootdown(space.nest.asid());
     let selection = view
         .range(page(0), one())
@@ -538,33 +565,245 @@ fn a_mapped_view_pins_until_the_last_holder_drops() {
         matches!(space.nest.detach(selection), Err(NestError::Shootdown)),
         "transfer: the injected shootdown failure must be reported"
     );
+    let still_active = view
+        .active()
+        .expect("transfer: active ranges after withdrawal")
+        .iter()
+        .any(|range| range.start.as_usize() <= BASE && BASE <= range.end());
     crate::expect!(
-        transfer(&whole, 0, &seat_page, 0) == Err(TransferError::Busy),
-        "transfer: an unsettled sync keeps the residency"
+        clean_before_withdraw && !still_active,
+        "transfer: stale clean state plus the new active hole must not authorize a move"
+    );
+    crate::expect!(
+        space.nest.has_pending_invalidation(),
+        "transfer: the active hole still has unconfirmed invalidation"
+    );
+    crate::expect!(
+        transfer(&source, 0, &seat_page, 0) == Err(TransferError::Busy),
+        "transfer: an unsettled sync keeps the page busy"
     );
     space
         .nest
         .retry_invalidation()
         .expect("transfer: retry invalidation");
+    // 这一页的 PTE 已撤、已同步：它不再是这份关系握着的页。
+    transfer(&source, 0, &seat_page, 0).expect("transfer: a withdrawn page moves");
     crate::expect!(
-        transfer(&whole, 0, &seat_page, 0) == Err(TransferError::Busy),
-        "transfer: a live relation still pins its whole window"
+        placed(&seat_page) == alloc::vec![(0, address)],
+        "transfer: the withdrawn page keeps its carrier"
     );
-    // 撤下整段关系之后，只要还有一份持有，驻留就还在。
-    space
-        .nest
-        .detach(view.whole())
-        .expect("transfer: detach the rest");
+    // 关系仍然握着第 1..3 页：那些页仍然拒绝。
+    let second_seat = acquire(1);
+    let second_page = second_seat.whole();
     crate::expect!(
-        transfer(&whole, 0, &seat_page, 0) == Err(TransferError::Busy),
-        "transfer: the residency lasts until the last holder drops"
+        transfer(&other, 0, &second_page, 0) == Err(TransferError::Busy),
+        "transfer: a relation still holds its other pages"
     );
     drop(view);
     drop(space);
-    transfer(&whole, 0, &seat_page, 0).expect("transfer: the move lands once the view is gone");
+
+    // 关系比它认住的地址空间活得久：旧 TLB 无从核实，永久拒绝，不当“没有旧 TLB”。
+    let orphan_flat = acquire(1);
+    let orphan_page = orphan_flat.whole();
+    drop(
+        orphan_page
+            .materialize()
+            .expect("transfer: materialize orphan"),
+    );
+    let orphan_space = SpaceBuilder::user()
+        .build()
+        .expect("transfer: orphan space");
+    let orphan_reservation = support::reserve(&orphan_space, VirtAddr::wrap(BASE), PAGE_SIZE)
+        .expect("transfer: orphan reserve");
+    let orphan = orphan_space
+        .nest
+        .attach(orphan_reservation, orphan_page.clone(), Access::all(), rw)
+        .expect("transfer: orphan attach");
+    drop(orphan_space);
+    let third_seat = acquire(1);
+    let third_page = third_seat.whole();
     crate::expect!(
-        !placed(&seat_page).is_empty(),
+        transfer(&orphan_page, 0, &third_page, 0) == Err(TransferError::NotTransferable),
+        "transfer: a relation whose space is gone is not transferable"
+    );
+    drop(orphan);
+}
+
+/// 永久失联的属主优先于可重试的活动映射，不随候选顺序改变失败身份。
+fn an_unreachable_owner_dominates_mapped_candidates() {
+    let source = acquire(1).whole();
+    drop(source.materialize().expect("transfer: materialize source"));
+    let target = acquire(1).whole();
+    let rw = Access::READ | Access::WRITE;
+    let live_space = SpaceBuilder::user().build().expect("transfer: live space");
+    let live_reservation = support::reserve(&live_space, VirtAddr::wrap(BASE), PAGE_SIZE)
+        .expect("transfer: live reservation");
+    let live = live_space
+        .nest
+        .attach(live_reservation, source.clone(), rw, rw)
+        .expect("transfer: live relation");
+    let lost_space = SpaceBuilder::user().build().expect("transfer: lost space");
+    let lost_reservation = support::reserve(&lost_space, VirtAddr::wrap(BASE), PAGE_SIZE)
+        .expect("transfer: lost reservation");
+    let lost = lost_space
+        .nest
+        .attach(lost_reservation, source.clone(), rw, rw)
+        .expect("transfer: relation whose owner will disappear");
+    drop(lost_space);
+
+    for _ in 0..2 {
+        crate::expect!(
+            transfer(&source, 0, &target, 0) == Err(TransferError::NotTransferable),
+            "transfer: an unreachable owner dominates every retryable candidate"
+        );
+    }
+    crate::expect!(
+        placed(&source).len() == 1 && placed(&target).is_empty(),
+        "transfer: refusal restores both slots"
+    );
+    drop(lost);
+    drop(live);
+    drop(live_space);
+}
+
+/// 占槽之后、结算之前：别的驻留、物化（PA 出口）与发布都在同一个在途窗口里被拒。
+///
+/// 探针借真实在途窗口核对排除关系；裁决随后看到关系还握着这一页，
+/// 于是这次移交自己也 Busy，两端原样还回去。
+fn an_in_flight_claim_blocks_every_other_use() {
+    let flat = acquire(2);
+    let whole = flat.whole();
+    let source = whole.range(page(0), one()).expect("transfer: source");
+    drop(source.materialize().expect("transfer: materialize source"));
+    let address = placed(&source)[0].1;
+    write_byte(PhysAddr::from_raw(address), 0x11);
+
+    let rw = Access::READ | Access::WRITE;
+    let space = SpaceBuilder::user().build().expect("transfer: space");
+    let reservation =
+        support::reserve(&space, VirtAddr::wrap(BASE), 2 * PAGE_SIZE).expect("transfer: reserve");
+    let view = space
+        .nest
+        .attach(reservation, whole.clone(), Access::all(), rw)
+        .expect("transfer: attach");
+    let seat = acquire(1);
+    let seat_page = seat.whole();
+
+    *PUBLISHED.lock() = Some((space.nest.clone(), view.clone(), view.whole()));
+    crate::core::memory::transfer::arm_in_flight(Some(in_flight_refusals));
+    let outcome = transfer(&source, 0, &seat_page, 0);
+    crate::core::memory::transfer::arm_in_flight(None);
+    *PUBLISHED.lock() = None;
+
+    crate::expect!(
+        outcome == Err(TransferError::Busy),
+        "transfer: a relation holding the page refuses the move"
+    );
+    // 回退原态：源还是同一承载、同一 PA、同一内容；目标还是空的；不留驻留。
+    crate::expect!(
+        placed(&source) == alloc::vec![(0, address)],
+        "transfer: a refused claim restores the source"
+    );
+    crate::expect!(
+        read_byte(PhysAddr::from_raw(address)) == 0x11,
+        "transfer: content survives a refused claim"
+    );
+    crate::expect!(
+        placed(&seat_page).is_empty(),
+        "transfer: a refused claim leaves the seat empty"
+    );
+    crate::expect!(
+        !source.is_pinned(),
+        "transfer: a refused claim leaves no residency behind"
+    );
+    drop(
+        source
+            .reside()
+            .expect("transfer: no residue blocks a new lease"),
+    );
+    // 关系走了之后同一页可以移。
+    drop(view);
+    drop(space);
+    transfer(&source, 0, &seat_page, 0)
+        .expect("transfer: the move lands once the relation is gone");
+    crate::expect!(
+        placed(&seat_page) == alloc::vec![(0, address)],
         "transfer: the carrier reached the seat"
+    );
+}
+
+/// 在途窗口里的排除：新驻留、物化（PA 出口）与一次发布都当场 Busy。
+fn in_flight_refusals(source: &FlatRange, _page: PageIndex) {
+    crate::expect!(
+        matches!(source.reside(), Err(FlatError::Busy)),
+        "transfer: an in-flight page refuses a new residency"
+    );
+    crate::expect!(
+        matches!(source.materialize(), Err(FlatError::Busy)),
+        "transfer: the PA exit needs a materialized window; an in-flight page refuses it"
+    );
+    let published = PUBLISHED.lock();
+    let (nest, _, selection) = published.as_ref().expect("transfer: publish context");
+    crate::expect!(
+        matches!(
+            nest.materialize_active(selection.clone()),
+            Err(NestError::Busy)
+        ),
+        "transfer: publishing a window with an in-flight page is refused"
+    );
+}
+
+/// 回退按目标原本的样子还回去：墓碑不会被抹成 Fresh。
+fn a_refused_move_keeps_a_tombstone_target() {
+    let source_flat = acquire(1);
+    let source = source_flat.whole();
+    drop(source.materialize().expect("transfer: materialize source"));
+
+    // 目标第 0 页先是墓碑：把它的承载先移到第 1 页去。
+    let target_flat = acquire(2);
+    let target = target_flat.whole();
+    let tombstone = target.range(page(0), one()).expect("transfer: target page");
+    drop(
+        tombstone
+            .materialize()
+            .expect("transfer: materialize target"),
+    );
+    let seat = target.range(page(1), one()).expect("transfer: empty seat");
+    transfer(&tombstone, 0, &seat, 0).expect("transfer: make a tombstone");
+    crate::expect!(
+        matches!(tombstone.materialize(), Err(FlatError::Missing)),
+        "transfer: the target page is a tombstone"
+    );
+
+    // 这段来源上挂一段关系：这次移交会在占槽之后被裁决拒掉。
+    let rw = Access::READ | Access::WRITE;
+    let space = SpaceBuilder::user().build().expect("transfer: space");
+    let reservation =
+        support::reserve(&space, VirtAddr::wrap(BASE), PAGE_SIZE).expect("transfer: reserve");
+    let view = space
+        .nest
+        .attach(reservation, source.clone(), Access::all(), rw)
+        .expect("transfer: attach");
+    crate::expect!(
+        transfer(&source, 0, &tombstone, 0) == Err(TransferError::Busy),
+        "transfer: a relation holding the page refuses the move"
+    );
+    // 墓碑没被抹成 Fresh：物化仍然拒，而不是补出一个新承载。
+    crate::expect!(
+        matches!(tombstone.materialize(), Err(FlatError::Missing)),
+        "transfer: a refused move keeps the target tombstone"
+    );
+    crate::expect!(
+        placed(&source).len() == 1,
+        "transfer: a refused move keeps the source carrier"
+    );
+    drop(view);
+    drop(space);
+    // 关系走了之后真的移过去：目标从墓碑变成承载。
+    transfer(&source, 0, &tombstone, 0).expect("transfer: move onto a tombstone");
+    crate::expect!(
+        placed(&tombstone).len() == 1,
+        "transfer: a tombstone target accepts a carrier"
     );
 }
 

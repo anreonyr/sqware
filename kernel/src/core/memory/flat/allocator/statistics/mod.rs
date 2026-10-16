@@ -33,6 +33,8 @@ pub(crate) use frame_kinds::install_frame_kinds;
 #[cfg(debug_assertions)]
 pub(crate) use kind::Kind;
 #[cfg(debug_assertions)]
+pub(crate) use kinds::Kinds;
+#[cfg(debug_assertions)]
 pub(crate) use mark::mark;
 #[cfg(debug_assertions)]
 pub(crate) use stats::kinds;

@@ -41,6 +41,7 @@ pub mod residency;
 #[path = "../../../programs/src/system/supply/retention/mod.rs"]
 pub(crate) mod retention_core;
 pub mod shell;
+pub mod source_views;
 pub mod spare;
 pub mod stress;
 mod support;
