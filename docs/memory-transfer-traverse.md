@@ -1227,3 +1227,97 @@ reviewer 未重跑 accept/product/system-fault，仍引用上述父代理实际�
 该阶段已通过独立实测复审，批准本地封存；未获得共享分支合并或推送许可。
 Frame 身份/零分配、真实硬件弱内存、所有 SEE 的远端完成契约、Seal 并发、
 设备/DMA 和真实 Platform 产品接线仍不在本景完成范围，不称 T4/T5 总验收完成。
+
+### T4D3A Seal 补关与入口覆盖（已通过独立复审）
+
+基线为 `88dad547`。本阶段补 PieCall::Seal/Revoke 的真实解码派发，
+不把同 Task 的先后次序当成真实并发。初次测试确认 Seal 的部分失败缺陷：
+失活已落地、close_maps 同步失败留下责任后，再次 Seal 会被存活门控的
+PieSnapshot::owner 拒绝。用户明确批准原属主重复 Seal 补完关闭，
+对象保持失活，不恢复访问或迁移管理权；该批准不是推送或共享分支落地许可。
+
+生产修复仅在 Seal 入口增加补关资格：
+资源 Meta 已失活且稳定的 Mail.owner 等于当前 Task，才可越过失活导致的
+owner 缺席；token 仍须在本任务表中，且原来的“已死、无 maps”早错仍返回 Dead。
+活 Meta 继续走原 owner/alive/Grant 判据，不能把 Grant 失效当成补关理由。
+未全局修改 PieSnapshot::owner、alive、manages，也未改锁、租约时机或 ABI。
+
+| 状态 | 返回/效果 |
+|---|---|
+| Meta 活、Grant 已失效 | Denied，不失活、不撤图 |
+| Meta 死、仍有 maps、非属主 | Denied，不碰尚欠的关闭责任 |
+| Meta 死、仍有 maps、原属主且 token 仍在 | 继续 close_maps，成功 0；同步失败仍保留责任 |
+| Meta 死、无 maps | 既定 Dead，不恢复任何权限 |
+
+纯补关按资源归属与关闭责任判定：Meta 和 Grant 都已死时，原属主若仍持表中 token
+也可以补关；不能把实现误写成“所有 Grant 死的情况都拒绝”。
+
+新增五项内核用例：
+
+- Seal 的非属主/无效 token、staged reserved 与 PoleOperation Busy 早错，
+  以及正常失活和关图；增加活 Meta/死 Grant 的拒绝反例。
+- Seal 后同配置 Transfer 从 Busy 变 Denied。此配置的保留窗口本身 pin 页，
+  证明的是管理拒绝先于物理资格，不宣称一次可成功迁移变成拒绝；
+  被拒副作用的比较基线在 Seal 完成后，保留窗口仍能解析。
+- 真正成功的 Transfer 后 Seal：目标承载/内容保留，源 Pole 自己关系关闭，
+  无关映射不变；只属顺序属性。
+- 注入 Seal 关闭同步失败：Busy、失活不回滚、maps/失效/禁复用责任保留，
+  非属主补关 Denied；原属主经 trap::envcall 重试 0、关闭完成，
+  再次 Seal 精确 Dead，管理判据始终为假。不再用 Shut 绕过此重试合同。
+- Revoke 的目标/根 token/联合授出资格拒绝、真正撤子及不影响其他分支。
+  联合条件未被单独隔离，撤销后的 Transfer Denied 也不独证 manages 门的必要性；
+  不用造假的 token 表追求不可达单门反例。
+
+运行槽夹具放在 conductor 现有的测试子模块，因 Pie 入口读取
+current().running_task，不能只传 dispatch 的 ident 冒充在座调用者。
+Held 转 Ready 先同步 release_held，不 launch 进调度队列；
+结束腾槽/摘徽记，已 doom 的任务不复活。seat 对 kernel_sp、内核 TP 与时限的写入
+不还原，已在夹具中明确限定用途。它不是完整 guest 调度或 ecall 端到端：
+只有补关重试驱动 trap::envcall 并读取真 c.ebreak 长度，其余走服务 dispatch。
+reserved 预置使用生产 record 的 staged 形状，不宣称覆盖整个跨 Team spawn 事务。
+
+父代理在最终主树实跑：
+
+```sh
+nu scripts/qtest.nu --package kernel -- -- pie_
+nu scripts/qtest.nu --package kernel
+```
+
+- 精确五例 5 passed / 70 filtered（0.52s）；
+  健康面 74 passed + 缺 initrd 哨兵 1 failed，退出 101（6.05s），不称全绿。
+- kernel all-targets semihosting offline dev/release 通过，
+  dev 无告警、release 6 组既有告警。
+- D1/TLB 各 1 passed（0.42s/0.17s）；
+  Fresh 精确 DA 1 passed / 74 filtered（10.29s）；
+  accept/product/system-fault 各 1 passed（10.39s/5.33s/13.54s）。
+- 四个相关 Rust 文件按 edition 2024、skip_children 检查通过，diff check 通过。
+  worker 的末次检查点另有两处排版漂移，由父逐处修正，未全树重排。
+
+初审期间 reviewer 的 scratch Git 指针曾误指向其 Delta 树，已恢复并比对；
+父树实核初次三文件差异指纹仍为原检查点，未发现源码丢失。
+默认 index 不宣称未变，也未 reset；所有父侧验证/提交继续用独立临时 index。
+后续 mutant 副本排除 .git/任何 gitdir 指针，禁止用 checkout/reset/restore 还原，
+不将副本代码回拷任何被审工作树。
+
+最终独立 reviewer 对父树四个代码文件复算 diffSHA，
+为 `807cd8f07c3bf440a7359c9dc8e8f54a169ac8cea248197db538374ff2faeb4e`，
+与局部格式修正后版本逐字节一致；文档另行记录，不改变这四个文件。
+副本排除 .git，确认不是 Git 工作树后，逐项局部 patch、构建、实跑并在副本还原：
+
+| 变体 | 被拒绝的用例/原因 |
+|---|---|
+| 删除 cleanup 例外，恢复旧门 | partial_failure：原属主重试 Denied，不是 0 |
+| cleanup 放宽到活 Meta | authority：活 Meta/死 Grant 被错误 Seal |
+| cleanup 不核稳定属主 | partial_failure：非属主错误补完关闭 |
+| 删除 dead/no-maps 早错 | partial_failure：完成后的调用答 0，而非既定 Dead |
+
+四条 mutation 均被抓。reviewer 独立复跑精确五例 5 passed / 70 filtered、
+默认健康面 74 passed + 同一缺 initrd 哨兵 1 failed，退出码分别 0/101；
+未重跑 release 场景，release 证据仍是上述父代理实际矩阵。
+with_running 的 release_held 和“不复活 doom”守卫经静态复核；
+删除任一守卫的探针仍五例通过，故不冒称这两个防御分支已有动态覆盖。
+Revoke 联合条件、staged 预置与服务派发的覆盖边界仍按上文限定。
+
+本阶段已获独立审查接受，批准本地封存，未获得推送或共享分支落地许可。
+真正跨 Task 的迁移/撤销/退出竞争、多 Hart 确定性交错、
+设备/DMA 与真实 Platform 接线仍未完成，不以入口级覆盖宣称 T4/T5 总验收通过。

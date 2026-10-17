@@ -453,6 +453,36 @@ mod tests {
         kernel::entry::check::syscall::transfer_relations();
     }
 
+    #[cfg(debug_assertions)]
+    #[test]
+    fn pie_seal_authority() {
+        kernel::entry::check::syscall::pole_seal_authority();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn pie_seal_refuses_transfer() {
+        kernel::entry::check::syscall::pole_seal_refuses_transfer();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn pie_seal_keeps_transferred_page() {
+        kernel::entry::check::syscall::pole_seal_keeps_transferred_page();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn pie_seal_partial_failure() {
+        kernel::entry::check::syscall::pole_seal_partial_failure();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn pie_revoke_removes_child() {
+        kernel::entry::check::syscall::pole_revoke_removes_child();
+    }
+
     #[test]
     fn scene() {
         // fresh 失败回退那一景靠一个在途夹具注入一次失败：它只在这一格打开时才装上，

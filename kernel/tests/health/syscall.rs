@@ -14,6 +14,8 @@ use crate::core::work::pend::{self, Need, Permission};
 use crate::core::work::unit::space::Space;
 use crate::core::work::unit::space::SpaceBuilder;
 
+use crate::core::work::room::conductor::tests::with_running;
+
 use crate::core::work::unit::task::Task;
 use crate::core::work::unit::team::{Team, TeamBuilder};
 use crate::entry::call as envcall;
@@ -110,6 +112,7 @@ impl Caller {
             EnvCall::Room(call) => (call.slot(), call.pack()),
             EnvCall::Debug(call) => (call.slot(), call.pack()),
             EnvCall::Control(call) => (call.slot(), call.pack()),
+            EnvCall::Pie(call) => (call.slot(), call.pack()),
             _ => unreachable!(),
         };
         self.raw(slot, regs)
@@ -2862,10 +2865,10 @@ fn materialize_page(caller: &Caller, handle: usize, page: usize) {
     drop(one.materialize().expect("materialize the page"));
 }
 
-/// 别的任务用自己的私有来源铸一根根，并把一枚子 Pie 交给 `me`。
+/// 别的任务用自己的私有来源铸一根根，并把一枚子 Pie 交给 `me`；回答 `(根, 子)`。
 ///
 /// 交给 `me` 的那一枚 `sire` 非空：它不是 root token，拿它作不了主。
-fn grant_to(giver: &Caller, me: &Caller, pages: usize) -> env::PieToken {
+fn grant_pair(giver: &Caller, me: &Caller, pages: usize) -> (env::PieToken, env::PieToken) {
     use env::{Mark, Permission, PieToken};
     let source = acquire_fresh(giver, pages);
     assert!(source > 0, "giver source: {source}");
@@ -2886,7 +2889,29 @@ fn grant_to(giver: &Caller, me: &Caller, pages: usize) -> env::PieToken {
         Mark::NONE,
     )
     .expect("a child grant");
-    PieToken::mint(child)
+    (root, PieToken::mint(child))
+}
+
+/// 别的任务用自己的私有来源铸一根根，并把一枚子 Pie 交给 `me`。
+///
+/// 交给 `me` 的那一枚 `sire` 非空：它不是 root token，拿它作不了主。
+fn grant_to(giver: &Caller, me: &Caller, pages: usize) -> env::PieToken {
+    grant_pair(giver, me, pages).1
+}
+
+/// 内核铸的一份独立保留授权；用户入口拿不到，夹具直铸才能走到保留面。
+fn retention_cap(caller: &Caller) -> env::PieToken {
+    use crate::core::work::mail::nole::NoleMeta;
+    let pie = pend::Pie::try_new(
+        Mail::Nole(NoleMeta::mint_retention(caller.task.ident.id).expect("retention cap")),
+        env::Mark::NONE,
+        Permission::FETCH | Permission::STORE | Permission::VEST,
+        None,
+    )
+    .expect("pie");
+    let token = pie.token();
+    caller.task.pend.pies.lock().push(pie);
+    token
 }
 
 /// 真实入口的移交成功面：两端窗口各自解析、页号只换一次、承载与整页内容一起走。
@@ -3104,7 +3129,6 @@ pub fn transfer_pages() {
 /// 真实入口的拒绝面：两端管理授权各自把关、失效的授权写点、可重试与永久拒结。
 pub fn transfer_refusals() {
     use crate::core::memory::flat::Frame;
-    use crate::core::work::mail::nole::NoleMeta;
     use crate::core::work::pend::SourceAuthorization;
     use env::{AcquireSource, Mark, MemoryFail, Permission, PieToken, ReferenceRange};
 
@@ -3297,18 +3321,7 @@ pub fn transfer_refusals() {
     }));
     assert!(sealed_hold > 0, "the root token lends its window");
     // 这一枚保留授权同样是内核铸、引导发放的 cap，用户入口拿不到。
-    let cap = {
-        let pie = pend::Pie::try_new(
-            Mail::Nole(NoleMeta::mint_retention(user.task.ident.id).expect("retention cap")),
-            Mark::NONE,
-            Permission::FETCH | Permission::STORE | Permission::VEST,
-            None,
-        )
-        .expect("pie");
-        let token = pie.token();
-        user.task.pend.pies.lock().push(pie);
-        token
-    };
+    let cap = retention_cap(&user);
     let sealed_retained = user.call(EnvCall::Memory(MemoryCall::Acquire {
         source: AcquireSource::Reference(
             ReferenceRange::new(reference(sealed_hold as usize), 0, 2).expect("window"),
@@ -3367,18 +3380,7 @@ pub fn transfer_refusals() {
     let (_, _, held_source) = user.attach_alloc_reference(2 * PAGE_SIZE, 6);
     // 这枚保留授权是**生产真形态**（内核铸），但当前由引导资源发放、
     // 用户入口拿不到——夹具直铸一份，才能走到下面那条判据。
-    let cap = {
-        let pie = pend::Pie::try_new(
-            Mail::Nole(NoleMeta::mint_retention(user.task.ident.id).expect("retention cap")),
-            Mark::NONE,
-            Permission::FETCH | Permission::STORE | Permission::VEST,
-            None,
-        )
-        .expect("pie");
-        let token = pie.token();
-        user.task.pend.pies.lock().push(pie);
-        token
-    };
+    let cap = retention_cap(&user);
     let retained = user.call(EnvCall::Memory(MemoryCall::Acquire {
         source: AcquireSource::Reference(ReferenceRange::new(held_source, 0, 2).expect("window")),
         retention: cap,
@@ -3720,4 +3722,608 @@ pub fn sync_failure() {
         );
         assert_eq!(frame.gpr.x(Gprs::A0), id.get(), "answer written back");
     }
+}
+
+// ---- 封印与撤销（class 7 的 slot 3 / slot 6）：真实解码派发，调用者来自运行槽 ----
+//
+// `Seal` / `Revoke` 的调用者取自 `current().running_task()`，不是派发时那个
+// `ident`。故每一下都经 `with_running` 把被测任务真正放上本核运行槽，再走
+// `EnvCall` 解码派发（`Caller.raw` 是服务派发，刻意绕过 `trap::envcall`）。
+
+/// 真实 `PieCall::Seal` 的管理面：成功、主人不符，与两种明确的 `Busy`。
+pub fn pole_seal_authority() {
+    use env::{PieCall, PieFail, PieToken};
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let me = Caller::new(false);
+    let lord = Caller::new(false);
+    let seal = |token| {
+        with_running(me.task.clone(), || {
+            me.call(EnvCall::Pie(PieCall::Seal { token }))
+        })
+    };
+
+    // 本任务自己的私有整段来源铸出来的根：这段 Pole 的主人就是本任务；创建时那段
+    // 关系（Input）就是它名下的图。
+    let (_, at, source) = me.attach_alloc_reference(2 * PAGE_SIZE, 6);
+    let root = crate::entry::call::pie::create_pole(&me.task, source, true).expect("root");
+    assert_eq!(
+        me.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
+        0
+    );
+    let meta = pend::locate(&me.task, root)
+        .expect("root pie")
+        .mail()
+        .pole()
+        .expect("a pole");
+    assert!(me.team.space.nest.translate(KVirt::wrap(at)).is_some());
+
+    // 主人不是调用者：别的任务铸的根交给我那一枚，我作不了主。
+    let child = grant_to(&lord, &me, 2);
+    let lord_meta = pend::locate(&me.task, child)
+        .expect("child pie")
+        .mail()
+        .pole()
+        .expect("a pole");
+    assert_eq!(seal(child), PieFail::Denied.code());
+    assert!(
+        lord_meta.alive(),
+        "a refused seal must not deactivate the Pole"
+    );
+    assert!(pend::locate(&me.task, child).expect("child pie").alive());
+
+    // 手里没这一枚：当场拒。
+    assert_eq!(seal(PieToken::mint(0x5eed)), PieFail::Denied.code());
+
+    // 资源本身还活、这一枚的 Grant 已经不答话（授权失效那一档，不是补关）：原属主
+    // 也不行，且不许把资源失活。Grant 用生产 API 作废，token 仍留在表里。
+    let (_, at2, source2) = me.attach_alloc_reference(PAGE_SIZE, 6);
+    let root2 = crate::entry::call::pie::create_pole(&me.task, source2, true).expect("root");
+    assert_eq!(
+        me.call(EnvCall::Memory(MemoryCall::Release { reference: source2 })),
+        0
+    );
+    let meta2 = pend::locate(&me.task, root2)
+        .expect("root pie")
+        .mail()
+        .pole()
+        .expect("a pole");
+    pend::locate(&me.task, root2)
+        .expect("root pie")
+        .grant()
+        .invalidate();
+    assert!(meta2.alive(), "the resource itself is still alive");
+    assert!(
+        !pend::locate(&me.task, root2).expect("root pie").alive(),
+        "its Grant answers nothing"
+    );
+    assert_eq!(seal(root2), PieFail::Denied.code());
+    assert!(
+        meta2.alive(),
+        "a refused seal must not deactivate the resource"
+    );
+    assert!(
+        me.team.space.nest.translate(KVirt::wrap(at2)).is_some(),
+        "a refused seal must not tear a map down"
+    );
+    pend::release(&me.task, root2).unwrap();
+
+    // 这一段已经交给别的 team（staged 保留）：明确 Busy，不失活、不撤图。
+    let view = me
+        .team
+        .space
+        .nest
+        .probe(KVirt::wrap(at))
+        .expect("the input view");
+    assert!(
+        meta.record(
+            root,
+            &me.team.space,
+            view.clone(),
+            Some(lord.team.id),
+            false
+        )
+        .is_ok(),
+        "stage the relation under another team"
+    );
+    assert_ne!(meta.reserved(), 0);
+    assert_eq!(seal(root), PieFail::Busy.code());
+    assert!(meta.alive(), "a Busy seal must not deactivate the Pole");
+    assert!(
+        me.team.space.nest.translate(KVirt::wrap(at)).is_some(),
+        "a Busy seal must not tear a map down"
+    );
+    meta.detach_staging(root, lord.team.id);
+    assert_eq!(meta.reserved(), 0);
+
+    // Pole 自己的操作租约被占：同样明确 Busy。
+    let operation = pole::PoleOperation::acquire(&meta).expect("the Pole operation lease");
+    assert_eq!(seal(root), PieFail::Busy.code());
+    assert!(meta.alive());
+    assert!(me.team.space.nest.translate(KVirt::wrap(at)).is_some());
+    drop(operation);
+
+    // 成功：0；Pole 失活、名下关系关掉，而它那枚 Grant 仍答话。
+    assert_eq!(seal(root), 0);
+    assert!(!meta.alive(), "the seal lands on the Pole itself");
+    assert!(!pend::locate(&me.task, root).expect("root pie").alive());
+    assert!(me.team.space.nest.translate(KVirt::wrap(at)).is_none());
+    assert!(
+        meta.grant(root)
+            .is_some_and(|grant| grant.permission().is_some()),
+        "the root Grant still answers after the seal"
+    );
+    me.team.space.nest.audit();
+    drop(view);
+    pend::release(&me.task, root).unwrap();
+}
+
+/// 真实 `PieCall::Seal` 之后：这段 Pole 当场不再是管理者。
+///
+/// 口径是**管理拒绝先于物理资格**，不是“Seal 把一次成功变成拒绝”：两端都用带独立
+/// 保留的窗口，那份保留自己就压着源页，故 Seal **之前**同一次迁移本来就答 `Busy`
+/// （源槽不是空闲的承载）；Seal **之后**同一次调用的答案换成 `Denied`——入口的
+/// `endpoint` 先问管理判据（`manages`），而驻留那一格要到 `Transaction::claim` 才问。
+/// 真 0 成功面由姊妹用例 `pole_seal_keeps_transferred_page` 承载，本例不声称 0→Denied。
+///
+/// 保留窗口在 Seal 之后仍解析得动（保留自己强持来源，不看 Pole），故副作用基线取
+/// Seal 完成后，逐项比对被拒前后的整页读数与帧账。
+pub fn pole_seal_refuses_transfer() {
+    use crate::core::memory::flat::allocator::statistics::{block_occupied, frame_occupied};
+    use env::{AcquireSource, MemoryFail, PieCall, ReferenceRange};
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let me = Caller::new(false);
+    let (_, _, source) = me.attach_alloc_reference(2 * PAGE_SIZE, 6);
+    let root = crate::entry::call::pie::create_pole(&me.task, source, true).expect("root");
+    assert_eq!(
+        me.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
+        0
+    );
+    let meta = pend::locate(&me.task, root)
+        .expect("root pie")
+        .mail()
+        .pole()
+        .expect("a pole");
+    let seal_root = || {
+        with_running(me.task.clone(), || {
+            me.call(EnvCall::Pie(PieCall::Seal { token: root }))
+        })
+    };
+    let held = me.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token: root,
+            offset: 0,
+            count: 2,
+        },
+        retention: env::PieToken::NONE,
+    }));
+    assert!(held > 0, "the root lends its window: {held}");
+    let cap = retention_cap(&me);
+    let window = me.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Reference(
+            ReferenceRange::new(reference(held as usize), 0, 2).expect("window"),
+        ),
+        retention: cap,
+    }));
+    assert!(window > 0, "a retained window: {window}");
+    let pa = slot_at(&window_of(&me, window as usize), 0);
+    super::transfer::fill_pattern(PhysAddr::from_raw(pa));
+    let seats = slots_of(&window_of(&me, window as usize));
+
+    // Seal 之前的**同配置对照**：这份保留正压着源页 ⇒ 源槽不是空闲承载 ⇒ `Busy`。
+    // 这是占槽前的早错：一格槽没被改、一格帧没动、也没有关系被这次移交动过。
+    let frames = frame_occupied() - block_occupied();
+    assert_eq!(
+        me.call(transfer_call(window as usize, 0, window as usize, 1)),
+        MemoryFail::Busy.code(),
+        "a residency over the source page is not an idle carrier"
+    );
+    assert_eq!(slots_of(&window_of(&me, window as usize)), seats);
+    assert_eq!(frame_occupied() - block_occupied(), frames);
+    assert!(!me.team.space.nest.has_pending_invalidation());
+
+    // 真实 Seal：成功；Pole 失活，而它的 Grant 仍答话。
+    assert_eq!(seal_root(), 0);
+    assert!(!meta.alive(), "the seal lands on the Pole itself");
+    assert!(
+        meta.grant(root)
+            .is_some_and(|grant| grant.permission().is_some()),
+        "the root Grant still answers even though the Meta is dead"
+    );
+
+    // 基线取 Seal 之后：保留窗口仍解析得动，承载读数与帧账都从这里量。
+    // Seal 本来就撤它名下映射、会把那些表页还回分配器 ⇒ **不**拿跨 Seal 的帧账当
+    // 不变断言；承载本身有没有动，看槽位读数（下面那句）。
+    let baseline = slots_of(&window_of(&me, window as usize));
+    assert_eq!(baseline, seats, "the Seal moved no carrier");
+    assert!(super::transfer::pattern_holds(PhysAddr::from_raw(pa)));
+    let after = frame_occupied() - block_occupied();
+    assert!(!me.team.space.nest.has_pending_invalidation());
+
+    assert_eq!(
+        me.call(transfer_call(window as usize, 0, window as usize, 1)),
+        MemoryFail::Denied.code(),
+        "after the Seal the management gate refuses before the physical one is consulted"
+    );
+    // 被拒的迁移不留任何副作用：读数与基线逐项相同。
+    assert_eq!(slots_of(&window_of(&me, window as usize)), baseline);
+    assert!(super::transfer::pattern_holds(PhysAddr::from_raw(pa)));
+    assert_eq!(frame_occupied() - block_occupied(), after);
+    assert!(!me.team.space.nest.has_pending_invalidation());
+    me.team.space.nest.audit();
+}
+
+/// 真实 `PieCall::Seal` 只关**自己名下**的关系：已经交进目标槽的整页照旧在。
+///
+/// 从这条 Pole 的窗口里把一页交进本任务一份**私有**空窗口：承载与整页内容一起落到
+/// 目标槽，且移动不新分配任何帧。Seal 之后，Pole 自己那条关系关掉，别的普通映射
+/// 照旧回话，而交出去的那一页留在目标槽里。
+///
+/// 本例也是这条入口的**真 0 成功面**（两端合法、没有驻留压页）——`pole_seal_refuses_transfer`
+/// 那条“Seal 前 `Busy` → Seal 后 `Denied`”的对照不拿本例当同配置。
+pub fn pole_seal_keeps_transferred_page() {
+    use super::transfer::{fill_pattern, pattern_holds};
+    use crate::core::memory::flat::allocator::statistics::{block_occupied, frame_occupied};
+    use env::{AcquireSource, PieCall};
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let me = Caller::new(false);
+    // 一段与这条 Pole 无关的普通映射：Seal 不许动它。
+    let (_, spare) = me.attach_alloc(PAGE_SIZE, 6);
+    let (_, at, source) = me.attach_alloc_reference(2 * PAGE_SIZE, 6);
+    let root = crate::entry::call::pie::create_pole(&me.task, source, true).expect("root");
+    assert_eq!(
+        me.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
+        0
+    );
+    let meta = pend::locate(&me.task, root)
+        .expect("root pie")
+        .mail()
+        .pole()
+        .expect("a pole");
+    let held = me.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token: root,
+            offset: 0,
+            count: 2,
+        },
+        retention: env::PieToken::NONE,
+    }));
+    assert!(held > 0, "the root lends its window: {held}");
+    let source_range = window_of(&me, held as usize);
+    let target = acquire_fresh(&me, 2);
+    assert!(target > 0, "a fresh private window: {target}");
+    let target_range = window_of(&me, target as usize);
+    let pa = slot_at(&source_range, 0);
+    fill_pattern(PhysAddr::from_raw(pa));
+
+    // 移交成功：承载与整页内容一起落进目标空槽，不新分配任何帧。
+    let frames = frame_occupied() - block_occupied();
+    assert_eq!(
+        me.call(transfer_call(held as usize, 0, target as usize, 0)),
+        0,
+        "a resident page moves into a fresh slot"
+    );
+    assert_eq!(
+        slots_of(&target_range),
+        alloc::vec![(0, pa)],
+        "the target seat holds the same physical start"
+    );
+    assert!(
+        pattern_holds(PhysAddr::from_raw(pa)),
+        "all 4096 bytes came along"
+    );
+    assert!(
+        tombstone(&source_range, 0),
+        "the source page becomes a tombstone"
+    );
+    assert_eq!(
+        frame_occupied() - block_occupied(),
+        frames,
+        "the carrier moved; no frame was allocated or lost"
+    );
+
+    // 真实 Seal：它自己那条关系关掉，别的照旧回话；交出去的整页留在目标槽。
+    let sealed = with_running(me.task.clone(), || {
+        me.call(EnvCall::Pie(PieCall::Seal { token: root }))
+    });
+    assert_eq!(sealed, 0);
+    assert!(!meta.alive());
+    assert!(
+        me.team.space.nest.translate(KVirt::wrap(at)).is_none(),
+        "the Pole's own relation is closed"
+    );
+    assert!(
+        me.team.space.nest.translate(KVirt::wrap(spare)).is_some(),
+        "an unrelated relation of the same task survives"
+    );
+    assert_eq!(
+        slots_of(&target_range),
+        alloc::vec![(0, pa)],
+        "the target seat keeps the same physical start"
+    );
+    assert!(
+        pattern_holds(PhysAddr::from_raw(pa)),
+        "the transferred bytes are intact"
+    );
+    me.team.space.nest.audit();
+}
+
+/// 真实 `PieCall::Seal` 部分失败与**补关**：首次失活落地但关图同步失败时，原属主可以
+/// 对同一枚仍在表里的 token 重发 Seal 把关闭补完。
+///
+/// ① 注入一次撤页确认失败（`close_maps` 里的同步），Seal 当场拒 `Busy`：失活已落地、
+///    不回滚，关闭责任留在 Pole 上，那段占用禁提前复用；
+/// ② 换**别的任务**拿同一枚 Pole 的另一枚 token 补关 → 照旧 `Denied`，且不动原处；
+/// ③ 原属主重发 Seal：这次走真入口 `trap::envcall`（真 `c.ebreak` 长度与推进），
+///    它先结清那张表上待结的失效，再派发这一次调用 → `0`，图关完；
+/// ④ 关完之后再发一次：既定精确返回是 `Dead`（资源已失活且无图可关）；
+/// ⑤ 失活没有被撤销，也没有恢复任何活权限（来源的管理判据当场从真变假）；Grant 是
+///    这一枚 Pie 自己的，Seal 不动它，token 走到尽头（`release`）它才随之消失。
+pub fn pole_seal_partial_failure() {
+    use crate::core::memory::nest::identity::fail_next_shootdown;
+    use crate::core::work::room::identity::Identity;
+    use env::{AcquireSource, Mark, Permission, PieCall, PieFail, PieToken};
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let me = Caller::new(false);
+    let stranger = Caller::new(false);
+    let (_, at, source) = me.attach_alloc_reference(2 * PAGE_SIZE, 6);
+    let root = crate::entry::call::pie::create_pole(&me.task, source, true).expect("root");
+    assert_eq!(
+        me.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
+        0
+    );
+    let meta = pend::locate(&me.task, root)
+        .expect("root pie")
+        .mail()
+        .pole()
+        .expect("a pole");
+    assert!(me.team.space.nest.translate(KVirt::wrap(at)).is_some());
+    let seal = || {
+        with_running(me.task.clone(), || {
+            me.call(EnvCall::Pie(PieCall::Seal { token: root }))
+        })
+    };
+    // 补关只认原属主：同一枚 Pole 的另一枚 token 落在别的任务手里（`accord` 要给
+    // 活资源，故先发）。
+    let outsider = PieToken::mint(
+        pend::accord(
+            &me.task,
+            root,
+            &Arc::downgrade(&stranger.task),
+            Permission::FETCH | Permission::STORE | Permission::VEST,
+            Mark::NONE,
+        )
+        .expect("a child grant"),
+    );
+    // 这一段来源的管理判据（迁移两端用的就是它）：先取一份引用，好看到它随失活翻面。
+    let held = me.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token: root,
+            offset: 0,
+            count: 2,
+        },
+        retention: env::PieToken::NONE,
+    }));
+    assert!(held > 0, "the root lends its window: {held}");
+    let manages = || {
+        let hold = me.task.pend.references.get(held as usize).expect("hold");
+        let _serial = me.task.pend.lock();
+        hold.source().manages(&me.task)
+    };
+    assert!(manages(), "a live Pole manages its own source");
+
+    // 重试那一格要的真指令先备齐（这一步自己会结算失效面，故必须在注入之前）。
+    let (_, code_at) = me.attach_alloc(PAGE_SIZE, 6);
+    let code = code_at + PAGE_SIZE / 4;
+    assert!(
+        me.team.space.copy_out(
+            &[0x02, 0x90, 0x00, 0x00, 0x73, 0x00, 0x10, 0x00],
+            KVirt::wrap(code)
+        ),
+        "c.ebreak / ebreak at {code:#x}"
+    );
+    assert_eq!(me.set_access_at(code_at, PAGE_SIZE, 10), 0, "R|X");
+    assert!(!me.team.space.nest.has_pending_invalidation());
+
+    // ① 下一次撤页确认失败：Seal 的 `close_maps` 当场拒。
+    fail_next_shootdown(me.team.space.nest.asid());
+    assert_eq!(
+        seal(),
+        PieFail::Busy.code(),
+        "an unconfirmed close is retryable"
+    );
+    // 失活已经落地，不回滚。
+    assert!(!meta.alive(), "the seal landed and is not rolled back");
+    assert!(!pend::locate(&me.task, root).expect("root pie").alive());
+    // 关闭/退休责任保留：名字还挂在 Pole 名下，占用禁复用，失效待结算；失活也没把
+    // 管理权还给这一枚（来源的管理判据当场变假）。
+    assert!(
+        meta.has_maps(),
+        "the close responsibility stays on the Pole"
+    );
+    assert!(me.team.space.nest.has_pending_invalidation());
+    assert_eq!(
+        super::support::reserve(&me.team.space, KVirt::wrap(at), PAGE_SIZE).err(),
+        Some(NestError::NoRegion),
+        "the retired span may not be reused early"
+    );
+    assert!(!manages(), "the landing seal restored no management");
+
+    // ② 非属主捧着同一枚 Pole 的另一枚 token：照旧拒，不动原处。
+    let stranger_seal = || {
+        with_running(stranger.task.clone(), || {
+            stranger.call(EnvCall::Pie(PieCall::Seal { token: outsider }))
+        })
+    };
+    assert_eq!(
+        stranger_seal(),
+        PieFail::Denied.code(),
+        "a non-owner cannot finish someone else's close"
+    );
+    assert!(meta.has_maps() && me.team.space.nest.has_pending_invalidation());
+
+    // ③ 真入口重试（原属主）：先结清待结的失效、按真长度推过 `c.ebreak`，再派发。
+    let frame_pa = me.task.ident.frame_pa.as_usize();
+    {
+        let slot = PieCall::Seal { token: root }.slot();
+        let frame = unsafe { &mut *(frame_pa as *mut TrapContext) };
+        frame.sepc = KVirt::wrap(code);
+        frame.gpr.set_x(Gprs::A7, slot);
+        frame.gpr.set_x(Gprs::A0, root.get());
+    }
+    let served = with_running(me.task.clone(), || {
+        let frame = unsafe { &mut *(frame_pa as *mut TrapContext) };
+        crate::entry::trap::envcall(frame, Some(Identity::Live(me.task.ident.clone()))).is_some()
+    });
+    assert!(served, "the entry serves the call");
+    assert!(
+        !me.team.space.nest.has_pending_invalidation(),
+        "the entry settled the pending sync first"
+    );
+    let frame = unsafe { &*(frame_pa as *const TrapContext) };
+    assert_eq!(
+        frame.sepc.as_usize(),
+        code + 2,
+        "c.ebreak advances two bytes"
+    );
+    assert_eq!(
+        frame.gpr.x(Gprs::A0) as isize,
+        0,
+        "the owner's retry completes the close"
+    );
+    assert!(!meta.has_maps(), "the close responsibility is settled");
+    assert!(me.team.space.nest.translate(KVirt::wrap(at)).is_none());
+
+    // ④ 关完之后再发一次：既定精确返回是 `Dead`。
+    assert_eq!(seal(), PieFail::Dead.code(), "a finished seal answers Dead");
+
+    // ⑤ 失活没被撤销、管理权没回来；Grant 跟看这一枚 Pie 自己的命，`Seal` 不动它。
+    assert!(!meta.alive() && !pend::locate(&me.task, root).expect("root pie").alive());
+    assert!(!manages(), "the finished close restored no management");
+    assert!(
+        meta.grant(root)
+            .is_some_and(|grant| grant.permission().is_some()),
+        "the Grant belongs to the Pie; the Seal does not invalidate it"
+    );
+    pend::release(&me.task, root).unwrap();
+    assert!(
+        meta.grant(root).is_none(),
+        "the Grant goes where the Pie that carried it goes"
+    );
+    me.team.space.nest.audit();
+    stranger.team.space.nest.audit();
+}
+
+/// 真实 `PieCall::Revoke`：`dst` / `token` 与 lord 侧授权把关；撤销之后这一段
+/// 连它名下关系一起消失。
+///
+/// 把关是**两格**：`cull` 先在目标表里找得到这一枚，再核调用者（他得是它的 lord，
+/// 且自己表里还得有它的 parent token）。生产可构造的状态里，lord 关系与 parent token
+/// 是同一次 `accord` 一起落进调用者表的（`Keep` 会把 sire 与 lord 一并转给上家，
+/// `pend::forget` 不落单格），故**只废掉其中一格**的状态不可达：以下几条负例一律
+/// 只断言联合判据把人挡住，不声称覆盖了哪一格，也不为追覆盖去伪造 token 表。
+pub fn pole_revoke_removes_child() {
+    use env::{AcquireSource, Mark, MemoryFail, Permission, PieCall, PieFail, PieToken};
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let lord = Caller::new(false);
+    let peer = Caller::new(false);
+    let stranger = Caller::new(false);
+    let rw = Access::READ | Access::WRITE;
+
+    // lord 用自己的私有来源铸一根根，把两枚子 Pie 分别交给 peer 与 stranger。
+    let (root, child) = grant_pair(&lord, &peer, 1);
+    let other_child = PieToken::mint(
+        pend::accord(
+            &lord.task,
+            root,
+            &Arc::downgrade(&stranger.task),
+            Permission::FETCH | Permission::STORE | Permission::VEST,
+            Mark::NONE,
+        )
+        .expect("a second child grant"),
+    );
+    let meta = pend::locate(&lord.task, root)
+        .expect("root pie")
+        .mail()
+        .pole()
+        .expect("a pole");
+    let (lord_at, _) = pole::open(&meta, root, &lord.team.space, rw).expect("lord's relation");
+    let (peer_at, _) = pole::open(&meta, child, &peer.team.space, rw).expect("peer's relation");
+    let lord_nest = lord.team.space.nest.clone();
+    let peer_nest = peer.team.space.nest.clone();
+    // peer 手里这份引用取自 child 那条分支；它自己强持不了来源（未带保留）。
+    let peer_held = peer.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token: child,
+            offset: 0,
+            count: 1,
+        },
+        retention: PieToken::NONE,
+    }));
+    assert!(peer_held > 0, "the child lends its window: {peer_held}");
+    let peer_range = window_of(&peer, peer_held as usize);
+    let pa = slot_at(&peer_range, 0);
+    super::transfer::fill_pattern(PhysAddr::from_raw(pa));
+
+    let revoke = |dst, token| {
+        with_running(lord.task.clone(), || {
+            lord.call(EnvCall::Pie(PieCall::Revoke { dst, token }))
+        })
+    };
+    let from_peer = |dst: env::TaskId, token| {
+        with_running(peer.task.clone(), || {
+            peer.call(EnvCall::Pie(PieCall::Revoke { dst, token }))
+        })
+    };
+
+    // dst 指错人：拿着这枚 token 的既不是他，也没有这一枚可撤（找得到这一枚是先决）。
+    assert_eq!(
+        revoke(stranger.task.ident.id, child),
+        PieFail::Denied.code()
+    );
+    // 根那一枚自己不能当被撤的那一枚：`sire` 为空 ⇒ 没有 lord 侧授权。
+    assert_eq!(revoke(lord.task.ident.id, root), PieFail::Denied.code());
+    // lord 侧授权：该撤的那一枚归它自己的 vestor，别的任务撤不动。
+    assert_eq!(
+        from_peer(stranger.task.ident.id, other_child),
+        PieFail::Denied.code()
+    );
+    // 上面几次拒绝都没有动到任何东西。
+    assert!(pend::locate(&peer.task, child).is_some());
+    assert!(peer_nest.translate(KVirt::wrap(peer_at)).is_some());
+    assert!(pend::locate(&stranger.task, other_child).is_some());
+
+    // 真撤销：0；子那枚与它名下关系一起收掉，别的分支不动。
+    assert_eq!(revoke(peer.task.ident.id, child), 0);
+    assert!(pend::locate(&peer.task, child).is_none());
+    assert!(peer_nest.translate(KVirt::wrap(peer_at)).is_none());
+    assert!(lord_nest.translate(KVirt::wrap(lord_at)).is_some());
+    assert!(pend::locate(&stranger.task, other_child).is_some());
+    assert_eq!(
+        slots_of(&peer_range),
+        alloc::vec![(0, pa)],
+        "the revoked branch moved no carrier"
+    );
+    assert!(
+        super::transfer::pattern_holds(PhysAddr::from_raw(pa)),
+        "the source page itself is untouched"
+    );
+
+    // 撤销之后这一段连它名下关系都不在了。这次迁移被拒是**两道门一起**的结果：
+    // 入口先问管理判据（那枚 root token 已不在本表），而这条分支的来源也解析不到——
+    // 故不拿它单独作证是哪一道门拒的（单看管理判据的是 `pole_seal_refuses_transfer`，
+    // 那里保留窗口仍解析得动）。它只说明：撤销后这一段不再是可用的一端。
+    assert_eq!(
+        peer.call(transfer_call(peer_held as usize, 0, peer_held as usize, 1)),
+        MemoryFail::Denied.code(),
+        "a revoked branch is no longer a usable end"
+    );
+    assert_eq!(slots_of(&peer_range), alloc::vec![(0, pa)]);
+    lord.team.space.nest.audit();
+    peer.team.space.nest.audit();
+    stranger.team.space.nest.audit();
 }
