@@ -513,6 +513,8 @@ struct PieModel {
     next: usize,
     entries: Vec<(PieInfo, Option<PieToken>)>,
     fail_revoke: bool,
+    /// 每次 `accord` 收到的窗口请求，按调用顺序；用来核“窗口真的从供给层走到了效果层”。
+    windows: Vec<Option<(usize, usize)>>,
 }
 
 impl PieModel {
@@ -578,6 +580,7 @@ impl PieEffects for PieModel {
     }
 
     fn accord(&mut self, request: Accord) -> Result<PieToken, Fail> {
+        self.windows.push(request.window);
         self.issue(
             request.token,
             request.target,
@@ -691,6 +694,7 @@ impl super::production_source::Resource for TestResource {
                 super::production_source::RootAssignment {
                     shared: self.shared,
                     index,
+                    window: None,
                 },
                 super::production_source::RootRequest {
                     id: request.id,
@@ -841,13 +845,21 @@ fn production_private_root_revoke_covers_regrant_descendants_but_keeps_siblings(
         permission: Permission::FETCH | Permission::VEST,
     };
     let mut lease_a = PrivateRoot::derive_with(
-        RootAssignment { shared, index: 0 },
+        RootAssignment {
+            shared,
+            index: 0,
+            window: None,
+        },
         request(1),
         &mut effects,
     )
     .unwrap();
     let lease_b = PrivateRoot::derive_with(
-        RootAssignment { shared, index: 0 },
+        RootAssignment {
+            shared,
+            index: 0,
+            window: None,
+        },
         request(2),
         &mut effects,
     )
@@ -870,6 +882,7 @@ fn production_private_root_revoke_covers_regrant_descendants_but_keeps_siblings(
             target: TaskId::new(81),
             permission: Permission::FETCH,
             mark: Mark::of("kept-grandchild"),
+            window: None,
         })
         .unwrap();
 
@@ -879,6 +892,50 @@ fn production_private_root_revoke_covers_regrant_descendants_but_keeps_siblings(
     assert!(!effects.inspect(leaf).unwrap().alive);
     assert!(effects.inspect(lease_b.token()).unwrap().alive);
     assert!(effects.inspect(shared).unwrap().alive);
+}
+
+#[test]
+fn production_private_root_derivation_carries_the_assignment_window_to_the_effect() {
+    let mut effects = PieModel::default();
+    let shared = effects.seed(PieInfo {
+        token: PieToken::mint(1),
+        kind: PieKind::Pole,
+        permission: Permission::FETCH | Permission::VEST,
+        owner: TaskId::new(31),
+        vestor: TaskId::new(44),
+        mark: Mark::of("machine-root"),
+        alive: true,
+    });
+    let request = RootRequest {
+        id: LeaseId(1),
+        origin: origin(4, 90),
+        owner: TaskId::new(8),
+        permission: Permission::FETCH,
+    };
+    // `None` = 不请求窗口：效果层收到的就是 `None`（继承父分支那一段在内核那一侧）。
+    PrivateRoot::derive_with(
+        RootAssignment {
+            shared,
+            index: 0,
+            window: None,
+        },
+        request,
+        &mut effects,
+    )
+    .unwrap();
+    assert_eq!(effects.windows.last().copied(), Some(None));
+    // 真实管理者给的绝对页坐标原样走到效果层。
+    PrivateRoot::derive_with(
+        RootAssignment {
+            shared,
+            index: 1,
+            window: Some((1, 3)),
+        },
+        request,
+        &mut effects,
+    )
+    .unwrap();
+    assert_eq!(effects.windows.last().copied(), Some(Some((1, 3))));
 }
 
 #[test]
@@ -1133,7 +1190,11 @@ fn failed_native_root_cleanup_stays_releasing_until_retry_succeeds() {
         Ok(Begin::Started)
     );
     let root = PrivateRoot::derive_with(
-        RootAssignment { shared, index: 0 },
+        RootAssignment {
+            shared,
+            index: 0,
+            window: None,
+        },
         RootRequest {
             id: LeaseId(1),
             origin: caller,
@@ -1190,7 +1251,11 @@ fn invalid_provision_keeps_derived_roots_available_for_recovery() {
         alive: true,
     });
     let root = PrivateRoot::derive_with(
-        RootAssignment { shared, index: 0 },
+        RootAssignment {
+            shared,
+            index: 0,
+            window: None,
+        },
         RootRequest {
             id: LeaseId(1),
             origin: origin(4, 90),
@@ -1237,7 +1302,11 @@ fn partial_provider_failure_keeps_earlier_derived_roots_for_cleanup() {
         })
         .unwrap();
     let first = PrivateRoot::derive_with(
-        RootAssignment { shared, index: 0 },
+        RootAssignment {
+            shared,
+            index: 0,
+            window: None,
+        },
         RootRequest {
             id: LeaseId(1),
             origin: caller,

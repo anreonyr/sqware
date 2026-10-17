@@ -4,7 +4,7 @@ use system_api::supply::{Fail, Key};
 
 use super::{
     LeaseRequest, Provision, ProvisionError, Resource,
-    lease::{DeliveryRoute, MAX_ROOTS, PrivateRoot, RootRequest},
+    lease::{DeliveryRoute, MAX_ROOTS, PrivateRoot, RootAssignment, RootRequest},
     pole::PoleResource,
 };
 
@@ -142,14 +142,18 @@ where
         for (at, item) in self.items.iter().enumerate() {
             let index = at + 1;
             let root = match PrivateRoot::derive(
-                item.shared,
+                RootAssignment {
+                    shared: item.shared,
+                    index,
+                    // 合集里的每一项就是它自己那一段：不另外请求窗口，继承来源那一段。
+                    window: None,
+                },
                 RootRequest {
                     id: request.id,
                     origin: request.origin,
                     owner: request.owner,
                     permission: item.permission,
                 },
-                index,
             ) {
                 Ok(root) => root,
                 Err(failure) => return Err(ProvisionError::with_roots(failure, roots)),

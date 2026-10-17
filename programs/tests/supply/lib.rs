@@ -7,7 +7,7 @@ mod lease;
 pub mod production_source;
 
 use env::{Mark, Permission, PieToken, TaskId};
-use lease::{Origin, PrivateRoot, Provision, ProvisionError, RootRequest};
+use lease::{Origin, PrivateRoot, Provision, ProvisionError, RootAssignment, RootRequest};
 use system_api::supply::{Fail, Key};
 
 pub struct LeaseRequest {
@@ -22,16 +22,15 @@ pub struct LeaseRequest {
 }
 
 impl LeaseRequest {
-    pub fn derive(&self, shared: PieToken, index: usize) -> Result<PrivateRoot, Fail> {
+    pub fn derive(&self, assignment: RootAssignment) -> Result<PrivateRoot, Fail> {
         PrivateRoot::derive(
-            shared,
+            assignment,
             RootRequest {
                 id: self.id,
                 origin: self.origin,
                 owner: self.owner,
                 permission: self.permission,
             },
-            index,
         )
     }
 }

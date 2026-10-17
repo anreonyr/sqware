@@ -71,6 +71,11 @@ pub struct FailedRoots {
 pub struct RootAssignment {
     pub shared: PieToken,
     pub index: usize,
+    /// 这一段子分支的**有效窗口**（相对来源起点的绝对页偏移与页数）。
+    ///
+    /// `None` = 不请求窗口：内核那一侧让子分支**继承**父分支那一段（父不带窗口时才是整段）。
+    /// 只有手里就是那枚来源的真实管理者才拿得出这对坐标；合法性（落在父窗口里、非空）归内核。
+    pub window: Option<(usize, usize)>,
 }
 
 pub struct Accord {
@@ -78,6 +83,9 @@ pub struct Accord {
     pub target: TaskId,
     pub permission: Permission,
     pub mark: Mark,
+    /// 这一枚子分支的**有效窗口**（相对来源起点的绝对页偏移与页数）；`None` = 不请求，
+    /// 那就**继承**父的那一段。合法性（落在父的窗口里、非空）归内核那一侧。
+    pub window: Option<(usize, usize)>,
 }
 
 pub struct DeliveryRequest<'a> {
@@ -747,12 +755,22 @@ impl PieEffects for NativePieEffects {
     }
 
     fn accord(&mut self, request: Accord) -> Result<PieToken, Fail> {
-        env::pie::accord(
-            request.token,
-            request.target,
-            request.permission,
-            request.mark,
-        )
+        match request.window {
+            Some((offset, count)) => env::pie::accord_window(
+                request.token,
+                request.target,
+                request.permission,
+                request.mark,
+                offset,
+                count,
+            ),
+            None => env::pie::accord(
+                request.token,
+                request.target,
+                request.permission,
+                request.mark,
+            ),
+        }
         .map_err(|_| Fail::Denied)
     }
 
@@ -762,12 +780,8 @@ impl PieEffects for NativePieEffects {
 }
 
 impl PrivateRoot {
-    pub fn derive(shared: PieToken, request: RootRequest, index: usize) -> Result<Self, Fail> {
-        Self::derive_with(
-            RootAssignment { shared, index },
-            request,
-            &mut NativePieEffects,
-        )
+    pub fn derive(assignment: RootAssignment, request: RootRequest) -> Result<Self, Fail> {
+        Self::derive_with(assignment, request, &mut NativePieEffects)
     }
 
     pub fn derive_with<E: PieEffects + ?Sized>(
@@ -775,7 +789,11 @@ impl PrivateRoot {
         request: RootRequest,
         effects: &mut E,
     ) -> Result<Self, Fail> {
-        let RootAssignment { shared, index } = assignment;
+        let RootAssignment {
+            shared,
+            index,
+            window,
+        } = assignment;
         let source = effects.inspect(shared).map_err(|_| Fail::Denied)?;
         if !source.alive
             || request.owner.get() == 0
@@ -798,6 +816,7 @@ impl PrivateRoot {
             target: request.owner,
             permission: child,
             mark: lease_mark,
+            window,
         })?;
         let valid = effects.inspect(token).is_ok_and(|derived| {
             derived.alive
@@ -843,6 +862,9 @@ impl PrivateRoot {
             target,
             permission,
             mark: slot,
+            // 交付不请求窗口：这一段跟的是**这一条分支**的窗口（内核那一侧继承），
+            // 故“再授出只能是同一段或更窄”不用这一层操心。
+            window: None,
         })?;
         Delivery::with_description(seed, description).ok_or(Fail::Bad)
     }

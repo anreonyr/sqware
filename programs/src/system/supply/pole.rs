@@ -2,7 +2,7 @@ use alloc::vec;
 use env::{Permission, PieKind, PieToken};
 use system_api::supply::{self, Fail, Key};
 
-use super::{LeaseRequest, Provision, ProvisionError, Resource};
+use super::{LeaseRequest, Provision, ProvisionError, Resource, RootAssignment};
 
 /// A provider-owned shared Pole exposed through independent per-lease child roots.
 pub struct PoleResource<P> {
@@ -260,7 +260,14 @@ where
         if !self.authorize(request) {
             return Err(ProvisionError::new(Fail::Denied));
         }
-        let root = request.derive(self.root, 0).map_err(ProvisionError::new)?;
+        let root = request
+            .derive(RootAssignment {
+                shared: self.root,
+                index: 0,
+                // 这一枚就是本资源自己那段：整段交出，不另外请求窗口。
+                window: None,
+            })
+            .map_err(ProvisionError::new)?;
         Provision::new(
             vec![root],
             0,

@@ -40,16 +40,17 @@ pub struct LeaseRequest {
 }
 
 impl LeaseRequest {
-    pub fn derive(&self, shared: PieToken, index: usize) -> Result<PrivateRoot, Fail> {
+    /// 从 `assignment` 指定的来源分支上派生一枚子分支；窗口随 `assignment.window`
+    /// （`None` = 不请求，继承父分支那一段）。见 [`RootAssignment`]。
+    pub fn derive(&self, assignment: RootAssignment) -> Result<PrivateRoot, Fail> {
         PrivateRoot::derive(
-            shared,
+            assignment,
             RootRequest {
                 id: self.id,
                 origin: self.origin,
                 owner: self.owner,
                 permission: self.permission,
             },
-            index,
         )
     }
 }
