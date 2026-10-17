@@ -386,8 +386,10 @@ impl Dma {
         if !self.served && used >= 1 {
             self.served = true;
             let sector_ok = self.pages.as_ref().is_some_and(sector_matches);
+            // 正证两个数：可写两段的和（只读的头不算）与该写回的状态。
+            let written_ok = len == written_bytes() && status == block_ok();
             self.say(&alloc::format!(
-                "system-dma: served used={used} len={len} status={status} sector_ok={sector_ok}"
+                "system-dma: served used={used} len={len} status={status} written_ok={written_ok} sector_ok={sector_ok}"
             ));
         }
         // 服务一收，下面的 `offline(Fault)` → `isolate` → 释放全归既有生命周期。
@@ -445,6 +447,11 @@ impl Dma {
                 "system-dma: after the death isolation used_moved={moved} sentinel_held={held} status={status} requester={}",
                 self.requester,
             ));
+            // 到这里本域对那一段工作内存的**最后一次访问**已经过完：图与匿名来源
+            // 可以收 — 归属侧是 System 自己，没有别人的窗口从这里派生过。
+            if let Some(pages) = self.pages.take() {
+                let _ = pages.close();
+            }
         }
         Progress::Done
     }
