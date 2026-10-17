@@ -280,6 +280,29 @@ impl Dma {
         let team = unit.team();
         let service = unit.spawn(&[], 0).map_err(|_| Failure::Pending)?;
 
+        // 两枚窗口：管理者自己那一枚（收口时打响那一次门铃、端点复位都用它），以及
+        // 从它收窄出来、经产品供给窗口那一层交给服务的那一枚（`NativePieEffects`）。
+        //
+        // **次第一：先把本域那一段图拿下来，再把那一枚交出去**——`ONLY` 的成功
+        // 派生是**移交**：交出去之后发送方那枚就不能再 `Open` 了，故图必须在前面。
+        // 又：`ONLY` 的分支一交出去，源就不能再派生第二枚，故一个进程只有这一轮。
+        let mine = env::pie::accord_window(
+            self.aperture,
+            env::unit::self_id(),
+            OWNER_SUBSET,
+            BAR_MARK,
+            first,
+            pages_in_bar,
+        )
+        .map_err(|_| Failure::Full)?;
+        let bar = Dock::open(mine).map_err(|error| {
+            crate::debug::put(&alloc::format!(
+                "system-dma: bar dock open {:?}",
+                error.source
+            ));
+            Failure::Closed
+        })?;
+
         // 取这段工作内存：本域一份（建表/读完成），独立保留那一份在 `retain_memory`。
         let pages = Pages::take(self.retention, COUNT).map_err(fail)?;
         let queue = CommandQueue::new(self.base, &pages, COMMANDS, FAULTS, FENCE);
@@ -289,6 +312,8 @@ impl Dma {
             Some(EndpointDrain {
                 ecam: ecam_base,
                 requester,
+                bar: bar.view().base(),
+                caps,
             }),
         );
         // 只故障景：装一层“第一次停住答 `Pending`”，验“确认失败仍保留”。
@@ -330,27 +355,7 @@ impl Dma {
             Ok(())
         })?;
 
-        // 两枚窗口：管理者自己那一枚（收口时打响那一次门铃），以及从它收窄出来、
-        // 经产品供给窗口那一层交给服务的那一枚（`NativePieEffects`）。
-        //
-        // **次第一：先把本域那一段图拿下来，再把那一枚交出去**——`ONLY` 的成功
-        // 派生是**移交**：交出去之后发送方那枚就不能再 `Open` 了，故图必须在前面。
-        let mine = env::pie::accord_window(
-            self.aperture,
-            env::unit::self_id(),
-            OWNER_SUBSET,
-            BAR_MARK,
-            first,
-            pages_in_bar,
-        )
-        .map_err(|_| Failure::Full)?;
-        let bar = Dock::open(mine).map_err(|error| {
-            crate::debug::put(&alloc::format!(
-                "system-dma: bar dock open {:?}",
-                error.source
-            ));
-            Failure::Closed
-        })?;
+        // 把那一枚交出去（`ONLY`：发送方那一枚就此不可再 `Open`，图已在上面拿下）。
         let root_window = PrivateRoot::derive(
             RootAssignment {
                 shared: mine,

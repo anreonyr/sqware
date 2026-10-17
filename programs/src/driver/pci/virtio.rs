@@ -264,6 +264,44 @@ impl Virtio {
     }
 }
 
+/// 复位设备并回读确认（状态回到 0）。
+///
+/// 这是所选 virtio-pci 后端能给的**端点侧停止凭据**：写 `status = 0` 请求复位，
+/// 回读到 0 就是设备认了这一次。
+/// **不是说这就能保证物理 PCIe 上“已到线、未落内存的 posted write”已排空**：那一档
+/// 要的是 interconnect-specific fence，本平台给不出；要更硬的一档得再加后端自己的
+/// drain 完成凭据。前一个读者（`stop` 那一侧）把这句当合同读。
+pub fn reset(bar: usize, caps: &Caps) -> bool {
+    write(bar, caps, STATUS, 0, 1);
+    read(bar, caps, STATUS, 1) == 0
+}
+
+/// 公共区里的一格：`width` 字节（本层只用到 1 / 2 / 4）。
+fn write(bar: usize, caps: &Caps, register: u16, value: u32, width: usize) {
+    let at = (bar + caps.common as usize + register as usize) as *mut u8;
+    // SAFETY: 公共区在本域已映射的那一段 BAR 里，偏移取自规范的表。
+    unsafe {
+        match width {
+            1 => core::ptr::write_volatile(at, value as u8),
+            2 => core::ptr::write_volatile(at as *mut u16, value as u16),
+            _ => core::ptr::write_volatile(at as *mut u32, value),
+        }
+    }
+}
+
+/// 同 [`write`] 的读侧。
+fn read(bar: usize, caps: &Caps, register: u16, width: usize) -> u32 {
+    let at = (bar + caps.common as usize + register as usize) as *const u8;
+    // SAFETY: 同 `write`。
+    unsafe {
+        match width {
+            1 => u32::from(core::ptr::read_volatile(at)),
+            2 => u32::from(core::ptr::read_volatile(at as *const u16)),
+            _ => core::ptr::read_volatile(at as *const u32),
+        }
+    }
+}
+
 /// 队列的通知偏移（只读那一格：设备给的，与谁持有 BAR 无关）。
 pub fn notify_offset(bar: usize, caps: &Caps) -> u16 {
     // SAFETY: 公共区在本域已映射的那一段 BAR 里。

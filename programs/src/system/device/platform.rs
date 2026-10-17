@@ -2,16 +2,16 @@
 //!
 //! 停一个范围是一条**有序链**（照 IOMMU 规范那条 NOTE 落下来）：
 //! ① **撤访问权**（`DDTP` 落 Off）→ ② 改动全局可见后**失效**（`IOTINVAL.VMA`）
-//! → ③ `IOFENCE.C` 并等完成记录 → ④ **端点侧不再发起**（清 PCI bus-master 并
-//! 回读确认）→ ⑤ 回读确认两台队列的 `on`/`busy` 与 `DDTP` 那一格。
+//! → ③ `IOFENCE.C` 并等完成记录 → ④ **端点侧不再发起**（清 PCI bus-master 与
+//! 按 virtio 那一手复位，各自回读确认）→ ⑤ 回读确认两台队列的 `on`/`busy`
+//! 与 `DDTP` 那一格。
 //!
 //! 三处**不当作证明**（这台仿真的实现事实，或本题拿不到的保证）：
 //! - `IOTINVAL` 只清 IOVA 缓存，**不撤访问权**——只失效而表还开着，新访问照旧成功；
 //! - `IOFENCE.C` 的 `PR`/`PW` 本机被当成保留位忽略，且硬件即使支持也只保证
 //!   “已处理过的请求”落全局序；**端点在途那一段**（已到线、未落内存的 posted write）
 //!   要的是 interconnect-specific fence，本平台拿不出那个证据；
-//! - ④ 只证“端点不再有发起新请求的授权”，**不证**已发出的写已经落下去。若某一日
-//!   要更硬的那一档，得再加所选端点真的 stop/reset **完成**凭据（本 slice 未接）。
+//! - ④ 的两步只证“端点不再发起新请求”，**不证**已发出的写已经落下去。
 //!
 //! 三次“等”都是有界进展步骤：期限内没等到就返 `Pending`，引用原样保留、下次接着来。
 //! `synchronize` 与 `isolate` 走**同一条**停止链：一次性设备生命周期里没有比它更弱的
@@ -28,13 +28,17 @@ use crate::driver::iommu::{
     regs,
 };
 use crate::driver::pci::ecam::{self, Ecam};
+use crate::driver::pci::virtio::{self, Caps};
 use crate::system::supply::retention::{DeviceRange, Failure, Platform};
 
-/// 端点侧那一条收口要的两个数：ECAM 段起址与这一个功能的号。
+/// 端点侧那一条收口要的四样：ECAM 段起址与功能号（清 bus-master），
+/// 以及那一根 BAR 的本域基址与能力表（按 virtio 那一手复位并回读确认）。
 #[derive(Clone, Copy)]
 pub struct EndpointDrain {
     pub ecam: usize,
     pub requester: u16,
+    pub bar: usize,
+    pub caps: Caps,
 }
 
 /// System 里那一枚 IOMMU 的停机权威：一段设备范围 ＋ 一枚随时可发命令的队列。
@@ -129,13 +133,17 @@ impl IommuPlatform {
                 return Err(("fence incomplete", Failure::Pending));
             }
         }
-        // ④ 端点侧不再发起：清 bus-master 并回读确认——端点不再有发起内存请求的授权。
-        //    （这只证“不再发起新请求”；已发出的写未落内存那一档本平台拿不出凭据，见文件头。）
+        // ④ 端点侧不再发起：先清 bus-master（回读确认），再按 virtio 那一手复位设备
+        //    并回读确认。两者任一没确认就保留——不冒充已停。
+        //    （这两步证的是“端点不再发起新请求”；已发出的写在途那一档见文件头。）
         if let Some(endpoint) = self.endpoint {
             let scan = Ecam::new(endpoint.ecam, endpoint.requester);
             scan.command_and(ecam::COMMAND_MASTER);
             if scan.read16(ecam::COMMAND) & ecam::COMMAND_MASTER != 0 {
                 return Err(("endpoint bus-master", Failure::Unavailable));
+            }
+            if !virtio::reset(endpoint.bar, &endpoint.caps) {
+                return Err(("endpoint reset", Failure::Unavailable));
             }
         }
         // ⑤ 两台立过的队列各自停（on 落了、busy 也清了）；页请求队列若开着 = fail
