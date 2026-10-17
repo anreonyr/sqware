@@ -138,7 +138,16 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         start: &[
             "hub", "pipe", "account", "terminal", "login", "router", "uart", "rtc",
         ],
-        resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers", "system-dma"],
+        resources: &[
+            "shell",
+            "cat",
+            "emit",
+            "upper",
+            "fail",
+            "spin",
+            "workers",
+            "system-dma",
+        ],
         targets: &[scene_target(&[
             "hub", "pipe", "account", "terminal", "router", "uart", "rtc",
         ])],
@@ -148,6 +157,50 @@ pub const DEPLOYMENTS: &[Deployment] = &[
     Deployment {
         name: "iommu-product-fault",
         entry: "system-fault-dma",
+        start: &[
+            "hub", "pipe", "account", "terminal", "login", "router", "uart", "rtc",
+        ],
+        resources: &[
+            "shell",
+            "cat",
+            "emit",
+            "upper",
+            "fail",
+            "spin",
+            "workers",
+            "system-dma",
+        ],
+        targets: &[scene_target(&[
+            "hub", "pipe", "account", "terminal", "router", "uart", "rtc",
+        ])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-product-start-before",
+        entry: "system-start-before-dma",
+        start: &[
+            "hub", "pipe", "account", "terminal", "login", "router", "uart", "rtc",
+        ],
+        resources: &[
+            "shell",
+            "cat",
+            "emit",
+            "upper",
+            "fail",
+            "spin",
+            "workers",
+            "system-dma",
+        ],
+        targets: &[scene_target(&[
+            "hub", "pipe", "account", "terminal", "router", "uart", "rtc",
+        ])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-product-start-after",
+        entry: "system-start-after-dma",
         start: &[
             "hub", "pipe", "account", "terminal", "login", "router", "uart", "rtc",
         ],

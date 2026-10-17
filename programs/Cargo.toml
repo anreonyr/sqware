@@ -145,6 +145,20 @@ test = false
 bench = false
 doctest = false
 
+[[bin]]
+name = "prog-system-start-before-dma"
+path = "src/system/start_before_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-system-start-after-dma"
+path = "src/system/start_after_main.rs"
+test = false
+bench = false
+doctest = false
+
 
 [[bin]]
 name = "prog-router"

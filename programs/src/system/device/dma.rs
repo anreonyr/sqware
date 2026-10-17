@@ -143,6 +143,24 @@ enum Stage {
     Done(Started),
 }
 
+/// 这一景的产品 DMA 走哪一条路。
+///
+/// 它是**装配**的事实（由景名给出），不是运行时开关：普通产品是 [`Path::Normal`]，
+/// 生产里没有一条常开的故障后门。两个起手故障点都是**受控注入**（就在本文件的
+/// 装配序列里 `say` 一句再 `Err`），与“硬件没在期限内回答”那条自然超时**不是同一件事**
+/// ——后者走 [`Handshake`] 到期，报的是 `stop pending`。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Path {
+    /// 普通产品：显式 `Close::Normal` 收口，起手不注入。
+    Normal,
+    /// 故障景：收服务走 `offline(Fault)`，且平台第一次停住答 `Pending`。
+    Fault,
+    /// 起手受控失败：`spawn` 之后、**发布之前**（范围已登记，可达标记还没点）。
+    StartupBeforePublish,
+    /// 起手受控失败：**发布与武装都过了**、交付之前。
+    StartupAfterPublish,
+}
+
 /// 一次开始的结果：设备在不在。
 pub enum Started {
     /// 本机没有这台设备（普通产品保持行为）。
@@ -171,6 +189,8 @@ pub struct Dma {
     published: bool,
     /// 那一份登记在 `Holds` 上的编号（发布门的成败都记在它那一格）。
     retained: Option<usize>,
+    /// 收子任务那两条命令已经发出去了（每帧 `join` 探它落地，不重发）。
+    reclaim_sent: bool,
     pages: Option<Pages>,
     /// 武装那一串用的队列（`setup` 里建好，一帧推一格）。
     queues: Option<CommandQueue>,
@@ -199,11 +219,8 @@ pub struct Dma {
     /// 打铃那一时刻的 `used.idx`。
     prove_before: u16,
     reported: bool,
-    /// 这一景走哪一条收口：`false` = 显式 `Close::Normal`，`true` = 收服务走
-    /// `offline(Fault)`。两者停链相同，差别只在“谁先关闸”。
-    fault: bool,
-    /// 这一景是否装一次“第一次停住答 Pending”的注入（只故障景为真）。
-    inject: bool,
+    /// 这一景走哪一条路（见 [`Path`]）。
+    path: Path,
     /// 服务那一台镜像（装配期就从清单里取好，运行期不重查）。
     image: Option<&'static [u8]>,
     kind: Option<env::ProgramKind>,
@@ -212,12 +229,12 @@ pub struct Dma {
 }
 
 impl Dma {
-    /// `image` / `kind` 是那一台端点服务在镜像里的字节与特权级；`fault` / `inject`
-    /// 由这一景的装配给出（普通产品为假）。
+    /// `image` / `kind` 是那一台端点服务在镜像里的字节与特权级；`path` 由这一景的装配给出
+    /// （普通产品为 [`Path::Normal`]）。
     pub const fn new(
         image: Option<&'static [u8]>,
         kind: Option<env::ProgramKind>,
-        fault: bool,
+        path: Path,
     ) -> Self {
         Self {
             start: Start::Fresh,
@@ -231,6 +248,7 @@ impl Dma {
             attached: false,
             published: false,
             retained: None,
+            reclaim_sent: false,
             pages: None,
             queues: None,
             handshake: None,
@@ -248,8 +266,7 @@ impl Dma {
             prove_left: 0,
             prove_before: 0,
             reported: false,
-            fault,
-            inject: fault,
+            path,
             image,
             kind,
             done: false,
@@ -303,34 +320,14 @@ impl Dma {
     /// 要报出来，不能用 `let _` 吐成“已清”而无凭据。
     ///
     /// 范围：登记过（`attached`）才关得了，没 attach 过时不假装关过（`close` 只会答
-    /// `Unknown`）；`close` 的结果也按真实报。关成 `Fault` 之后 `Holds` 会把它推到
-    /// `Stopped` 并把登记释放，故不会有一个空转在 `Open` 的范围。
+    /// `Unknown`，那一格不能按“已关”打印）；`close` 的结果也按真实报。关成 `Fault` 之后
+    /// `Holds` 会把它推到 `Stopped` 并把登记释放，故不会有一个空转在 `Open` 的范围。
     ///
-    /// 本地所有者：**发布之前**失败 = 设备从来没可达过，本域那几段图与页当场还回去
-    /// （没有外部读者要隔断）；**发布之后**失败 = 停机凭据归平台，`pages` 留到 `settle`
-    /// 确认之后才还（见 `Dma::settle` 的 `!served` 那一支）。
+    /// 本地所有者：**发布之前**失败 = 设备从来没可达过，本域那几段页归 `settle` 直接
+    /// 结清；**发布之后**失败 = 停机凭据归平台，`pages` 也要留到 `settle` 确认之后才还。
+    /// 两档都归 `settle`——那里才是“最后一次读 MMIO”之后（见 [`Dma::finish`]）。
     fn rollback(&mut self, supplies: &mut Supplies) {
-        if let Some(service) = self.service {
-            match env::room::doom(service).map_err(|error| error.source) {
-                Ok(()) => self.service = None,
-                Err(failure) => self.say(&alloc::format!(
-                    "system-dma: startup failed, child doom={failure:?} still held"
-                )),
-            }
-        }
-        if self.service.is_none() {
-            if let Some(team) = self.team {
-                match env::unit::slay_team(team).map_err(|error| error.source) {
-                    Ok(()) => {
-                        self.team = None;
-                        self.say("system-dma: startup failed, child reclaimed");
-                    }
-                    Err(failure) => self.say(&alloc::format!(
-                        "system-dma: startup failed, child slay={failure:?} still held"
-                    )),
-                }
-            }
-        }
+        self.reclaim();
         if let Some(range) = self.range {
             if !self.attached {
                 self.say("system-dma: startup failed, no registered scope");
@@ -342,18 +339,51 @@ impl Dma {
                 ));
             }
         }
-        // 发布之前失败：设备从来没可达过，本域那几段图与页（以及 BAR/ECAM 那两段映射）
-        // 当场还回去。IOMMU 那一段图留着：`settle` 还要从它读一次停机现场。
-        if !self.published {
-            if let Some(bar) = self.bar.take() {
-                let _ = bar.shut();
-            }
-            if let Some(ecam) = self.ecam.take() {
-                let _ = ecam.shut();
-            }
-            if let Some(pages) = self.pages.take() {
-                let _ = pages.close();
-            }
+    }
+
+    /// 收子任务：`doom` ＋ `slay_team` **只发一次**，两个结果原样报出来；之后每帧
+    /// `join` 一次探它**真的没了**。
+    ///
+    /// 「没有留着活僵尸」要的是最后那一格（`join` 看到已回收），不是“命令发出去了”
+    /// ——所以收干净之前 `service`/`team` 两个手柄都**不** `take` 掉，下一帧接着收。
+    /// 命令真失败时失败写在 `child doomed` 那一行里，而 `reclaimed` 那一行就不会出现：
+    /// 只报成功、或沉默地把失败吐掉，两种都做不到。
+    fn reclaim(&mut self) {
+        let Some(service) = self.service else {
+            return;
+        };
+        if !self.reclaim_sent {
+            self.reclaim_sent = true;
+            let doom = env::room::doom(service).map_err(|error| error.source);
+            let slay = self
+                .team
+                .map(|team| env::unit::slay_team(team).map_err(|error| error.source));
+            self.say(&alloc::format!(
+                "system-dma: startup failed, child doomed doom={doom:?} slay={slay:?}"
+            ));
+        }
+        if matches!(env::unit::join_task(service, Wait::POLL), Ok(true)) {
+            self.service = None;
+            self.team = None;
+            self.say("system-dma: startup failed, child reclaimed");
+        }
+    }
+
+    /// 本域对设备那几段图的**最后一次访问**已经过完：显式把寄存器 / ECAM / BAR 三段图关掉，
+    /// 并把 `range` 放掉——之后 `settle` 再进来就不会再读 MMIO（`range` 为 `None` 直接 `Done`）。
+    ///
+    /// 现在才关是因为平台对象只持本域地址（`usize`），而 `settle` 的停机现场要从这三段读；
+    /// 图一关再读就是悬空。
+    fn finish(&mut self) {
+        self.range = None;
+        if let Some(dock) = self.iommu.take() {
+            let _ = dock.shut();
+        }
+        if let Some(dock) = self.ecam.take() {
+            let _ = dock.shut();
+        }
+        if let Some(dock) = self.bar.take() {
+            let _ = dock.shut();
         }
     }
 
@@ -366,6 +396,11 @@ impl Dma {
             }
             Start::Faults | Start::Commands | Start::Fence | Start::Ddtp => self.arm(),
             Start::Armed => {
+                // 受控注入（只这一景）：发布与武装都过了、交付之前停一次。
+                if self.path == Path::StartupAfterPublish {
+                    self.say("system-dma: startup fault injected after publish");
+                    return Err(Failure::Unavailable);
+                }
                 self.deliver(supplies)?;
                 self.start = Start::Running;
                 Ok(Stage::Done(Started::Running))
@@ -490,7 +525,7 @@ impl Dma {
             }),
         );
         // 只故障景：装一层“第一次停住答 `Pending`”，验“确认失败仍保留”。
-        let platform: Box<dyn Platform> = if self.inject {
+        let platform: Box<dyn Platform> = if self.path == Path::Fault {
             Box::new(FaultOnce::new(inner))
         } else {
             Box::new(inner)
@@ -508,6 +543,12 @@ impl Dma {
             },
         )?;
         self.retained = Some(id);
+        // 受控注入（只这一景）：`spawn` 之后、发布之前停一次——范围已登记、可达标记
+        // 还没点。它验的是“部分发布的失败真的被隔断”，不是“硬件超时”。
+        if self.path == Path::StartupBeforePublish {
+            self.say("system-dma: startup fault injected before publish");
+            return Err(Failure::Unavailable);
+        }
         // 发布门：**先把可达标记点上**（执行发布之前），再铺表、描述符。
         supplies.retention.publish_begin(id)?;
         self.published = true;
@@ -712,7 +753,7 @@ impl Dma {
             // 关闸**之前**的现场：这几格此刻还不是停的样子（目录表还接着、队列还开着），
             // 故它与释放后那一行对照起来才看得出判据不是白给的真。
             self.say(&alloc::format!("system-dma: at close {}", self.stopped()));
-            if !self.fault {
+            if self.path != Path::Fault {
                 let _ = supplies.retention.close(range, Close::Normal);
                 self.say("system-dma: requested Close::Normal");
             } else if let Some(service) = self.service {
@@ -756,6 +797,7 @@ impl Dma {
             if let Some(pages) = self.pages.take() {
                 let _ = pages.close();
             }
+            self.finish();
             return Progress::Done;
         }
         if !self.reported {
@@ -812,6 +854,7 @@ impl Dma {
             if let Some(pages) = self.pages.take() {
                 let _ = pages.close();
             }
+            self.finish();
         }
         Progress::Done
     }

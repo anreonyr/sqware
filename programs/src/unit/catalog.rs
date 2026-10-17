@@ -100,12 +100,16 @@ pub mod sleeper;
 pub mod subject;
 #[path = "../system/program.rs"]
 pub mod system;
-#[path = "../system/fault_program.rs"]
-pub mod system_fault_dma;
 #[path = "../service/dma/program.rs"]
 pub mod system_dma;
 #[path = "../harness/probe/system_fault/program.rs"]
 pub mod system_fault;
+#[path = "../system/fault_program.rs"]
+pub mod system_fault_dma;
+#[path = "../system/start_after_program.rs"]
+pub mod system_start_after_dma;
+#[path = "../system/start_before_program.rs"]
+pub mod system_start_before_dma;
 #[path = "../user/terminal/program.rs"]
 pub mod terminal;
 #[path = "../driver/uart/program.rs"]
@@ -148,6 +152,10 @@ pub const PROGRAMS: &[&UnitFile] = &[
     // 故障注入景那一台 System：与 `system` 同一身子、不同镜像，
     // 只有它的景才会在第二轮装一次 `Pending` 注入。
     &system_fault_dma::PROGRAM,
+    // 起手受控失败那两景的 System：同样与 `system` 同一身子、不同镜像，
+    // 只有各自那一景才会在那个受控点停一次（景名就是那张图上的事实）。
+    &system_start_before_dma::PROGRAM,
+    &system_start_after_dma::PROGRAM,
     // 真实 Task 等待那一景：**装载者 ＋ 控制单元**两台——控制单元要真的被装载（有 sire），
     // 故它那一 Team 的成员带着收据；真实等待链本身在控制单元里（见 `probe/memory_transfer`）。
     &memory_transfer::ENTRY,

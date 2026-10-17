@@ -57,8 +57,8 @@ pub(crate) fn resources(
     resources.insert(crate::system::device::dma::Dma::new(
         service_image.map(|(elf, _)| elf),
         service_image.map(|(_, space)| space),
-        // 注入只由**这一景自己的装配**给出（景名不是故障景就是假）。
-        deployment.name == "iommu-product-fault",
+        // 走哪一条路由**这一景自己的装配**给出（普通产品是 `Normal`）。
+        startup_path(deployment.name),
     ))?;
     control::install(
         &mut resources,
@@ -101,4 +101,18 @@ pub(crate) fn resources(
         })?
         .insert(life::Deadline(0))?;
     Ok(resources)
+}
+
+/// 这一景那张图上，产品 DMA 走哪一条路：景名就是装配的事实。
+///
+/// 三个 `iommu-product*` 景各有一张自己的入口镜像（`crates/image` 按入口认景），
+/// 故这里只认名字，不引入任何运行时开关。
+fn startup_path(deployment: &str) -> crate::system::device::dma::Path {
+    use crate::system::device::dma::Path;
+    match deployment {
+        "iommu-product-fault" => Path::Fault,
+        "iommu-product-start-before" => Path::StartupBeforePublish,
+        "iommu-product-start-after" => Path::StartupAfterPublish,
+        _ => Path::Normal,
+    }
 }

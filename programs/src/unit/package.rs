@@ -53,6 +53,8 @@ pub const PACKAGES: &[Package] = &[
     package!("iommu-dma"),
     package!("system-dma"),
     package!("system-fault-dma"),
+    package!("system-start-before-dma"),
+    package!("system-start-after-dma"),
     package!("probe-owner"),
     package!("probe-rule"),
     package!("probe-rule-other"),

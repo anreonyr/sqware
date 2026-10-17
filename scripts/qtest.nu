@@ -313,7 +313,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   }
   # 端点那一景的那张盘：**可再生**（每次按同一花纹重建，落在 `<TRACE_OUT>/` 里，
   # 不进库），且由参数表那边只读挂上。景那一侧按同一花纹核读回的数据，故盘是承重的。
-  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault"] {
+  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after"] {
     let disk = ($trapdir | path join "iommu-dma.img")
     ^python3 -c 'import sys, pathlib; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 4096)' $disk
     ["--endpoint" $disk]
@@ -463,6 +463,41 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
       $want = ($want | append [
         "^system-dma: service doomed"
         "^system-dma: NOT released .*failure=Some\\(Pending\\)"
+      ])
+    }
+    for $pattern in $want {
+      if ($console | where {|line| $line =~ $pattern } | is-empty) {
+        print $"本景未成功完成：缺少 ($pattern)"
+        $code = 1
+      }
+    }
+  }
+
+  if $code == 0 and $scene in ["iommu-product-start-before" "iommu-product-start-after"] {
+    # 起手受控失败那两景：System 在一个**明确的点**上停一次（受控注入，不是硬件自然
+    # 超时），主动把子任务收进死亡路径、把范围关成 `Fault`。要看到的是：子任务没留
+    # 活僵尸、登记过的范围真被关掉（结果按真实报），且两档之间设备那一侧的现场截然
+    # 不同——发布之前失败 = 设备从来没被接上（bus-master 还在、stopped=false）；
+    # 发布之后失败 = 平台真把设备停了才释放（stopped=true）。
+    let console = (open --raw $env.QEMU_TEE_LOG | lines)
+    mut want = [
+      "^system-dma: startup failed, child reclaimed$"
+      "^system-dma: startup failure settled ddtp=0x"
+      "^exit tid=1 reason=0x0 note: system: done"
+    ]
+    if $scene == "iommu-product-start-before" {
+      $want = ($want | append [
+        "^system-dma: startup fault injected before publish$"
+        # 范围已登记、可达标记还没点：关成 `Fault` 真发生了（`close=Ok(())`，结果按真实报）。
+        "^system-dma: startup failed, range close=Ok.*$"
+        "^system-dma: startup failure settled ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x4 status=0 queue_enable=0 stopped=false$"
+      ])
+    } else {
+      $want = ($want | append [
+        "^system-dma: startup fault injected after publish$"
+        # 范围已登记且已发布：关成 `Fault` 之后平台必须真把设备停了才算完。
+        "^system-dma: startup failed, range close=Ok.*$"
+        "^system-dma: startup failure settled ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true$"
       ])
     }
     for $pattern in $want {
