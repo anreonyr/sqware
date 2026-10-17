@@ -48,7 +48,7 @@ impl Drop for InitReceipt {
 }
 
 pub struct Supplies {
-    pub(super) accounts: Accounts,
+    pub(crate) accounts: Accounts,
     providers: alloc::vec::Vec<Provider>,
     leases: alloc::vec::Vec<LeaseOwner>,
     pub(crate) retention: Holds,

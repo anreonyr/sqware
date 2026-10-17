@@ -84,6 +84,48 @@ impl Pages {
         (self.view.address() + index * PAGE_SIZE + offset) as *mut u8
     }
 
+    /// 第 `index` 页、偏移 `at` 处写一个字节（本域那一份视图）。
+    pub fn put8(&self, index: usize, at: usize, value: u8) {
+        // SAFETY: 这一段是本域已映射的可写 View，`index`/`at` 落在窗内。
+        unsafe { core::ptr::write_volatile(self.at(index, at), value) };
+    }
+
+    pub fn put16(&self, index: usize, at: usize, value: u16) {
+        // SAFETY: 同 `put8`，偏移按 2 字节格取。
+        unsafe { core::ptr::write_volatile(self.at(index, at) as *mut u16, value) };
+    }
+
+    pub fn put32(&self, index: usize, at: usize, value: u32) {
+        // SAFETY: 同 `put8`，偏移按 4 字节格取。
+        unsafe { core::ptr::write_volatile(self.at(index, at) as *mut u32, value) };
+    }
+
+    pub fn put64(&self, index: usize, at: usize, value: u64) {
+        // SAFETY: 同 `put8`，偏移按 8 字节格取。
+        unsafe { core::ptr::write_volatile(self.at(index, at) as *mut u64, value) };
+    }
+
+    pub fn get8(&self, index: usize, at: usize) -> u8 {
+        // SAFETY: 同 `put8`。
+        unsafe { core::ptr::read_volatile(self.at(index, at)) }
+    }
+
+    pub fn get16(&self, index: usize, at: usize) -> u16 {
+        // SAFETY: 同 `put8`，偏移按 2 字节格取。
+        unsafe { core::ptr::read_volatile(self.at(index, at) as *const u16) }
+    }
+
+    pub fn get32(&self, index: usize, at: usize) -> u32 {
+        // SAFETY: 同 `put8`，偏移按 4 字节格取。
+        unsafe { core::ptr::read_volatile(self.at(index, at) as *const u32) }
+    }
+
+    /// 把一整页铺成同一个字节。
+    pub fn fill(&self, index: usize, byte: u8) {
+        // SAFETY: 整页都在本域这一段可写 View 里。
+        unsafe { core::ptr::write_bytes(self.at(index, 0), byte, PAGE_SIZE) };
+    }
+
     /// 显式结清：先撤本域的图，再放下保留，最后放下匿名来源。
     pub fn close(mut self) -> Result<(), &'static str> {
         self.view.close().map_err(|_| "iommu: view close")?;

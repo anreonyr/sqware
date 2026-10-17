@@ -12,6 +12,7 @@ pub(crate) mod wait;
 pub use execute::run;
 
 mod config;
+pub(crate) mod device;
 pub(crate) mod retention;
 pub(crate) mod supplies;
 

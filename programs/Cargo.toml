@@ -131,6 +131,13 @@ test = false
 bench = false
 doctest = false
 
+[[bin]]
+name = "prog-system-dma"
+path = "src/service/dma/main.rs"
+test = false
+bench = false
+doctest = false
+
 
 [[bin]]
 name = "prog-router"

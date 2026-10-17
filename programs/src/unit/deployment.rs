@@ -138,7 +138,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         start: &[
             "hub", "pipe", "account", "terminal", "login", "router", "uart", "rtc",
         ],
-        resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers"],
+        resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers", "system-dma"],
         targets: &[scene_target(&[
             "hub", "pipe", "account", "terminal", "router", "uart", "rtc",
         ])],

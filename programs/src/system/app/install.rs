@@ -44,6 +44,20 @@ pub(crate) fn resources(
     )?;
     resources.insert(super::operator::Layout::default())?;
     resources.insert(super::operator::BootstrapReceipt::default())?;
+    // 端点服务那一台镜像：装配期就从清单里取好，运行期不再重查。
+    let service = crate::unit::PROGRAMS
+        .iter()
+        .copied()
+        .find(|program| program.name() == "system-dma");
+    let service_image = service.and_then(|program| {
+        boot.catalog
+            .find(program.loader.image)
+            .map(|entry| (entry.elf, program.loader.space))
+    });
+    resources.insert(crate::system::device::dma::Dma::new(
+        service_image.map(|(elf, _)| elf),
+        service_image.map(|(_, space)| space),
+    ))?;
     control::install(
         &mut resources,
         status.clone(),

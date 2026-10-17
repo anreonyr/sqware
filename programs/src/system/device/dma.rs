@@ -20,7 +20,6 @@ use system_api::supply::LeaseId;
 use resource::dock::Dock;
 use resource::raw::Hole;
 
-use crate::boot::{Accounts, Catalog};
 use crate::driver::iommu::{
     context::DeviceContext,
     order,
@@ -31,6 +30,7 @@ use crate::driver::iommu::{
 use crate::driver::pci::ecam::{self, Ecam};
 use crate::driver::pci::endpoint::Endpoint;
 use crate::driver::pci::virtio::{self, Caps};
+use crate::system::app::supplies::Supplies;
 use crate::system::device::platform::{EndpointDrain, IommuPlatform};
 use crate::system::loader::{Image, Loader};
 use crate::system::supply::retention::{DeviceRange, Failure, Scope};
@@ -49,8 +49,6 @@ const BLOCK: [u16; 2] = [0x1001, 0x1042];
 /// 交给服务的那一段 BAR 与交给服务那一枚坐标孔的门牌。
 const BAR_MARK: Mark = Mark::of("system-dma-bar");
 const COORD_MARK: Mark = Mark::of("system-dma-coord");
-/// 端点服务那一台在镜像里的名字。
-const SERVICE: &str = "system-dma";
 /// 管理者自己那一枚：读写、可再授出，形态位照源那一枚（`ONLY` 必须一致）。
 const OWNER_SUBSET: Permission = Permission::FETCH
     .union(Permission::STORE)
@@ -97,6 +95,8 @@ const SENTINEL: u8 = 0x5A;
 const COORD_WORDS: usize = 9;
 /// 等服务、等收工的期限（毫秒）。
 const WAIT_MS: usize = 2000;
+/// 确认之后等设备再推一次的帧数（System 的一帧一帧，不阻塞）。
+const PROVE_FRAMES: usize = 8;
 
 /// 产品 DMA 管理者：一次只跑一台端点。
 pub struct Dma {
@@ -112,10 +112,24 @@ pub struct Dma {
     caps: Option<Caps>,
     requester: u16,
     service: Option<TaskId>,
+    /// 服务那一 Team（收工时按 Team 收，与 `ruin` 同一条路）。
+    team: Option<env::TeamId>,
     /// 第一轮已完成（设备真的写回了 `used` 环）。
     served: bool,
-    /// 服务已死、由 System 自己收口那一手是否已经打过。
-    fenced_out: bool,
+    /// 服务已收（走 System 自己的生命周期：`offline` → `isolate` → 确认后才释放）。
+    doomed: bool,
+    /// 确认之后那一次“自己打响门铃”已经做过。
+    proved: bool,
+    /// 等设备再推一次的剩几帧。
+    prove_left: usize,
+    /// 打铃那一时刻的 `used.idx`。
+    prove_before: u16,
+    reported: bool,
+    /// 服务那一台镜像（装配期就从清单里取好，运行期不重查）。
+    image: Option<&'static [u8]>,
+    kind: Option<env::ProgramKind>,
+    /// 开过就失败过：不在旧范围上反复重试。
+    failed: bool,
 }
 
 /// 一次开始的结果：设备在不在。
@@ -127,7 +141,8 @@ pub enum Started {
 }
 
 impl Dma {
-    pub const fn new() -> Self {
+    /// `image` / `kind` 是那一台端点服务在镜像里的字节与特权级。
+    pub const fn new(image: Option<&'static [u8]>, kind: Option<env::ProgramKind>) -> Self {
         Self {
             iommu: None,
             ecam: None,
@@ -140,8 +155,16 @@ impl Dma {
             caps: None,
             requester: 0,
             service: None,
+            team: None,
             served: false,
-            fenced_out: false,
+            doomed: false,
+            proved: false,
+            prove_left: 0,
+            prove_before: 0,
+            reported: false,
+            image,
+            kind,
+            failed: false,
         }
     }
 
@@ -152,30 +175,42 @@ impl Dma {
     /// 发现 → 保留 → 发布 → 交付 → 放开服务。
     ///
     /// 不在任何一步阻塞等设备：这是 System 的一帧，测得出来就往下走、测不出来就留着。
+    /// 失败一次就**封口**：不在旧范围上反复重试（它已经登记下了，由生命周期收口）。
     pub fn begin(
         &mut self,
-        accounts: &Accounts,
-        catalog: &Catalog<'static>,
         loader: &mut Loader,
-        retention: &mut crate::system::supply::retention::Holds,
-        retain_memory: impl FnOnce(
-            DeviceRange,
-            AcquireSource,
-        ) -> Result<usize, Failure>,
+        supplies: &mut Supplies,
     ) -> Result<Started, Failure> {
+        if self.failed {
+            return Ok(Started::Absent);
+        }
         if self.running() {
             return Ok(Started::Running);
         }
-        let Some(iommu) = accounts.token(Name::Page(Page::Region(IOMMU_BASE))) else {
+        match self.attempt(loader, supplies) {
+            Ok(started) => Ok(started),
+            Err(failure) => {
+                self.failed = true;
+                Err(failure)
+            }
+        }
+    }
+
+    fn attempt(&mut self, loader: &mut Loader, supplies: &mut Supplies) -> Result<Started, Failure> {
+        if self.running() {
+            return Ok(Started::Running);
+        }
+        let Some(iommu) = supplies.accounts.token(Name::Page(Page::Region(IOMMU_BASE))) else {
             return Ok(Started::Absent);
         };
-        let Some(ecam) = accounts.token(Name::Page(Page::Region(ECAM_BASE))) else {
+        let Some(ecam) = supplies.accounts.token(Name::Page(Page::Region(ECAM_BASE))) else {
             return Ok(Started::Absent);
         };
-        let Some(aperture) = accounts.token(Name::Page(Page::Region(APERTURE_BASE))) else {
+        let Some(aperture) = supplies.accounts.token(Name::Page(Page::Region(APERTURE_BASE))) else {
             return Ok(Started::Absent);
         };
-        self.retention = accounts
+        self.retention = supplies
+            .accounts
             .token(Name::Call(Call::Retain))
             .ok_or(Failure::Denied)?;
         self.aperture = aperture;
@@ -197,21 +232,16 @@ impl Dma {
         let range = DeviceRange::new(endpoint.address(), endpoint.size()).ok_or(Failure::Denied)?;
 
         // 先把那台服务任务立起来（**按住**：坐标没铺好之前不放它跑）。
-        let program = crate::unit::PROGRAMS
-            .iter()
-            .copied()
-            .find(|program| program.name() == SERVICE)
-            .ok_or(Failure::Unknown)?;
-        let image = catalog
-            .find(program.loader.image)
-            .ok_or(Failure::Unavailable)?
-            .elf;
+        let (Some(image), Some(kind)) = (self.image, self.kind) else {
+            return Err(Failure::Unavailable);
+        };
         let unit = loader
             .build(Image {
                 bytes: image,
-                kind: program.loader.space,
+                kind,
             })
             .map_err(|_| Failure::Pending)?;
+        let team = unit.team();
         let service = unit.spawn(&[], 0).map_err(|_| Failure::Pending)?;
 
         // 取这段工作内存：本域一份（建表/读完成），独立保留那一份在 `retain_memory`。
@@ -219,15 +249,14 @@ impl Dma {
         let queue = CommandQueue::new(self.base, &pages, COMMANDS, FAULTS, FENCE);
         let platform = IommuPlatform::new(
             range,
-            self.base,
             queue,
             Some(EndpointDrain {
                 ecam: ecam_dock.view().base(),
                 requester,
             }),
         );
-        retention.attach(Scope::new(range, service, Some(Box::new(platform))))?;
-        let id = retain_memory(
+        supplies.retention.attach(Scope::new(range, service, Some(Box::new(platform))))?;
+        let id = supplies.retain_memory(
             range,
             AcquireSource::Source {
                 token: pages.source(),
@@ -235,15 +264,14 @@ impl Dma {
                 count: COUNT,
             },
         )?;
-
         // 发布：表与队列都布好、`IOFENCE` 拿到完成记录之后才接上设备目录表。
         let ddt = pages.physical(DDT);
         let root = pages.physical(ROOT);
         let context = DeviceContext::first_stage(root);
         let requester = self.requester as usize;
-        retention.publish(id, |_| {
+        supplies.retention.publish(id, |_| {
             for (index, word) in context.words().iter().enumerate() {
-                put64(&pages, DDT, requester * 64 + index * 8, *word);
+                pages.put64(DDT, requester * 64 + index * 8, *word);
             }
             table::map_pages(&pages, ROOT, MIDDLE, LEAF, IOVA_BASE, DESC, DEVICE_PAGES)
                 .map_err(|_| Failure::Denied)?;
@@ -262,6 +290,9 @@ impl Dma {
 
         // 两枚窗口：管理者自己那一枚（收口时打响那一次门铃），以及从它收窄出来、
         // 经产品供给窗口那一层交给服务的那一枚（`NativePieEffects`）。
+        //
+        // **次第一：先把本域那一段图拿下来，再把那一枚交出去**——`ONLY` 的成功
+        // 派生是**移交**：交出去之后发送方那枚就不能再 `Open` 了，故图必须在前面。
         let mine = env::pie::accord_window(
             self.aperture,
             env::unit::self_id(),
@@ -270,7 +301,14 @@ impl Dma {
             first,
             pages_in_bar,
         )
-        .map_err(|_| Failure::Denied)?;
+        .map_err(|_| Failure::Full)?;
+        let bar = Dock::open(mine).map_err(|error| {
+            crate::debug::put(&alloc::format!(
+                "system-dma: bar dock open {:?}",
+                error.source
+            ));
+            Failure::Closed
+        })?;
         let root_window = PrivateRoot::derive(
             RootAssignment {
                 shared: mine,
@@ -300,7 +338,7 @@ impl Dma {
         // 坐标只经那一枚孔过去：种子、页数、能力表四格、三段 IOVA。
         let (common, notify, multiplier, device) = caps.parts();
         let writer = ipc::session::establish::give(service, COORD_MARK)
-            .map_err(|_| Failure::Denied)?;
+            .map_err(|_| Failure::Conflict)?;
         let frame = [
             seed.get(),
             pages_in_bar,
@@ -322,12 +360,97 @@ impl Dma {
 
         self.iommu = Some(iommu_dock);
         self.ecam = Some(ecam_dock);
-        self.bar = Some(Dock::open(mine).map_err(|_| Failure::Denied)?);
+        self.bar = Some(bar);
         self.range = Some(range);
         self.pages = Some(pages);
         self.service = Some(service);
+        self.team = Some(team);
         env::unit::embark_task(service).map_err(|_| Failure::Pending)?;
         Ok(Started::Running)
+    }
+
+    /// 收口：看到设备写回 → 收掉服务（由 System 自己的生命周期隔离并确认）→
+    /// 确认之后再用管理者自己那一枚窗口打一次铃，验明设备再也推不动。
+    ///
+    /// 它**永远返 `Done`**：隔离与释放的节奏归既有生命周期（`retention.sweep`），
+    /// 这里只是看结果；返 `Pending` 会把这帧后面的步骤挡住，反而让 `sweep` 跑不到。
+    pub fn settle(&mut self, supplies: &mut Supplies) -> ::schedule::Progress {
+        use ::schedule::Progress;
+        let Some(service) = self.service else {
+            return Progress::Done;
+        };
+        let (used, len, status) = match self.pages.as_ref() {
+            Some(pages) => completion(pages),
+            None => return Progress::Done,
+        };
+        if !self.served && used >= 1 {
+            self.served = true;
+            let sector_ok = self.pages.as_ref().is_some_and(sector_matches);
+            self.say(&alloc::format!(
+                "system-dma: served used={used} len={len} status={status} sector_ok={sector_ok}"
+            ));
+        }
+        // 服务一收，下面的 `offline(Fault)` → `isolate` → 释放全归既有生命周期。
+        if self.served && !self.doomed {
+            self.doomed = true;
+            let doom = env::room::doom(service).map_err(|error| error.source);
+            let slay = self
+                .team
+                .map(|team| env::unit::slay_team(team).map_err(|error| error.source));
+            self.say(&alloc::format!(
+                "system-dma: service doomed doom={doom:?} slay={slay:?}"
+            ));
+        }
+        let Some(range) = self.range else {
+            return Progress::Done;
+        };
+        if supplies.retention.occupied().any(|(held, ..)| held == range) {
+            return Progress::Done;
+        }
+        // 确认之后（保留已放下）才做这一手：自己打响那一次门铃。
+        if !self.proved {
+            self.proved = true;
+            if let Some(pages) = self.pages.as_ref() {
+                self.prove_before = pages.get16(USED, 2);
+                sentinel(pages, DATA);
+                pages.put8(STATUS, 0, 0xFF);
+                arm(pages);
+            }
+            if let (Some(bar), Some(caps)) = (self.bar.as_ref(), self.caps) {
+                ring_own(bar, &caps);
+            }
+            self.prove_left = PROVE_FRAMES;
+            return Progress::Done;
+        }
+        if self.prove_left > 0 {
+            self.prove_left -= 1;
+            return Progress::Done;
+        }
+        if !self.reported {
+            self.reported = true;
+            let moved = self
+                .pages
+                .as_ref()
+                .is_some_and(|pages| pages.get16(USED, 2) != self.prove_before);
+            let held = self
+                .pages
+                .as_ref()
+                .is_some_and(|pages| holds_byte(pages, DATA, SENTINEL));
+            let status = self
+                .pages
+                .as_ref()
+                .map(|pages| pages.get8(STATUS, 0))
+                .unwrap_or(0xFF);
+            self.say(&alloc::format!(
+                "system-dma: after the death isolation used_moved={moved} sentinel_held={held} status={status} requester={}",
+                self.requester,
+            ));
+        }
+        Progress::Done
+    }
+
+    fn say(&self, message: &str) {
+        crate::debug::put(message);
     }
 }
 
@@ -341,66 +464,30 @@ fn fail(_: &'static str) -> Failure {
 
 /// 摆一轮请求：三段描述符（头 → 数据 → 状态）＋可用环那一格。
 fn arm(pages: &Pages) {
-    descriptor(pages, 0, iova(HEADER) as u64, HEADER_BYTES as u32, DESC_NEXT, 1);
+    descriptor(pages, 0, (iova(HEADER) as u64, HEADER_BYTES as u32, DESC_NEXT, 1));
     descriptor(
         pages,
         1,
-        iova(DATA) as u64,
-        SECTOR as u32,
-        DESC_NEXT | DESC_WRITE,
-        2,
+        (iova(DATA) as u64, SECTOR as u32, DESC_NEXT | DESC_WRITE, 2),
     );
-    descriptor(pages, 2, iova(STATUS) as u64, 1, DESC_WRITE, 0);
-    put32(pages, HEADER, 0, BLK_IN);
-    put32(pages, HEADER, 4, 0);
-    put64(pages, HEADER, 8, 0);
-    put8(pages, STATUS, 0, 0xFF);
-    put16(pages, AVAIL, 4, 0);
-    put16(pages, AVAIL, 2, 1);
+    descriptor(pages, 2, (iova(STATUS) as u64, 1, DESC_WRITE, 0));
+    pages.put32(HEADER, 0, BLK_IN);
+    pages.put32(HEADER, 4, 0);
+    pages.put64(HEADER, 8, 0);
+    pages.put8(STATUS, 0, 0xFF);
+    pages.put16(AVAIL, 4, 0);
+    pages.put16(AVAIL, 2, 1);
     order::sync();
 }
 
-fn descriptor(pages: &Pages, index: usize, address: u64, len: u32, flags: u16, next: u16) {
+/// 一个描述符：地址 ＋ 长度 ＋ 标志 ＋ 链上的下一项（这不四段就一条链）。
+fn descriptor(pages: &Pages, index: usize, link: (u64, u32, u16, u16)) {
+    let (address, len, flags, next) = link;
     let at = index * 16;
-    put64(pages, DESC, at, address);
-    put32(pages, DESC, at + 8, len);
-    put16(pages, DESC, at + 12, flags);
-    put16(pages, DESC, at + 14, next);
-}
-
-fn put8(pages: &Pages, page: usize, at: usize, value: u8) {
-    // SAFETY: 保留窗里的页是本域刚取的可写页，偏移在页内。
-    unsafe { core::ptr::write_volatile(pages.at(page, at), value) };
-}
-
-fn put16(pages: &Pages, page: usize, at: usize, value: u16) {
-    // SAFETY: 同 `put8`，偏移按 2 字节格取。
-    unsafe { core::ptr::write_volatile(pages.at(page, at) as *mut u16, value) };
-}
-
-fn put32(pages: &Pages, page: usize, at: usize, value: u32) {
-    // SAFETY: 同 `put8`，偏移按 4 字节格取。
-    unsafe { core::ptr::write_volatile(pages.at(page, at) as *mut u32, value) };
-}
-
-fn put64(pages: &Pages, page: usize, at: usize, value: u64) {
-    // SAFETY: 同 `put8`，偏移按 8 字节格取。
-    unsafe { core::ptr::write_volatile(pages.at(page, at) as *mut u64, value) };
-}
-
-pub fn get8(pages: &Pages, page: usize, at: usize) -> u8 {
-    // SAFETY: 保留窗里的页是本域刚取的页，偏移在页内。
-    unsafe { core::ptr::read_volatile(pages.at(page, at)) }
-}
-
-pub fn get32(pages: &Pages, page: usize, at: usize) -> u32 {
-    // SAFETY: 同 `get8`，偏移按 4 字节格取。
-    unsafe { core::ptr::read_volatile(pages.at(page, at) as *const u32) }
-}
-
-pub fn get16(pages: &Pages, page: usize, at: usize) -> u16 {
-    // SAFETY: 同 `get8`，偏移按 2 字节格取。
-    unsafe { core::ptr::read_volatile(pages.at(page, at) as *const u16) }
+    pages.put64(DESC, at, address);
+    pages.put32(DESC, at + 8, len);
+    pages.put16(DESC, at + 12, flags);
+    pages.put16(DESC, at + 14, next);
 }
 
 /// 一轮里设备写回的可写字节数（正证里要核的那个数）。
@@ -418,38 +505,28 @@ pub fn expected(at: usize) -> u8 {
     (at % 256) as u8
 }
 
-/// 负证那一轮先铺在数据页里的哨兵。
+/// 把某一页铺成哨兵（负证里核“一字节未动”）。
 pub fn sentinel(pages: &Pages, page: usize) {
-    // SAFETY: 保留窗里的页是本域刚取的可写页，整页都在这一段里。
-    unsafe { core::ptr::write_bytes(pages.at(page, 0), SENTINEL, PAGE_SIZE) };
+    pages.fill(page, SENTINEL);
 }
 
-/// 读一轮完成：`used.idx`、写回长度、状态字节、开环里那一格。
+/// 读一轮完成：`used.idx`、写回长度、状态字节。
 pub fn completion(pages: &Pages) -> (u16, u32, u8) {
-    (get16(pages, USED, 2), get32(pages, USED, 8), get8(pages, STATUS, 0))
+    (
+        pages.get16(USED, 2),
+        pages.get32(USED, 8),
+        pages.get8(STATUS, 0),
+    )
 }
 
-/// 打成整页的那个字节（负证里核“一字节未动”）。
+/// 整页是否还是同一个字节（负证里核“一字节未动”）。
 pub fn holds_byte(pages: &Pages, page: usize, byte: u8) -> bool {
-    (0..PAGE_SIZE).all(|at| get8(pages, page, at) == byte)
+    (0..PAGE_SIZE).all(|at| pages.get8(page, at) == byte)
 }
 
 /// 数据页与盘花纹逐字节相同。
 pub fn sector_matches(pages: &Pages) -> bool {
-    (0..SECTOR).all(|at| get8(pages, DATA, at) == expected(at))
-}
-
-/// 设备那一半打完铃之后，由系统自己再打一次（服务已经不在），并确认再没有推进。
-pub fn rearm_and_idle(pages: &Pages) -> bool {
-    sentinel(pages, DATA);
-    put8(pages, STATUS, 0, 0xFF);
-    arm(pages);
-    order::sync();
-    !holds_sentinel(pages)
-}
-
-fn holds_sentinel(pages: &Pages) -> bool {
-    holds_byte(pages, DATA, SENTINEL)
+    (0..SECTOR).all(|at| pages.get8(DATA, at) == expected(at))
 }
 
 /// 由管理者自己那一枚窗口打响门铃（不经过服务）。

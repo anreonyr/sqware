@@ -228,7 +228,10 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   # 它跑得动的前提（debug 下每轮都挂在 20 ms 那一缝上）。
   if not ($scene | is-empty) {
     let prof = if ($profile | is-empty) { "release" } else { $profile }
-    let image = (^cargo image $scene $prof | complete)
+    # 产品那一景的设备变体：镜像就是 **product**（入口 `system`），
+    # 只是把 `--iommu --endpoint` 接上，故造图那一格按 `product` 走。
+    let image_scene = if $scene == "iommu-product" { "product" } else { $scene }
+    let image = (^cargo image $image_scene $prof | complete)
     if $image.exit_code != 0 {
       print -n $image.stdout
       print -n $image.stderr
@@ -310,7 +313,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   }
   # 端点那一景的那张盘：**可再生**（每次按同一花纹重建，落在 `<TRACE_OUT>/` 里，
   # 不进库），且由参数表那边只读挂上。景那一侧按同一花纹核读回的数据，故盘是承重的。
-  let endpoint_argv = if $scene == "iommu-dma" {
+  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product"] {
     let disk = ($trapdir | path join "iommu-dma.img")
     ^python3 -c 'import sys, pathlib; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 4096)' $disk
     ["--endpoint" $disk]
@@ -436,6 +439,22 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     let proof = "^exit tid=[0-9]+ reason=0x0 note: iommu-probe: acceptance passed"
     if ($console | where {|line| $line =~ $proof } | is-empty) {
       print $"本景未成功完成：缺少 ($proof)"
+      $code = 1
+    }
+  }
+
+  if $code == 0 and $scene == "iommu-product" {
+    # 产品那一侧：System 自己完成保留/发布、放一台跨 Team 服务去做真 DMA、
+    # 服务死后由既有生命周期独立隔离；两行读数都在那一侧逐条核过
+    # （身子见 `system/device/dma.rs`）。
+    let console = (open --raw $env.QEMU_TEE_LOG | lines)
+    let served = "^system-dma: served used=[1-9]"
+    let isolated = "^system-dma: after the death isolation used_moved=false sentinel_held=true"
+    if ($console | where {|line| $line =~ $served } | is-empty) {
+      print $"本景未成功完成：缺少 ($served)"
+      $code = 1
+    } else if ($console | where {|line| $line =~ $isolated } | is-empty) {
+      print $"本景未成功完成：缺少 ($isolated)"
       $code = 1
     }
   }

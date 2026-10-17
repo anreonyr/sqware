@@ -83,6 +83,7 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
         crate::system::assembly::hooks::instance()?,
     )?;
     frame.system("static", crate::system::control::startup)?;
+    frame.system("device", crate::system::app::device::begin)?;
     frame.system("retire.static", crate::system::control::retire_completed)?;
     frame.system("assembly.completed", crate::system::assembly::completed)?;
     frame.system("running", f::running)?;
@@ -94,6 +95,7 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
     frame.system("deadline", f::deadline)?;
     frame.system("ruin.rest", crate::system::control::ruin_rest)?;
     frame.system("retention.sweep", crate::system::app::retention::sweep)?;
+    frame.system("device.settle", crate::system::app::device::settle)?;
     frame.system("done", f::done)?;
     frame.system("bound", f::bound)?;
     frame.system("stopping.bound", f::stopping_bound)?;

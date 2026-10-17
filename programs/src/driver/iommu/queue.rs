@@ -82,6 +82,11 @@ impl CommandQueue {
         }
     }
 
+    /// 这一枚队列所在的寄存器窗起址。
+    pub fn base(&self) -> usize {
+        self.base
+    }
+
     /// 开两个队列：先故障队列（故障得有地方记），再命令队列。
     ///
     /// 每一台都走完协议：写 `ENABLE|MEM_FAULT`（顺手清掉粘住的内存故障位）→ 轮询到 busy 落

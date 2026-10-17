@@ -21,7 +21,6 @@
 
 use crate::driver::iommu::{
     order,
-    order as _order,
     queue::{self, CommandQueue},
     regs,
 };
@@ -44,20 +43,23 @@ pub struct IommuPlatform {
     queue: CommandQueue,
     /// 端点侧排空那两个数；没有端点访问权时是 `None`（只停 IOMMU 那一侧）。
     endpoint: Option<EndpointDrain>,
+    /// 失败现场的诊断只报一次。
+    reported: bool,
 }
 
 impl IommuPlatform {
     pub fn new(
         range: DeviceRange,
-        base: usize,
         queue: CommandQueue,
         endpoint: Option<EndpointDrain>,
     ) -> Self {
+        let base = queue.base();
         Self {
             range,
             base,
             queue,
             endpoint,
+            reported: false,
         }
     }
 }
@@ -83,19 +85,36 @@ impl IommuPlatform {
     ///
     /// 步骤可重入：队列立过才失效/排空（没立过就没有在途命令），`DDTP` Off 幂等。
     fn stop(&mut self) -> Result<(), Failure> {
+        match self.steps() {
+            Ok(()) => Ok(()),
+            Err((why, failure)) => {
+                if !self.reported {
+                    self.reported = true;
+                    crate::debug::put(&alloc::format!(
+                        "system-dma: stop pending at {why} ({failure:?})"
+                    ));
+                }
+                Err(failure)
+            }
+        }
+    }
+
+    fn steps(&mut self) -> Result<(), (&'static str, Failure)> {
         // ① 撤设备访问授权：目录表落 Off（幂等），回读确认 mode 与 busy。
         let stopped = match regs::ddtp_set(self.base, regs::DDTP_MODE_OFF, None) {
             Ok(seen) => seen,
             // 握手超时：busy 还挂着 = 还没停，可重试。
-            Err((_, seen)) if seen & regs::DDTP_BUSY != 0 => return Err(Failure::Pending),
+            Err((_, seen)) if seen & regs::DDTP_BUSY != 0 => {
+                return Err(("ddtp busy", Failure::Pending));
+            }
             // 其余回读 = 不认识的现场：保留并报不可用（不冒充已停）。
-            Err((_, _)) => return Err(Failure::Unavailable),
+            Err((_, _)) => return Err(("ddtp handshake", Failure::Unavailable)),
         };
         if stopped & regs::DDTP_BUSY != 0 {
-            return Err(Failure::Pending);
+            return Err(("ddtp still busy", Failure::Pending));
         }
         if stopped & 0xF != regs::DDTP_MODE_OFF {
-            return Err(Failure::Unavailable);
+            return Err(("ddtp not off", Failure::Unavailable));
         }
         // ② 改动全局可见之后才失效；③ 用完成记录作“前序命令已完”的凭据。
         //    队列从未立过（发布早就失败）就没有在途命令，两步都跳过。
@@ -104,7 +123,7 @@ impl IommuPlatform {
             order::sync();
             self.queue.invalidate_all();
             if !self.queue.fence() {
-                return Err(Failure::Pending);
+                return Err(("fence incomplete", Failure::Pending));
             }
         }
         // ④ 端点侧排空：清 bus-master 并回读确认——端点不再有发起内存请求的授权。
@@ -112,7 +131,7 @@ impl IommuPlatform {
             let scan = Ecam::new(endpoint.ecam, endpoint.requester);
             scan.command_and(ecam::COMMAND_MASTER);
             if scan.read16(ecam::COMMAND) & ecam::COMMAND_MASTER != 0 {
-                return Err(Failure::Unavailable);
+                return Err(("endpoint bus-master", Failure::Unavailable));
             }
         }
         // ⑤ 两台立过的队列各自停（on 落了、busy 也清了）；页请求队列若开着 = fail
@@ -121,17 +140,19 @@ impl IommuPlatform {
         if commands_up || faults_up {
             let (commands, faults) = self.queue.disable();
             if !queue::quiet(commands, regs::QUEUE_ON) || !queue::quiet(faults, regs::QUEUE_ON) {
-                return Err(Failure::Pending);
+                return Err(("queues not quiet", Failure::Pending));
             }
         }
         let (commands, faults) = self.queue.status();
         let page_request = regs::read32(self.base, regs::PQCSR);
-        if page_request & (regs::QUEUE_ENABLE | regs::QUEUE_ON) != 0
-            || queue::command_error(commands)
-            || queue::queue_error(faults)
-            || queue::queue_error(page_request)
-        {
-            return Err(Failure::Unavailable);
+        if page_request & (regs::QUEUE_ENABLE | regs::QUEUE_ON) != 0 {
+            return Err(("page request queue active", Failure::Unavailable));
+        }
+        if queue::command_error(commands) || queue::queue_error(faults) {
+            return Err(("queue error bit", Failure::Unavailable));
+        }
+        if queue::queue_error(page_request) {
+            return Err(("page queue error bit", Failure::Unavailable));
         }
         Ok(())
     }
