@@ -450,6 +450,9 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     # 并在平台第一次回 `Pending` 时留着保留、不重启，恢复真确认后才释放。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
     mut want = [
+      # 发起权是显式的一步：落位之后回读 0x0，翻译入口确认之后才置上 0x4。
+      "^system-dma: endpoint configured requester=[0-9]+ bar=0x[0-9a-f]+ master=0x0$"
+      "^system-dma: endpoint bus-master=0x4 granted=true$"
       "^system-dma: served used=[1-9].*written_ok=true sector_ok=true"
       # 承重那一格：每一个字段都钉死。把平台 stop 换成空实现，这几格就回不到 0。
       "^system-dma: confirmed and released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true$"
@@ -477,8 +480,8 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     # 起手受控失败那两景：System 在一个**明确的点**上停一次（受控注入，不是硬件自然
     # 超时），主动把子任务收进死亡路径、把范围关成 `Fault`。要看到的是：子任务没留
     # 活僵尸、登记过的范围真被关掉（结果按真实报），且两档之间设备那一侧的现场截然
-    # 不同——发布之前失败 = 设备从来没被接上（bus-master 还在、stopped=false）；
-    # 发布之后失败 = 平台真把设备停了才释放（stopped=true）。
+    # 不同——发布之前失败 = **从未授权**（没有 `granted=true` 那一行、`master` 回读 0x0）；
+    # 发布之后失败 = **授权过、由平台整条停机链收回**（`granted=true` 在、`master` 回 0x0）。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
     mut want = [
       "^system-dma: startup failed, child reclaimed$"
@@ -488,30 +491,31 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     if $scene == "iommu-product-start-before" {
       $want = ($want | append [
         "^system-dma: startup fault injected before publish$"
-        # 发布之前失败：停机链不会跑，回退自己撤掉端点发起权限并按同一形状回读。
-        "^system-dma: startup failed, endpoint bus-master=0x0$"
+        # 发布之前失败：从未授权，落位之后回读就是 0x0。
+        "^system-dma: endpoint configured requester=[0-9]+ bar=0x[0-9a-f]+ master=0x0$"
         # 范围已登记、可达标记还没点：关成 `Fault` 真发生了（`close=Ok(())`，结果按真实报）。
         "^system-dma: startup failed, range close=Ok.*$"
         "^system-dma: startup failure settled ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true$"
       ])
+      # 反向：这一档从未授权，授权那一行不许出现。
+      let granted = (
+        $console
+        | where {|line| $line =~ "^system-dma: endpoint bus-master=0x4 granted=true$" }
+        | length
+      )
+      if $granted != 0 {
+        print "本景未按预期收口：发布之前不该出现授权那一行"
+        $code = 1
+      }
     } else {
       $want = ($want | append [
         "^system-dma: startup fault injected after publish$"
+        # 授权确实发生过：后面 `master` 回 0x0 才是平台收回的，而不是从没给过。
+        "^system-dma: endpoint bus-master=0x4 granted=true$"
         # 范围已登记且已发布：关成 `Fault` 之后平台必须真把设备停了才算完。
         "^system-dma: startup failed, range close=Ok.*$"
         "^system-dma: startup failure settled ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true$"
       ])
-      # 已发布那一档走的是平台整条停机链，**不许**用清 bus-master 冒充排空：
-      # 回退自己那一步（只有发布之前那一档才会打的那一行）在这里必须不出现。
-      let forged = (
-        $console
-        | where {|line| $line =~ "^system-dma: startup failed, endpoint bus-master=" }
-        | length
-      )
-      if $forged != 0 {
-        print "本景未按预期收口：发布之后不该出现回退自己撤 bus-master 的那一行"
-        $code = 1
-      }
     }
     for $pattern in $want {
       if ($console | where {|line| $line =~ $pattern } | is-empty) {

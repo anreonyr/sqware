@@ -15,6 +15,8 @@ pub(super) enum Start {
     Fence,
     /// 编程 `DDTP` 到 1LVL 并回读确认。
     Ddtp,
+    /// 置上 bus-master 并回读确认。
+    Master,
     /// 武装完了，等交付坐标、放开服务。
     Armed,
     /// 服务已放开，这一轮在跑。

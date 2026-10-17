@@ -150,7 +150,7 @@ pub fn acceptance() {
     note(&format!(
         "iommu-dma: endpoint requester={requester} bar={bar_index} probe={probe:?}"
     ));
-    let endpoint = Endpoint::claim(&scan, bar_index, (APERTURE_BASE, APERTURE_SIZE))
+    let endpoint = Endpoint::configure(&scan, bar_index, (APERTURE_BASE, APERTURE_SIZE))
         .unwrap_or_else(|fail| panic!("{fail}"));
     note(&format!(
         "iommu-dma: endpoint address={:#x} size={:#x} window={:#x}..{:#x}",
@@ -220,6 +220,8 @@ pub fn acceptance() {
     order::sync();
     let programmed = regs::ddtp_set(base, regs::DDTP_MODE_1LVL, Some(pages.physical(DDT)))
         .unwrap_or_else(|(name, seen)| panic!("{name}: ddtp={seen:#x}"));
+    // 翻译入口已确认，此刻才给发起权。
+    endpoint.grant_master();
 
     // ⑦ 第一轮：控制者摆好（头 / 描述符 / 可用环），再放开服务——设备那一半由它做。
     fill(&pages, DATA, 0);
@@ -285,8 +287,9 @@ pub fn acceptance() {
     // 设备那一次尝试被 IOMMU 拒的那条记录：`ctx` 拉不出来时由 `riscv_iommu_ctx` 自己写
     // （与控制器自己的调试口读是两条路），故这一读必须排在 `translate` 之前。
     let (refusals, refusal_cause, refusal_did, refusal_ttype) = queues.faults();
+    let master = endpoint.master();
     note(&format!(
-        "iommu-dma: ddtp_off={stopped:#x} fenced_before_off={fenced_before_off} idle={idle} refusals={refusals} refusal_cause={refusal_cause} refusal_did={refusal_did} refusal_ttype={refusal_ttype}",
+        "iommu-dma: ddtp_off={stopped:#x} fenced_before_off={fenced_before_off} idle={idle} master={master:#x} refusals={refusals} refusal_cause={refusal_cause} refusal_did={refusal_did} refusal_ttype={refusal_ttype}",
     ));
     let refused_device =
         refusal_cause == regs::DMA_DISABLED as u32 && refusal_did == endpoint.requester() as u32;
@@ -309,7 +312,7 @@ pub fn acceptance() {
         || queue::queue_error(fault_csr)
         || queue::queue_error(page_csr);
 
-    let checks: [(&str, bool); 18] = [
+    let checks: [(&str, bool); 19] = [
         (
             "the owner window is exactly one bar",
             bar.view().size() == count * PAGE_SIZE,
@@ -321,10 +324,7 @@ pub fn acceptance() {
         ("command fence completed before publishing", fenced),
         ("debug port maps the retained data page", mapped),
         ("another requester is not translated", split),
-        (
-            "the service observed the completion it rang for",
-            served_ok,
-        ),
+        ("the service observed the completion it rang for", served_ok),
         ("device consumed the descriptor chain", delivered_through),
         ("device wrote the image sector through IOVA", delivered),
         ("blk status is ok", status == BLK_OK),
@@ -334,6 +334,10 @@ pub fn acceptance() {
         (
             "the device attempt after the death was refused",
             refused_device,
+        ),
+        (
+            "the endpoint was still authorized when the iommu refused it",
+            endpoint.master() == ecam::COMMAND_MASTER,
         ),
         (
             "the same endpoint could not reach memory",

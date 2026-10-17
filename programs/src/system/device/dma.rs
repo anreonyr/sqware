@@ -134,17 +134,14 @@ pub struct Dma {
     retained: Option<usize>,
     /// 收子任务那两条命令已经发出去了（每帧 `join` 探它落地，不重发）。
     reclaim_sent: bool,
-    /// 端点已经 `claim` 过（那几笔 PCI 配置写下去了：内存空间、bus-master、BAR 落位）。
-    claimed: bool,
-    /// 端点 `COMMAND` 里 bus-master 那一位最近一次**回读**到的值；`Some(0)` = 已确认撤掉。
-    master_seen: Option<u16>,
     pages: Option<Pages>,
     /// 武装那一串用的队列（`setup` 里建好，一帧推一格）。
     queues: Option<CommandQueue>,
     /// 当前那一格等硬件的期限（跨帧保留）。
     handshake: Option<Handshake>,
     caps: Option<Caps>,
-    requester: u16,
+    /// 已经配置好的那一台端点。
+    endpoint: Option<Endpoint>,
     service: Option<TaskId>,
     /// 服务那一 Team（收工时按 Team 收，与 `ruin` 同一条路）。
     team: Option<env::TeamId>,
@@ -196,13 +193,11 @@ impl Dma {
             published: false,
             retained: None,
             reclaim_sent: false,
-            claimed: false,
-            master_seen: None,
             pages: None,
             queues: None,
             handshake: None,
             caps: None,
-            requester: 0,
+            endpoint: None,
             service: None,
             team: None,
             window: PieToken::NONE,
@@ -276,7 +271,6 @@ impl Dma {
     /// 结清；**发布之后**失败 = 停机凭据归平台，`pages` 也要留到 `settle` 确认之后才还。
     /// 两档都归 `settle`——那里才是“最后一次读 MMIO”之后（见 [`Dma::finish`]）。
     fn rollback(&mut self, supplies: &mut Supplies) {
-        self.revoke_authority();
         self.reclaim();
         if let Some(range) = self.range {
             if !self.attached {
@@ -289,36 +283,6 @@ impl Dma {
                 ));
             }
         }
-    }
-
-    /// 发布之前失败：设备从来没可达过，停机链（平台）不会跑，故这里**自己**撤掉端点的
-    /// 发起权限——清 ECAM 的 bus-master 并按平台收口那一步的**同一形状**回读（写后真读一次，
-    /// 拿到的就是撤没撤掉的现场）。
-    ///
-    /// **只在发布之前这一档做**：发布过的那一档归平台整条停机链，不用清 master 冒充排空。
-    /// 回读不是 0 就一直留着（`master_seen` 不是 `Some(0)`），`settle` 不会因此收尾：
-    /// 没确认不提早丢责任。
-    fn revoke_authority(&mut self) {
-        if self.published || !self.claimed {
-            return;
-        }
-        let Some(ecam) = self.ecam.as_ref() else {
-            return;
-        };
-        let scan = Ecam::new(ecam.view().base(), self.requester);
-        scan.command_and(ecam::COMMAND_MASTER);
-        let master = scan.read16(ecam::COMMAND) & ecam::COMMAND_MASTER;
-        if self.master_seen != Some(master) {
-            self.master_seen = Some(master);
-            self.say(&alloc::format!(
-                "system-dma: startup failed, endpoint bus-master={master:#x}"
-            ));
-        }
-    }
-
-    /// 端点发起权限已经确认撤掉（或本来就没给过），否则就归平台那条停机链去确认。
-    fn authority_clear(&self) -> bool {
-        self.published || !self.claimed || self.master_seen == Some(0)
     }
 
     /// 收子任务：`doom` ＋ `slay_team` **只发一次**，两个结果原样报出来；之后每帧
@@ -350,12 +314,13 @@ impl Dma {
     }
 
     /// 本域对设备那几段图的**最后一次访问**已经过完：显式把寄存器 / ECAM / BAR 三段图关掉，
-    /// 并把 `range` 放掉——之后 `settle` 再进来就不会再读 MMIO（`range` 为 `None` 直接 `Done`）。
+    /// 并把 `range` 与 `endpoint` 放掉——之后 `settle` 再进来就不会再读 MMIO（`range` 为 `None` 直接 `Done`）。
     ///
     /// 现在才关是因为平台对象只持本域地址（`usize`），而 `settle` 的停机现场要从这三段读；
     /// 图一关再读就是悬空。
     fn finish(&mut self) {
         self.range = None;
+        self.endpoint = None;
         if let Some(dock) = self.iommu.take() {
             let _ = dock.shut();
         }
@@ -374,7 +339,9 @@ impl Dma {
                 self.setup(loader, supplies)?;
                 Ok(Stage::Continue)
             }
-            Start::Faults | Start::Commands | Start::Fence | Start::Ddtp => self.arm(),
+            Start::Faults | Start::Commands | Start::Fence | Start::Ddtp | Start::Master => {
+                self.arm()
+            }
             Start::Armed => {
                 // 受控注入（只这一景）：发布与武装都过了、交付之前停一次。
                 if self.path == Path::StartupAfterPublish {
@@ -434,11 +401,16 @@ impl Dma {
         let scan = Ecam::new(ecam_base, requester);
         let (bar_index, caps) = Caps::read(&scan).map_err(|_| Failure::Unavailable)?;
         let endpoint =
-            Endpoint::claim(&scan, bar_index, (APERTURE_BASE, APERTURE_SIZE)).map_err(fail)?;
-        self.requester = endpoint.requester();
+            Endpoint::configure(&scan, bar_index, (APERTURE_BASE, APERTURE_SIZE)).map_err(fail)?;
+        // 落位之后立刻回读：`configure` 不动 bus-master，此刻必须还是 0。
+        let master = endpoint.master();
+        self.say(&alloc::format!(
+            "system-dma: endpoint configured requester={} bar={:#x} master={master:#x}",
+            endpoint.requester(),
+            endpoint.address(),
+        ));
+        self.endpoint = Some(endpoint);
         self.caps = Some(caps);
-        // 到这里那几笔 PCI 配置已经写下（内存空间、bus-master、BAR 落位）：失败回退要认账。
-        self.claimed = true;
         let first = ((endpoint.address() - APERTURE_BASE) / PAGE_SIZE as u64) as usize;
         let pages_in_bar = (endpoint.size() as usize).div_ceil(PAGE_SIZE);
         // 这一轮的范围是**设备能经 IOMMU 到的那一段内存**（不是 BAR 那一段 MMIO）：
@@ -500,8 +472,7 @@ impl Dma {
             range,
             queue,
             Some(EndpointDrain {
-                ecam: ecam_base,
-                requester,
+                endpoint,
                 bar: bar_base,
                 caps,
             }),
@@ -535,7 +506,7 @@ impl Dma {
         supplies.retention.publish_begin(id)?;
         self.published = true;
         let context = DeviceContext::first_stage(pages.physical(ROOT));
-        let requester = self.requester as usize;
+        let requester = endpoint.requester() as usize;
         for (index, word) in context.words().iter().enumerate() {
             pages.put64(DDT, requester * 64 + index * 8, *word);
         }
@@ -585,6 +556,19 @@ impl Dma {
                 let ddt = self.pages.as_ref().ok_or(Failure::Unknown)?.physical(DDT);
                 if !self.programmed(regs::DDTP_MODE_1LVL, ddt)? {
                     return Ok(Stage::Waiting);
+                }
+                self.start = Start::Master;
+                Ok(Stage::Continue)
+            }
+            Start::Master => {
+                let endpoint = self.endpoint.ok_or(Failure::Unknown)?;
+                let master = endpoint.grant_master();
+                let granted = master == ecam::COMMAND_MASTER;
+                self.say(&alloc::format!(
+                    "system-dma: endpoint bus-master={master:#x} granted={granted}"
+                ));
+                if !granted {
+                    return Err(Failure::Unavailable);
                 }
                 self.start = Start::Armed;
                 Ok(Stage::Continue)
@@ -662,6 +646,7 @@ impl Dma {
         )
         .map_err(|_| Failure::Denied)?;
         let seed = root_window.token();
+        let requester = self.endpoint.as_ref().ok_or(Failure::Unknown)?.requester();
         let bar_base = self
             .bar
             .as_ref()
@@ -669,7 +654,7 @@ impl Dma {
             .unwrap_or(0);
         crate::debug::put(&alloc::format!(
             "system-dma: endpoint requester={} bar={bar_base:#x} window={}+{} seed={}",
-            self.requester,
+            requester,
             self.first,
             self.pages_in_bar,
             seed.get(),
@@ -769,11 +754,6 @@ impl Dma {
         // 起手失败那一档：没有正证、也没有“确认后放页”那一格，只报现场。
         // （子任务已由 `rollback` 主动收进死亡路径，范围也已关成 `Fault`。）
         if !self.served {
-            // 发布之前失败那一档：端点发起权限要**先确认撤掉**才收尾（真回读）。
-            // 没确认就留到下一帧接着撤——不提前关图、也不提前放页。
-            if !self.authority_clear() {
-                return Progress::Done;
-            }
             if !self.reported {
                 self.reported = true;
                 self.say(&alloc::format!(
@@ -834,7 +814,7 @@ impl Dma {
                 .unwrap_or(0xFF);
             self.say(&alloc::format!(
                 "system-dma: reset endpoint idle used_moved={moved} sentinel_held={held} status_byte={status} requester={}",
-                self.requester,
+                self.endpoint.map_or(u16::MAX, |endpoint| endpoint.requester()),
             ));
             // 到这里本域对那一段工作内存的**最后一次访问**已经过完：图与匿名来源
             // 可以收 — 归属侧是 System 自己，没有别人的窗口从这里派生过。
@@ -856,14 +836,10 @@ impl Dma {
         let ddtp = regs::read64(self.base, regs::DDTP);
         let cq = regs::read32(self.base, regs::CQCSR);
         let fq = regs::read32(self.base, regs::FQCSR);
-        let master = self
-            .ecam
-            .as_ref()
-            .map(|dock| {
-                Ecam::new(dock.view().base(), self.requester).read16(ecam::COMMAND)
-                    & ecam::COMMAND_MASTER
-            })
-            .unwrap_or(ecam::COMMAND_MASTER);
+        let master = match (self.ecam.as_ref(), self.endpoint.as_ref()) {
+            (Some(_), Some(endpoint)) => endpoint.master(),
+            _ => ecam::COMMAND_MASTER,
+        };
         let (status, enable) = match (self.bar.as_ref(), self.caps) {
             (Some(bar), Some(caps)) => (
                 virtio::status(bar.view().base(), &caps),

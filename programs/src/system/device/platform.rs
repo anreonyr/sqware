@@ -36,7 +36,6 @@ use crate::driver::iommu::{
     queue::{self, CommandQueue},
     regs,
 };
-use crate::driver::pci::ecam::{self, Ecam};
 use crate::driver::pci::virtio;
 use crate::system::supply::retention::{DeviceRange, Failure, Platform};
 
@@ -197,17 +196,13 @@ impl IommuPlatform {
         }
     }
 
-    /// ④ 端点侧不再发起：先清 bus-master（回读确认），再按 virtio 那一手复位设备
-    ///    并回读确认。两者任一没确认就保留——不冒充已停。
-    ///    （这两步证的是“端点不再发起新请求”；已发出的写在途那一档见文件头。）
+    /// ④ 端点侧不再发起：清 bus-master、按 virtio 那一手复位设备，任一没回读确认就保留。
     fn drain(&mut self) -> Step {
-        if let Some(endpoint) = self.endpoint {
-            let scan = Ecam::new(endpoint.ecam, endpoint.requester);
-            scan.command_and(ecam::COMMAND_MASTER);
-            if scan.read16(ecam::COMMAND) & ecam::COMMAND_MASTER != 0 {
+        if let Some(drain) = self.endpoint {
+            if drain.endpoint.revoke_master() != 0 {
                 return Step::Failed;
             }
-            if !virtio::reset(endpoint.bar, &endpoint.caps) {
+            if !virtio::reset(drain.bar, &drain.caps) {
                 return Step::Failed;
             }
         }

@@ -5,6 +5,7 @@
 //! 本层只说「哪一格、几字节、怎么量」，不说设备是什么（那是 `endpoint` 那一层）。
 
 /// ECAM 段 ＋ 段内**一个功能**：那一个号（`requester`）同时是配置空间的坐标与 IOMMU 的设备号。
+#[derive(Clone, Copy)]
 pub struct Ecam {
     base: usize,
     requester: u16,

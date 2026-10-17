@@ -1,13 +1,12 @@
-//! 端点侧那一条收口要的四样。
+//! 端点侧收口要的三样。
 
+use crate::driver::pci::endpoint::Endpoint;
 use crate::driver::pci::virtio::Caps;
 
-/// 端点侧那一条收口要的四样：ECAM 段起址与功能号（清 bus-master），
-/// 以及那一根 BAR 的本域基址与能力表（按 virtio 那一手复位并回读确认）。
+/// 端点侧收口要的三样：已配置的端点（清 bus-master），BAR 的本域基址与能力表（复位并回读）。
 #[derive(Clone, Copy)]
 pub struct EndpointDrain {
-    pub ecam: usize,
-    pub requester: u16,
+    pub endpoint: Endpoint,
     pub bar: usize,
     pub caps: Caps,
 }
