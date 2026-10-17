@@ -1,16 +1,23 @@
-//! 真实 RISC-V IOMMU（`riscv-iommu-sys`）的寄存器段：本域取设备区 → 建 DDT / DC / Sv39 表 / 队列
-//! → 编程 → 硬件按我们写下的表翻译一次（正证）→ 拆除时 **DDTP Off 与三个队列 on/busy 分别确认**
-//! → 同一 requester 与同一 IOVA 再译一次必须被拒（隔离负证）。
+//! 真实 RISC-V IOMMU（`riscv-iommu-sys`）那两景共用的一片：寄存器格、设备上下文、
+//! Sv39 表、命令/故障队列，以及把一台 PCI 端点接上来的那三个模块。
 //!
-//! 证据都是寄存器读数：CAP 与复位 DDTP 的原值、编程后 DDTP 的回读、队列 CSR 的活动/忙位、
-//! IOFENCE.C 写下的完成记录、以及调试翻译口报回的物理页号。
-//! 端点真 DMA、产品 System 的 `Platform` 安装与跨主体 BAR 窗口不在本景。
+//! `iommu-probe`：本域取设备区 → 建 DDT / DC / Sv39 表 / 队列 → 编程 → 硬件按我们写下的表
+//! 翻译一次（正证）→ 拆除时 **DDTP Off 与队列 on/busy 分别确认** → 同一 requester 与同一 IOVA
+//! 再译一次必须被拒（隔离负证）。
+//!
+//! `iommu-dma`：同一片寄存器路径 ＋ 一台**真实 PCI 端点**（`virtio-blk-pci`）——
+//! ECAM 发现、BAR 落位、精确 BAR 交给驱动，再让端点按 IOVA 真写内存。
 
 mod context;
+pub mod dma;
+mod ecam;
+mod endpoint;
+mod order;
 mod pages;
 mod queue;
 mod regs;
 mod table;
+mod virtio;
 
 use alloc::format;
 
@@ -75,7 +82,8 @@ pub fn acceptance() {
         // SAFETY: DDT 页是本域刚取的可写页，DC 项按 64 字节排。
         unsafe { core::ptr::write_volatile(at, *word) };
     }
-    table::map(&pages, ROOT, MIDDLE, LEAF, IOVA, data);
+    table::map_pages(&pages, ROOT, MIDDLE, LEAF, IOVA, DATA, 1)
+        .unwrap_or_else(|fail| panic!("iommu-probe: {fail}"));
     note(&format!(
         "iommu-probe: ddt={:#x} root={:#x} commands={:#x} faults={:#x} fence={:#x} data={:#x} iova={IOVA:#x}",
         pages.physical(DDT),
@@ -91,11 +99,12 @@ pub fn acceptance() {
         .enable()
         .unwrap_or_else(|fail| panic!("iommu-probe: {fail}"));
 
-    // ③ 把设备目录表接上：一级 DDT + 回读确认。
-    let ddtp = regs::DDTP_MODE_1LVL | (regs::page_number(pages.physical(DDT)) << regs::PPN_SHIFT);
-    regs::write64(base, regs::DDTP, ddtp);
-    let programmed = regs::read64(base, regs::DDTP);
-    let ddtp_on = programmed & 0xF == regs::DDTP_MODE_1LVL && programmed & regs::DDTP_BUSY == 0;
+    // ③ 把设备目录表接上：一级 DDT ＋ 规范那一手（写 → 轮询 busy 落 → 回读校验 mode）。
+    let ddtp = match regs::ddtp_set(base, regs::DDTP_MODE_1LVL, Some(pages.physical(DDT))) {
+        Ok(seen) => (seen, true),
+        Err((_, seen)) => (seen, false),
+    };
+    let (programmed, ddtp_on) = ddtp;
 
     // ④ 队列仍开着时才能等到完成记录：先失效旧翻译，再让硬件写下完成数。
     queues.invalidate_all();
@@ -106,9 +115,9 @@ pub fn acceptance() {
 
     // ⑤ 正证：让硬件按我们写下的 DDT / DC / Sv39 表走一遍，报回物理页号。
     let translated = translate(base);
-    let (faults, cause) = queues.faults();
+    let (faults, cause, did, ttype) = queues.faults();
     note(&format!(
-        "iommu-probe: ddtp_on={ddtp_on} ddtp={programmed:#x} fenced={fenced} cqh={command_head} fqh={fault_head} cqcsr={command_csr_after:#x} fqcsr={fault_csr_after:#x} cqb={command_base:#x} fqb={fault_base:#x} response={translated:#x} faults={faults} cause={cause}",
+        "iommu-probe: ddtp_on={ddtp_on} ddtp={programmed:#x} fenced={fenced} cqh={command_head} fqh={fault_head} cqcsr={command_csr_after:#x} fqcsr={fault_csr_after:#x} cqb={command_base:#x} fqb={fault_base:#x} response={translated:#x} faults={faults} cause={cause} did={did} ttype={ttype}",
     ));
     let mapped = translated & regs::TR_FAULT == 0
         && (translated & regs::TR_PPN_FIELD) == (regs::page_number(data) << regs::PPN_SHIFT);
@@ -117,8 +126,10 @@ pub fn acceptance() {
 
     // ⑥ 拆除：DDTP Off 与两个**已启用**的队列各自确认。
     // 页请求队列本景从未启用（没有 ATS 请求），故不写它、也不把它当“停过”的证。
-    regs::write64(base, regs::DDTP, regs::DDTP_MODE_OFF);
-    let stopped = regs::read64(base, regs::DDTP);
+    let stopped = match regs::ddtp_set(base, regs::DDTP_MODE_OFF, None) {
+        Ok(seen) => seen,
+        Err((_, seen)) => seen,
+    };
     let (command_csr, fault_csr) = queues.disable();
     drop(queues);
     let page_csr = regs::read32(base, regs::PQCSR);
@@ -136,8 +147,7 @@ pub fn acceptance() {
     note(&format!(
         "iommu-probe: ddtp_off={stopped:#x} cqcsr={command_csr:#x} fqcsr={fault_csr:#x} pqcsr={page_csr:#x} isolated_response={denied:#x}",
     ));
-    let refused = denied & regs::TR_FAULT != 0
-        && (denied & regs::TR_PPN_FIELD) >> regs::PPN_SHIFT == regs::DMA_DISABLED;
+    let refused = denied & regs::TR_FAULT != 0 && regs::cause(denied) == regs::DMA_DISABLED;
 
     pages
         .close()
@@ -168,10 +178,7 @@ pub fn acceptance() {
 
 /// 让硬件按当前 DDT / DC / 页表翻一次 `IOVA`，返回响应寄存器的原值。
 fn translate(base: usize) -> u64 {
-    regs::write64(base, regs::TR_REQ_IOVA, IOVA as u64);
-    let control = regs::TR_GO | regs::TR_NW | ((DEVICE_ID as u64) << regs::TR_DID_SHIFT);
-    regs::write64(base, regs::TR_REQ_CTL, control);
-    regs::read64(base, regs::TR_RESPONSE)
+    regs::translate(base, DEVICE_ID, IOVA, false)
 }
 
 fn note(message: &str) {

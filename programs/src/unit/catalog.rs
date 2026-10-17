@@ -28,6 +28,8 @@ pub mod guest;
 pub mod hang;
 #[path = "../service/hub/program.rs"]
 pub mod hub;
+#[path = "../harness/probe/iommu/dma/program.rs"]
+pub mod iommu_dma;
 #[path = "../harness/probe/iommu/program.rs"]
 pub mod iommu_probe;
 #[path = "../harness/bench/load/load/program.rs"]
@@ -146,8 +148,11 @@ pub const PROGRAMS: &[&UnitFile] = &[
     // fresh 失败回退那一景：同样**一台**（supervisor 引导镜像＝控制者），
     // 两阶段的读者都是它同 Team 里真起的任务。
     &memory_transfer_fresh::PROGRAM,
-    // 真实 RISC-V IOMMU 那一景：**一台**（supervisor 引导镜像＝控制者），
-    // 从引导账取设备区、建 DDT/DC/Sv39 表与队列，编程后由硬件翻一次并回读物理页号。
+    // 真实 RISC-V IOMMU 那两景：各**一台**（supervisor 引导镜像＝控制者）。
+    // `iommu-probe` 从引导账取设备区、建 DDT/DC/Sv39 表与队列，编程后由硬件翻一次并回读物理页号；
+    // `iommu-dma` 则多一台**真实 PCI 端点**（`virtio-blk-pci`）：ECAM 发现、精确 BAR 交付、
+    // 按 IOVA 真读一轮，再隔离之后重试同一段。
+    &iommu_dma::PROGRAM,
     &iommu_probe::PROGRAM,
     &probe_owner::PROBE_OWNER,
     &probe_rule::PROBE_RULE,

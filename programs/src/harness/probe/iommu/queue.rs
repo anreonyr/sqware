@@ -2,6 +2,10 @@
 //!
 //! 队列是同步推进的（尾一写就处理），故「提交」= 写尾 + 等完成记录；
 //! 完成记录那一页是硬件自己写的存储，它出现在保留窗里，且它是**在队列仍开着时**才能到的。
+//!
+//! 两台队列的开关都走规范那一手（同 Linux `iommu/riscv/iommu.c` 的
+//! `riscv_iommu_queue_enable`/`_disable`）：写 CSR → **有界轮询到 busy 落** → 校验活动位。
+//! 写后单次读不算走完协议。
 
 use super::pages::Pages;
 use super::regs;
@@ -55,32 +59,53 @@ impl<'a> CommandQueue<'a> {
         }
     }
 
-    /// 开两个队列：先故障队列（故障得有地方记），再命令队列；各自确认「活动且不忙」。
+    /// 开两个队列：先故障队列（故障得有地方记），再命令队列。
+    ///
+    /// 每一台都走完协议：写 `ENABLE|MEM_FAULT`（顺手清掉粘住的内存故障位）→ 轮询到 busy 落
+    /// → 校验 `ON` 真的立起来。**不开**中断位（本景轮询，没有 IOMMU 的中断向量）。
     pub fn enable(&mut self) -> Result<(), &'static str> {
         let faults =
             (regs::page_number(self.pages.physical(self.faults)) << regs::PPN_SHIFT) | FAULT_LOG2SZ;
         regs::write64(self.base, regs::FQB, faults);
-        regs::write32(self.base, regs::FQCSR, regs::QUEUE_ENABLE);
-        if !active(regs::read32(self.base, regs::FQCSR), regs::QUEUE_ON) {
-            return Err("iommu-probe: fault queue did not come up");
+        let seen = self.raise(regs::FQCSR);
+        if !active(seen, regs::QUEUE_ON) || seen & regs::QUEUE_MEM_FAULT != 0 {
+            return Err("iommu: fault queue did not come up");
         }
         let commands = (regs::page_number(self.pages.physical(self.commands)) << regs::PPN_SHIFT)
             | COMMAND_LOG2SZ;
         regs::write64(self.base, regs::CQB, commands);
-        regs::write32(self.base, regs::CQCSR, regs::QUEUE_ENABLE);
-        if !active(regs::read32(self.base, regs::CQCSR), regs::QUEUE_ON) {
-            return Err("iommu-probe: command queue did not come up");
+        let seen = self.raise(regs::CQCSR);
+        if !active(seen, regs::QUEUE_ON) || seen & regs::QUEUE_MEM_FAULT != 0 {
+            return Err("iommu: command queue did not come up");
         }
         Ok(())
     }
 
-    /// 撤下两个队列，返回写完之后各自的真实读数（判定在外面，现场带数）。
+    /// 落两个队列（先命令、后故障）：写 0 → 轮询到 busy 落；返最后那一刻的真实读数。
+    ///
+    /// 「停」与「忙已清」仍然是两件事，故判定在外面（要的是各自那一对读数）。
     pub fn disable(&mut self) -> (u32, u32) {
-        regs::write32(self.base, regs::CQCSR, 0);
-        let commands = regs::read32(self.base, regs::CQCSR);
-        regs::write32(self.base, regs::FQCSR, 0);
-        let faults = regs::read32(self.base, regs::FQCSR);
+        let commands = self.lower(regs::CQCSR);
+        let faults = self.lower(regs::FQCSR);
         (commands, faults)
+    }
+
+    /// 抬一台队列并等它真的立起来：写 `ENABLE|MEM_FAULT`（清粘住的故障），轮询 busy 落。
+    fn raise(&self, csr: usize) -> u32 {
+        regs::write32(self.base, csr, regs::QUEUE_ENABLE | regs::QUEUE_MEM_FAULT);
+        poll(
+            || regs::read32(self.base, csr),
+            |seen| seen & regs::QUEUE_BUSY == 0,
+        )
+    }
+
+    /// 落一台队列并等它真的停下来（同样有界）。
+    fn lower(&self, csr: usize) -> u32 {
+        regs::write32(self.base, csr, 0);
+        poll(
+            || regs::read32(self.base, csr),
+            |seen| seen & regs::QUEUE_BUSY == 0,
+        )
     }
 
     /// 让这个 IOMMU 忘掉此前翻译出来的那些项。
@@ -128,17 +153,25 @@ impl<'a> CommandQueue<'a> {
         )
     }
 
-    /// 硬件记下的故障条数与最近一条的原因码（0 = 没有故障）。
-    pub fn faults(&self) -> (u32, u32) {
+    /// 硬件记下的故障条数与最近一条的 `(cause, devid, ttype)`（0 条时报全 0）。
+    ///
+    /// 一条 32 字节记录的头 8 字节：cause[11:0] / pid[31:12] / pv[32] /
+    /// ttype[39:34] / **did[63:40]** —— 谁被拒、拒在哪一步，都在这一个数里。
+    pub fn faults(&self) -> (u32, u32, u32, u32) {
         let count = regs::read32(self.base, regs::FQT) & (FAULT_ENTRIES - 1);
         if count == 0 {
-            return (0, 0);
+            return (0, 0, 0, 0);
         }
         let slot = ((count - 1) % FAULT_ENTRIES) as usize * FAULT_BYTES;
         // SAFETY: 故障队列页是本域刚取的可写页，记录按 32 字节排。
         let header =
             unsafe { core::ptr::read_volatile(self.pages.at(self.faults, slot) as *const u64) };
-        (count, (header & 0xFFF) as u32)
+        (
+            count,
+            (header & 0xFFF) as u32,
+            (header >> 40) as u32,
+            ((header >> 34) & 0x3F) as u32,
+        )
     }
 
     fn submit(&mut self, dword0: u64, dword1: u64) {
@@ -150,8 +183,21 @@ impl<'a> CommandQueue<'a> {
             core::ptr::write_volatile(at.add(1), dword1);
         }
         self.tail = self.tail.wrapping_add(1);
+        // 命令字与门铃之间要显式有序：设备那一侧才看得见刚写下那一项。
+        super::order::sync();
         regs::write32(self.base, regs::CQT, self.tail);
     }
+}
+
+/// 有界轮询一台队列 CSR 直到 `done`（返最后那一刻的读数；到期限就把它原样交出去）。
+fn poll(mut read: impl FnMut() -> u32, done: impl Fn(u32) -> bool) -> u32 {
+    let mut seen = read();
+    let mut left = POLL_LIMIT;
+    while !done(seen) && left > 0 {
+        seen = read();
+        left -= 1;
+    }
+    seen
 }
 
 /// 队列已活动且不忙。

@@ -39,6 +39,7 @@ pub const QUEUE_CMD_ILL: u32 = 1 << 10;
 
 /// `DDTP.mode`：Off = 设备访存不翻译（隔离态）；1LVL = 一级设备目录表。
 pub const DDTP_MODE_OFF: u64 = 0;
+pub const DDTP_MODE_BARE: u64 = 1;
 pub const DDTP_MODE_1LVL: u64 = 2;
 pub const DDTP_BUSY: u64 = 1 << 4;
 
@@ -56,6 +57,27 @@ pub const TR_PPN_FIELD: u64 = ((1u64 << 44) - 1) << 10;
 /// `TR_RESPONSE` 在 FAULT 置起时，原因码落在 ppn 那几格（`riscv_iommu_process_dbg`）。
 /// 256 = `DMA_DISABLED`：这台设备此刻不被翻译。
 pub const DMA_DISABLED: u64 = 256;
+
+/// 响应寄存器里的原因码（只有 FAULT 置起时才有意义）。
+pub fn cause(response: u64) -> u64 {
+    (response & TR_PPN_FIELD) >> PPN_SHIFT
+}
+
+/// 让硬件按**当前**表翻一次 `iova`（调试口那三格），返响应寄存器原值。
+///
+/// `device` 是 requester id（DID 那一格）；`write` = 这次请求是写访问
+/// （读访问置 `TR_NW`）。调试口走的是与设备访存**同一条**翻译路
+/// （`riscv_iommu_process_dbg` → `riscv_iommu_translate`），故它对“这台设备能不能翻”
+/// 说的话与设备那一侧同一件事。
+pub fn translate(base: usize, device: u32, iova: usize, write: bool) -> u64 {
+    write64(base, TR_REQ_IOVA, iova as u64);
+    let mut control = TR_GO | ((device as u64) << TR_DID_SHIFT);
+    if !write {
+        control |= TR_NW;
+    }
+    write64(base, TR_REQ_CTL, control);
+    read64(base, TR_RESPONSE)
+}
 
 pub fn read32(base: usize, at: usize) -> u32 {
     // SAFETY: `base` 是一段已授权、已映射的设备寄存器窗口，`at` 是表内的对齐偏移。
@@ -80,4 +102,35 @@ pub fn write64(base: usize, at: usize, value: u64) {
 /// 基址格里的页号：物理页起址右移一页。
 pub fn page_number(physical: usize) -> u64 {
     (physical as u64 >> 12) & (PPN_FIELD >> PPN_SHIFT)
+}
+
+/// 有界轮询：写完之后等硬件把 `BUSY` 落下去。
+///
+/// 与 Linux `iommu/riscv/iommu.c` 同一条口径（`RISCV_IOMMU_DDTP_TIMEOUT`）：
+/// 写下去还要轮询到 busy 落，写后单次读不算走完协议。
+const POLL_LIMIT: usize = 10_000_000;
+
+/// 换 `DDTP`：`mode` 与（`xLVL` 时的）根表页号，按规范那一手走完——
+/// 写 → 有界轮询到 busy 落 → 回读校验 mode 真的是要的那一档。
+///
+/// 返最后那一刻的真实读数（失败现场也要有数）。
+pub fn ddtp_set(base: usize, mode: u64, root: Option<usize>) -> Result<u64, (&'static str, u64)> {
+    if mode > DDTP_MODE_BARE && root.is_none() {
+        return Err(("iommu: ddtp root", 0));
+    }
+    let mut value = mode;
+    if let Some(root) = root {
+        value |= page_number(root) << PPN_SHIFT;
+    }
+    write64(base, DDTP, value);
+    let mut seen = read64(base, DDTP);
+    let mut left = POLL_LIMIT;
+    while seen & DDTP_BUSY != 0 && left > 0 {
+        seen = read64(base, DDTP);
+        left -= 1;
+    }
+    if seen & DDTP_BUSY != 0 || seen & 0xF != mode {
+        return Err(("iommu: ddtp handshake", seen));
+    }
+    Ok(seen)
 }

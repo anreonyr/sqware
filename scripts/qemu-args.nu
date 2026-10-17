@@ -31,7 +31,7 @@
 # `--serial <后端>` = 换掉串口那一格（默认 `stdio`）。整机用例要把串口搬到一条**能喂输入**
 # 的通道上（`cargo-qtest` 把 QEMU 的 stdin 钉成 null），见 [`qtest.nu`](qtest.nu) 的头注；
 # **串口这一格因此只有一个出处**——`-serial` 不是"后者胜"，写两次会多出一枚串口（实测踩过）。
-export def args [elf?: path, --board-only, --serial: string, --iommu] {
+export def args [elf?: path, --board-only, --serial: string, --iommu, --endpoint: string] {
   let root = ($env.FILE_PWD | path dirname)
   let elf = if ($elf | is-empty) { null } else { ($elf | path expand) }
   let extra = ($env.QEMU_EXTRA_ARGS? | default "" | split row -r '\s+' | where { |s| $s != "" })
@@ -76,6 +76,25 @@ export def args [elf?: path, --board-only, --serial: string, --iommu] {
   # 已把它挡在设备账外），不占 PCI aperture。
   let machine = if $iommu { "virt,iommu-sys=on" } else { "virt" }
 
+  # 真实 PCI 端点：**只有要它的那一景**才加（`--endpoint <镜像文件>`）。
+  # 它是 `virtio-blk-pci`（不是测具）；盘是调用方给的一张**可再生**的小镜像，
+  # 只读挂上（`readonly=on`）——端点那一景只读它，不会改仓里任何一张真盘。
+  # `iommu_platform=on` 是**那一格的关键**：不上它，QEMU 的 virtio 设备
+  # 拿的是 `address_space_memory`（`virtio_bus_device_plugged` 的那一句默认），
+  # 端点发的地址根本不过 `iommu-map` 指的那台 IOMMU——实测过：不带它时
+  # 一次 `riscv_iommu_dma` 都不出现，端点静默停在读不到可用环那一格。
+  # `disable-legacy=on` 是前面的代价：QEMU 不给过渡态开那两个一起用
+  # （`VIRTIO_F_IOMMU_PLATFORM was supported by neither legacy nor transitional device`），
+  # 而本驱动走的就是 1.x 那套寄存器，传统 I/O BAR 那一格本来也不用。
+  let endpoint = if ($endpoint | is-empty) {
+      []
+  } else {
+      [
+          "-drive" $"file=($endpoint),format=raw,if=none,readonly=on,id=iommu-dma"
+          "-device" "virtio-blk-pci,drive=iommu-dma,iommu_platform=on,disable-legacy=on"
+      ]
+  }
+
   [
     "-machine", $machine
     "-bios", ($root | path join "SBI.bin")
@@ -90,12 +109,13 @@ export def args [elf?: path, --board-only, --serial: string, --iommu] {
     ...$icount_args
     ...$semihosting
     ...$initrd_arg
+    ...$endpoint
     ...$gdb
     ...$extra
   ]
 }
 
 # 给外壳消费者用：一行一个参数（`qtest.nu` 靠它拼 `--qemu-arg=`）。
-def main [elf?: path, --board-only, --serial: string, --iommu] {
-  for a in (args $elf --board-only=$board_only --serial=$serial --iommu=$iommu) { print $a }
+def main [elf?: path, --board-only, --serial: string, --iommu, --endpoint: string] {
+  for a in (args $elf --board-only=$board_only --serial=$serial --iommu=$iommu --endpoint=$endpoint) { print $a }
 }

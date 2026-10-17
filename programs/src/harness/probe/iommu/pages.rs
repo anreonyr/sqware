@@ -61,6 +61,11 @@ impl Pages {
         })
     }
 
+    /// 这一段有多少页。
+    pub fn count(&self) -> usize {
+        self.physical.len()
+    }
+
     /// 第 `index` 页的物理起址（设备要看到的那个数）。
     pub fn physical(&self, index: usize) -> usize {
         self.physical[index] as usize

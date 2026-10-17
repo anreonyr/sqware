@@ -123,6 +123,15 @@ test = false
 bench = false
 doctest = false
 
+# 真实 PCI 端点在 IOMMU 翻译下 DMA 那一景的引导镜像：发现端点、落 BAR、精确交付、真读一轮。
+[[bin]]
+name = "prog-iommu-dma"
+path = "src/harness/probe/iommu/dma/main.rs"
+test = false
+bench = false
+doctest = false
+
+
 [[bin]]
 name = "prog-router"
 path = "src/driver/router/main.rs"

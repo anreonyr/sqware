@@ -209,6 +209,15 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         sources: &[],
     },
     Deployment {
+        name: "iommu-dma",
+        entry: "iommu-dma",
+        start: &[],
+        resources: &[],
+        targets: &[scene_target(&[])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
         name: "rig",
         entry: "rig",
         start: &[],

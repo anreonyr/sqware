@@ -308,7 +308,16 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   } else {
     []
   }
-  let board = (^nu ($script_dir | path join "qemu-args.nu") --board-only ...$iommu_argv ...$serial_argv
+  # 端点那一景的那张盘：**可再生**（每次按同一花纹重建，落在 `<TRACE_OUT>/` 里，
+  # 不进库），且由参数表那边只读挂上。景那一侧按同一花纹核读回的数据，故盘是承重的。
+  let endpoint_argv = if $scene == "iommu-dma" {
+    let disk = ($trapdir | path join "iommu-dma.img")
+    ^python3 -c 'import sys, pathlib; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 4096)' $disk
+    ["--endpoint" $disk]
+  } else {
+    []
+  }
+  let board = (^nu ($script_dir | path join "qemu-args.nu") --board-only ...$iommu_argv ...$serial_argv ...$endpoint_argv
       | lines | where { |l| ($l | str trim) != "" })
   let qemu_args = ($board | each { |a| $"--qemu-arg=($a)" })
   let pkg = if ($package | is-empty) { [] } else { ["--package" $package] }
@@ -425,6 +434,16 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     # 引导那一台报收尾：拆除与隔离判据都在它自己那一侧逐条核过（身子见 `probe/iommu.rs`）。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
     let proof = "^exit tid=[0-9]+ reason=0x0 note: iommu-probe: acceptance passed"
+    if ($console | where {|line| $line =~ $proof } | is-empty) {
+      print $"本景未成功完成：缺少 ($proof)"
+      $code = 1
+    }
+  }
+
+  if $code == 0 and $scene == "iommu-dma" {
+    # 同理：端点那一景的正证与负证都在那一台自己那一侧逐条核过（身子见 `probe/iommu/dma.rs`）。
+    let console = (open --raw $env.QEMU_TEE_LOG | lines)
+    let proof = "^exit tid=[0-9]+ reason=0x0 note: iommu-dma: acceptance passed"
     if ($console | where {|line| $line =~ $proof } | is-empty) {
       print $"本景未成功完成：缺少 ($proof)"
       $code = 1
