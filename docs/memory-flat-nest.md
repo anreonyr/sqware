@@ -1113,6 +1113,13 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 | 负证 | 先 `IOTINVAL` ＋ `IOFENCE.C`（拿到完成记录），再把 `DDTP` 落 Off 并回读确认；同一端点、同一段数据再打一次门铃 → 不再前进（`idle=1`）、哨兵页一字节未动、状态字节未被改写、调试口同一条请求报 `0x40001`（cause 256 = `DMA_DISABLED`） |
 | 收口 | `IOFENCE.C` 再走一遍（队列还活着时它能完成），再按握手停两台队列；确认到位之后才 `close()` 归还保留 |
 
+**两个角色**：设备那一半（配置空间之后的寄存器那一面）归**端点服务**——一台同 Team 的真任务，
+它手里只有一枚精确到一根 BAR 的窗口（自己核 `Open` 长度与交付的页数相等）与几个 IOVA；
+内存那一半（队列/描述符/数据页）与 IOMMU 寄存器归控制者，那是所有者的保留。
+服务在第二轮摆好之后**退场**（不撤队列、不复位设备），于是“服务死时端点还是活的”是真的：
+`ddtp_off` 那一步、以及它之后由**控制者自己那一枚窗口**打的那一次门铃，都不经过任何服务；
+确认（`refusals` 里那条 did=8 的 256 记录 ＋ 哨兵页一字节未动）之后才 `close()` 归还保留。
+
 **QEMU 那两格不上不行的**（都实测过）：`iommu_platform=on` 才让设备的 DMA 走那台 IOMMU——
 `virtio_bus_device_plugged` 默认给的是 `address_space_memory`，不开它时 `riscv_iommu_dma`
 一次都不出现、设备静默停在读不到可用环那一格；`disable-legacy=on` 是它的代价
@@ -1121,17 +1128,20 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 
 **证据**（`nu scripts/qtest.nu --package kernel --scene iommu-dma`，release）：
 `cap=0x78e2cf4f10` / `requester=8 bar=4 probe=Some((16384, true))` / `address=0x400000000` /
-`ddtp=0x23feac02`（1LVL）`capacity=256 used=1 id=0 len=513 status=0 faults=0` /
-`translate=0x23fed800`（＝数据页的页号）`neighbour=0x40001` /
-`ddtp_off=0x0 idle=1 refused=0x40001 refused_cause=256`，末行 `iommu-dma: acceptance passed`。
+`ddtp=0x23ff0002`（1LVL）`queue=256 served=1 used=1 id=0 len=513 status=0 faults=0` /
+`translate=0x23ff2800`（＝数据页的页号）`neighbour=0x40001`；
+服务那一行 `service queue=256 used=1 status=15`（它自己立起队列、打响门铃、看到完成）；
+服务退场之后 `ddtp_off=0x0 fenced_before_off=true idle=1 refusals=8 refusal_cause=256 refusal_did=8 refusal_ttype=3`
+（`refusals` 那几条就是设备在隔离态被拒的真尝试：每次都记一条），
+末行 `iommu-dma: acceptance passed`。
 
 ### 未做（不宣称已完成）
 
 - **产品接线**：`programs/src/system/` 没有安装真实 `Platform`，也没有独立 DMAC 服务，
-  故「服务死亡 → System 不依赖死服务独立隔离」这条路径在产品组合里仍未接上
+  故「服务死亡 → System 不依赖死服务独立隔离」这条路径在**产品组合**里仍未接上
   （PR6 的 `Holds`/`Platform` 机制仍在，但没有真实寄存器实现挂上去）。`iommu-dma` 景里
-  驱动与 System 仍是同一台程序（同一 Team、同一 AS）：窗口那一枚门闩只给驱动那一份，
-  但内存还没分成两个域。
+  这条形状已经真跑过：服务是一台另起的真任务、只持精确 BAR 窗口，它退场之后由控制者独自收口；
+  但那两台同 Team（同一 AS），故内存那一侧还没分成两个域。
 - **供给 / 租约那一层仍不带窗口**：`PrivateRoot::derive` / `RootRequest` / `LeaseRequest`
   与 `resource::capability::Loan::accord` 都还只传权限子集；`env::pie::accord_window`
   在 ABI 上可用，产品那一层的接线仍未做。

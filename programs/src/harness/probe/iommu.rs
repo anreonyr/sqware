@@ -12,10 +12,12 @@ mod context;
 pub mod dma;
 mod ecam;
 mod endpoint;
+mod handoff;
 mod order;
 mod pages;
 mod queue;
 mod regs;
+mod service;
 mod table;
 mod virtio;
 

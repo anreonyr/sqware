@@ -6,15 +6,21 @@
 //! 而且不存在传统 I/O BAR 那一格（本机 PCI 的 I/O 窗口没有门闩）。
 //!
 //! 本层只到“队列立起来、能打响门铃”；块请求（头/数据/状态）在 `dma` 那一层。
+//!
+//! 两段用法各有它的一侧：**驱动那一侧**（`Virtio`）自己发现能力表、把队列立起来；
+//! **发布那一侧**（`ring`）不建驱动——队列与描述符由别人布好，它只做“推一下”那件事。
 
 use super::ecam::{self, Ecam};
 use super::order;
 
-/// 那一张能力表里属 virtio 的四格：BAR 内偏移与通知乘数。
+/// 那一张能力表里属 virtio 的四格：BAR 内偏移与通知乘数（**不含 BAR 号**——
+/// 那是发现那一侧的事，`read` 把它一并交出来）。
 ///
 /// QEMU 把四格都放在同一个 BAR 里（实测 `virtio-blk-pci` 是 BAR4，0/0x1000/0x2000/0x3000）。
+/// 两个入口：`read` 从配置空间发现；`from_parts` 从**已经发现过的**那一组数（跨主体交接时，
+/// 发现方把坐标交给持有 BAR 的那一方）。
+#[derive(Clone, Copy)]
 pub struct Caps {
-    bar: u8,
     common: u32,
     notify: u32,
     multiplier: u32,
@@ -22,12 +28,45 @@ pub struct Caps {
 }
 
 impl Caps {
-    /// 从配置空间的能力链表上把那四格读出来。
+    /// 把“别处已经发现过的那四个数”收进来（本域不重发现）。
+    ///
+    /// `span` = 拿到的那一段有多大：三个区都必须在里面，且**各占一处**（同一段 BAR 里三个结构
+    /// 挤在同一偏移上不是本层认的那张能力表）。偏移本身可以是 0（`common` 实测就在 BAR 头上）。
+    pub const fn from_parts(
+        common: u32,
+        notify: u32,
+        multiplier: u32,
+        device: u32,
+        span: usize,
+    ) -> Option<Self> {
+        if common as usize >= span
+            || notify as usize >= span
+            || device as usize >= span
+            || common == notify
+            || notify == device
+            || common == device
+        {
+            return None;
+        }
+        Some(Self {
+            common,
+            notify,
+            multiplier,
+            device,
+        })
+    }
+
+    /// 那四个数（发现方把它们交出去时用：接收方不重发现，只收下这一组坐标）。
+    pub const fn parts(&self) -> (u32, u32, u32, u32) {
+        (self.common, self.notify, self.multiplier, self.device)
+    }
+
+    /// 从配置空间的能力链表上把那四格读出来（连同它们所在那一根 BAR 的号）。
     ///
     /// 链表从 `CAPABILITY`（0x34）出发，`cap_next` 串联；只认 `cap_vndr = 0x09` 且
-    /// `cap_len ≥ 16` 的项，`cfg_type` 1/2/4 各归各位。缺一不可，四格还必须同一个 BAR
-    /// （本层只会打开一个窗口）。跳数有界，链里绕圈也出得来。
-    pub fn read(ecam: &Ecam) -> Result<Self, &'static str> {
+    /// `cap_len ≥ 16` 的项，`cfg_type` 1/2/4 各归各位。缺一不可（本层只会打开一个窗口）。
+    /// 跳数有界，链里绕圈也出得来。
+    pub fn read(ecam: &Ecam) -> Result<(u8, Self), &'static str> {
         let mut at = ecam.read8(ecam::CAPABILITY) & 0xFC;
         let mut common = None;
         let mut notify = None;
@@ -64,31 +103,27 @@ impl Caps {
             at = next;
         }
         match (bar, common, notify, device) {
-            (Some(bar), Some(common), Some(notify), Some(device)) => Ok(Self {
+            (Some(bar), Some(common), Some(notify), Some(device)) => Ok((
                 bar,
-                common,
-                notify,
-                multiplier,
-                device,
-            }),
+                Self {
+                    common,
+                    notify,
+                    multiplier,
+                    device,
+                },
+            )),
             _ => Err("iommu-dma: virtio caps"),
         }
-    }
-
-    /// 这四格落在哪一根 BAR 上（本层只会打开这一根）。
-    pub const fn bar(&self) -> u8 {
-        self.bar
     }
 }
 
 /// 一个已经上电、队列已立起来的 virtio-pci 设备面。
 ///
-/// `common`/`notify` 是**已加过 BAR 基址**的绝对地址（本域里的视图地址）。
+/// 它就把 BAR 基址与那一组坐标拿着；寄存器的算法在下面几个 `read`/`write` 与
+/// [`ring`] 里各只有一处。
 pub struct Virtio {
-    common: usize,
-    notify: usize,
-    multiplier: u32,
-    notify_off: u16,
+    bar: usize,
+    caps: Caps,
 }
 
 impl Virtio {
@@ -100,12 +135,7 @@ impl Virtio {
     /// 不接就等于说“设备能直接访客内存”，而这里不是。
     /// 只认这两位：别的位不哄它（设备不提供 1.x 也当场拒）。
     pub fn open(bar: usize, caps: &Caps) -> Result<Self, &'static str> {
-        let mut virtio = Self {
-            common: bar + caps.common as usize,
-            notify: bar + caps.notify as usize,
-            multiplier: caps.multiplier,
-            notify_off: 0,
-        };
+        let mut virtio = Self { bar, caps: *caps };
         virtio.write8(STATUS, 0);
         virtio.write8(STATUS, STATUS_ACKNOWLEDGE);
         virtio.write8(STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER);
@@ -137,19 +167,14 @@ impl Virtio {
     }
 
     /// 立第 0 号队列：尺寸先回读再写回（不改设备的取值）、描述符/可用环/已用环三段
-    /// 用**本域挑的那三个 IOVA**（设备真的会照这三段去取），最后 DRIVER_OK。
+    /// 用**调用方挑的那三个地址**（设备真的会照这三段去取），最后 DRIVER_OK。
     ///
-    /// 返设备给出的队列长度（描述符表能放几项）——调用方拿它算环的宽度。
-    pub fn setup_queue(
-        &mut self,
-        desc: u64,
-        avail: u64,
-        used: u64,
-        capacity: u16,
-    ) -> Result<u16, &'static str> {
+    /// 返设备给出的队列长度（描述符表能放几项）——“本域那一页装得下吗”是**布环那一侧**的
+    /// 判据（它才知道自己那页有多大），故这一层收下设备给的数、不替它判。
+    pub fn setup_queue(&mut self, desc: u64, avail: u64, used: u64) -> Result<u16, &'static str> {
         self.write16(QUEUE_SELECT, 0);
         let size = self.read16(QUEUE_SIZE);
-        if size == 0 || size > capacity || !size.is_power_of_two() {
+        if size == 0 || !size.is_power_of_two() {
             return Err("iommu-dma: virtio queue size");
         }
         self.write16(QUEUE_SIZE, size);
@@ -161,7 +186,6 @@ impl Virtio {
         self.write32(QUEUE_USED_LOW, used as u32);
         self.write32(QUEUE_USED_HIGH, (used >> 32) as u32);
         self.write16(QUEUE_ENABLE, 1);
-        self.notify_off = self.read16(QUEUE_NOTIFY_OFF);
         self.write8(
             STATUS,
             STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
@@ -172,46 +196,95 @@ impl Virtio {
         Ok(size)
     }
 
-    /// 打响门铃：本域刚写下的描述符/可用环往后端那一侧推的那一下。
-    ///
-    /// 前后各一枚栅栏：没有它，设备可能看到半截描述符（QEMU 下碰不上，硬件上会）。
-    pub fn notify(&self) {
-        order::sync();
-        let at = self.notify + self.notify_off as usize * self.multiplier as usize;
-        // SAFETY: 通知区在本域已映射的那一段 BAR 里，门铃就是这一个 16 位写。
-        unsafe { core::ptr::write_volatile(at as *mut u16, 0) };
-        order::sync();
+    /// 设备此刻的状态字节（出口留一行现场用）。
+    pub fn status(&self) -> u8 {
+        self.read8(STATUS)
     }
 
-    pub fn read8(&self, register: u16) -> u8 {
-        // SAFETY: 装置区在本域已映射的那一段 BAR 里，偏移取自规范的表。
-        unsafe { core::ptr::read_volatile((self.common + register as usize) as *const u8) }
+    /// 推一下这一台自己的第 0 号队列（块设备就一条队列）。
+    pub fn notify(&self) {
+        ring(self.bar, &self.caps, 0);
+    }
+
+    fn read8(&self, register: u16) -> u8 {
+        // SAFETY: 公共区在本域已映射的那一段 BAR 里，偏移取自规范的表。
+        unsafe {
+            core::ptr::read_volatile(
+                (self.bar + self.caps.common as usize + register as usize) as *const u8,
+            )
+        }
     }
 
     fn read16(&self, register: u16) -> u16 {
         // SAFETY: 同 `read8`。
-        unsafe { core::ptr::read_volatile((self.common + register as usize) as *const u16) }
+        unsafe {
+            core::ptr::read_volatile(
+                (self.bar + self.caps.common as usize + register as usize) as *const u16,
+            )
+        }
     }
 
     fn read32(&self, register: u16) -> u32 {
         // SAFETY: 同 `read8`。
-        unsafe { core::ptr::read_volatile((self.common + register as usize) as *const u32) }
+        unsafe {
+            core::ptr::read_volatile(
+                (self.bar + self.caps.common as usize + register as usize) as *const u32,
+            )
+        }
     }
 
     fn write8(&mut self, register: u16, value: u8) {
         // SAFETY: 同 `read8`。
-        unsafe { core::ptr::write_volatile((self.common + register as usize) as *mut u8, value) }
+        unsafe {
+            core::ptr::write_volatile(
+                (self.bar + self.caps.common as usize + register as usize) as *mut u8,
+                value,
+            )
+        }
     }
 
     fn write16(&mut self, register: u16, value: u16) {
         // SAFETY: 同 `read8`。
-        unsafe { core::ptr::write_volatile((self.common + register as usize) as *mut u16, value) }
+        unsafe {
+            core::ptr::write_volatile(
+                (self.bar + self.caps.common as usize + register as usize) as *mut u16,
+                value,
+            )
+        }
     }
 
     fn write32(&mut self, register: u16, value: u32) {
         // SAFETY: 同 `read8`。
-        unsafe { core::ptr::write_volatile((self.common + register as usize) as *mut u32, value) }
+        unsafe {
+            core::ptr::write_volatile(
+                (self.bar + self.caps.common as usize + register as usize) as *mut u32,
+                value,
+            )
+        }
     }
+}
+
+/// 队列的通知偏移（只读那一格：设备给的，与谁持有 BAR 无关）。
+pub fn notify_offset(bar: usize, caps: &Caps) -> u16 {
+    // SAFETY: 公共区在本域已映射的那一段 BAR 里。
+    unsafe {
+        core::ptr::read_volatile(
+            (bar + caps.common as usize + QUEUE_NOTIFY_OFF as usize) as *const u16,
+        )
+    }
+}
+
+/// 打响门铃：通知区基址 ＋ `queue_notify_off × 乘数`，写下去的值是队列号。
+///
+/// 发布那一侧（点完描述符的那一方）只要这一格就够了——队列由别人布好也行。
+/// 前后各一枚栅栏：没有它，设备可能看到半截描述符（QEMU 下碰不上，硬件上会）。
+pub fn ring(bar: usize, caps: &Caps, queue: u16) {
+    order::sync();
+    let at =
+        bar + caps.notify as usize + notify_offset(bar, caps) as usize * caps.multiplier as usize;
+    // SAFETY: 通知区在本域已映射的那一段 BAR 里，门铃就是这一个 16 位写。
+    unsafe { core::ptr::write_volatile(at as *mut u16, queue) };
+    order::sync();
 }
 
 /// 能力链表最多追几项（链里绕圈也出得来）。
