@@ -1244,5 +1244,30 @@ System 起一个**跨 Team** 的端点服务（镜像 `system-dma`），把**精
   （`inspect` 在宿主上是真 ecall）；`iommu-queue` 桩也见证不到 `enable` 成功路径与“busy 抬起再落”。
 - 自然 `Handshake` 到期（平台报 `stop pending`）没有端到端场景见证（QEMU 必答）。
 - `reset endpoint idle` 仍不敏感，只当“复位后端点闲”命名，不是 IOMMU-only 负证。
-- 最终增量审查尚未返回（sealed `HEAD = 7237712b`）；在此之前本节只记已验证的读数，
-  不写审查结论。
+
+### 独立审查结果与已记录的边界
+
+同组独立 reviewer 对 sealed `HEAD = 7237712b`（blob `ccfe78adce6b` / `3bfe0c40f5b7` /
+`ff8f8e66b92b` / `e8c6b1804393` / `06c80a42dc18` / `dd2cbf6b55ec`）与文档提交 `88ef1072`
+（仅 docs，+71）给出了结论：**acceptable，无阻塞**。独立复跑：四个场景各 1 passed（两档起手
+失败的现场与上面逐字相同），iommu-queue 15 / lease-window 2 / retention 6 passed。
+三个关键负例都真红：`fence_step` 每次重发→15 例中 6 例红；`IommuPlatform::stop()` 换成空实现
+→ `iommu-product` 红且 `confirmed and released … stopped=true` 与 `reset endpoint idle …`
+两行同时消失（`arm(round)` 修后这一行是真的）；`reclaim` 里吞掉 doom/slay → `start-before` 红
+（`缺少 … child reclaimed`）。静态面也核过：产品路不再碰同步入口，`system/device/` 下无
+`park`/`Wait::AtMost`/`Wait::Forever`，System 帧可达处没有 2s / 10M 等待。
+
+审查一并记录的边界（均无阻塞）：
+
+1. **发布前失败的 PCI 配置不回退**（设计取舍，本节就是“哪一种”的说法）：`spawn` 后·发布前失败时，
+   PCI 功能已被 `claim`（bus-master 与内存空间开着、BAR 已落位），而停机链正确地被跳过
+   （什么都还没发布），于是它**带着 bus-master 但没有所有者**留在那里。本平台的取舍是：
+   发布前失败要收的是**子任务与登记过的范围**，不回退那几笔 PCI 配置写（进程随即结束，且 `DDTP`
+   默认 Off ⇒ 那一刻设备发起也只会被拒，到不了内存）。若项目以后要的是“起手失败不得留下 DMA 授权”，
+   那属于发布前回退的**行为**变更（需新场景），不是当前承诺。
+2. `!self.attached` 那一条（`startup failed, no registered scope`）没有场景；三个起手分支里两档已见证，
+   第三档与前例同一裁断：要它就得各自的小景/进程。
+3. `dma.rs` 现持有 5 个类型（`Dma`/`Started`/`Path`/`Stage`/`Start`）、`platform.rs` 4 个。几个小枚举
+   都只服务于那一个带状态的结构，但若“一个文件一个数据结构”按严格读法执行，这一格待定。
+4. reviewer 未重跑：`iommu-dma`/`iommu-probe`/`product` 三景、supply 23 / system-shape 18、
+   kernel 76+1 哨兵、`cargo check` 告警与 fmt/diffcheck（均归本报告）。
