@@ -11,6 +11,7 @@ use execution::memory::{Reference, View, traverse};
 const READ_WRITE: u64 = 6;
 
 pub struct Pages {
+    pole: PieToken,
     reference: Reference,
     view: View,
     physical: Vec<u64>,
@@ -55,10 +56,17 @@ impl Pages {
         // SAFETY: 这一段是本域刚挂上的可读写 View，`count` 页连成一片。
         unsafe { core::ptr::write_bytes(view.address() as *mut u8, 0, count * PAGE_SIZE) };
         Ok(Self {
+            pole,
             reference,
             view,
             physical,
         })
+    }
+
+    /// 这一段所在的**匿名来源**（本域持有）：另起一份保留、或向别的任务
+    /// 授一段窗口（`accord_window`）都以它为准。
+    pub fn source(&self) -> PieToken {
+        self.pole
     }
 
     /// 这一段有多少页。
@@ -76,11 +84,12 @@ impl Pages {
         (self.view.address() + index * PAGE_SIZE + offset) as *mut u8
     }
 
-    /// 显式结清：先撤本域的图，再放下保留。
+    /// 显式结清：先撤本域的图，再放下保留，最后放下匿名来源。
     pub fn close(mut self) -> Result<(), &'static str> {
         self.view.close().map_err(|_| "iommu: view close")?;
         self.reference
             .release()
-            .map_err(|_| "iommu: page release")
+            .map_err(|_| "iommu: page release")?;
+        resource::raw::release(self.pole).map_err(|_| "iommu: page source")
     }
 }

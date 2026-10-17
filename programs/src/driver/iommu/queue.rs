@@ -30,32 +30,37 @@ const IOFENCE_NOTIFY: u64 = 1 << 10;
 /// 等完成记录的有界自旋。
 const POLL_LIMIT: usize = 1_000_000;
 
-pub struct CommandQueue<'a> {
+/// 三个页都用**保留窗里的页号**指，构造时就从窗里取走这两组数：本域地址
+/// （写命令项 / 读故障记录 / 读完成记录）与真实物理页起址（编程 CSR）。
+///
+/// 它**不持窗、也不持自己的尾**：命令尾每次都从 `CQT` 回读（硬件才知道消费到哪），
+/// 故持有者可以各持一枚而不会分叉——产品那一侧 System 与它的平台各持一枚。
+pub struct CommandQueue {
     base: usize,
-    pages: &'a Pages,
     commands: usize,
     faults: usize,
     fence: usize,
-    tail: u32,
+    command_page: usize,
+    fault_page: usize,
+    fence_page: usize,
 }
 
-impl<'a> CommandQueue<'a> {
-    /// 三个页都用**保留窗里的页号**指：窗同时知道本域地址与真实物理起址，
-    /// 于是写命令用前者、编程给设备用后者，不会把两者弄混。
+impl CommandQueue {
     pub fn new(
         base: usize,
-        pages: &'a Pages,
+        pages: &Pages,
         commands: usize,
         faults: usize,
         fence: usize,
     ) -> Self {
         Self {
             base,
-            pages,
-            commands,
-            faults,
-            fence,
-            tail: 0,
+            commands: pages.at(commands, 0) as usize,
+            faults: pages.at(faults, 0) as usize,
+            fence: pages.at(fence, 0) as usize,
+            command_page: pages.physical(commands),
+            fault_page: pages.physical(faults),
+            fence_page: pages.physical(fence),
         }
     }
 
@@ -65,14 +70,13 @@ impl<'a> CommandQueue<'a> {
     /// → 校验 `ON` 真的立起来。**不开**中断位（本景轮询，没有 IOMMU 的中断向量）。
     pub fn enable(&mut self) -> Result<(), &'static str> {
         let faults =
-            (regs::page_number(self.pages.physical(self.faults)) << regs::PPN_SHIFT) | FAULT_LOG2SZ;
+            (regs::page_number(self.fault_page) << regs::PPN_SHIFT) | FAULT_LOG2SZ;
         regs::write64(self.base, regs::FQB, faults);
         let seen = self.raise(regs::FQCSR);
         if !active(seen, regs::QUEUE_ON) || seen & regs::QUEUE_MEM_FAULT != 0 {
             return Err("iommu: fault queue did not come up");
         }
-        let commands = (regs::page_number(self.pages.physical(self.commands)) << regs::PPN_SHIFT)
-            | COMMAND_LOG2SZ;
+        let commands = (regs::page_number(self.command_page) << regs::PPN_SHIFT) | COMMAND_LOG2SZ;
         regs::write64(self.base, regs::CQB, commands);
         let seen = self.raise(regs::CQCSR);
         if !active(seen, regs::QUEUE_ON) || seen & regs::QUEUE_MEM_FAULT != 0 {
@@ -116,9 +120,9 @@ impl<'a> CommandQueue<'a> {
     /// 提交一条 IOFENCE.C 并等它写下的完成记录；`false` = 期限内没等到。
     pub fn fence(&mut self) -> bool {
         let dword0 = IOFENCE_C | IOFENCE_NOTIFY | ((FENCE_DATA as u64) << 32);
-        let dword1 = (self.pages.physical(self.fence) as u64) >> FENCE_ADDRESS_SHIFT;
+        let dword1 = (self.fence_page as u64) >> FENCE_ADDRESS_SHIFT;
         self.submit(dword0, dword1);
-        let record = self.pages.at(self.fence, 0) as *const u32;
+        let record = self.fence as *const u32;
         for _ in 0..POLL_LIMIT {
             // SAFETY: 完成记录页是本域刚取的可写页。
             let seen = unsafe { core::ptr::read_volatile(record) };
@@ -164,8 +168,7 @@ impl<'a> CommandQueue<'a> {
         }
         let slot = ((count - 1) % FAULT_ENTRIES) as usize * FAULT_BYTES;
         // SAFETY: 故障队列页是本域刚取的可写页，记录按 32 字节排。
-        let header =
-            unsafe { core::ptr::read_volatile(self.pages.at(self.faults, slot) as *const u64) };
+        let header = unsafe { core::ptr::read_volatile((self.faults + slot) as *const u64) };
         (
             count,
             (header & 0xFFF) as u32,
@@ -174,18 +177,22 @@ impl<'a> CommandQueue<'a> {
         )
     }
 
+    /// 提交一项：先回读命令尾，再把那一项写在当前槽上，最后推门铃。
+    ///
+    /// 尾取自 `CQT`（硬件消费到哪它才知道），故本层不藏自己的计数；两次提交之间
+    /// 没有别的写者时就与“本地自增”同一条结果。
     fn submit(&mut self, dword0: u64, dword1: u64) {
-        let slot = (self.tail % COMMAND_ENTRIES) as usize * COMMAND_BYTES;
-        let at = self.pages.at(self.commands, slot) as *mut u64;
+        let tail = regs::read32(self.base, regs::CQT);
+        let slot = (tail % COMMAND_ENTRIES) as usize * COMMAND_BYTES;
+        let at = (self.commands + slot) as *mut u64;
         // SAFETY: 命令队列页是本域刚取的可写页，项按 16 字节排。
         unsafe {
             core::ptr::write_volatile(at, dword0);
             core::ptr::write_volatile(at.add(1), dword1);
         }
-        self.tail = self.tail.wrapping_add(1);
         // 命令字与门铃之间要显式有序：设备那一侧才看得见刚写下那一项。
         super::order::sync();
-        regs::write32(self.base, regs::CQT, self.tail);
+        regs::write32(self.base, regs::CQT, tail.wrapping_add(1));
     }
 }
 
