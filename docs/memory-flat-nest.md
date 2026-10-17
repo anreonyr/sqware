@@ -1302,3 +1302,169 @@ System 起一个**跨 Team** 的端点服务（镜像 `system-dma`），把**精
 - **两条 fail-closed 分支仍无场景（设计如此）**：`authority_clear` 的“未确认”那一支（QEMU 做不出
   配置写失败）与 `!self.attached`。两者都**保留责任**而不是报成成功，故它们是代码级的保证，
   不是被见证的保证。
+
+## 架构回正 · 阶段 0：基线封存
+
+封存对象：本节与提交 `a6d626fb68126a143374ff13242af0b9b6f34356`（分支 `arch-realign`）。
+阶段 0 不改产品语义，只把已验证的 IOMMU 产品闭环固定成可复现清单，供阶段 1
+（拆 `Endpoint::claim`，`programs/src/system/device/dma.rs:437`）及其后迁 Retention /
+`System::device` 时逐格对照。
+
+### 基线与复现前提
+
+- `git rev-parse HEAD` → `a6d626fb68126a143374ff13242af0b9b6f34356`（检查前后一致）；
+  阶段 0 无代码改动。
+- 检查时 `git --no-optional-locks status --short` 无输出（工作树干净）。跑景落在 `trace/**`，
+  该目录已被 `.gitignore` 的 `/trace/` 覆盖，不进 status。
+- 本机 `PATH` 不含 `~/.cargo/bin`，而 `cargo-qtest`（`cargo-qemu-test` 那一枚）装在那里 ⇒
+  整机那几轮的**前提**是 `export PATH="$HOME/.cargo/bin:$PATH"`；`scripts/qtest.nu` 会先验
+  `cargo qtest --help` 里有 `--qemu-arg`（装成同名的另一个包当场报错）。
+- 一景一次调用：整机用例只有 `embedded::tests::scene` 一例，景由 `--scene` 给的镜像定。
+  每次重建 `-initrd` 并写 `trace/scene-<景>-console.log`；成功那轮删掉 `scene-<景>-qtest.log`，
+  失败那轮另留 `trace/qtest.log`。
+
+### 复现命令与读数
+
+```sh
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo test --manifest-path programs/tests/retention/Cargo.toml --target x86_64-unknown-linux-gnu
+cargo test --manifest-path programs/tests/supply/Cargo.toml --target x86_64-unknown-linux-gnu
+cargo test --manifest-path programs/tests/lease-window/Cargo.toml --target x86_64-unknown-linux-gnu
+cargo test --manifest-path programs/tests/iommu-queue/Cargo.toml --target x86_64-unknown-linux-gnu
+nu scripts/qtest.nu --package kernel --scene iommu-product
+nu scripts/qtest.nu --package kernel --scene iommu-product-fault
+nu scripts/qtest.nu --package kernel --scene iommu-product-start-before
+nu scripts/qtest.nu --package kernel --scene iommu-product-start-after
+nu scripts/qtest.nu --package kernel --scene iommu-dma
+nu scripts/qtest.nu --package kernel --scene iommu-probe
+nu scripts/qtest.nu --package kernel      # 健康面（debug）：既有失败那一轮
+cargo check -p programs --release
+cargo check --release
+git diff --check
+```
+
+| 检查 | 本轮读数 |
+|---|---|
+| `retention` / `supply` / `lease-window` / `iommu-queue` | 6 / 23 / 2 / 15 例，全 `ok`，0 failed（`supply` 那一档把 System 的 supply 模块整个编进宿主测试，另有**既有**告警：`unused import` 两条在 `programs/src/system/supply/retention/mod.rs:17` 与 `programs/tests/supply/lib.rs:9`，同轮还有若干 `dead_code`） |
+| 六个命名景 | 各 `1 passed`（整机那一例一律叫 `embedded::tests::scene`） |
+| `nu scripts/qtest.nu --package kernel` | 77 例：`76 passed; 1 failed` —— **不是全绿**，见「既有失败」 |
+| `cargo check -p programs --release` | exit 0，零告警 |
+| `cargo check --release` | exit 0；`kernel` lib 报 7 条 `dead_code`（基线的读数） |
+| `git diff --check` | 无输出 |
+
+### 固定的断言与逐字现场
+
+端点使用**精确 BAR**：领到的窗口长度必须正好是那一根 BAR 的页数，否则
+`programs/src/service/dma/endpoint.rs:52-53` 当场拒（`system-dma: bar window is not the exact bar`，
+本轮的正常景没打出它）；窗口由 `programs/src/system/device/dma.rs:648-651` 的
+`RootAssignment { window: Some((self.first, self.pages_in_bar)) }` 交出。正常轮现场：
+
+```
+system-dma: service bar=0x23000 pages=4 queue=256 status=15
+```
+
+跨 Team **无裸 VA**：坐标只经那一枚孔，共 9 个字（`programs/src/service/dma/endpoint.rs:24`
+`WORDS = 9`）——种子 / 页数 / 能力表四格（common·notify·multiplier·device）/ 三段 IOVA
+（desc·avail·used），由 `programs/src/system/device/dma.rs:685` 铺、
+`endpoint.rs:39` 收；服务手里没有别的地址。同一轮现场：
+
+```
+system-dma: endpoint requester=8 bar=0x103d2000 window=0+4 seed=290
+```
+
+保留**直到真正 stop**：关闸前那一行（`dma.rs:737`）与确认并释放后那一行（`dma.rs:793`）成对：
+
+```
+system-dma: at close ddtp=0x22179402 cqcsr=0x10001 fqcsr=0x10001 master=0x4 status=15 queue_enable=1 stopped=false
+system-dma: requested Close::Normal
+system-dma: confirmed and released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true
+```
+
+Fence cookie **不重复误判**：承重的是 `programs/tests/iommu-queue` 里这 6 例——把
+`programs/src/driver/iommu/queue.rs:184` 的「在途就不重发」那一格改成每次重发，它们全红、
+其余 9 例绿（本轮在一个仓外一次性副本上量的，仓内未动）：
+
+```
+tests::an_unanswered_fence_stays_in_flight_and_is_not_re_issued
+tests::a_late_store_of_the_previous_cookie_does_not_pass
+tests::the_in_flight_fence_passes_once_its_own_cookie_lands
+tests::a_wrapped_ring_keeps_cookies_distinct_and_slots_rotating
+tests::a_single_fence_step_leaves_the_wait_for_the_next_frame
+tests::every_frame_waits_on_one_fence_under_one_deadline
+```
+
+两种起手失败都**回收子任务与范围**，且都不谎报已停止（注入在 `dma.rs:531` / `dma.rs:381`，
+`child doomed` 在 `dma.rs:342`，`child reclaimed` 在 `dma.rs:348`）：
+
+`trace/scene-iommu-product-start-before-console.log`：
+
+```
+system-dma: startup fault injected before publish
+system-dma: startup failed, endpoint bus-master=0x0
+system-dma: startup failed, child doomed doom=Ok(()) slay=Some(Ok(()))
+system-dma: startup failed, child reclaimed
+system-dma: startup failed, range close=Ok(())
+system-dma: begin failed Unavailable
+system-dma: startup failure settled ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true
+```
+
+`trace/scene-iommu-product-start-after-console.log`：
+
+```
+system-dma: startup fault injected after publish
+system-dma: startup failed, child doomed doom=Ok(()) slay=Some(Ok(()))
+system-dma: startup failed, child reclaimed
+system-dma: startup failed, range close=Ok(())
+system-dma: begin failed Unavailable
+system-dma: startup failure settled ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true
+```
+
+两档的 `stopped=true` 都是真回读值，**不能**用 `stopped` 区分档；区分靠注入行与
+`endpoint bus-master=` 那一行的有/无（`start-after` 断言它不出现，见上文「增量复核」）。
+`start-before` 那一档从没发布过、停机链不走，回退自己撤掉 bus-master 并按同一形状回读之后
+才报现场。
+
+失败的确认**不释放 Frame**（`dma.rs:760`），随后真确认才放页：
+
+```
+system-dma: service doomed doom=Ok(()) slay=Some(Ok(()))
+system: device memory held base=0x200000000 length=0x6000 tid=5 phase=Closing(Fault) references=1 failure=Some(Pending)
+system-dma: NOT released holds=1 phase=Closing(Fault) failure=Some(Pending)
+system-dma: confirmed and released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true
+```
+
+另两景的关键行：
+
+`trace/scene-iommu-dma-console.log`（端点侧的隔离负证在这里，以下是逐字连续切片；其后还有六行收场摘要）：
+
+```
+iommu-dma: ddtp=0x23ff0802 queue=256 served=1 used=1 id=0 len=513 status=0 faults=0 cause=0 did=0 ttype=0 translate=0x23ff3000 neighbour=0x40001
+qemu-system-riscv64: virtio: zero sized buffers are not allowed
+iommu-dma: ddtp_off=0x0 fenced_before_off=true idle=1 refusals=8 refusal_cause=256 refusal_did=8 refusal_ttype=3
+iommu-dma: requester=8 bar=0x10051000 iova=0x200003000 delivered=512 bytes
+exit tid=1 reason=0x0 note: iommu-dma: acceptance passed
+```
+
+`trace/scene-iommu-probe-console.log`：
+
+```
+iommu-probe: ddtp_off=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 isolated_response=0x40001
+iommu-probe: translated 0x200000000 -> 0x8fe6d000
+exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
+```
+
+### 既有失败（不许算全绿）
+
+不带 `--scene` 的那一轮里 `embedded::tests::scene` 必红：`firmware exited with status 134`，
+尾注三行是 `sqware: boot failed` / `operation  load boot image` /
+`reason     test scene requires an initrd`（`trace/qtest.log:101-104`）。这是设计（测试模式
+缺 initrd 就宁可红），与本重构无关，记作**既有失败**；整机那一例的真读数在六个命名景里。
+
+### 未覆盖 / 不宣称
+
+- QEMU 的 `virtio-blk` 复位/排空（BQL 下同步 `blk_drain()`）**不能**冒充物理 PCIe 的
+  posted-write 排空；本机没有那一层（见上文「停止依据与它的边界」）。
+- 两条 fail-closed 分支仍无场景：`authority_clear` 的“未确认”那一支（判据在 `dma.rs:320`，
+  QEMU 做不出配置写失败）与 `!self.attached`（`dma.rs:282-283`）。它们保留责任，不是被见证的保证。
+- 本轮未重跑 `--scene product` 与 `system-shape` 18 例（不在阶段 0 清单内；读数见上文
+  「验收命令与读数」）。`NativePieEffects` 的宿主见证就是 `lease-window` 那 2 例，本轮已跑。
