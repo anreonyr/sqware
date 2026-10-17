@@ -197,7 +197,8 @@ impl Dma {
     /// 发现 → 保留 → 发布 → 交付 → 放开服务。
     ///
     /// 不在任何一步阻塞等设备：这是 System 的一帧，测得出来就往下走、测不出来就留着。
-    /// 失败一次就**封口**：不在旧范围上反复重试（它已经登记下了，由生命周期收口）。
+    /// 起手失败一次就**封口不再重试**，但把已经拿到的东西**主动**交回去
+    /// （见 [`Dma::rollback`]）——不指望一个还没放开的任务自己死。
     pub fn begin(
         &mut self,
         loader: &mut Loader,
@@ -209,16 +210,36 @@ impl Dma {
         if self.running() {
             return Ok(Started::Running);
         }
-        match self.attempt(loader, supplies) {
+        match self.stage(loader, supplies) {
             Ok(started) => Ok(started),
             Err(failure) => {
                 self.failed = true;
+                self.rollback(supplies);
                 Err(failure)
             }
         }
     }
 
-    fn attempt(&mut self, loader: &mut Loader, supplies: &mut Supplies) -> Result<Started, Failure> {
+    /// 起手失败的回退：**主动**把子任务收进既有死亡路径、把范围关成 `Fault`
+    /// （没发布过的登记直接结清，发布过的那些由平台确认后释放），本地所有者
+    /// （`pages` / 映射 / 目录表）留在 `self` 上让 `settle` 接着报、接着收。
+    fn rollback(&mut self, supplies: &mut Supplies) {
+        if let Some(service) = self.service.take() {
+            let _ = env::room::doom(service);
+        }
+        if let Some(team) = self.team.take() {
+            let _ = env::unit::slay_team(team);
+        }
+        if let Some(range) = self.range {
+            if !self.closing {
+                self.closing = true;
+                let _ = supplies.retention.close(range, Close::Fault);
+                self.say("system-dma: startup failed, range closed as fault");
+            }
+        }
+    }
+
+    fn stage(&mut self, loader: &mut Loader, supplies: &mut Supplies) -> Result<Started, Failure> {
         if self.running() {
             return Ok(Started::Running);
         }
@@ -266,6 +287,8 @@ impl Dma {
         let base = IOVA_BASE;
         let range = DeviceRange::new(base as u64, (DEVICE_PAGES * PAGE_SIZE) as u64)
             .ok_or(Failure::Denied)?;
+        // 范围一旦定下就记在管理者身上：后面任何一步失败都能把它关成 `Fault`。
+        self.range = Some(range);
 
         // 先把那台服务任务立起来（**按住**：坐标没铺好之前不放它跑）。
         let (Some(image), Some(kind)) = (self.image, self.kind) else {
@@ -279,6 +302,9 @@ impl Dma {
             .map_err(|_| Failure::Pending)?;
         let team = unit.team();
         let service = unit.spawn(&[], 0).map_err(|_| Failure::Pending)?;
+        // 子任务一建出来就归管理者：起手后面任何一步失败都**主动**收它。
+        self.team = Some(team);
+        self.service = Some(service);
 
         // 两枚窗口：管理者自己那一枚（收口时打响那一次门铃、端点复位都用它），以及
         // 从它收窄出来、经产品供给窗口那一层交给服务的那一枚（`NativePieEffects`）。
@@ -302,9 +328,17 @@ impl Dma {
             ));
             Failure::Closed
         })?;
+        self.bar = Some(bar);
+        let bar_base = self
+            .bar
+            .as_ref()
+            .map(|dock| dock.view().base())
+            .ok_or(Failure::Closed)?;
 
         // 取这段工作内存：本域一份（建表/读完成），独立保留那一份在 `retain_memory`。
         let pages = Pages::take(self.retention, COUNT).map_err(fail)?;
+        self.pages = Some(pages);
+        let pages = self.pages.as_ref().ok_or(Failure::Unknown)?;
         let queue = CommandQueue::new(self.base, &pages, COMMANDS, FAULTS, FENCE);
         let inner = IommuPlatform::new(
             range,
@@ -312,7 +346,7 @@ impl Dma {
             Some(EndpointDrain {
                 ecam: ecam_base,
                 requester,
-                bar: bar.view().base(),
+                bar: bar_base,
                 caps,
             }),
         );
@@ -405,11 +439,6 @@ impl Dma {
             .push(&bytes, Wait::AtMost(WAIT_MS))
             .map_err(|_| Failure::Pending)?;
 
-        self.bar = Some(bar);
-        self.range = Some(range);
-        self.pages = Some(pages);
-        self.service = Some(service);
-        self.team = Some(team);
         env::unit::embark_task(service).map_err(|_| Failure::Pending)?;
         Ok(Started::Running)
     }
@@ -475,6 +504,21 @@ impl Dma {
         // 都还活着）：目录表 Off、两台队列的 `on` 落了、端点 bus-master 清了、设备
         // 状态与队列使能都回 0。任一没到位就 `stopped=false`——把 stop 换成空实现，
         // 这一行必红（这是“确认并释放”那一格的承重判据）。
+        // 起手失败那一档：没有正证、也没有“确认后放页”那一格，只报现场。
+        // （子任务已由 `rollback` 主动收进死亡路径，范围也已关成 `Fault`。）
+        if !self.served {
+            if !self.reported {
+                self.reported = true;
+                self.say(&alloc::format!(
+                    "system-dma: startup failure settled {}",
+                    self.stopped()
+                ));
+            }
+            if let Some(pages) = self.pages.take() {
+                let _ = pages.close();
+            }
+            return Progress::Done;
+        }
         if !self.reported {
             self.reported = true;
             self.say(&alloc::format!(
