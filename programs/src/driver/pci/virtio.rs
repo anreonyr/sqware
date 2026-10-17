@@ -273,7 +273,19 @@ impl Virtio {
 /// drain 完成凭据。前一个读者（`stop` 那一侧）把这句当合同读。
 pub fn reset(bar: usize, caps: &Caps) -> bool {
     write(bar, caps, STATUS, 0, 1);
-    read(bar, caps, STATUS, 1) == 0
+    // 回读两格：状态回到 0，**且队列被设备自己放下**（`virtio_pci_reset` 在
+    // `virtio_bus_reset` 之后清 `proxy->vqs[i].enabled`，上游 virtio-pci.c 2349-2368）。
+    status(bar, caps) == 0 && queue_enable(bar, caps) == 0
+}
+
+/// 设备状态字节（公共区 `status`，0x14）。
+pub fn status(bar: usize, caps: &Caps) -> u8 {
+    read(bar, caps, STATUS, 1) as u8
+}
+
+/// 队列使能那一格（公共区 `queue_enable`，0x1c）。
+pub fn queue_enable(bar: usize, caps: &Caps) -> u16 {
+    read(bar, caps, QUEUE_ENABLE, 2) as u16
 }
 
 /// 公共区里的一格：`width` 字节（本层只用到 1 / 2 / 4）。

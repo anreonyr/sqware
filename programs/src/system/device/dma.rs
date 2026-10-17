@@ -441,6 +441,9 @@ impl Dma {
         // 请求关闸：正常景显式正常关闭；故障景收服务（它的死走 `offline` → `Fault`）。
         if self.served && !self.closing {
             self.closing = true;
+            // 关闸**之前**的现场：这几格此刻还不是停的样子（目录表还接着、队列还开着），
+            // 故它与释放后那一行对照起来才看得出判据不是白给的真。
+            self.say(&alloc::format!("system-dma: at close {}", self.stopped()));
             if !self.fault {
                 let _ = supplies.retention.close(range, Close::Normal);
                 self.say("system-dma: requested Close::Normal");
@@ -468,11 +471,21 @@ impl Dma {
             }
             return Progress::Done;
         }
-        // 到这里保留已放下 = 平台确认过了。
+        // 到这里保留已放下 = 平台确认过了。**独立核一遍现场**（映射与保留在这一刻
+        // 都还活着）：目录表 Off、两台队列的 `on` 落了、端点 bus-master 清了、设备
+        // 状态与队列使能都回 0。任一没到位就 `stopped=false`——把 stop 换成空实现，
+        // 这一行必红（这是“确认并释放”那一格的承重判据）。
         if !self.reported {
             self.reported = true;
-            self.say("system-dma: confirmed and released");
+            self.say(&alloc::format!(
+                "system-dma: confirmed and released {}",
+                self.stopped()
+            ));
         }
+        // 再打一次铃并观察。**这一步只说明被复位过的端点是闲的**（设备模型已清掉
+        // 它的 vring，门铃根本不进设备），**不是**“IOMMU 单独挡住一次在途设备”的负证——
+        // 那条负证在 `--scene iommu-dma` 的探针里（同一 requester 再翻一次必须被拒，
+        // 且故障队列记下 `DMA_DISABLED`）。
         // 确认之后由管理者自己那一枚窗口再打一次铃，验设备再也推不动。
         if !self.proved {
             self.proved = true;
@@ -508,7 +521,7 @@ impl Dma {
                 .map(|pages| pages.get8(STATUS, 0))
                 .unwrap_or(0xFF);
             self.say(&alloc::format!(
-                "system-dma: after the isolation used_moved={moved} sentinel_held={held} status={status} requester={}",
+                "system-dma: reset endpoint idle used_moved={moved} sentinel_held={held} status_byte={status} requester={}",
                 self.requester,
             ));
             // 到这里本域对那一段工作内存的**最后一次访问**已经过完：图与匿名来源
@@ -522,6 +535,35 @@ impl Dma {
 
     fn say(&self, message: &str) {
         crate::debug::put(message);
+    }
+
+    /// 停止现场的独立读数（映射与保留在这一刻都还活着）：目录表 Off 且不忙、
+    /// 两台队列的 `on` 落了、端点 bus-master 清了、设备状态与队列使能都回 0。
+    fn stopped(&self) -> alloc::string::String {
+        let ddtp = regs::read64(self.base, regs::DDTP);
+        let cq = regs::read32(self.base, regs::CQCSR);
+        let fq = regs::read32(self.base, regs::FQCSR);
+        let master = self
+            .ecam
+            .as_ref()
+            .map(|dock| {
+                Ecam::new(dock.view().base(), self.requester).read16(ecam::COMMAND)
+                    & ecam::COMMAND_MASTER
+            })
+            .unwrap_or(ecam::COMMAND_MASTER);
+        let (status, enable) = match (self.bar.as_ref(), self.caps) {
+            (Some(bar), Some(caps)) => (
+                virtio::status(bar.view().base(), &caps),
+                virtio::queue_enable(bar.view().base(), &caps),
+            ),
+            _ => (0xFF, 0xFFFF),
+        };
+        let off = ddtp & 0xF == regs::DDTP_MODE_OFF && ddtp & regs::DDTP_BUSY == 0;
+        let queues_off = cq & regs::QUEUE_ON == 0 && fq & regs::QUEUE_ON == 0;
+        let stopped = off && queues_off && master == 0 && status == 0 && enable == 0;
+        alloc::format!(
+            "ddtp={ddtp:#x} cqcsr={cq:#x} fqcsr={fq:#x} master={master:#x} status={status} queue_enable={enable} stopped={stopped}"
+        )
     }
 }
 

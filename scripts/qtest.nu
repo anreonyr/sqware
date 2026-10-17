@@ -451,8 +451,11 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
     mut want = [
       "^system-dma: served used=[1-9].*written_ok=true sector_ok=true"
-      "^system-dma: confirmed and released"
-      "^system-dma: after the isolation used_moved=false sentinel_held=true"
+      # 承重那一格：每一个字段都钉死。把平台 stop 换成空实现，这几格就回不到 0。
+      "^system-dma: confirmed and released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true$"
+      "^system-dma: reset endpoint idle used_moved=false sentinel_held=true"
+      # 整机也真的收场（与普通 product 同一格）。
+      "^exit tid=1 reason=0x0 note: system: done"
     ]
     if $scene == "iommu-product" {
       $want = ($want | append "^system-dma: requested Close::Normal")
