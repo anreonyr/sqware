@@ -27,11 +27,22 @@ impl Pie {
         permission: Permission,
         sire: Option<PieToken>,
     ) -> Result<Pie, env::PieFail> {
+        Self::try_new_window(meta, mark, permission, sire, None)
+    }
+
+    /// 带**有效窗口**的一枚：窗口相对来源起点，只在建这一枚时给定。
+    pub(crate) fn try_new_window(
+        meta: Mail,
+        mark: Mark,
+        permission: Permission,
+        sire: Option<PieToken>,
+        window: Option<(crate::core::memory::address::PageOffset, crate::core::memory::address::PageCount)>,
+    ) -> Result<Pie, env::PieFail> {
         let token = next_id();
         Ok(Pie {
             core: PieSnapshot {
                 token,
-                grant: meta.new_grant(permission, token)?,
+                grant: meta.new_grant(permission, token, window)?,
                 mark,
                 sire,
                 lord: Weak::new(),

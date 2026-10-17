@@ -183,8 +183,9 @@ impl Mail {
         &self,
         permission: Permission,
         token: PieToken,
+        window: Option<(crate::core::memory::address::PageOffset, crate::core::memory::address::PageCount)>,
     ) -> Result<Arc<Grant>, PieFail> {
-        let grant = Grant::try_new(permission)?;
+        let grant = Grant::try_new_window(permission, window)?;
         if let Mail::Pole(meta) = self {
             meta.register_grant(token, grant.clone())?;
         }

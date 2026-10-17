@@ -352,9 +352,9 @@ impl PoleMeta {
 /// 覆盖到末尾：Unseal 前允许同源多个 Attach（slice、中间有洞），那些关系仍归撤销
 /// 清理，但不能顶替整窗去复用——否则会把 slice 的第 1 页当成源 0 页，或报整长
 /// 却只有几个 PTE。
-fn covers_source(meta: &PoleMeta, entry: &HeldMap) -> bool {
+fn covers_source(source: &FlatRange, entry: &HeldMap) -> bool {
     let view = &entry.view;
-    if !view.source().same_range(&meta.source) {
+    if !view.source().same_range(source) {
         return false;
     }
     let (start, size) = view.initial_range();
@@ -437,6 +437,15 @@ pub(crate) fn open(
     {
         return Err(PieFail::Denied);
     }
+    // 这一枚分支的有效窗口：有窗口就只映那一段，本域看到的与报出去的都只是它。
+    let source = match grant.window() {
+        Some((offset, count)) => meta.source().range(offset, count).map_err(|_| PieFail::Denied)?,
+        None => meta.source(),
+    };
+    let size = source
+        .page_count()
+        .checked_bytes()
+        .ok_or(PieFail::NotAligned)?;
     let reusable = {
         let maps = meta.maps.lock();
         maps.iter()
@@ -445,21 +454,16 @@ pub(crate) fn open(
                     && entry.opened()
                     && entry.placed_in(space)
                     && entry.live()
-                    && covers_source(meta, entry)
+                    && covers_source(&source, entry)
             })
             .map(|entry| entry.view.clone())
     };
     if let Some(view) = reusable {
         narrow_view(space, &view, access).map_err(pie_map_error)?;
-        return Ok((view.initial_range().0.as_usize(), meta.size()));
+        return Ok((view.initial_range().0.as_usize(), size));
     }
     meta.reserve_records(1)?;
     // 来源已在手上：先选址登记，再按来源范围挂载，不经任何 kernel / canonical 视图。
-    let source = meta.source();
-    let size = source
-        .page_count()
-        .checked_bytes()
-        .ok_or(PieFail::NotAligned)?;
     let reservation = space
         .nest
         .reserve(Placement::lowest(RegionId::Normal, size, PAGE_SIZE).map_err(pie_map_error)?)
@@ -477,7 +481,7 @@ pub(crate) fn open(
         let _ = space.dispose(view);
         return Err(PieFail::Dead);
     }
-    Ok((address, meta.size()))
+    Ok((address, size))
 }
 
 pub(crate) fn shut(meta: &Arc<PoleMeta>, token: PieToken) -> Result<(), PieFail> {

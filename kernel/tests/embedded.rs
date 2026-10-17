@@ -221,6 +221,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn branch_window_narrows_and_binds() {
+        kernel::entry::check::syscall::branch_window();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn memory_control_and_task_death() {
         kernel::entry::check::syscall::control_and_death();
     }

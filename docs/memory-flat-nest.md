@@ -986,8 +986,8 @@ data/descriptor/DDT/页表/三类队列的硬件闭环必须在 PR7 完成。
 
 基线 `HEAD = 73af1c13d1bfeaffa787f29cb0952ee77e3728bc`。这一段的实际状态：
 **用户态**在真实硬件上把 DDT / DC / Sv39 表 / 队列建起来、编程、让硬件翻一次、
-再拆除并确认隔离；**端点真 DMA、产品 `Platform` 安装与跨主体精确 BAR 窗口尚未做**
-（下面「未做」一节逐条列，不以本段代替那些验收）。
+再拆除并确认隔离；**带窗口的分支**（精确 BAR 跨主体那一枚原语）已实现并有实测；
+**端点真 DMA 与产品 `Platform` 安装尚未做**（下面「未做」一节逐条列，不以本段代替那些验收）。
 
 ### 选定的硬件与实测坐标
 
@@ -1033,7 +1033,7 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 随后被拒。这些判据都在景内逐条断言（`iommu-probe: <哪一条>` 就是失败名），
 不是拿复位默认值充负例。
 
-### 跨主体精确 BAR：实测缺口（本段未补）
+### 跨主体精确 BAR：实测缺口（已补，见下节）
 
 现有接口**只能把精确子窗口给持有者自己**：
 `AcquireSource::Source { token, offset, count }`（`kernel/src/entry/call/memory.rs::acquire`）
@@ -1046,6 +1046,34 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 ⇒ 把 PCI aperture 交给某个驱动只能是**整段**，这与「只给必需 BAR」冲突。
 最小补法（待裁决）：由**源的真实管理者**派生一段有界只 RW/NX 的子窗口并沿既有交付链
 给指定主体，复用源的撤销与生命周期，不放宽 `create_pole` 的三条限制。
+
+### 精确 BAR 跨主体：带窗口的分支（已实现）
+
+上一节那一节列的缺口已补：窗口绑在**交付 token 的 branch**（`Grant`）上，
+复用源的授权与撤销，不放宽 `create_pole` 的三条限制。
+
+| 面 | 事实 |
+|---|---|
+| 窗口的坐标 | `Grant.window: Option<(PageOffset, PageCount)>`，用**相对来源起点的绝对页偏移**（不是相对父分支的偏移）⇒ 嵌套派生不会叠加两层偏移 |
+| 建窗口的唯一入口 | 新子操作 `PieCall::AccordWindow { src, dst, subset, mark, offset, count }`（slot 11）。旧 `Accord` 的形状与语义**一字未动**（它派生出来的窗口仍是 `None` = 整段） |
+| 单调收窄 | `effective_window`：不请求就继承父的有效窗口；请求的必须落在父的有效窗口里（父无窗口就是整段来源），空长与溢出当场拒。非 Pole（无真实来源）上请求窗口一律拒 |
+| 使用路径都守窗口 | `acquire`（`AcquireSource::Source`）在解析出源坐标后再核一次窗口（越窗 `Denied`）；`pole::open` 只映窗口那一段，报出的长度与关系也都只是它（本域看不到窗口外的页） |
+| 不放大 | 窗口不动 `Access` 上限：`open` 的访问仍由门闩权限折出（只读 / 读写），MMIO 永不可执行；窗口不放宽 `subset` 之外任何一位 |
+| 生命周期 | 窗口就在那一枚 Grant 上：撤销 / 封印 / 交回照旧令分支及其 Views 失效，窗口不另开一条命 |
+| 仍拒建根 | 带窗口的分支 `hold.branch().is_some()` ⇒ `create_pole` 照旧 `Denied` |
+
+实测（`nu scripts/qtest.nu --package kernel`，新增用例 `branch_window_narrows_and_binds` 走**真实调用面**
+`EnvCall::Pie` / `EnvCall::Memory`）：越窗 `(2,3)`/`(4,1)` 与嵌套放宽 `(0,2)`/`(2,2)`/`(1,3)` 均 `Denied`、
+空长 `(1,0)` 报 `NotAligned`、四笔被拒的派生在目标表里**一格里也不落地**；
+窗口 `(1,2)` 落地且回读就是这一段；嵌套 `(1,1)` 更窄成立；
+`Open` 只报 `2 * PAGE_SIZE` 且首 PA 等于来源第 1 页、窗口后一页未映射、窗口页**不可执行**；
+`Acquire` 窗口外 `Denied` / 窗口内成功；带窗口的分支 `create_pole` 仍 `Denied`；
+`Revoke` 之后分支与它的 View 一起消失；不带窗口的 `Accord` 仍拿到整段 4 页。
+整轮 `75 passed / 1 failed`（仍只是缺 initrd 的 `scene` 哨兵），
+`--scene iommu-probe` 1 passed，`--scene accept` 1 passed(10.39s)，`system-shape` 18 passed。
+
+仍未做：**供给 / 租约那一层还不带窗口**（`PrivateRoot::derive` / `Accord` / `RootRequest` 仍只传权限子集），
+故产品里的“System 把精确 BAR 交给某个驱动”还差这一段接线（`env::pie::accord_window` 已在 ABI 上可用）。
 
 ### 未做（不宣称已完成）
 

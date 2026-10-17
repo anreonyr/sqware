@@ -21,7 +21,7 @@ pub(crate) use need::Need;
 pub(crate) use crate::core::work::grant::form_ok;
 pub(crate) use pie::{Permission, Pie, PieSnapshot, accede, allows, locate, vestor};
 
-pub(crate) use accord::{accord, clear_heir};
+pub(crate) use accord::{accord, accord_window, clear_heir};
 pub(crate) use cull::{doom, release, revoke};
 pub(crate) use narrow::reduce;
 

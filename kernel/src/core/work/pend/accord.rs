@@ -3,11 +3,44 @@ use alloc::sync::{Arc, Weak};
 use env::{Mark, PieFail, PieToken};
 
 use super::Need;
-use super::pie::{Heir, Permission};
+use super::pie::{Heir, Permission, PieSnapshot};
+use crate::core::memory::address::{PageCount, PageOffset};
 use crate::core::work::grant::narrows;
 use crate::core::work::mail::pole::PoleOperation;
 use crate::core::work::room::messenger::{self, WakeKey};
 use crate::core::work::unit::task::Task;
+
+/// 这一枚子分支的有效窗口。
+///
+/// 不请求就继承父的那一段；请求的那一段必须落在父的有效窗口里（父没有窗口就是整段来源），
+/// 空长与溢出一律拒。窗口只在 Pole（有真实来源）上成立。
+fn effective_window(
+    pie: &PieSnapshot,
+    requested: Option<(PageOffset, PageCount)>,
+) -> Result<Option<(PageOffset, PageCount)>, PieFail> {
+    let Some(requested) = requested else {
+        return Ok(pie.grant().window());
+    };
+    if requested.1.get() == 0 {
+        return Err(PieFail::Denied);
+    }
+    let meta = pie.mail().pole().ok_or(PieFail::Denied)?;
+    let outer = pie
+        .grant()
+        .window()
+        .unwrap_or((PageOffset::ZERO, meta.source().page_count()));
+    let outer_end = outer.0.get().checked_add(outer.1.get());
+    let inner_end = requested.0.get().checked_add(requested.1.get());
+    let inside = matches!(
+        (outer_end, inner_end),
+        (Some(outer_end), Some(inner_end))
+            if requested.0.get() >= outer.0.get() && inner_end <= outer_end
+    );
+    if !inside {
+        return Err(PieFail::Denied);
+    }
+    Ok(Some(requested))
+}
 
 pub(crate) fn accord(
     caller: &Arc<Task>,
@@ -15,6 +48,21 @@ pub(crate) fn accord(
     dst: &Weak<Task>,
     subset: Permission,
     mark: Mark,
+) -> Result<usize, PieFail> {
+    accord_window(caller, src, dst, subset, mark, None)
+}
+
+/// 同 `accord`，但可给这一枚子分支一个**有效窗口**。
+///
+/// 请求的那一段用**相对来源起点的绝对页偏移**说（不是相对父分支的偏移），
+/// 且必须落在父的有效窗口里：重复与嵌套派生只能单调收窄，没有放宽的路。
+pub(crate) fn accord_window(
+    caller: &Arc<Task>,
+    src: PieToken,
+    dst: &Weak<Task>,
+    subset: Permission,
+    mark: Mark,
+    requested: Option<(PageOffset, PageCount)>,
 ) -> Result<usize, PieFail> {
     let target = dst.upgrade().ok_or(PieFail::Denied)?;
     let token = super::with_pair(caller, &target, || {
@@ -45,7 +93,8 @@ pub(crate) fn accord(
             return Err(PieFail::Denied);
         }
         let mark = if mark == Mark::NONE { pie.mark() } else { mark };
-        let mut granted = pie.vest(mark, subset)?;
+        let window = effective_window(&pie, requested)?;
+        let mut granted = pie.vest_window(mark, subset, window)?;
         granted.parent(src, Arc::downgrade(caller));
         caller
             .pend

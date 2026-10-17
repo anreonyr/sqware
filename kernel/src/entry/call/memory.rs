@@ -684,6 +684,21 @@ fn acquire(
             // 分支就是调用者手里这一枚 Pie 的 token 与它的 Grant。
             let grant = pie.grant().clone();
             let (offset, count) = self::window(&authorization, offset, count)?;
+            // 这一枚分支若有有效窗口，请求的那一段必须落在它里面。
+            // 两边都是**相对来源起点的绝对页偏移**，故嵌套派生不会叠加两层偏移。
+            if let Some((window_offset, window_count)) = grant.window() {
+                let end = window_offset
+                    .get()
+                    .checked_add(window_count.get())
+                    .ok_or(MemoryFail::NotAligned)?;
+                let requested_end = offset
+                    .get()
+                    .checked_add(count.get())
+                    .ok_or(MemoryFail::NotAligned)?;
+                if offset.get() < window_offset.get() || requested_end > end {
+                    return Err(MemoryFail::Denied);
+                }
+            }
             let retained = if retention == PieToken::NONE {
                 None
             } else {

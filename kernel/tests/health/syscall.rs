@@ -2195,6 +2195,278 @@ pub fn capability() {
 ///
 /// 装载器的真实次序是「先 shut 掉 token 的全部 View，再从 Pole 来源 Mmap」，
 /// 所以这里按同一次序验证，不靠任何 keeper / canonical 关系。
+/// 带窗口的分支：精确子窗口只能**单调收窄**，且 acquire / open / 建根 / 撤销都守它。
+///
+/// 窗口用**相对来源起点的绝对页偏移**说（不是相对父分支的偏移），故嵌套派生不会叠加两层。
+/// 每一段都走真实调用面（`EnvCall::Pie` / `EnvCall::Memory`），不是直接调内部函数。
+pub fn branch_window() {
+    use crate::entry::call::pie::create_pole;
+    use env::{AcquireSource, MemoryFail, PieCall, PieFail, PieToken, UnsealArgs};
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let owner = Caller::new(false);
+    let peer = Caller::new(false);
+    let subset = Permission::FETCH | Permission::STORE | Permission::VEST;
+    let dst = peer.task.ident.id;
+
+    let token = |code: isize| {
+        assert!(code > 0, "token: {code}");
+        PieToken::mint(code as usize)
+    };
+    // 一份 4 页私有来源 → 根（整段，无窗口）。
+    let (_, _, source_reference) = owner.attach_alloc_reference(4 * PAGE_SIZE, 6);
+    let root = token(pie_call(
+        &owner,
+        PieCall::Unseal {
+            args: UnsealArgs::Pole {
+                reference: source_reference,
+                shared: true,
+            },
+        },
+    ));
+    assert_eq!(
+        owner.call(EnvCall::Memory(MemoryCall::Release {
+            reference: source_reference
+        })),
+        0
+    );
+    assert_eq!(
+        pend::locate(&owner.task, root)
+            .unwrap()
+            .mail()
+            .pole()
+            .unwrap()
+            .source()
+            .page_count()
+            .get(),
+        4,
+        "the root covers the whole source"
+    );
+    assert_eq!(
+        pend::locate(&owner.task, root).unwrap().grant().window(),
+        None,
+        "a plain root carries no window"
+    );
+
+    // 越窗 / 空长 / 溢出：都拒，且**目标表里不落地**。空长当场报对齐（它连一段都不是）。
+    let before = peer.task.pend.pies.lock().len();
+    for (offset, count, expected) in [
+        (2usize, 3usize, PieFail::Denied),
+        (1, 0, PieFail::NotAligned),
+        (usize::MAX, 2, PieFail::Denied),
+        (4, 1, PieFail::Denied),
+    ] {
+        let code = pie_call(
+            &owner,
+            PieCall::AccordWindow {
+                src: root,
+                dst,
+                subset,
+                mark: env::Mark::NONE,
+                offset,
+                count,
+            },
+        );
+        assert_eq!(
+            code,
+            expected.code(),
+            "window ({offset},{count}) must be refused"
+        );
+        assert_eq!(
+            peer.task.pend.pies.lock().len(),
+            before,
+            "a refused window must not land"
+        );
+    }
+
+    // 窗口 (1,2) 落在整段里：落地，且窗口就是那一段。
+    let child = token(pie_call(
+        &owner,
+        PieCall::AccordWindow {
+            src: root,
+            dst,
+            subset,
+            mark: env::Mark::NONE,
+            offset: 1,
+            count: 2,
+        },
+    ));
+    assert_eq!(
+        pend::locate(&peer.task, child).unwrap().grant().window(),
+        Some((PageOffset::new(1), PageCount::new(2).unwrap()))
+    );
+
+    // 嵌套：从这一枚再派生只能更窄，不能拿回窗口外的那几页。
+    for (offset, count) in [(0usize, 2usize), (2, 2), (1, 3)] {
+        let code = pie_call(
+            &peer,
+            PieCall::AccordWindow {
+                src: child,
+                dst: owner.task.ident.id,
+                subset,
+                mark: env::Mark::NONE,
+                offset,
+                count,
+            },
+        );
+        assert_eq!(
+            code,
+            PieFail::Denied.code(),
+            "nested window ({offset},{count}) must not widen"
+        );
+    }
+    let grand = token(pie_call(
+        &peer,
+        PieCall::AccordWindow {
+            src: child,
+            dst: owner.task.ident.id,
+            subset,
+            mark: env::Mark::NONE,
+            offset: 1,
+            count: 1,
+        },
+    ));
+    assert_eq!(
+        pend::locate(&owner.task, grand).unwrap().grant().window(),
+        Some((PageOffset::new(1), PageCount::new(1).unwrap()))
+    );
+
+    // Open 只映窗口那一段：长度是它，PA 次序与来源第 1 页对得上。
+    let (whole, whole_size) = open_pair(&owner, root);
+    assert!(whole > 0, "open root: {whole}");
+    assert_eq!(whole_size, 4 * PAGE_SIZE);
+    let source_page_1 = owner
+        .team
+        .space
+        .nest
+        .physical_at(KVirt::wrap(whole as usize + PAGE_SIZE))
+        .unwrap();
+    let (windowed, window_size) = open_pair(&peer, child);
+    assert!(windowed > 0, "open windowed: {windowed}");
+    assert_eq!(
+        window_size,
+        2 * PAGE_SIZE,
+        "a windowed token opens only its window"
+    );
+    assert_eq!(
+        peer.team
+            .space
+            .nest
+            .physical_at(KVirt::wrap(windowed as usize)),
+        Some(source_page_1),
+        "the window starts at the source's first page in it"
+    );
+    assert!(
+        !peer.team.space.validate_access(
+            KVirt::wrap(windowed as usize + 2 * PAGE_SIZE),
+            PAGE_SIZE,
+            Access::READ
+        ),
+        "the page after the window is not mapped"
+    );
+    assert!(
+        !peer
+            .team
+            .space
+            .validate_access(KVirt::wrap(windowed as usize), PAGE_SIZE, Access::EXECUTE),
+        "a windowed device window is never mapped executable"
+    );
+
+    // Acquire 也守窗口：窗口外取不到，窗口内取得到。
+    let acquire = |offset: usize, count: usize| {
+        peer.call(EnvCall::Memory(MemoryCall::Acquire {
+            source: AcquireSource::Source {
+                token: child,
+                offset,
+                count,
+            },
+            retention: PieToken::NONE,
+        }))
+    };
+    assert_eq!(acquire(0, 1), MemoryFail::Denied.code() as isize);
+    assert_eq!(acquire(1, 3), MemoryFail::Denied.code() as isize);
+    assert_eq!(acquire(2, 2), MemoryFail::Denied.code() as isize);
+    let inside = acquire(1, 2);
+    assert!(inside > 0, "acquire inside the window: {inside}");
+
+    // 带窗口的分支不能建独立根。
+    assert_eq!(
+        create_pole(&peer.task, reference(inside as usize), true).unwrap_err(),
+        PieFail::Denied
+    );
+
+    // 撤销令这一枚与它的 Views 一起失效（窗口不另开一条命）。
+    assert_eq!(
+        pie_call(&owner, PieCall::Revoke { dst, token: child }),
+        0
+    );
+    assert!(pend::locate(&peer.task, child).is_none());
+    assert!(pend::locate(&owner.task, grand).is_none());
+    assert!(
+        peer.team
+            .space
+            .nest
+            .translate(KVirt::wrap(windowed as usize))
+            .is_none(),
+        "revoking the branch closes the view it opened"
+    );
+    assert_eq!(open_pair(&peer, child).0, PieFail::Denied.code());
+
+    // 旧 Accord 不变：不带窗口的派生拿到的是整段。
+    let (_, _, plain) = owner.attach_alloc_reference(4 * PAGE_SIZE, 6);
+    let other = token(pie_call(
+        &owner,
+        PieCall::Unseal {
+            args: UnsealArgs::Pole {
+                reference: plain,
+                shared: true,
+            },
+        },
+    ));
+    assert_eq!(
+        owner.call(EnvCall::Memory(MemoryCall::Release { reference: plain })),
+        0
+    );
+    let legacy = token(pie_call(
+        &owner,
+        PieCall::Accord {
+            src: other,
+            dst,
+            subset,
+            mark: env::Mark::NONE,
+        },
+    ));
+    assert_eq!(
+        pend::locate(&peer.task, legacy).unwrap().grant().window(),
+        None,
+        "a plain accord still hands the whole source"
+    );
+    assert_eq!(open_pair(&peer, legacy).1, 4 * PAGE_SIZE);
+}
+
+/// 一次 `Open` 的两个返回值（地址与长度）——`pair` 只认 Memory 域。
+fn open_pair(caller: &Caller, token: env::PieToken) -> (isize, usize) {
+    let EnvCall::Pie(call) = (EnvCall::Pie(env::PieCall::Open { token })) else {
+        unreachable!()
+    };
+    let (slot, regs) = (call.slot(), call.pack());
+    let frame = unsafe { &mut *(caller.task.ident.frame_pa.as_usize() as *mut TrapContext) };
+    for (i, value) in regs.into_iter().enumerate() {
+        frame.gpr.set_x(Gprs::A0 + i, value);
+    }
+    frame.gpr.set_x(Gprs::A7, slot);
+    let ident = caller.task.ident.clone();
+    with_running(caller.task.clone(), || {
+        assert!(envcall::dispatch(frame, ident).is_some());
+    });
+    (frame.gpr.x(Gprs::A0) as isize, frame.gpr.x(Gprs::A1))
+}
+
+/// class 7 的调用者取自运行槽，不是派发时那个 `ident`：夹具每一手都经 `with_running`。
+fn pie_call(caller: &Caller, call: env::PieCall) -> isize {
+    with_running(caller.task.clone(), || caller.call(EnvCall::Pie(call)))
+}
+
 pub fn memory_pole() {
     use crate::core::memory::flat::Frame;
     use crate::entry::call::pie::create_pole;
