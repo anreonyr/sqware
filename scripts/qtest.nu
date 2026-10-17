@@ -488,9 +488,11 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     if $scene == "iommu-product-start-before" {
       $want = ($want | append [
         "^system-dma: startup fault injected before publish$"
+        # 发布之前失败：停机链不会跑，回退自己撤掉端点发起权限并按同一形状回读。
+        "^system-dma: startup failed, endpoint bus-master=0x0$"
         # 范围已登记、可达标记还没点：关成 `Fault` 真发生了（`close=Ok(())`，结果按真实报）。
         "^system-dma: startup failed, range close=Ok.*$"
-        "^system-dma: startup failure settled ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x4 status=0 queue_enable=0 stopped=false$"
+        "^system-dma: startup failure settled ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true$"
       ])
     } else {
       $want = ($want | append [
@@ -499,6 +501,17 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
         "^system-dma: startup failed, range close=Ok.*$"
         "^system-dma: startup failure settled ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true$"
       ])
+      # 已发布那一档走的是平台整条停机链，**不许**用清 bus-master 冒充排空：
+      # 回退自己那一步（只有发布之前那一档才会打的那一行）在这里必须不出现。
+      let forged = (
+        $console
+        | where {|line| $line =~ "^system-dma: startup failed, endpoint bus-master=" }
+        | length
+      )
+      if $forged != 0 {
+        print "本景未按预期收口：发布之后不该出现回退自己撤 bus-master 的那一行"
+        $code = 1
+      }
     }
     for $pattern in $want {
       if ($console | where {|line| $line =~ $pattern } | is-empty) {

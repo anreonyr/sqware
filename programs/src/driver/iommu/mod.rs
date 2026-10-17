@@ -10,7 +10,10 @@
 //! - [`order`] 是“本域写下的字节 ↔ 设备看到的字节”之间那一枚栅栏。
 
 pub mod context;
+pub mod fence;
+pub mod handshake;
 pub mod order;
+mod outstanding;
 pub mod pages;
 pub mod queue;
 pub mod regs;

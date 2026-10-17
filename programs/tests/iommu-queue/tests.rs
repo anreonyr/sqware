@@ -39,6 +39,7 @@ use alloc::rc::Rc;
 use crate::device::{self, COMMANDS, Command, Device, FAULTS, FENCE};
 use crate::iommu::queue::{self, CommandQueue, FENCE_DATA};
 use crate::iommu::regs::{self, QUEUE_ON};
+use crate::iommu::{fence, handshake};
 
 /// Command encoding, as `queue.rs` documents it (its own constants are private):
 /// `IOFENCE.C` with `AV` set carries the completion value in `dword0[63:32]`.
@@ -432,7 +433,7 @@ fn a_single_fence_step_leaves_the_wait_for_the_next_frame() {
     let tail = device.tail();
     let before = device::now();
     assert!(
-        matches!(queue.fence_step(), queue::Fence::Waiting),
+        matches!(queue.fence_step(), fence::Fence::Waiting),
         "the held device has not answered"
     );
     assert!(
@@ -444,7 +445,7 @@ fn a_single_fence_step_leaves_the_wait_for_the_next_frame() {
         tail + 1,
         "the step submitted the command once"
     );
-    assert!(matches!(queue.fence_step(), queue::Fence::Waiting));
+    assert!(matches!(queue.fence_step(), fence::Fence::Waiting));
     assert_eq!(device.tail(), tail + 1, "the next frame does not re-issue");
 }
 
@@ -456,12 +457,12 @@ fn every_frame_waits_on_one_fence_under_one_deadline() {
     let mut frames = 0;
     loop {
         match queue.fence_step() {
-            queue::Fence::Waiting => {
+            fence::Fence::Waiting => {
                 frames += 1;
                 assert!(frames < 10_000, "the deadline must arrive");
             }
-            queue::Fence::Expired => break,
-            queue::Fence::Settled => panic!("the device is held"),
+            fence::Fence::Expired => break,
+            fence::Fence::Settled => panic!("the device is held"),
         }
     }
     let elapsed = device::now() - before;
@@ -475,7 +476,7 @@ fn every_frame_waits_on_one_fence_under_one_deadline() {
 
 #[test]
 fn a_handshake_expires_once_after_its_own_limit_however_often_it_is_asked() {
-    let handshake = regs::Handshake::new(FENCE_NS);
+    let handshake = handshake::Handshake::new(FENCE_NS);
     let before = device::now();
     let mut checks = 0;
     while !handshake.expired() {
@@ -492,7 +493,7 @@ fn a_handshake_expires_once_after_its_own_limit_however_often_it_is_asked() {
 
 #[test]
 fn the_synchronous_wait_stops_at_the_same_fixed_limit() {
-    let handshake = regs::Handshake::new(FENCE_NS);
+    let handshake = handshake::Handshake::new(FENCE_NS);
     let before = device::now();
     let last = handshake.wait(|| 0u32, |_| false);
     let elapsed = device::now() - before;

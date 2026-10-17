@@ -13,8 +13,11 @@
 //!   每帧一次，没等到就把 [`regs::Handshake`] 与在途的那条命令原样留到下一帧）。
 //! 两档共用同一次写入与同一条 `busy` 判据，故不是两套协议。
 
+use super::fence::Fence;
+use super::handshake::Handshake;
+use super::outstanding::Outstanding;
 use super::pages::Pages;
-use super::regs::{self, Handshake};
+use super::regs;
 
 /// 命令项 16 字节；故障记录 32 字节。
 const COMMAND_BYTES: usize = 16;
@@ -55,31 +58,7 @@ const FENCE_NS: u64 = 2_000_000_000;
 /// 等一台队列立起来 / 停下来与 `DDTP` 握手的上限（纳秒）。
 const HANDSHAKE_NS: u64 = 2_000_000_000;
 
-/// 在途的那一条 `IOFENCE.C`：它在完成记录页的那一槽、本域给它的完成值，
-/// 以及**那一条**的等待期限。重试只继续等它，不重提新命令、也不重置这条期限。
-struct Outstanding {
-    slot: usize,
-    cookie: u32,
-    handshake: Handshake,
-}
-
-/// 一次 `IOFENCE.C` 在途时的**单步**读数。
-///
-/// 「还没到」与「过了期限还没到」是两件事：前者下一帧接着读，后者要按期限收场。
-pub enum Fence {
-    /// 本次的完成记录到了。
-    Settled,
-    /// 还没到，在途且期限内。
-    Waiting,
-    /// 在途那一条过了期限还没到。
-    Expired,
-}
-
-/// 三个页都用**保留窗里的页号**指，构造时就从窗里取走这两组数：本域地址
-/// （写命令项 / 读故障记录 / 读完成记录）与真实物理页起址（编程 CSR）。
-///
-/// 它**不持窗、也不持自己的尾**：命令尾每次都从 `CQT` 回读（硬件才知道消费到哪），
-/// 故持有者可以各持一枚而不会分叉——产品那一侧 System 与它的平台各持一枚。
+/// 在途的那一条 `IOFENCE.C`（见 [`Outstanding`]）；重试只继续等它。
 pub struct CommandQueue {
     base: usize,
     commands: usize,

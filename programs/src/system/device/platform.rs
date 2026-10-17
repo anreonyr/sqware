@@ -30,58 +30,19 @@
 //! 必须让那两段映射活到本对象的**最后一次访问**之后。
 
 use crate::driver::iommu::{
+    fence::Fence,
+    handshake::Handshake,
     order,
-    queue::{self, CommandQueue, Fence},
-    regs::{self, Handshake},
+    queue::{self, CommandQueue},
+    regs,
 };
 use crate::driver::pci::ecam::{self, Ecam};
-use crate::driver::pci::virtio::{self, Caps};
+use crate::driver::pci::virtio;
 use crate::system::supply::retention::{DeviceRange, Failure, Platform};
 
-/// 端点侧那一条收口要的四样：ECAM 段起址与功能号（清 bus-master），
-/// 以及那一根 BAR 的本域基址与能力表（按 virtio 那一手复位并回读确认）。
-#[derive(Clone, Copy)]
-pub struct EndpointDrain {
-    pub ecam: usize,
-    pub requester: u16,
-    pub bar: usize,
-    pub caps: Caps,
-}
-
-/// 停链走到哪一步（照 IOMMU 规范那条 NOTE 的次序）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Stop {
-    /// ① 撤访问权：`DDTP` 落 Off，等 busy 落并回读确认。
-    Revoke,
-    /// ② 改动全局可见之后失效（`IOTINVAL.VMA`，一次提交）。
-    Invalidate,
-    /// ③ `IOFENCE.C` 并等**本次**完成记录。
-    Fence,
-    /// ④ 端点侧不再发起：清 bus-master、按 virtio 那一手复位（各自回读确认）。
-    Drain,
-    /// ⑤ 两台立过的队列停机确认（on 落了、busy 也清了）。
-    Queues,
-    /// ⑥ 回读两个队列的故障位与页请求队列。
-    Confirm,
-    /// 整条链走完。
-    Done,
-}
-
-/// 链路一步的结果。
-///
-/// 「完成」与「硬失败」是两件事，而「还没确认」一律是 `Waiting`：无论它是「在期限内
-/// 再等一帧」还是「期限到头了」——两种都**保留**这一枚引用，只是后者的凭据得写成
-/// 不可用（不冒充已停）。
-enum Step {
-    /// 这一步完成了，接着走下一步。
-    Continue,
-    /// 这一步要等硬件；没到期限就留到下一帧。
-    Waiting,
-    /// 硬件没按协议回答 = 这一步没走完，拿不到凭据。
-    Failed,
-    /// 整条链走完了。
-    Done,
-}
+use super::endpoint_drain::EndpointDrain;
+use super::step::Step;
+use super::stop::Stop;
 
 /// System 里那一枚 IOMMU 的停机权威：一段设备范围 ＋ 一枚随时可发命令的队列。
 pub struct IommuPlatform {

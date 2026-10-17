@@ -107,8 +107,8 @@ pub(crate) fn resources(
 ///
 /// 三个 `iommu-product*` 景各有一张自己的入口镜像（`crates/image` 按入口认景），
 /// 故这里只认名字，不引入任何运行时开关。
-fn startup_path(deployment: &str) -> crate::system::device::dma::Path {
-    use crate::system::device::dma::Path;
+fn startup_path(deployment: &str) -> crate::system::device::path::Path {
+    use crate::system::device::path::Path;
     match deployment {
         "iommu-product-fault" => Path::Fault,
         "iommu-product-start-before" => Path::StartupBeforePublish,

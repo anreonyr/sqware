@@ -27,18 +27,24 @@ use resource::raw::Hole;
 
 use crate::driver::iommu::{
     context::DeviceContext,
+    fence::Fence,
+    handshake::Handshake,
     order,
     pages::Pages,
-    queue::{self, CommandQueue, Fence},
-    regs::{self, Handshake},
-    table,
+    queue::{self, CommandQueue},
+    regs, table,
 };
 use crate::driver::pci::ecam::{self, Ecam};
 use crate::driver::pci::endpoint::Endpoint;
 use crate::driver::pci::virtio::{self, Caps};
 use crate::system::app::supplies::Supplies;
+use crate::system::device::endpoint_drain::EndpointDrain;
 use crate::system::device::fault::FaultOnce;
-use crate::system::device::platform::{EndpointDrain, IommuPlatform};
+use crate::system::device::path::Path;
+use crate::system::device::platform::IommuPlatform;
+use crate::system::device::stage::Stage;
+use crate::system::device::start::Start;
+use crate::system::device::started::Started;
 use crate::system::loader::{Image, Loader};
 use crate::system::supply::retention::{Close, DeviceRange, Failure, Platform, Scope};
 use crate::system::supply::{Origin, PrivateRoot, RootAssignment, RootRequest};
@@ -108,69 +114,6 @@ const COORD_WORDS: usize = 9;
 /// 确认之后等设备再推一次的帧数（System 的一帧一帧，不阻塞）。
 const PROVE_FRAMES: usize = 8;
 
-/// 起手走到哪一步。
-///
-/// 除了 `Fresh` 与装配，后面每一格都是“要等硬件”的一步：每帧只推一格，
-/// 一个帧推完就往下走，要等就留在这一格里。
-enum Start {
-    /// 还没起手。
-    Fresh,
-    /// 装配完了，等硬件武装：先抬故障队列。
-    Faults,
-    /// 等命令队列立起来。
-    Commands,
-    /// 提交 `IOTINVAL` 与一条 `IOFENCE.C`，等本次完成记录。
-    Fence,
-    /// 编程 `DDTP` 到 1LVL 并回读确认。
-    Ddtp,
-    /// 武装完了，等交付坐标、放开服务。
-    Armed,
-    /// 服务已放开，这一轮在跑。
-    Running,
-    /// 本机没有这台设备（普通产品保持行为）。
-    Absent,
-    /// 起手失败过：封口不重试（只把子任务收干净）。
-    Failed,
-}
-
-/// 一帧推一步的结果。
-enum Stage {
-    /// 又推进了一步，接着走。
-    Continue,
-    /// 这一步要等硬件：本帧到此，下一帧接着来。
-    Waiting,
-    /// 收工。
-    Done(Started),
-}
-
-/// 这一景的产品 DMA 走哪一条路。
-///
-/// 它是**装配**的事实（由景名给出），不是运行时开关：普通产品是 [`Path::Normal`]，
-/// 生产里没有一条常开的故障后门。两个起手故障点都是**受控注入**（就在本文件的
-/// 装配序列里 `say` 一句再 `Err`），与“硬件没在期限内回答”那条自然超时**不是同一件事**
-/// ——后者走 [`Handshake`] 到期，报的是 `stop pending`。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Path {
-    /// 普通产品：显式 `Close::Normal` 收口，起手不注入。
-    Normal,
-    /// 故障景：收服务走 `offline(Fault)`，且平台第一次停住答 `Pending`。
-    Fault,
-    /// 起手受控失败：`spawn` 之后、**发布之前**（范围已登记，可达标记还没点）。
-    StartupBeforePublish,
-    /// 起手受控失败：**发布与武装都过了**、交付之前。
-    StartupAfterPublish,
-}
-
-/// 一次开始的结果：设备在不在。
-pub enum Started {
-    /// 本机没有这台设备（普通产品保持行为）。
-    Absent,
-    /// 还在装配/武装：本帧推到哪里算哪里，下一帧接着来。
-    Starting,
-    /// 已经保留、发布并放开了服务。
-    Running,
-}
-
 /// 产品 DMA 管理者：一次只跑一台端点。
 pub struct Dma {
     /// 起手走到哪一步（见 [`Start`]）。
@@ -191,6 +134,10 @@ pub struct Dma {
     retained: Option<usize>,
     /// 收子任务那两条命令已经发出去了（每帧 `join` 探它落地，不重发）。
     reclaim_sent: bool,
+    /// 端点已经 `claim` 过（那几笔 PCI 配置写下去了：内存空间、bus-master、BAR 落位）。
+    claimed: bool,
+    /// 端点 `COMMAND` 里 bus-master 那一位最近一次**回读**到的值；`Some(0)` = 已确认撤掉。
+    master_seen: Option<u16>,
     pages: Option<Pages>,
     /// 武装那一串用的队列（`setup` 里建好，一帧推一格）。
     queues: Option<CommandQueue>,
@@ -249,6 +196,8 @@ impl Dma {
             published: false,
             retained: None,
             reclaim_sent: false,
+            claimed: false,
+            master_seen: None,
             pages: None,
             queues: None,
             handshake: None,
@@ -327,6 +276,7 @@ impl Dma {
     /// 结清；**发布之后**失败 = 停机凭据归平台，`pages` 也要留到 `settle` 确认之后才还。
     /// 两档都归 `settle`——那里才是“最后一次读 MMIO”之后（见 [`Dma::finish`]）。
     fn rollback(&mut self, supplies: &mut Supplies) {
+        self.revoke_authority();
         self.reclaim();
         if let Some(range) = self.range {
             if !self.attached {
@@ -339,6 +289,36 @@ impl Dma {
                 ));
             }
         }
+    }
+
+    /// 发布之前失败：设备从来没可达过，停机链（平台）不会跑，故这里**自己**撤掉端点的
+    /// 发起权限——清 ECAM 的 bus-master 并按平台收口那一步的**同一形状**回读（写后真读一次，
+    /// 拿到的就是撤没撤掉的现场）。
+    ///
+    /// **只在发布之前这一档做**：发布过的那一档归平台整条停机链，不用清 master 冒充排空。
+    /// 回读不是 0 就一直留着（`master_seen` 不是 `Some(0)`），`settle` 不会因此收尾：
+    /// 没确认不提早丢责任。
+    fn revoke_authority(&mut self) {
+        if self.published || !self.claimed {
+            return;
+        }
+        let Some(ecam) = self.ecam.as_ref() else {
+            return;
+        };
+        let scan = Ecam::new(ecam.view().base(), self.requester);
+        scan.command_and(ecam::COMMAND_MASTER);
+        let master = scan.read16(ecam::COMMAND) & ecam::COMMAND_MASTER;
+        if self.master_seen != Some(master) {
+            self.master_seen = Some(master);
+            self.say(&alloc::format!(
+                "system-dma: startup failed, endpoint bus-master={master:#x}"
+            ));
+        }
+    }
+
+    /// 端点发起权限已经确认撤掉（或本来就没给过），否则就归平台那条停机链去确认。
+    fn authority_clear(&self) -> bool {
+        self.published || !self.claimed || self.master_seen == Some(0)
     }
 
     /// 收子任务：`doom` ＋ `slay_team` **只发一次**，两个结果原样报出来；之后每帧
@@ -457,6 +437,8 @@ impl Dma {
             Endpoint::claim(&scan, bar_index, (APERTURE_BASE, APERTURE_SIZE)).map_err(fail)?;
         self.requester = endpoint.requester();
         self.caps = Some(caps);
+        // 到这里那几笔 PCI 配置已经写下（内存空间、bus-master、BAR 落位）：失败回退要认账。
+        self.claimed = true;
         let first = ((endpoint.address() - APERTURE_BASE) / PAGE_SIZE as u64) as usize;
         let pages_in_bar = (endpoint.size() as usize).div_ceil(PAGE_SIZE);
         // 这一轮的范围是**设备能经 IOMMU 到的那一段内存**（不是 BAR 那一段 MMIO）：
@@ -787,6 +769,11 @@ impl Dma {
         // 起手失败那一档：没有正证、也没有“确认后放页”那一格，只报现场。
         // （子任务已由 `rollback` 主动收进死亡路径，范围也已关成 `Fault`。）
         if !self.served {
+            // 发布之前失败那一档：端点发起权限要**先确认撤掉**才收尾（真回读）。
+            // 没确认就留到下一帧接着撤——不提前关图、也不提前放页。
+            if !self.authority_clear() {
+                return Progress::Done;
+            }
             if !self.reported {
                 self.reported = true;
                 self.say(&alloc::format!(

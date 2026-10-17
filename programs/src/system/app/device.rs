@@ -7,7 +7,8 @@ use ::schedule::{Progress, ResMut};
 
 use crate::system::app::Fault;
 use crate::system::app::supplies::Supplies;
-use crate::system::device::dma::{Dma, Started};
+use crate::system::device::dma::Dma;
+use crate::system::device::started::Started;
 use crate::system::loader::Loader;
 
 /// 开始一次产品 DMA：发现 → 保留 → 发布 → 交付 → 放开服务，**一帧推一步**。
