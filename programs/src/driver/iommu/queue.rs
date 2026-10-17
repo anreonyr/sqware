@@ -18,23 +18,38 @@ const COMMAND_LOG2SZ: u64 = 7;
 const FAULT_LOG2SZ: u64 = 6;
 const COMMAND_ENTRIES: u32 = 2 << COMMAND_LOG2SZ;
 const FAULT_ENTRIES: u32 = 2 << FAULT_LOG2SZ;
-/// IOFENCE.C 写下的那个数：完成记录里出现它，才算硬件执行过这条命令。
+/// IOFENCE.C 完成记录的基准值：完成记录里出现 `基准 ＋ 命令尾` 才算硬件执行过
+/// **那一条**命令。
+///
+/// 固定值不行：上一次 `IOFENCE` 写下的那 4 字节会留在完成记录页里，下一次若只等
+/// “看到某个固定值”，一枚迟到的旧存储就会冒充本次完成。故每次用**与本次命令尾绑定的**
+/// 新值，并在提交前把那一格清零（旧值不留、旧存储也对不上新值）。
 pub const FENCE_DATA: u32 = 0x10F0_0FEE;
 /// 完成记录地址在命令里按 4 字节格给（地址 >> 2）。
 const FENCE_ADDRESS_SHIFT: u32 = 2;
 /// 命令操作码：IOTINVAL（功能 VMA）/ IOFENCE（功能 C）。
 const IOTINVAL_VMA: u64 = 1;
 const IOFENCE_C: u64 = 2;
-/// IOFENCE.C 的 AV：带完成记录。
+/// `IOFENCE.C` 那几个位：AV[10] 带完成记录、PR[12] 等已发出的读、PW[13] 等已发出的写。
+///
+/// 编码照规范（`opcode[6:0] func3[9:7] AV[10] WSI[11] PR[12] PW[13] rsvd[31:14] DATA[63:32]`），
+/// 但**不把“完成记录出现”当成端点在途已排空**：本机 QEMU 把 `PR`/`PW` 当保留位忽略
+/// （`riscv_iommu_iofence` 处理命令时就立刻写记录），而硬件即使支持也只保证“已被
+/// IOMMU 处理过的请求”落全局序。端点在途那一段由端点侧收口（清 bus-master）单独管。
 const IOFENCE_NOTIFY: u64 = 1 << 10;
-/// 等完成记录的有界自旋。
-const POLL_LIMIT: usize = 1_000_000;
+const IOFENCE_PR: u64 = 1 << 12;
+const IOFENCE_PW: u64 = 1 << 13;
 
 /// 三个页都用**保留窗里的页号**指，构造时就从窗里取走这两组数：本域地址
 /// （写命令项 / 读故障记录 / 读完成记录）与真实物理页起址（编程 CSR）。
 ///
 /// 它**不持窗、也不持自己的尾**：命令尾每次都从 `CQT` 回读（硬件才知道消费到哪），
 /// 故持有者可以各持一枚而不会分叉——产品那一侧 System 与它的平台各持一枚。
+/// 等一条 `IOFENCE.C` 完成的上限（纳秒）。
+const FENCE_NS: u64 = 2_000_000_000;
+/// 等一台队列立起来 / 停下来与 `DDTP` 握手的上限（纳秒）。
+const HANDSHAKE_NS: u64 = 2_000_000_000;
+
 pub struct CommandQueue {
     base: usize,
     commands: usize,
@@ -43,6 +58,8 @@ pub struct CommandQueue {
     command_page: usize,
     fault_page: usize,
     fence_page: usize,
+    /// 在途的那一条 `IOFENCE.C` 的完成值：重试只**继续等它**，不重提新命令。
+    pending: Option<u32>,
 }
 
 impl CommandQueue {
@@ -61,6 +78,7 @@ impl CommandQueue {
             command_page: pages.physical(commands),
             fault_page: pages.physical(faults),
             fence_page: pages.physical(fence),
+            pending: None,
         }
     }
 
@@ -117,20 +135,46 @@ impl CommandQueue {
         self.submit(IOTINVAL_VMA, 0);
     }
 
-    /// 提交一条 IOFENCE.C 并等它写下的完成记录；`false` = 期限内没等到。
+    /// 提交一条 `IOFENCE.C`（或**继续等**已在途的那一条）直到硬件写下本次的完成值。
+    ///
+    /// 完成值 = `FENCE_DATA + 提交时读到的命令尾`：每次提交一个新值（尾全局单调，
+    /// 且提交由本域**唯一**串行提交者发出），故一枚迟到的旧完成存储对不上新值。
+    /// 期限内没等到则返 `false` 并**保留那条在途命令**：下一次调用继续等它，
+    /// 不重提新命令、不把已有的完成丢掉。
     pub fn fence(&mut self) -> bool {
-        let dword0 = IOFENCE_C | IOFENCE_NOTIFY | ((FENCE_DATA as u64) << 32);
-        let dword1 = (self.fence_page as u64) >> FENCE_ADDRESS_SHIFT;
-        self.submit(dword0, dword1);
+        let cookie = match self.pending {
+            Some(cookie) => cookie,
+            None => {
+                // 旧完成（含可能迟到的旧存储）不得冒充本次。
+                // SAFETY: 完成记录页是本域刚取的可写页。
+                unsafe { core::ptr::write_volatile(self.fence as *mut u32, 0) };
+                super::order::sync();
+                let tail = regs::read32(self.base, regs::CQT);
+                let cookie = FENCE_DATA.wrapping_add(tail);
+                let dword0 = IOFENCE_C
+                    | IOFENCE_NOTIFY
+                    | IOFENCE_PR
+                    | IOFENCE_PW
+                    | ((cookie as u64) << 32);
+                let dword1 = (self.fence_page as u64) >> FENCE_ADDRESS_SHIFT;
+                self.submit_at(tail, dword0, dword1);
+                self.pending = Some(cookie);
+                cookie
+            }
+        };
         let record = self.fence as *const u32;
-        for _ in 0..POLL_LIMIT {
+        let until = env::chrono::clock().saturating_add(FENCE_NS);
+        loop {
             // SAFETY: 完成记录页是本域刚取的可写页。
             let seen = unsafe { core::ptr::read_volatile(record) };
-            if seen == FENCE_DATA {
+            if seen == cookie {
+                self.pending = None;
                 return true;
             }
+            if env::chrono::clock() >= until {
+                return false;
+            }
         }
-        false
     }
 
     /// 硬件消费到哪了：两个队列的头。
@@ -179,10 +223,16 @@ impl CommandQueue {
 
     /// 提交一项：先回读命令尾，再把那一项写在当前槽上，最后推门铃。
     ///
-    /// 尾取自 `CQT`（硬件消费到哪它才知道），故本层不藏自己的计数；两次提交之间
-    /// 没有别的写者时就与“本地自增”同一条结果。
+    /// 尾取自 `CQT`（硬件消费到哪它才知道），故本层不藏自己的计数。**这一读一写
+    /// 不是并发互斥**：同一时刻只应有一个提交者（本域就是 System 自己的执行权），
+    /// 多个句柄靠回读尾只保证“不藏分叉的本地计数”，不保证两个提交者不撞槽。
     fn submit(&mut self, dword0: u64, dword1: u64) {
         let tail = regs::read32(self.base, regs::CQT);
+        self.submit_at(tail, dword0, dword1);
+    }
+
+    /// 在指定尾上写一项并推门铃（调用方已经拿过尾，故可与它写下的完成值绑定）。
+    fn submit_at(&mut self, tail: u32, dword0: u64, dword1: u64) {
         let slot = (tail % COMMAND_ENTRIES) as usize * COMMAND_BYTES;
         let at = (self.commands + slot) as *mut u64;
         // SAFETY: 命令队列页是本域刚取的可写页，项按 16 字节排。
@@ -199,10 +249,9 @@ impl CommandQueue {
 /// 有界轮询一台队列 CSR 直到 `done`（返最后那一刻的读数；到期限就把它原样交出去）。
 fn poll(mut read: impl FnMut() -> u32, done: impl Fn(u32) -> bool) -> u32 {
     let mut seen = read();
-    let mut left = POLL_LIMIT;
-    while !done(seen) && left > 0 {
+    let until = env::chrono::clock().saturating_add(HANDSHAKE_NS);
+    while !done(seen) && env::chrono::clock() < until {
         seen = read();
-        left -= 1;
     }
     seen
 }

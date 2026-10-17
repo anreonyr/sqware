@@ -68,6 +68,13 @@ impl Ecam {
         self.write16(COMMAND, self.read16(COMMAND) | set);
     }
 
+    /// 命令寄存器里清掉 `clear` 那几位（**读改写**：别动别的位）。
+    ///
+    /// 端点侧收口用它把 `bus-master` 拉下来：端点从此没有发起内存请求的授权。
+    pub fn command_and(&self, clear: u16) {
+        self.write16(COMMAND, self.read16(COMMAND) & !clear);
+    }
+
     /// 量一根**内存** BAR 的长度（标准那一手：先写全 1、再读回掩码，随后把原值放回去）。
     ///
     /// 返 `(字节数, 是不是 64 位那一根)`；`None` = 这一格不存在（原值 0）或它是 I/O 空间

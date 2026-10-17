@@ -8,4 +8,5 @@
 //! 还没接上的那一半（产品 DMA 服务与它的工作页保留/发布）在下一次提交：
 //! 平台已经有了，缺的是把它挂进 `Holds::attach` 并真发布页的那一份管理者。
 
+pub mod dma;
 pub mod platform;
