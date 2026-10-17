@@ -23,11 +23,12 @@ FAULT_KILLED = 0xFFFFFFFF
 
 def run(conn, capture):
     """喂入帮手指的那个入口：一例 = 一次连接。"""
+    pending = pathlib.Path(os.environ["SCENE_SUMMARY_PENDING"])
     harness = Harness(conn, capture)
     trace = pathlib.Path(capture).parent
     try:
         harness.finish(stage(harness))
-        harness.write_summary(trace / "scene-memory-transfer-phases.json")
+        harness.write_summary(pending)
     finally:
         try:
             os.replace(harness.trace.path, trace / "scene-memory-transfer-diagnose.jsonl")

@@ -19,6 +19,10 @@ pub mod memory_transfer;
 // 那颗 hart 第一次再访存必须缺页”。两台都在引导镜像那一域里，共享那族身子的量具。
 pub mod memory_transfer_tlb;
 
+// 又一面：一次真移交失败把目标还成从未物化的 Fresh。等待者与晚到者物化的都是
+// 新清零页；握手页那一面与内核夹具共用同一份线格式（见 `memory_transfer_fresh/handshake.rs`）。
+pub mod memory_transfer_fresh;
+
 pub(crate) mod fixture;
 
 /// Run the full system acceptance image from the in-crate fixture.

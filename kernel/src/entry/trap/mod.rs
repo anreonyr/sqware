@@ -5,6 +5,7 @@ use alloc::sync::Arc;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{scause, sepc, sie, sip, stval};
 
+use crate::core::memory::address::VirtAddr as KVirt;
 use crate::core::memory::nest::identity::{self as asid, Asid};
 use crate::core::memory::nest::{FaultOutcome, Nest};
 use crate::core::work::record::trace::{self, EventKind, MemoryEvent, RoomEvent};
@@ -12,6 +13,8 @@ use crate::core::work::room::conductor::run::run;
 use crate::core::work::room::deadline;
 use crate::core::work::room::identity::{Identity, ident};
 use crate::core::work::room::messenger::{self, Handoff, WakeKey, redeem};
+use crate::core::work::unit::space::Space;
+use crate::core::work::unit::task::TaskIdent;
 use crate::machine::hart::{self, HartId};
 use crate::machine::switcher::context::TrapContext;
 use crate::putln;
@@ -174,10 +177,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             if !from_task {
                 panic!("kernel ebreak from the kernel itself");
             }
-            let Some(Identity::Live(ident_arc)) = ident else {
-                panic!("envcall without running task");
-            };
-            match crate::entry::call::dispatch(frame, ident_arc) {
+            match envcall(frame, ident) {
                 Some(next) => next,
                 None => crate::core::work::room::messenger::quit() as *mut TrapContext,
             }
@@ -366,15 +366,80 @@ fn quit(ident: Option<Identity>, reason: usize) -> *mut TrapContext {
 }
 
 fn kill_fault(ident: Option<Identity>) -> *mut TrapContext {
-    if let Some(task) = crate::core::work::room::conductor::current().running_task() {
-        let _commit = crate::core::work::commit();
-        if !task.dead() {
-            task.state.lock().doom(
-                Some(crate::machine::hart::hart_id()),
-                env::ExitCause::Fault,
-                messenger::EXIT_FAULT,
-            );
-        }
-    }
+    let live = match &ident {
+        Some(Identity::Live(live)) => Some(live),
+        _ => None,
+    };
+    doom(live, env::ExitCause::Fault, messenger::EXIT_FAULT);
     quit(ident, messenger::EXIT_FAULT)
+}
+
+/// 环境调用那一支：先结清这张表上待结算的失效、再按真实长度把 `sepc` 推过那条
+/// `ebreak`，最后才派发。
+///
+/// 三件“不知道”都不许往下走——失效结不掉、入口那个字节读不出来、推过之后
+/// 越出地址宽度。那是这份地址空间的真实失败，与缺页那条同一种归责：照实记录，
+/// 把这个任务**显式判死**（`Fault`），交回 `None` 让入口按原样把它换出去。
+/// 绝不猜一个长度推进 `sepc`（错位会让客人跳过它自己写回答案的那一存），
+/// 也绝不在没结清的表上做这一次调用；越界时连原 `sepc` 一并留在原地。
+pub(crate) fn envcall(
+    frame: &mut TrapContext,
+    ident: Option<Identity>,
+) -> Option<*mut TrapContext> {
+    let Some(Identity::Live(ident)) = ident else {
+        panic!("envcall without running task");
+    };
+    let space = &ident.team.space;
+    if let Err(resource) = space.nest.retry_invalidation() {
+        log::error!("envcall: the address space cannot settle its sync: {resource:?}");
+        doom(Some(&ident), env::ExitCause::Fault, messenger::EXIT_FAULT);
+        return None;
+    }
+    let Some(length) = instr_len(space, frame.sepc) else {
+        log::error!(
+            "envcall: the instruction at sepc={:#x} is unreadable",
+            frame.sepc.as_usize()
+        );
+        doom(Some(&ident), env::ExitCause::Fault, messenger::EXIT_FAULT);
+        return None;
+    };
+    let Some(next_pc) = frame.sepc.as_usize().checked_add(length) else {
+        log::error!(
+            "envcall: sepc={:#x} plus an instruction length overflows",
+            frame.sepc.as_usize()
+        );
+        doom(Some(&ident), env::ExitCause::Fault, messenger::EXIT_FAULT);
+        return None;
+    };
+    frame.sepc = KVirt::wrap(next_pc);
+    crate::entry::call::dispatch(frame, ident)
+}
+
+/// 环境调用那条指令的长度：`c.ebreak` 两字节、`ebreak` 四字节。
+///
+/// 首字节读不出来就是**不知道**，交 `None`，不凭空造一个长度。客人的正文只要
+/// 在跑就读得出来（这条 `ebreak` 刚执行过）；读不出来是这份地址空间的失败。
+fn instr_len(space: &Space, sepc: KVirt) -> Option<usize> {
+    let byte = space.instruction_byte(sepc)?;
+    Some(if byte & 0b11 == 0b11 { 4 } else { 2 })
+}
+
+/// 把这个身份指到的任务显式判死并留下原因（换出由调用处负责）。
+///
+/// 身份指得到就只落在那一个上（环境调用与缺页两条路都按这份身份归责）；
+/// 指不到时才落到此刻在跑的那一个。
+fn doom(ident: Option<&Arc<TaskIdent>>, cause: env::ExitCause, reason: usize) {
+    let task = match ident {
+        Some(ident) => crate::core::work::room::scheduler::roster::muster(ident.id)
+            .and_then(|weak| weak.upgrade()),
+        None => None,
+    }
+    .or_else(|| crate::core::work::room::conductor::current().running_task());
+    let Some(task) = task else { return };
+    let _commit = crate::core::work::commit();
+    if !task.dead() {
+        task.state
+            .lock()
+            .doom(Some(crate::machine::hart::hart_id()), cause, reason);
+    }
 }

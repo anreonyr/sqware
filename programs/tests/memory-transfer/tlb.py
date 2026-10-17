@@ -46,12 +46,13 @@ LOAD_PAGE_FAULT = 13
 
 def run(conn, capture):
     """喂入帮手指的那个入口：一例 = 一次连接。"""
+    pending = pathlib.Path(os.environ["SCENE_SUMMARY_PENDING"])
     trace_dir = pathlib.Path(capture).parent
     console = Console(conn, capture)
     trace = Traces(pathlib.Path(capture).resolve().parent.parent / "sqware-diagnose.jsonl")
     try:
         summary = judge(console, trace)
-        (trace_dir / "scene-memory-transfer-tlb-summary.json").write_text(
+        pending.write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n"
         )
     finally:

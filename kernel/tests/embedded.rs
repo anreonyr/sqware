@@ -401,6 +401,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn syscall_sync_failure() {
+        kernel::entry::check::syscall::sync_failure();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn syscall_capability() {
         kernel::entry::check::syscall::capability();
     }
@@ -449,6 +455,10 @@ mod tests {
 
     #[test]
     fn scene() {
+        // fresh 失败回退那一景靠一个在途夹具注入一次失败：它只在这一格打开时才装上，
+        // 且只在 debug 档（夹具与那四个探针同属 `cfg(debug_assertions)`）。
+        #[cfg(all(feature = "fresh-scene", debug_assertions))]
+        kernel::entry::check::fresh_scene::arm();
         kernel::entry::boot::start().unwrap_or_else(|error| kernel::entry::boot::fail(error));
         kernel::entry::boot::run();
     }

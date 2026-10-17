@@ -12,6 +12,7 @@ import socket
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 HERE = pathlib.Path(__file__).parent
@@ -158,16 +159,19 @@ class TlbObserverTests(unittest.TestCase):
                 verdict="memory-transfer-tlb: FAIL the sampled load read a byte: the hot TLB was not revoked"
             )
 
-    def test_run_writes_a_summary_and_archives_the_export(self):
+    def test_run_stages_a_summary_without_publishing_success(self):
         trace_dir = self.root / "trace"
         trace_dir.mkdir()
         capture = trace_dir / "scene-memory-transfer-tlb-feed.log"
         (self.root / "sqware-diagnose.jsonl").write_text(
             "".join(json.dumps(item) + "\n" for item in proven())
         )
-        DRIVER.run(self.scripted([READER, FACTS, CAUGHT, CLOSED]), str(capture))
-        summary = json.loads((trace_dir / "scene-memory-transfer-tlb-summary.json").read_text())
+        pending = self.root / "private-pending.json"
+        with patch.dict("os.environ", {"SCENE_SUMMARY_PENDING": str(pending)}):
+            DRIVER.run(self.scripted([READER, FACTS, CAUGHT, CLOSED]), str(capture))
+        summary = json.loads(pending.read_text())
         self.assertEqual(summary["scene"], "memory-transfer-tlb")
+        self.assertFalse((trace_dir / "scene-memory-transfer-tlb-summary.json").exists())
         self.assertFalse((self.root / "sqware-diagnose.jsonl").exists())
         archived = Traces(trace_dir / "scene-memory-transfer-tlb-diagnose.jsonl")
         archived.poll()

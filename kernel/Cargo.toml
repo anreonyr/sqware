@@ -14,6 +14,11 @@ default = []
 # cargo 的 `unused_dependencies` 看不见 `cfg(feature = "semihosting")` 里的用法，
 # 依赖写成必选就永远挂着一条假警告。
 semihosting = ["dep:serde_json"]
+# Fresh 失败回退那一景的**在途夹具**：一个会读控制者握手页、放开读者、再注入一次撤页
+# 确认失败的内核探针。与 `semihosting` 同款**非默认**：默认关着就根本没有探针实体，
+# D1/TLB/accept/product 连它被装上的机会都没有。它只在 `cfg(debug_assertions)`
+# 里编得出来（那四个探针同处）；选景靠这一格 ＋ 握手页上那枚标记，不靠 debug_assertions。
+fresh-scene = []
 # 拆法：**登记与打点**搬去 `embedded-test`（`tests/embedded.rs` + `nu scripts/qtest.nu`）；
 # 那些 `cfg(any(debug_assertions, feature = "framework"))` 全部收成 `cfg(debug_assertions)`
 # ——**自检并进断言那一档**，它本来就只在 debug 里有实体。故这一格没有读者，删。

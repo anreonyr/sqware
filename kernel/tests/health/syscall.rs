@@ -3558,3 +3558,166 @@ pub fn transfer_wakes_relations() {
         0
     );
 }
+
+/// 撤页确认失败留在表上的那一笔，归下一个要用这张表的入口结清。
+///
+/// ① 结得清：真 `c.ebreak` 按两字节推进，答案写回；
+/// ② 连那一次也失败：不推进 `sepc`、不写答案、不做这一次调用，显式判死；
+/// ③ 表干净、入口那个字节却读不出来：同样不推进、不写答案、显式判死；
+/// ④ 四字节 `ebreak` 按四字节推进。
+pub fn sync_failure() {
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    use crate::core::memory::nest::identity::fail_next_shootdown;
+    use crate::core::work::room::identity::Identity;
+
+    // 一段可执行的真指令：`code` 是两字节 `c.ebreak`，`code + 4` 是四字节 `ebreak`。
+    fn code_fixture() -> (Caller, usize) {
+        let caller = Caller::new(false);
+        let (_, at) = caller.attach_alloc(PAGE_SIZE, 6);
+        let code = at + PAGE_SIZE / 4;
+        assert!(
+            caller.team.space.copy_out(
+                &[0x02, 0x90, 0x00, 0x00, 0x73, 0x00, 0x10, 0x00],
+                KVirt::wrap(code)
+            ),
+            "c.ebreak / ebreak at {code:#x}"
+        );
+        assert_eq!(caller.set_access_at(at, PAGE_SIZE, 10), 0, "R|X");
+        (caller, code)
+    }
+
+    // 再在表上留一笔待结算的失效：一次撤页确认失败（真安装真失败）。
+    fn arm_failed_sync(caller: &Caller) {
+        let scratch = caller.scratch_page();
+        let handle = caller.call(EnvCall::Memory(MemoryCall::Acquire {
+            source: env::AcquireSource::Allocation(
+                env::Allocation::new(PAGE_SIZE, PAGE_SIZE).expect("allocation"),
+            ),
+            retention: env::PieToken::NONE,
+        }));
+        assert!(handle > 0, "acquire: {handle}");
+        caller.write_words(scratch, &[handle as usize, 0, 1]);
+        caller.write_words(scratch + 32, &[0, 0, PAGE_SIZE]);
+        fail_next_shootdown(caller.team.space.nest.asid());
+        let attach = MemoryCall::Attach {
+            range: VirtAddr::new(scratch),
+            team: env::TeamId::new(0),
+            placement: VirtAddr::new(scratch + 32),
+            access: 6,
+            control: env::ViewControl::Caller,
+        };
+        assert_eq!(
+            caller.raw(attach.slot(), attach.pack()),
+            env::MemoryFail::Busy.code(),
+            "armed sync fails the install"
+        );
+        assert!(
+            caller.team.space.nest.has_pending_invalidation(),
+            "a failed sync keeps its responsibility"
+        );
+    }
+
+    fn frame_of(caller: &Caller) -> &mut TrapContext {
+        unsafe { &mut *(caller.task.ident.frame_pa.as_usize() as *mut TrapContext) }
+    }
+
+    // 判死必须是显式的 `Fault`：`None` 交回后入口会换出它，不许被当成 clean。
+    fn killed(caller: &Caller) {
+        assert!(caller.task.dead(), "the task is doomed");
+        assert_eq!(
+            caller.task.state.lock().dying(),
+            Some((env::ExitCause::Fault, env::EXIT_FAULT)),
+            "explicit Fault, never a clean reap"
+        );
+    }
+
+    // ① 结得清：先结清再执行。
+    {
+        let (caller, code) = code_fixture();
+        arm_failed_sync(&caller);
+        let id = caller.task.ident.id;
+        let frame = frame_of(&caller);
+        frame.sepc = KVirt::wrap(code);
+        frame.gpr.set_x(Gprs::A7, UnitCall::SelfId.slot());
+        assert!(
+            crate::entry::trap::envcall(frame, Some(Identity::Live(caller.task.ident.clone())))
+                .is_some(),
+            "settled: the call is served"
+        );
+        assert!(
+            !caller.team.space.nest.has_pending_invalidation(),
+            "the entry settled the pending sync first"
+        );
+        assert_eq!(
+            frame.sepc.as_usize(),
+            code + 2,
+            "c.ebreak advances two bytes"
+        );
+        assert_eq!(frame.gpr.x(Gprs::A0), id.get(), "answer written back");
+    }
+
+    // ② 结清那一次也失败：没有这一次调用，也没有错位的 `sepc`。
+    {
+        let (caller, code) = code_fixture();
+        arm_failed_sync(&caller);
+        fail_next_shootdown(caller.team.space.nest.asid());
+        let frame = frame_of(&caller);
+        frame.sepc = KVirt::wrap(code);
+        frame.gpr.set_x(Gprs::A0, 0x5eed);
+        frame.gpr.set_x(Gprs::A7, UnitCall::SelfId.slot());
+        assert!(
+            crate::entry::trap::envcall(frame, Some(Identity::Live(caller.task.ident.clone())))
+                .is_none(),
+            "an unconfirmed sync cannot be served"
+        );
+        assert_eq!(frame.sepc.as_usize(), code, "sepc untouched");
+        assert_eq!(frame.gpr.x(Gprs::A0), 0x5eed, "no answer written");
+        assert!(
+            caller.team.space.nest.has_pending_invalidation(),
+            "the responsibility stays"
+        );
+        killed(&caller);
+    }
+
+    // ③ 表干净、字节却读不出来（那一段没有可执行权限）：同样不许推进。
+    {
+        let (caller, _) = code_fixture();
+        assert!(
+            !caller.team.space.nest.has_pending_invalidation(),
+            "clean table"
+        );
+        let data = caller.scratch_page();
+        let frame = frame_of(&caller);
+        frame.sepc = KVirt::wrap(data);
+        frame.gpr.set_x(Gprs::A0, 0x5eed);
+        frame.gpr.set_x(Gprs::A7, UnitCall::SelfId.slot());
+        assert!(
+            crate::entry::trap::envcall(frame, Some(Identity::Live(caller.task.ident.clone())))
+                .is_none(),
+            "an unreadable entry cannot be served"
+        );
+        assert_eq!(frame.sepc.as_usize(), data, "sepc untouched");
+        assert_eq!(frame.gpr.x(Gprs::A0), 0x5eed, "no answer written");
+        killed(&caller);
+    }
+
+    // ④ 四字节 `ebreak` 按四字节推进。
+    {
+        let (caller, code) = code_fixture();
+        let id = caller.task.ident.id;
+        let frame = frame_of(&caller);
+        frame.sepc = KVirt::wrap(code + 4);
+        frame.gpr.set_x(Gprs::A7, UnitCall::SelfId.slot());
+        assert!(
+            crate::entry::trap::envcall(frame, Some(Identity::Live(caller.task.ident.clone())))
+                .is_some(),
+            "an ebreak is served"
+        );
+        assert_eq!(
+            frame.sepc.as_usize(),
+            code + 8,
+            "ebreak advances four bytes"
+        );
+        assert_eq!(frame.gpr.x(Gprs::A0), id.get(), "answer written back");
+    }
+}

@@ -107,6 +107,14 @@ test = false
 bench = false
 doctest = false
 
+# fresh 失败回退那一景的引导镜像：它也是控制者，两阶段的读者都是它同 Team 里真起的任务。
+[[bin]]
+name = "prog-memory-transfer-fresh"
+path = "src/harness/probe/memory_transfer_fresh/main.rs"
+test = false
+bench = false
+doctest = false
+
 [[bin]]
 name = "prog-router"
 path = "src/driver/router/main.rs"

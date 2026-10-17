@@ -972,3 +972,258 @@ python3 -B -m unittest discover -s programs/tests/memory-transfer -p 'test_*.py'
 均已验证远端同步完成契约。Fresh 失败回退/晚到者、Seal 并发、设备/DMA、
 真实 Platform 产品接线及 T4/T5 全部验收仍未完成。本景无等待者，不覆盖等待链
 与 shootdown 的交互。独立审查批准本地封存，不构成共享分支合并或推送许可。
+
+### T4D2 Fresh 失败回退与晚到者（执行记录）
+
+在 `81018931` 后新增独立 `memory-transfer-fresh` 景及非默认 `fresh-scene`
+测试开关。目标是两份不同普通 Flat 的真实 Transfer 在占槽后撤页确认失败：
+A 中 Reserved 目标上的真实等待者经生产 consumer 通知后物化新清零页；
+B 中失败时无等待者，失败返回后才创建晚到 Task，直接物化 Fresh，不进入等待。
+握手页为第三份普通来源，线格式由程序与内核测试夹具 include 同一文件，
+不新增生产 ABI、不放宽 Traverse 授权，也不跨 Transfer 持 Pages/Residency。
+源花纹保留是内容证据，不能据此声称端到端取得同 Frame 身份或零分配证据。
+
+worker 初次检查点报告常规 DA 场景连续六次通过、三个负对照失败；
+父代理合入该检查点后执行相同精确命令：
+
+```sh
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
+  --scene memory-transfer-fresh --feed-script programs/tests/memory-transfer/fresh.py \
+  -- --features semihosting,fresh-scene -- scene
+```
+
+父树实测 **0 passed / 1 failed / 68 filtered**（10.23s），脚本退出 1。
+A 的 Wait/Wake 各 1、目标未结算及已结算 Load、源撤页后已结算 Load 均出现，
+内容读数为目标 0、源 0x7f800。B 报 Busy/armed 后控制者超时：
+`the reader never reported`。完整导出有第二组 Spawn/Embark 环境调用，
+但只记录 tid 1–11 的 Spawn、没有晚到 Task 的 Spawn，也没有 B 目标页缺页。
+这一现象尚未定位，不能归因于特定 Team 生命周期或 ABI 缺陷；
+也不允许预先创建晚到 Task 来绕过“失败后才创建”的合同。
+现场存于忽略的 `trace/fresh-parent-initial-failure-{diagnose.jsonl,qtest.log,feed.log}`，
+无成功 summary，保留失败诊断归档。源码回退及生产通知均已核对无负对照残留。
+
+父代理另跑宿主回归 38 passed（0.048s），不把它当成端到端通过。
+初读另发现握手 volatile 不等于同步原子、源重新缺页判据会被初次 Store 满足、
+目标缺页未核精确数量/类型、feature 实体门与注释不一致等问题，已集中交原 writer
+返工。worker 曾报告 Join 的 `invalid TaskExit id` 偶发 panic，未定位；
+改用 raw Task 不能视为修好该问题。本阶段独立 reviewer 正在核实实现与失败现场，
+尚未批准封存、提交或推送。
+
+独立复审初版结论为 **BLOCKER**。reviewer 最终补正为首轮六次通过，
+后续 18 轮 14 passed、4 轮超时，合计 24 轮 20 passed / 4 failed；
+另一次启动后被中止的运行不计。不能用连续绿色替代稳定性验收。四轮均有第二组
+Spawn/Embark 调用却没有相应 Spawn 事件，也没有 B 目标页缺页；
+其中 Chrono::Clock 调用持续至外部 60s 超时，控制者自己的 10s 时限未生效。
+失败轮与引导 early IPI 探针实际发送 16/16 的记录相关，绿色轮该探针跳过；
+这只是观察到的相关性，不是根因证明，更不能通过关闭 IPI 检查让场景变绿。
+寄存器/回答路径异常及原 Join 异常仍待原 writer 定位。
+
+reviewer 另以观察器输入变体证实多处误通过：删除源撤页后的 Load、
+把缺页改为 Store 或增加目标已结算缺页、晚到者出现额外 Wake 等仍能通过。
+已要求源 Store→Load、目标 A 未结算 Load→已结算 Load、目标 B 恰一条
+已结算 Load 的精确判据，以及独立 tid 和晚到者零 Wait/Wake/Park。
+“失败后才创建晚到者”的完整边界目前来自程序序，不宣称宿主 trace
+包含了尚不存在的 Transfer 返回事件。
+
+复审还发现既有结构化导出在 HOST 锁超时、序列化失败和写失败时可能静默丢事件。
+因此 EOF、JSON 行完整性和已观察到的事件只能证明收到的部分，不能单独证明
+“从未发生某个事件”；这也限制既有 D1/T5A 中仅靠导出缺席作出的结论。
+此项是继续验收前的证据完整性前置，而非已解决的旁支问题。父代理已读码确认，
+交同一 writer 评估最小 fail-closed 修复：复用既有损坏标记记录所有导出失败，
+在所有 producer 停止后的成功测试出口拒绝损坏证据，不无限阻塞核心锁路径；
+最终命令失败时清除成功 summary、保留失败诊断。该修复尚未实现或验证，
+当前不能把失败/缺失事件的 trace 当完整账本。
+
+原 writer 随后因 `OpenCode Go error: {"model":"deepseek-flash"}` 中断，
+父代理按其精确 frontier `506468cb-3a27-4a2e-938a-1f8c474585e1.9768789`
+保留了六文件未完成返工，不把模型服务失败当编译或测试失败，也未换用其他模型。
+该返工尚未完成 ABI 定位、导出完整性修复与全部判据回归；
+内核 copy_out 后才放 Release fence 的写法仍待纠正，不能称已实现正确发布。
+父代理检查当前差异格式无空白错误，独立跑 `test_fresh.py` 为 11 passed /
+2 failed（观察器错误文案已变、测试的预期正则未更新），不是最新宿主全绿。
+早先 38 passed 属于初版读数，不适用于这份中断检查点。尚无新的端到端通过证据。
+
+父代理随后用同一 Flash high 模型的新上下文 worker 接手 ABI 定位，
+只交已确认合同、真实检查点与失败现场，不迁入整段历史；旧 writer 不再续写。
+父代理独立处理证据与同步边界，文件所有权分开。当前新增修复尚在定向复审：
+
+- 握手两侧统一用 AtomicU64 Release/Acquire。测试夹具通过既有 Nest::translate
+  取得第三 Flat 的普通 RAM 握手页，在回调期间访问原子字；该页不参与 Transfer，
+  控制者在调用返回前不关闭其 View。不新增生产 PA 出口，不取 Moving 源帧，
+  不跨迁移持有源 Pages/Residency，也不假定一次请求始终在同一 hart 上。
+- 导出沿用唯一 BROKEN 标记，序列化、host 锁超时、创建和写入失败均不可逆标记。
+  仍保持有界导出，不让持核心锁的生产者无限等待；停机屏障后、测试成功出口前
+  检查该标记，证据损坏则退出 101。qtest 最终失败时删除本景成功 summary，
+  保留诊断和失败日志；helper 晚完成时的成功产物发布竞态仍在复审核对。
+- 宿主要求精确的源 Store→已结算 Load、A 目标未结算 Load→已结算 Load、
+  B 目标恰一次已结算 Load、晚到者零 Wait/Wake/Park、独立 tid 和恰一次回收。
+  新增 12 项误通过反例，修正中断时两项预期文案，宿主总计 **50 passed**（0.050s）。
+  late Spawn 晚于 A 源重读是可观察顺序，完整“B 失败返回后才创建”仍由程序序保证。
+
+父代理本轮实际验证：kernel all-targets offline dev 与带 DA 的 release，
+均带 `semihosting,fresh-scene`，检查通过；`nu-check scripts/qtest.nu` 为 true、
+diff check 通过。D1 精确景 1 passed（0.47s）、TLB 1 passed（0.22s）；
+Fresh 精确 DA 1 passed / 68 filtered（10.64s）。这一轮绿色不取消既有偶发失败阻断，
+新 worker 尚未交付 ABI 根因或修复。
+
+父代理另作受控负对照：仅临时丢弃最后一条 Halt 导出事件并置 BROKEN。
+TLB 的真实采样/退出事实仍正确、宿主 `.result` 为 `ok`，但 firmware 与 qtest
+均退出 **101**（0 passed / 1 failed，0.27s），报告
+`structured export incomplete; scene evidence rejected`；最终无成功 summary，
+保留 diagnose 归档。移除注入后与注入前源文件哈希一致，TLB 再次 1 passed（0.22s）。
+现场在忽略的 `trace/export-drop-halt-negative-{qtest.log,diagnose.jsonl}`。
+这证明测试出口拒绝已知丢失，不证明导出从不失败；写错误和锁超时分支仍待独立复核。
+随后仅对 export.rs 作局部格式调整，未全树重排。未提交、未推送。
+
+定向复审批准了原子握手、导出 sticky 失败和 50 项宿主判据，
+但确认“qtest 失败后删除 summary”仍有 helper 晚写回的竞态。
+父代理改为单一发布权：qtest 在造镜像前删除旧正式 marker，
+给本轮生成带 UUID 的私有 pending 路径，经 `SCENE_SUMMARY_PENDING` 传给三个
+memory 驱动；驱动只写 pending，qtest 在固件退出、driver `.result` 与
+景收尾检查均成功后才原子 rename 为正式名。晚完成 driver 最多留下私有 pending，
+不能重建正式成功文件。非这三景不变；同一 TRACE_OUT 并发跑景仍不受支持。
+runner 预检失败发生在本轮初始化前，保留的是上一轮证据，不宣称本轮跑过。
+
+新协议定向复审通过，独立宿主回归 50 passed（0.052s）。
+父代理实跑 D1 1 passed（0.42s）、TLB 1 passed（0.22s），正式产物存在且可解析；
+两个 unit run 用例明确断言只写给定 pending、不写正式名。
+新协议下重复丢 Halt 负对照：TLB 事实正确、driver `.result=ok`、pending
+含 status=1/cause=13，但 firmware/qtest 均退出 101（0.22s），正式 summary 不存在，
+保留诊断。恢复前后 export.rs 哈希均为
+`be350ba5848cfa2405d160c2443f41a75ac58adb3fd3549cb0108ffb4fa05efd`，
+恢复后 TLB 再次 1 passed（0.22s）。新现场在
+`trace/export-pending-negative-{qtest.log,diagnose.jsonl}`，pending 保留作失败证据。
+
+随后 Fresh 精确 DA 命令再次失败：0 passed / 1 failed / 68 filtered，
+外部超时 60.05s，无正式 summary。B 的程序诊断打印
+`spawn ok tid=390752`、`embark ok tid=390752`（0x5f660），
+导出仅观察到 tid 1–11 的 Spawn。这是异常返回的正向读数，不是 tid=0；
+“必然读回自己的输入零值”不能作为已确认根因。console/feed/qtest/diagnose
+保留为 `trace/fresh-parent-staged-failure-*` 并交 ABI worker；超时轮的 console
+仅到 boot IPI 行，不能称取得完整运行期内核控制台，后续正向读数来自 UART feed。
+Fresh 偶发异常仍为阻断，以上证据与同步修复通过不代表本阶段通过或允许提交推送。
+
+reviewer 只读复核了新协议负对照的日志、缺 Halt 的 diagnose、遗留 UUID pending
+及恢复后正式 summary 的不同 deadline，确认未误发布，恢复哈希也一致。
+该注入显式跳过 Halt 并置 BROKEN，实测证明的是消费者拒绝损坏证据的链路；
+序列化、锁超时、创建和写错误四条生产端置标记路径已作静态复核，不冒称逐条注入覆盖。
+本轮定向审查结束，ABI 修复到位后再独立复审。
+
+ABI worker 随后交出根因检查点：失败的撤页确认留下 Nest::Failed，
+下一次 Spawn 的参数 copy_in 被 ready_state 拒绝，真实返回 Denied、没有发布 Task。
+同时入口 instr_len 无法读取客体陷入指令，默认按 4 字节推进 sepc；
+客体实际指令为两字节 `c.ebreak`，多推进两字节落入下一条四字节存储指令的中段，
+不再执行原本向返回缓冲写 a0 的存储，后续调用可能读到旧缓冲。worker 临时内核边界诊断记录
+Spawn 的内核答案为 -1、sepc=0x1a636（正确应为 0x1a634），同轮 UART
+却报 tid=390752；其反汇编将该值 0x5f660 对到栈上返回缓冲地址。
+此项是 worker 的 instrument/反汇编读数，父代理未独立复现该 instrument，
+已交原 reviewer 核实链路。early IPI 仍仅作为时序相关，不认定其为根因。
+
+父代理精确合入 worker 的一行 `retry_invalidation` 前置检查点，但仍拒绝封存：
+该版以 `let _ = ...` 忽略重试失败，连续同步失败时仍可落入错误长度回退，
+不是修复了整个缺陷类。worker 报修复后多轮通过，但移除该行后的三轮也绿，
+因此随机循环不能代替确定性回归。已要求同组返工：重试失败不执行环境操作、
+不猜长度推进 PC、不暴露旧缓冲作成功；补“重试成功后二字节正确返回”与
+“重试再次失败无副作用/无错误 PC 推进”的确定性用例。
+不得让 ready_state 自行重试、也不得在 Transfer 失败返回前暗中结清责任；
+这两条既有失败语义继续保留。该检查点未获最终审查，也未提交或推送。
+
+父代理补做了独立客体反汇编（不是沿用 SBI.elf 或 worker 的输出）：
+`target/image/release/riscv64gc-unknown-none-elf/release/prog-memory-transfer-fresh`
+的 SHA-256 为 `991c6ff4a8510ebd1936f12de78b9a2cc835a31164e323512246ef9f5b2d9d0c`。
+`llvm-objdump --disassemble-symbols='env::ecall::trap' --demangle <ELF>` 实测
+0x1a632 为 `9002 ebreak`、0x1a634 为 `00a83023 sd a0,0(a6)`；
+再从 `--start-address=0x1a636 --stop-address=0x1a640` 解码，
+错误 PC 处的上半字 `00a8` 实际是一条合法压缩 `addi a0,sp,0x48`，
+然后继续执行 0x1a638 的 `sd a1,8(a6)`。
+因此不仅 a0 的缓冲写入缺失，a0 寄存器还会被显式改为 sp+72；
+不能把错误执行简化为“干净跳过整条指令、总是只读旧值”。
+命令输出与该 ELF 哈希保存于忽略的 `trace/fresh-guest-trap-{disassembly.txt,elf.sha256}`，
+已交 ABI worker 与 reviewer。重试成功后无需为了形式额外再陷一次；
+待实现的约束是确认长度后才执行/推进、重试仍失败时明确归故障责任。
+
+reviewer 也已亲验上述指令。但不能据 `390752 - 0x48` 的算术关系
+就认定该 TaskId 直接来自被改坏的 a0：trap 返回三元组使用隐藏返回缓冲，
+最终值还取决于 caller 如何读取该缓冲。RISC-V call/jal 不自动压栈，
+不同调用点的栈深也未必相同；“每个 API 都返回同一 sp 派生常量”未经测量。
+已要求最终报告分清寄存器执行、缓冲写入和调用者解码，不再扩大数值推断。
+
+ABI 返工检查点将边界归位：`entry::call::dispatch` 只服务调用、不再处理 PC；
+真实 trap 的唯一环境入口负责重试失效、以 `Option` 读取长度后推进 PC，
+重试失败或文本不可读时先显式将目标 Task doom 为 Fault，再交回换出。
+既有 reap 会优先保留 `state.dying()` 的原因，不将该 `None` 当正常 Reap。
+新增 `syscall_sync_failure` 用真实 Caller/Space/Frame 和两次顺序的一次性注入，
+确定性检查成功重试后的二字节推进与答案，以及重试再失败的不执行、不推进、
+哨兵未改、责任仍在、Task 已判死；没有扩建永久失败注入器。
+
+父代理在整合主树（含握手、导出和 pending 发布修复）实跑：
+默认健康面 **69 passed + 缺 initrd 哨兵 1 failed**，退出 101（7.94s），
+新 `syscall_sync_failure` 通过；Fresh 精确 DA **1 passed / 69 filtered**
+（10.38s）；宿主 **50 passed**（0.052s）。这是合并后的读数，不沿用子树早期结果。
+此版仍未封存：PC 加法须恢复 checked、测试须明确断 Fault 原因并补
+“重试成功但入口字节不可读”分支；已交同一 writer 集中收口，reviewer 同步核实。
+
+#### 最终检查点（已通过独立实测复审）
+
+ABI writer 的 `9945338` 已合入并停止写入。入口推进用 checked_add，
+溢出不改原 PC、不执行调用、明确 Fault；`syscall_sync_failure` 同一用例现在覆盖：
+
+1. Failed 后成功重试，真实二字节 `c.ebreak` 推进 2，SelfId 答案正确。
+2. 第二次同步也失败：不推进、不写答案、pending 保留，
+   且 `dying() == (Fault, EXIT_FAULT)`，不是仅断 dead。
+3. Nest Clean 但入口页无 X：不猜长度、不推进、不写答案，明确 Fault。
+4. 真实四字节 `ebreak` 正确推进 4。
+
+不新增持续注入。`retry_invalidation` 尾部清理失败只作静态复核、未注入覆盖；
+checked 算术保留，不为入口不可达的溢出状态新建测试抽象。
+“未修版本三轮也绿时谁先结清失效”仍未定位，不用它替代以上确定性证据。
+ARMED 在 claim 后写入且每轮请求先重置 PREPARED；claim 后的返回 Busy
+在当前 Transfer 实现只来自 unpublish 的 Shootdown 类，不是任意早错 Busy。
+但 B 不据此声称具体哪次 SBI 调用失败或源 PTE 已撤；A 另有源 Store→Load 的证据。
+
+父代理最终整合实跑：
+
+| 检查 | 结果 |
+|---|---|
+| 默认健康面 | 69 passed + 缺 initrd 哨兵 1 failed，退出 101（7.35s） |
+| Fresh 精确 DA | 1 passed / 69 filtered（10.38s）；小收口后 10.44s；负对照恢复后 10.38s |
+| D1 / TLB | 各 1 passed（0.42s / 0.17s） |
+| accept / product / system-fault | 各 1 passed（10.68s / 5.33s / 15.20s） |
+| 宿主 observer | 50 passed（0.051s） |
+| workspace offline dev/release | 通过；programs 10 组、kernel release 6 组既有告警 |
+| kernel all-targets semihosting offline dev、加 fresh-scene dev/release | 通过；dev 无告警，普通 release 6 组既有告警；另跑 fresh-scene DA release 无告警 |
+| 相关格式 / 脚本 | 20 个 Rust 文件按 edition 2024、skip_children 检查通过；nu-check 为 true，diff check 通过 |
+
+未全树格式化；messenger 两文件的既有 import 漂移未重排。
+新 helper queued 的定义和导出共用 fresh-scene 特征门，避免默认 debug 构建新告警；
+Fresh reader 去掉临时 unused alias、复用既有 note 输出，未改 raw 入口或阶段次序。
+
+父代理在最终树另跑不带 fresh-scene 的精确 DA 负对照：
+Transfer 真成功，程序以 `the transfer committed` 明确失败（10.48s），
+firmware 101、脚本 1，无正式 summary；恢复特征门后的精确命令重新通过。
+现场为忽略的 `trace/fresh-final-unarmed-{qtest.log,feed.log}`。
+它证明本景不会在夹具未武装时伪通过，不把这次负对照内的级联退出当成功场景。
+
+最终独立 reviewer 在父树的隔离副本逐条修改、构建、实跑、还原，
+以下六项 mutation 均令 `syscall_sync_failure` 成为唯一新增失败：
+
+| 变体 | 被哪条确定性判据拒绝 |
+|---|---|
+| 文本不可读时造 4 字节长度 | Clean 不可读分支 |
+| None 被当成 2 字节长度 | Clean 不可读分支 |
+| 长度恒为 2 | 真实四字节 ebreak 分支 |
+| 先取长度、后 retry | Failed 后成功重试分支 |
+| Fault 改为 Reap/0 | dying 的 cause/reason 断言 |
+| 删去显式 doom | dying 的 cause/reason 断言 |
+
+各次其余健康用例不变，缺 initrd 哨兵仍失败；每个变体结束均核对文件还原，
+不是删断言或放宽回收检查换绿。reviewer 最终与父树字节一致的副本读数：
+健康面 69 passed + 哨兵 1 failed（8.40s）、Fresh DA 1 passed / 69 filtered
+（10.43s）、宿主 50 passed（0.051s）；其先前 Fresh 连续三次通过，
+D1/TLB 各 1 passed（0.42s/0.22s）。
+queued 特征门和 reader 的小收口也经独立静态与 UART 对照核实。
+reviewer 未重跑 accept/product/system-fault，仍引用上述父代理实际读数。
+
+该阶段已通过独立实测复审，批准本地封存；未获得共享分支合并或推送许可。
+Frame 身份/零分配、真实硬件弱内存、所有 SEE 的远端完成契约、Seal 并发、
+设备/DMA 和真实 Platform 产品接线仍不在本景完成范围，不称 T4/T5 总验收完成。

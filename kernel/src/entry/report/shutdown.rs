@@ -43,6 +43,11 @@ pub(crate) fn verdict() {
     if !crate::testing() {
         return;
     }
+    #[cfg(feature = "semihosting")]
+    if !super::export::complete() {
+        putln!("[verdict] structured export incomplete; scene evidence rejected");
+        semihosting::process::exit(101)
+    }
     if tally::counts().0 == 0 {
         putln!("[verdict] 一台域都没起：世界没跑起来，这一景什么都没验");
         semihosting::process::exit(101)

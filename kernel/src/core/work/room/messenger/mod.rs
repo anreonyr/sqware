@@ -69,6 +69,8 @@ pub(crate) use wait::holder::Ticket;
 #[cfg(debug_assertions)]
 pub(crate) use wait::fwd::FWD_MAX;
 pub(crate) use wait::key::WakeKey;
+#[cfg(all(debug_assertions, feature = "fresh-scene"))]
+pub(crate) use wait::queued;
 #[cfg(debug_assertions)]
 pub(crate) use wait::site_count;
 pub(crate) use wait::{

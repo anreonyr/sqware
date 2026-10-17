@@ -5,8 +5,8 @@
 //! 每阶段收尾才显式放下；View 撤下则在引用之前，否则承载会晚一步才归零。
 
 use env::{
-    AcquireSource, Allocation, PAGE_SIZE, PieToken, Placement, TeamId, ViewControl, ViewId,
-    ViewSelection,
+    AcquireSource, Allocation, FlatReference, PAGE_SIZE, PieToken, Placement, TeamId, ViewControl,
+    ViewId, ViewSelection,
 };
 use execution::memory::Reference;
 
@@ -57,6 +57,13 @@ impl Source {
     /// 这条 View 的身份：等待位就是按它与空间的 ASID 定的。
     pub fn id(&self) -> ViewId {
         self.id
+    }
+
+    /// 这份来源在本任务引用表里的句柄：跨**两份**来源的移交两端各要一枚。
+    pub fn handle(&self) -> FlatReference {
+        self.reference
+            .handle()
+            .expect("memory-transfer: source handle")
     }
 
     /// 把第 `from` 页的承载换进第 `to` 页（同一份来源里的空槽）。

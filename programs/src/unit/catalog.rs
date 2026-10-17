@@ -38,6 +38,8 @@ pub mod login;
 pub mod member;
 #[path = "../harness/probe/memory_transfer/program.rs"]
 pub mod memory_transfer;
+#[path = "../harness/probe/memory_transfer_fresh/program.rs"]
+pub mod memory_transfer_fresh;
 #[path = "../harness/probe/memory_transfer_tlb/program.rs"]
 pub mod memory_transfer_tlb;
 #[path = "../harness/bench/load/park/program.rs"]
@@ -139,6 +141,9 @@ pub const PROGRAMS: &[&UnitFile] = &[
     // 热多 Hart 旧 TLB 那一景：**一台**（supervisor 引导镜像＝控制者），
     // 读者是它同 Team 里 raw 起的一台真任务，故不为它另铸一台镜像。
     &memory_transfer_tlb::PROGRAM,
+    // fresh 失败回退那一景：同样**一台**（supervisor 引导镜像＝控制者），
+    // 两阶段的读者都是它同 Team 里真起的任务。
+    &memory_transfer_fresh::PROGRAM,
     &probe_owner::PROBE_OWNER,
     &probe_rule::PROBE_RULE,
     &probe_rule_other::PROBE_RULE_OTHER,

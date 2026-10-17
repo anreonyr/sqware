@@ -16,7 +16,18 @@
 #   nu scripts/qtest.nu --package kernel --scene accept --feed-script programs/tests/terminal/session.py
 #   nu scripts/qtest.nu --package kernel --scene memory-transfer --feed-script programs/tests/memory-transfer/driver.py -- --features semihosting
 #   nu scripts/qtest.nu --package kernel --scene memory-transfer-tlb --feed-script programs/tests/memory-transfer/tlb.py -- --features semihosting
+#   CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
+#     --scene memory-transfer-fresh --feed-script programs/tests/memory-transfer/fresh.py \
+#     -- --features semihosting,fresh-scene -- scene
 #   nu scripts/qtest.nu -- --list                    # `--` 之后原样转给 cargo-qtest
+#
+# **（`memory-transfer-fresh` 另需带护栏那一档 ＋ 两格 feature）**：那一景靠一个在途夹具
+# 注入一次撤页确认失败，而夹具与那四个探针同属 `cfg(debug_assertions)` ⇒ 不带
+# `CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true` 就没有夹具体，那一次移交会直接成功，
+# 本景当场红（程序侧那一条 `Busy` 断言就是硬闸）。`fresh-scene` 是它的**显式选景**
+# （默认关着，D1/TLB/accept/product 连夹具体都没有），`semihosting` 仍是为结构化导出。
+# `-- scene` 那一格不能省：带护栏的 release 测试目标里有全部 `debug_assertions` 用例，
+# 一例一张镜像、整机用例只有 `scene` 这一例。
 #
 # **（`memory-transfer` 与 `memory-transfer-tlb` 两景必须带 `--features semihosting`）**：
 # 两景的判定都要读**结构化导出**（`sqware-diagnose.jsonl` 里的 `room.wait`/`room.wake`/
@@ -192,6 +203,19 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   let script_dir = $env.FILE_PWD
   let repo = ($script_dir | path dirname)
   let trapdir = ($env.TRACE_OUT? | default ($repo | path join "trace"))
+  let summary = match $scene {
+    "memory-transfer" => "scene-memory-transfer-phases.json"
+    "memory-transfer-tlb" => "scene-memory-transfer-tlb-summary.json"
+    "memory-transfer-fresh" => "scene-memory-transfer-fresh-summary.json"
+    _ => ""
+  }
+  let pending = if ($summary | is-empty) {
+    ""
+  } else {
+    rm --force ($trapdir | path join $summary)
+    $trapdir | path join $"($summary).pending-(random uuid)"
+  }
+  $env.SCENE_SUMMARY_PENDING = $pending
 
   mut cap = ""
   mut scene_args = []
@@ -237,19 +261,11 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     $FEED | save --force $helper
     rm -f $port_file
     if not ($feed_script | is-empty) { rm -f $"($cap).result" }
-    # 本景按本轮事件开门；在 QEMU 启动前清理固定名导出与追写捕获。
-    if $scene == "memory-transfer" {
+    # 三景使用本轮完整导出；正式成功标记仅由本进程发布。
+    if not ($summary | is-empty) {
       rm --force ($repo | path join "sqware-diagnose.jsonl")
       rm --force $cap
-      rm --force ($trapdir | path join "scene-memory-transfer-phases.json")
-      rm --force ($trapdir | path join "scene-memory-transfer-diagnose.jsonl")
-    }
-    # 热 TLB 那一景自己那几份同上（导出名是全机共用的那一个）。
-    if $scene == "memory-transfer-tlb" {
-      rm --force ($repo | path join "sqware-diagnose.jsonl")
-      rm --force $cap
-      rm --force ($trapdir | path join "scene-memory-transfer-tlb-summary.json")
-      rm --force ($trapdir | path join "scene-memory-transfer-tlb-diagnose.jsonl")
+      rm --force ($trapdir | path join $"scene-($scene)-diagnose.jsonl")
     }
     $env.FEED_HELPER = $helper
     $env.FEED_PID = $pid_file
@@ -383,6 +399,26 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
         print $"本景未成功完成：缺少 ($proof)"
         $code = 1
       }
+    }
+  }
+
+  if $code == 0 and $scene == "memory-transfer-fresh" {
+    # 引导那一台报收尾：两阶段的读者都已被它 join 到手才走到这一行，故这一句就是
+    # 本景的成功证明（逐格判据在宿主驱动那一侧）。
+    let console = (open --raw $env.QEMU_TEE_LOG | lines)
+    let proof = "^exit tid=[0-9]+ reason=0x0 note: memory-transfer-fresh: acceptance passed"
+    if ($console | where {|line| $line =~ $proof } | is-empty) {
+      print $"本景未成功完成：缺少 ($proof)"
+      $code = 1
+    }
+  }
+
+  if $code == 0 and not ($summary | is-empty) {
+    if ($pending | path exists) {
+      mv --force $pending ($trapdir | path join $summary)
+    } else {
+      print "交互驱动未提交本轮判定文件"
+      $code = 1
     }
   }
 
