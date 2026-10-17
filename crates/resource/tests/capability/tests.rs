@@ -54,6 +54,36 @@ fn dropping_loan_revokes_only_its_remote_capability() {
 }
 
 #[test]
+fn windowed_loan_grant_is_recorded_and_revoked_alone() {
+    test_backend::reset();
+    let capability = Capability::unseal_hole(Mark::of("aperture")).unwrap();
+    let source = capability.token();
+    let loan = capability
+        .grant_window(peer(), Permission::STORE, Mark::of("bar"), 4, 4)
+        .unwrap();
+    let remote = loan.remote();
+    assert_eq!(
+        test_backend::events()[1],
+        Event::AccordWindow(
+            source,
+            peer(),
+            Permission::STORE,
+            Mark::of("bar"),
+            4,
+            4,
+            remote
+        )
+    );
+    drop(loan);
+    assert_eq!(
+        test_backend::events().last(),
+        Some(&Event::Revoke(peer(), remote))
+    );
+    drop(capability);
+    assert_eq!(test_backend::events().last(), Some(&Event::Release(source)));
+}
+
+#[test]
 fn failed_loan_creates_no_revoke_responsibility() {
     test_backend::reset();
     let capability = Capability::unseal_hole(Mark::of("source")).unwrap();

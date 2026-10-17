@@ -85,6 +85,25 @@ pub mod pie {
         }
     }
 
+    pub fn accord_window(
+        src: PieToken,
+        peer: TaskId,
+        permission: Permission,
+        mark: Mark,
+        offset: usize,
+        count: usize,
+    ) -> PieResult<PieToken> {
+        let remote = token();
+        record(Event::AccordWindow(
+            src, peer, permission, mark, offset, count, remote,
+        ));
+        if crate::test_backend::fail(Op::Accord) {
+            Err(make_fail(PieFail::Denied))
+        } else {
+            Ok(remote)
+        }
+    }
+
     pub fn revoke(peer: TaskId, remote: PieToken) -> PieResult<()> {
         record(Event::Revoke(peer, remote));
         if crate::test_backend::busy(Op::Revoke) {
@@ -221,6 +240,7 @@ pub mod test_backend {
         Release(PieToken),
         Seal(PieToken),
         Accord(PieToken, TaskId, Permission, Mark, PieToken),
+        AccordWindow(PieToken, TaskId, Permission, Mark, usize, usize, PieToken),
         Revoke(TaskId, PieToken),
         Pull(PieToken),
         Wait(PieToken, MailCondition, Wait),

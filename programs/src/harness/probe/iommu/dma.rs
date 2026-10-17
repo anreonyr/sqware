@@ -16,6 +16,10 @@
 //! 窗口与几个地址；**内存那一半**（队列/描述符/数据页）与 IOMMU 寄存器归控制者，那是所有者的保留。
 //! 服务在第二轮摆好之后**退场**（不撤队列、不复位设备），于是“服务死时端点还活着”是真的。
 //!
+//! 但这两台是**同一 Team（同一 AS）**：服务打响门铃走的是它自己那一枚 BAR，看完成记录却用
+//! 控制者那一页的裸 VA（`HANDOFF.used_at`）——`used` 环不在它的窗口里。故这一步**不是**跨 AS 的
+//! 独立服务：那需要它自己的授权映射，或经消息/中断拿完成（见 `docs/memory-flat-nest.md` 末节）。
+//!
 //! **这一段是线性代码，不是故障安全**：保留在发布之前取得、`close()` 在确认之后才调用，
 //! 但本域被 abort / 杀任务时这里一行都不跑（Drop 也不跑）。产品那一侧要的是
 //! System **独立**持保留、并在确认停住之后才释放（见 `docs/memory-flat-nest.md` 末节）。
@@ -314,7 +318,7 @@ pub fn acceptance() {
         ("debug port maps the retained data page", mapped),
         ("another requester is not translated", split),
         (
-            "the service saw the completion through its own bar",
+            "the service observed the completion it rang for",
             served_ok,
         ),
         ("device consumed the descriptor chain", delivered_through),

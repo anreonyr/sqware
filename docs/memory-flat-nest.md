@@ -1096,8 +1096,10 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 整轮 `75 passed / 1 failed`（仍只是缺 initrd 的 `scene` 哨兵），
 `--scene iommu-probe` 1 passed，`--scene accept` 1 passed(10.39s)，`system-shape` 18 passed。
 
-仍未做：**供给 / 租约那一层还不带窗口**（`PrivateRoot::derive` / `Accord` / `RootRequest` 仍只传权限子集），
-故产品里的“System 把精确 BAR 交给某个驱动”还差这一段接线（`env::pie::accord_window` 已在 ABI 上可用）。
+仍未做：**供给 / 租约那一层已带窗口**（窗口随 `RootAssignment` 与 `Accord` 落到
+`env::pie::accord_window`；`LeaseRequest::derive` / `RootRequest` / `resource::Capability::grant_window`
+都已接），但**还没有任何调用点真填一个窗口**——能拿得出“精确 BAR 那对绝对页坐标”的真实设备
+管理者（System 侧 DMAC/设备 provider）仍未接，故产品里的“System 把精确 BAR 交给某个驱动”还差那一手。
 
 ### 真实端点在 IOMMU 翻译下 DMA（本段）
 
@@ -1120,6 +1122,12 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 `ddtp_off` 那一步、以及它之后由**控制者自己那一枚窗口**打的那一次门铃，都不经过任何服务；
 确认（`refusals` 里那条 did=8 的 256 记录 ＋ 哨兵页一字节未动）之后才 `close()` 归还保留。
 
+**这里的“控制者”是本景那一台探针任务（harness owner），不是 System 产品实现**：它自己持保留、
+自己收口，靠的是本域直接编程 IOMMU 寄存器；`0c9b2608` 的标题里的 “System close alone” 是**过度宣称**
+（那一版提交不改写，以本段为准）。同理，两台是**同一 Team（同一 AS）**：服务看完成记录读的是
+控制者那一页的**裸 VA**（`HANDOFF.used_at`，`used` 环不在它那一段 BAR 里），跨 AS 的独立服务需要
+它自己的授权映射或经一次完成通知，故“服务死 → System 独立隔离”在产品组合里仍未接上。
+
 **QEMU 那两格不上不行的**（都实测过）：`iommu_platform=on` 才让设备的 DMA 走那台 IOMMU——
 `virtio_bus_device_plugged` 默认给的是 `address_space_memory`，不开它时 `riscv_iommu_dma`
 一次都不出现、设备静默停在读不到可用环那一格；`disable-legacy=on` 是它的代价
@@ -1141,10 +1149,13 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
   故「服务死亡 → System 不依赖死服务独立隔离」这条路径在**产品组合**里仍未接上
   （PR6 的 `Holds`/`Platform` 机制仍在，但没有真实寄存器实现挂上去）。`iommu-dma` 景里
   这条形状已经真跑过：服务是一台另起的真任务、只持精确 BAR 窗口，它退场之后由控制者独自收口；
-  但那两台同 Team（同一 AS），故内存那一侧还没分成两个域。
-- **供给 / 租约那一层仍不带窗口**：`PrivateRoot::derive` / `RootRequest` / `LeaseRequest`
-  与 `resource::capability::Loan::accord` 都还只传权限子集；`env::pie::accord_window`
-  在 ABI 上可用，产品那一层的接线仍未做。
+  但那两台同 Team（同一 AS），故内存那一侧还没分成两个域。本景的收口是本域直接编程寄存器
+  （线性代码），**abort / 被杀任务时一行都不跑**（Drop 也不跑），故它**不构成 System 的独立停机权威**，
+  不能拿本景的正负证当产品 retention 完成。
+- **供给 / 租约那一层已带窗口，但无调用点**：窗口随 `RootAssignment`（`PrivateRoot::derive`）与
+  `Accord` 落到 `env::pie::accord_window`，`LeaseRequest::derive` 收 `RootAssignment`，
+  `resource::Capability::grant_window` / `Loan::accord_window` 也在（都有用例）。缺的是**产品侧
+  那个知道精确 BAR 坐标的真实设备管理者**：没有它，产品里就没人填得出那个窗口。
 - 多 hart 交错、真实在途发布竞态、ATS/PRI、二级（G 阶段）翻译都不在证据里。
 
 ### 验证命令与读数

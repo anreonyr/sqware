@@ -27,7 +27,8 @@ pub struct Handoff {
     pub desc: AtomicUsize,
     pub avail: AtomicUsize,
     pub used: AtomicUsize,
-    /// 已用环在本域里的地址：服务靠它等完成记录。
+    /// 已用环在**控制者本域**里的裸 VA：服务靠它等完成记录。
+    /// 两台同 AS 时它才有效；跨 AS 这一段要换成服务自己的授权映射或一次完成通知。
     pub used_at: AtomicUsize,
     /// 控制者 → 服务：第二轮已摆好，可以收工了。
     pub armed: AtomicUsize,

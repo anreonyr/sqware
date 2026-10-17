@@ -24,6 +24,19 @@ impl Capability {
         Loan::accord(&self.token, peer, permission, mark)
     }
 
+    /// 同 [`grant`](Self::grant)，但把交付分支限定在来源起点起的 **(offset, count) 页窗口**上。
+    /// 坐标是**绝对页偏移**（不算上父分支的偏移），合法性由内核按“只收窄”判。
+    pub fn grant_window(
+        &self,
+        peer: TaskId,
+        permission: Permission,
+        mark: Mark,
+        offset: usize,
+        count: usize,
+    ) -> PieResult<Loan<'_>> {
+        Loan::accord_window(&self.token, peer, permission, mark, offset, count)
+    }
+
     pub fn seal(&self) -> PieResult<()> {
         pie::seal(self.token)
     }
@@ -58,6 +71,24 @@ impl<'a> Loan<'a> {
         mark: Mark,
     ) -> PieResult<Self> {
         let remote = pie::accord(*source, peer, permission, mark)?;
+        Ok(Self {
+            _source: source,
+            peer,
+            remote,
+            active: true,
+        })
+    }
+
+    /// 同 [`accord`](Self::accord)，但只交付来源起点起的 **(offset, count) 页窗口**。
+    pub fn accord_window(
+        source: &'a PieToken,
+        peer: TaskId,
+        permission: Permission,
+        mark: Mark,
+        offset: usize,
+        count: usize,
+    ) -> PieResult<Self> {
+        let remote = pie::accord_window(*source, peer, permission, mark, offset, count)?;
         Ok(Self {
             _source: source,
             peer,
