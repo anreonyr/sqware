@@ -1241,7 +1241,7 @@ System 起一个**跨 Team** 的端点服务（镜像 `system-dma`），把**精
 同一形状回读；已发布那一档仍走完整 Platform 链，不用清 master 冒充排空）。因此
 `iommu-product-start-before` 的现场现在是 `endpoint bus-master=0x0` 与
 `master=0x0 … stopped=true`（master 也归 0 之后五项读数全落到停止值），
-`start-after` 另加一条“回退自己那一行不得出现”的反向断言。**这一笔尚待增量复核。**
+`start-after` 另加一条“回退自己那一行不得出现”的反向断言。**这一笔已过小增量复核（见下节）。**
 
 ### 仍未覆盖
 
@@ -1259,9 +1259,7 @@ System 起一个**跨 Team** 的端点服务（镜像 `system-dma`），把**精
 
 同组独立 reviewer 对 sealed `HEAD = 7237712b`（blob `ccfe78adce6b` / `3bfe0c40f5b7` /
 `ff8f8e66b92b` / `e8c6b1804393` / `06c80a42dc18` / `dd2cbf6b55ec`）与文档提交 `88ef1072`
-（仅 docs，+71）给出了结论：**acceptable，无阻塞**——**接受的正是 `7237712b` 那一版**；
-其后的 `6d9ecf68`（一型一文件 ＋ 发布前撤发起权限）是这两项裁决的落地，尚待小增量复核。独立复跑：四个场景各 1 passed（两档起手
-失败的现场与上面逐字相同），iommu-queue 15 / lease-window 2 / retention 6 passed。
+（仅 docs，+71）给出了结论：**acceptable，无阻塞**——**接受的正是 `7237712b` 那一版**。
 三个关键负例都真红：`fence_step` 每次重发→15 例中 6 例红；`IommuPlatform::stop()` 换成空实现
 → `iommu-product` 红且 `confirmed and released … stopped=true` 与 `reset endpoint idle …`
 两行同时消失（`arm(round)` 修后这一行是真的）；`reclaim` 里吞掉 doom/slay → `start-before` 红
@@ -1270,15 +1268,37 @@ System 起一个**跨 Team** 的端点服务（镜像 `system-dma`），把**精
 
 审查一并记录的边界（均无阻塞）：
 
-1. **发布前失败的 PCI 配置不回退**（设计取舍，本节就是“哪一种”的说法）：`spawn` 后·发布前失败时，
-   PCI 功能已被 `claim`（bus-master 与内存空间开着、BAR 已落位），而停机链正确地被跳过
-   （什么都还没发布），于是它**带着 bus-master 但没有所有者**留在那里。本平台的取舍是：
-   发布前失败要收的是**子任务与登记过的范围**，不回退那几笔 PCI 配置写（进程随即结束，且 `DDTP`
-   默认 Off ⇒ 那一刻设备发起也只会被拒，到不了内存）。若项目以后要的是“起手失败不得留下 DMA 授权”，
-   那属于发布前回退的**行为**变更（需新场景），不是当前承诺。
+1. **发布前失败留下的 PCI 配置**（这一格已按裁决改过，下面是**现行**说法）：`spawn` 后·发布前失败时
+   停机链正确地被跳过（什么都还没发布），故回退**自己**清掉 ECAM 的 bus-master 并按平台 drain 同一
+   形状回读确认，未发布不再留下**发起权限**。仍不回退的是**内存空间使能与 BAR 落位**那两笔
+   （它们不给发起权）；若项目要的是把这几笔 PCI 配置也全部拆掉，那仍是发布前回退的**行为**变更。
 2. `!self.attached` 那一条（`startup failed, no registered scope`）没有场景；三个起手分支里两档已见证，
    第三档与前例同一裁断：要它就得各自的小景/进程。
 3. `dma.rs` 现持有 5 个类型（`Dma`/`Started`/`Path`/`Stage`/`Start`）、`platform.rs` 4 个。几个小枚举
    都只服务于那一个带状态的结构，但若“一个文件一个数据结构”按严格读法执行，这一格待定。
+   （**已裁决并落地**：严格适用，已按一型一文件拆开，见下。）
 4. reviewer 未重跑：`iommu-dma`/`iommu-probe`/`product` 三景、supply 23 / system-shape 18、
    kernel 76+1 哨兵、`cargo check` 告警与 fmt/diffcheck（均归本报告）。
+
+### 增量复核（`6d9ecf68`）：acceptable，无阻塞
+
+同一位 reviewer 对 `6d9ecf68d80a7a6a9c05dd1c44eee3d287ab0657`（在它接受的 `7237712b` 之上
+**一笔代码提交**；它那个 checkout 的 HEAD 仍是 `99f03159`、新提交只作为对象存在，故封存按 hash 记）
+做了小增量复核：逐个 blob 核过（`queue f19e1f4654db` / `regs 2cb745ec7e72` / `handshake 3a48ca5f8ace` /
+`fence 1750d839116d` / `outstanding 5294a8b62a84` / `dma 1899c6cee067` / `platform ff9f10b12e93` /
+`endpoint_drain dd862785c683` / `start e1011ee3844c` / `stage 251bf12c5a71` / `path d1f372ea13cb` /
+`started 250c583112d5` / `stop c3181c46e6e6` / `step 080754b5c1c7` / `holds 06c80a42dc18` /
+`lease dd2cbf6b55ec` / `qtest b686e0e52231`），并从拆分前后各文件抽出 fn/struct/enum/trait/impl
+多重集做对比（91 vs 93）：差异只有预期的四处（`Dma::new` 多了两个字段、`rollback` 多一句
+`revoke_authority`、两个新方法、`Outstanding` 字段放宽到 `pub(super)`），
+`stopped`/`stop`/`step` 与已接受那一版**逐字节相同**；一型一文件处处成立。实测 `start-before`
+与 `start-after` 均 1 passed，且“移除 `revoke_authority` 的 `published` 提前返回”能真弄红
+`start-after`（反向断言承重）。
+
+它一并记下的两条：
+
+- **不要再用 `stopped` 当“哪一档”的信号**：master 归 0 后两档起手失败的 `stopped` 都是 true；
+  区分靠注入标记与 `endpoint bus-master=` 那一行的有/无（`start-after` 断言它不出现）。
+- **两条 fail-closed 分支仍无场景（设计如此）**：`authority_clear` 的“未确认”那一支（QEMU 做不出
+  配置写失败）与 `!self.attached`。两者都**保留责任**而不是报成成功，故它们是代码级的保证，
+  不是被见证的保证。
