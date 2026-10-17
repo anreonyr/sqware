@@ -86,6 +86,20 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-memory-transfer"
+path = "src/harness/probe/memory_transfer/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-memory-transfer-unit"
+path = "src/harness/probe/memory_transfer/unit.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-router"
 path = "src/driver/router/main.rs"
 test = false

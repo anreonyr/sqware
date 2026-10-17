@@ -36,6 +36,8 @@ pub mod lodger;
 pub mod login;
 #[path = "../harness/guest/member/program.rs"]
 pub mod member;
+#[path = "../harness/probe/memory_transfer/program.rs"]
+pub mod memory_transfer;
 #[path = "../harness/bench/load/park/program.rs"]
 pub mod park;
 #[path = "../harness/guest/passer/program.rs"]
@@ -128,6 +130,10 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &system_fault::FAULT_UNIT,
     &system_fault::DEPENDENT,
     &system_fault::CHILD,
+    // 真实 Task 等待那一景：**装载者 ＋ 控制单元**两台——控制单元要真的被装载（有 sire），
+    // 故它那一 Team 的成员带着收据；真实等待链本身在控制单元里（见 `probe/memory_transfer`）。
+    &memory_transfer::ENTRY,
+    &memory_transfer::UNIT,
     &probe_owner::PROBE_OWNER,
     &probe_rule::PROBE_RULE,
     &probe_rule_other::PROBE_RULE_OTHER,

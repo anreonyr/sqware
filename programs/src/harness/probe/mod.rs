@@ -13,6 +13,8 @@ pub mod rack;
 pub mod hierarchy;
 pub mod system_fault;
 
+pub mod memory_transfer;
+
 pub(crate) mod fixture;
 
 /// Run the full system acceptance image from the in-crate fixture.

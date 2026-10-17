@@ -14,7 +14,13 @@
 #   nu scripts/qtest.nu --package kernel --scene rig # 造 rig 景、带它跑整机那一例
 #   nu scripts/qtest.nu --package kernel --scene accept
 #   nu scripts/qtest.nu --package kernel --scene accept --feed-script programs/tests/terminal/session.py
+#   nu scripts/qtest.nu --package kernel --scene memory-transfer --feed-script programs/tests/memory-transfer/driver.py -- --features semihosting
 #   nu scripts/qtest.nu -- --list                    # `--` 之后原样转给 cargo-qtest
+#
+# **（`memory-transfer` 那一景必须带 `--features semihosting`）**：那一景的判定要读
+# **结构化导出**（`sqware-diagnose.jsonl` 里的 `room.wait`/`room.wake`/`memory.page_fault`），
+# 而那个导出只在内核 `semihosting` feature 打开时才落盘（`kernel/Cargo.toml` 非默认）。
+# 不带这一格，驱动会因缺事件而超时失败——正是该有的样子，不降断言。
 #
 # **（不带 `--scene` 那一轮，`scene` 那一例必红——那是设计）**：`scene` 的判据是"这台
 # 机器真的起过一次"，而**镜像由 `--scene` 那一格给**（`-initrd`）；不带景就没有镜像，
@@ -103,8 +109,17 @@ while True:
     if script:
         result = pathlib.Path(cap + ".result")
         try:
-            spec = importlib.util.spec_from_file_location("scene_driver", script)
+            # 驱动程序那一支可以带**同目录的兄弟模块**（按通道分文件，见 driver 那份头注）：
+            # 把它当**包**加载（搜索路径 = 它所在目录）并先注册进 `sys.modules`，
+            # 相对导入才找得到 —— 就这两处适配，没有第二套加载器。
+            # 不带相对导入的脚本（`programs/tests/terminal/session.py`）逐字照旧。
+            spec = importlib.util.spec_from_file_location(
+                "scene_driver",
+                script,
+                submodule_search_locations=[str(pathlib.Path(script).resolve().parent)],
+            )
             driver = importlib.util.module_from_spec(spec)
+            sys.modules["scene_driver"] = driver
             spec.loader.exec_module(driver)
             driver.run(conn, cap)
             result.write_text("ok")
@@ -220,6 +235,13 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     $FEED | save --force $helper
     rm -f $port_file
     if not ($feed_script | is-empty) { rm -f $"($cap).result" }
+    # 本景按本轮事件开门；在 QEMU 启动前清理固定名导出与追写捕获。
+    if $scene == "memory-transfer" {
+      rm --force ($repo | path join "sqware-diagnose.jsonl")
+      rm --force $cap
+      rm --force ($trapdir | path join "scene-memory-transfer-phases.json")
+      rm --force ($trapdir | path join "scene-memory-transfer-diagnose.jsonl")
+    }
     $env.FEED_HELPER = $helper
     $env.FEED_PID = $pid_file
     $env.FEED_PORTFILE = $port_file
@@ -320,6 +342,21 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
       let proof = $"^exit tid=[0-9]+ reason=0x0 note: ($probe):"
       if ($console | where {|line| $line =~ $proof } | is-empty) {
         print $"验收探针未成功完成：($probe)"
+        $code = 1
+      }
+    }
+  }
+
+  if $code == 0 and $scene == "memory-transfer" {
+    # 两台都报各自那一句话：引导那一台报收尾（本景的成功证明），
+    # 控制单元报自己也正常收了工。两句话都是本景独有的串，不按 tid 认——
+    # 打开 `CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS` 时，引导期那些自检会先铸几台任务，
+    # 入口那一台的 tid 就不是 1 了（实测那一轮是 10）。
+    let console = (open --raw $env.QEMU_TEE_LOG | lines)
+    for proof in ["memory-transfer: acceptance passed" "memory-transfer: run passed"] {
+      let at = $"^exit tid=[0-9]+ reason=0x0 note: ($proof)"
+      if ($console | where {|line| $line =~ $at } | is-empty) {
+        print $"本景未成功完成：缺少 ($proof)"
         $code = 1
       }
     }

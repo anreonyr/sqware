@@ -45,6 +45,8 @@ pub const PACKAGES: &[Package] = &[
     package!("system-fault-unit"),
     package!("system-dependent"),
     package!("system-child"),
+    package!("memory-transfer"),
+    package!("memory-transfer-unit"),
     package!("probe-owner"),
     package!("probe-rule"),
     package!("probe-rule-other"),

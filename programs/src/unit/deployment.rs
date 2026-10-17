@@ -173,6 +173,15 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         sources: &[],
     },
     Deployment {
+        name: "memory-transfer",
+        entry: "memory-transfer",
+        start: &[],
+        resources: &["memory-transfer-unit"],
+        targets: &[scene_target(&[])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
         name: "rig",
         entry: "rig",
         start: &[],

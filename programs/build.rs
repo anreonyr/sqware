@@ -37,6 +37,8 @@ fn main() {
     println!("cargo::rerun-if-changed=src/harness/probe/probe_watch_gone/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/probe_rule/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/probe_rule_other/main.rs");
+    println!("cargo::rerun-if-changed=src/harness/probe/memory_transfer/main.rs");
+    println!("cargo::rerun-if-changed=src/harness/probe/memory_transfer/unit.rs");
     println!("cargo::rerun-if-changed=src/harness/guest/guest/main.rs");
     println!("cargo::rerun-if-changed=src/harness/guest/passer/main.rs");
     println!("cargo::rerun-if-changed=src/harness/guest/lodger/main.rs");

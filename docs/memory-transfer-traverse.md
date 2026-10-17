@@ -819,3 +819,79 @@ slot 10 在本地受控树可执行，不等于允许发布或完成 T4/T5：
 共享 Team 单任务退出、多 Hart 旧 TLB、pend 跨 shootdown 的多 Hart 活性，
 以及入口 Seal 的并发编排仍未端到端验证。下一阶段用真实场景取证，
 不把当前无等待者时的消费顺序探针算作 Room 等待链证据。
+
+### T4D1 真实 Task 等待场景（已取证并通过定向审查）
+
+新增 `memory-transfer` 景：装载者通过真实 Loader 创建带 sire/收据的控制单元，
+故障任务由控制单元在同一 Team（Spawn team=0）内创建，共用同一 View。
+装载者核对控制单元 Reap + EXIT_OK，控制单元逐名核对预期退出原因，
+不放宽 ledger/verdict 来忽略意外故障。串口经 DTB 设备清单、引导区授权、
+生产 accord 与 Dock 映射取得，未新增裸 PA 接口、生产 ABI 或 trace schema。
+
+宿主读本轮结构化事件后才经 UART 开门，不以固定延时或“即将访存”作入队证据。
+Wait trace 位于 COMMIT 内、入链之前；填回 signal 必须取得同一 COMMIT，
+因此通知不会越过该次完整登记。身份来自同 Team/View 的实际构造、
+已知 tid/VA/阶段，折叠 key 只作辅助，不作为全局唯一身份。
+
+| 阶段 | 最终事件判据 |
+|---|---|
+| A 一次填回两名 | 两名各 Wait 1、Wake 1、正常 Exit；填回仅一次 Transfer |
+| B 单任务 Slay | 被杀者 Wait 1、Wake 0、无自愿 Exit，控制单元核 Slay 回执；存活者 Wait 1、Wake 1、正常 Exit |
+| C 部分撤页 | 被撤页任务 Wait 1、Wake 1、FaultKilled.stval 为公告 VA、Fault Exit；邻页任务 Wait 2、Wake 2、正常 Exit |
+
+六名故障任务各 Reap **恰一次**，全部来源/View 显式关闭、引用显式释放。
+预期被 Slay/Fault 的两名改用 raw Spawn 标量参数，不创建不能展开回收的 Rust
+闭包/结果槽；正常返回的任务仍用既有 Join 包装并逐字节校验整页内容。
+
+集中集成时发现 qtest 清理块冲突、初始化跳过本轮早到事件、未等 EOF 即归档，
+父代理接管单写修复。最终驱动从 offset=0 读取本轮完整行；完整坏 JSON、
+消费后删除/替换/截断、EOF 末行不完整均失败。先等远端 EOF 再最终读取，
+重核各阶段精确 Wait/Wake/Exit 与六名 Reap 后才写 summary、归档。
+固定名诊断与追写捕获仅在本景、QEMU 启动前清理。
+Python 通道各一文件，FEED 采用标准包加载；新增 13 个宿主回归保护读证据规则，
+只 mock 宿主 EOF，不模拟 KernelTask。独立 reviewer 实跑这些回归，
+分别破坏坏 JSON、EOF、最终 Wake 校验后对应断言真实失败。
+
+父代理最终实际验证：
+
+```sh
+nu scripts/qtest.nu --package kernel --scene memory-transfer \
+  --feed-script programs/tests/memory-transfer/driver.py -- --features semihosting
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
+  --scene memory-transfer --feed-script programs/tests/memory-transfer/driver.py \
+  -- --features semihosting -- scene
+python3 -B -m unittest discover -s programs/tests/memory-transfer -p 'test_*.py' -v
+```
+
+- 常规连续 3 次各 1 passed（0.37s / 0.42s / 0.37s）；带护栏 1 passed、
+  68 filtered（0.87s）。最终 summary 逐名符合上表，六名 Reap 各 1；
+  父代理两份 summary 归于忽略的 `trace/scene-memory-transfer-parent-*-phases.json`。
+- 13 个宿主回归通过（0.043s）。相同 FEED 加载路径真实回归 terminal session：
+  accept 1 passed（10.39s）、product 1 passed（3.78s）。
+- workspace offline dev/release 与 kernel all-targets semihosting offline
+  dev/release 通过；programs 10 组、kernel release 6 组既有诊断，dev kernel 无诊断。
+  健康面仍为 68 passed + 缺 initrd 哨兵 1 failed，退出 101（5.65s）。
+- system-fault 1 passed（13.44s）；loader-api 宿主（显式 x86_64、offline）
+  6 passed；14 个相关 Rust 文件格式检查通过，未全树重排。
+  Pend 宿主本阶段读数来自 worker，父代理未重跑未改的核心宿主套件。
+
+DA 命令的第二枚 `--` 后 `scene` 是 libtest 过滤器，不能省略或当普通位置参数。
+worker 实跑不加过滤器时 12 passed / 57 failed（前次 10 / 59），均为单连接
+场景 helper 退出后的 Connection refused；不是全绿，也不是本景端到端证据。
+普通 release 只有 scene 一例。独立 reviewer 另跑常规 5/5、DA 1 次通过，
+不带 semihosting 的负对照真实失败。最终审查批准协议、权限、收据与主树 observer 收口，
+不把子树早期通过读数替代主树验证。
+
+磁盘清理恢复后，父代理补跑无 semihosting 的精确负对照：
+driver 报缺等待事件，固件退出 101，qtest 脚本最终退出 1（30.27s）；
+当场断言本轮没有 summary 或归档 trace，旧成功产物未残留。为此仅在本景
+QEMU 启动前一并清理固定名 summary/归档，其他景不变。
+随后恢复正常精确命令 1 passed（0.42s）、带护栏过滤命令 1 passed /
+68 filtered（0.87s）、13 个宿主回归再次通过（0.042s），两处注释格式与
+diff check 通过；其余基线与场景读数仍为上述主树 observer 收口后的读数。
+worker 的不发门负对照仍只引用其报告，父代理没有重复。
+
+本景现在证明真实 ecall、Task 等待/整链唤醒、共享空间单任务退出与部分撤页通知。
+仍不证明 Fresh 失败回退/晚到者、精确 probe↔materialize Busy 交错、
+热多 Hart 旧 TLB、pend 跨 shootdown 活性、入口 Seal 并发编排或设备/DMA 迁移，
+不作为 T4/T5 全部完成或发布许可。
