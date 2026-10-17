@@ -99,6 +99,14 @@ test = false
 bench = false
 doctest = false
 
+# 热多 Hart 旧 TLB 那一景的引导镜像：它就是控制者，读者是它同 Team 里 raw 起的一台真任务。
+[[bin]]
+name = "prog-memory-transfer-tlb"
+path = "src/harness/probe/memory_transfer_tlb/main.rs"
+test = false
+bench = false
+doctest = false
+
 [[bin]]
 name = "prog-router"
 path = "src/driver/router/main.rs"

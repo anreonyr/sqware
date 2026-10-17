@@ -38,6 +38,8 @@ pub mod login;
 pub mod member;
 #[path = "../harness/probe/memory_transfer/program.rs"]
 pub mod memory_transfer;
+#[path = "../harness/probe/memory_transfer_tlb/program.rs"]
+pub mod memory_transfer_tlb;
 #[path = "../harness/bench/load/park/program.rs"]
 pub mod park;
 #[path = "../harness/guest/passer/program.rs"]
@@ -134,6 +136,9 @@ pub const PROGRAMS: &[&UnitFile] = &[
     // 故它那一 Team 的成员带着收据；真实等待链本身在控制单元里（见 `probe/memory_transfer`）。
     &memory_transfer::ENTRY,
     &memory_transfer::UNIT,
+    // 热多 Hart 旧 TLB 那一景：**一台**（supervisor 引导镜像＝控制者），
+    // 读者是它同 Team 里 raw 起的一台真任务，故不为它另铸一台镜像。
+    &memory_transfer_tlb::PROGRAM,
     &probe_owner::PROBE_OWNER,
     &probe_rule::PROBE_RULE,
     &probe_rule_other::PROBE_RULE_OTHER,

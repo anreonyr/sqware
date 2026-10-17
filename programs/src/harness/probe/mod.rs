@@ -15,6 +15,10 @@ pub mod system_fault;
 
 pub mod memory_transfer;
 
+// 同一条事实的另一面：`memory_transfer` 证“填回就把等待者放行”，它证“撤页之后远端
+// 那颗 hart 第一次再访存必须缺页”。两台都在引导镜像那一域里，共享那族身子的量具。
+pub mod memory_transfer_tlb;
+
 pub(crate) mod fixture;
 
 /// Run the full system acceptance image from the in-crate fixture.

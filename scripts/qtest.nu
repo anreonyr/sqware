@@ -15,12 +15,14 @@
 #   nu scripts/qtest.nu --package kernel --scene accept
 #   nu scripts/qtest.nu --package kernel --scene accept --feed-script programs/tests/terminal/session.py
 #   nu scripts/qtest.nu --package kernel --scene memory-transfer --feed-script programs/tests/memory-transfer/driver.py -- --features semihosting
+#   nu scripts/qtest.nu --package kernel --scene memory-transfer-tlb --feed-script programs/tests/memory-transfer/tlb.py -- --features semihosting
 #   nu scripts/qtest.nu -- --list                    # `--` 之后原样转给 cargo-qtest
 #
-# **（`memory-transfer` 那一景必须带 `--features semihosting`）**：那一景的判定要读
-# **结构化导出**（`sqware-diagnose.jsonl` 里的 `room.wait`/`room.wake`/`memory.page_fault`），
-# 而那个导出只在内核 `semihosting` feature 打开时才落盘（`kernel/Cargo.toml` 非默认）。
-# 不带这一格，驱动会因缺事件而超时失败——正是该有的样子，不降断言。
+# **（`memory-transfer` 与 `memory-transfer-tlb` 两景必须带 `--features semihosting`）**：
+# 两景的判定都要读**结构化导出**（`sqware-diagnose.jsonl` 里的 `room.wait`/`room.wake`/
+# `memory.page_fault`），而那个导出只在内核 `semihosting` feature 打开时才落盘
+# （`kernel/Cargo.toml` 非默认）。不带这一格，驱动会因缺事件而超时失败——正是该有的样子，
+# 不降断言。
 #
 # **（不带 `--scene` 那一轮，`scene` 那一例必红——那是设计）**：`scene` 的判据是"这台
 # 机器真的起过一次"，而**镜像由 `--scene` 那一格给**（`-initrd`）；不带景就没有镜像，
@@ -242,6 +244,13 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
       rm --force ($trapdir | path join "scene-memory-transfer-phases.json")
       rm --force ($trapdir | path join "scene-memory-transfer-diagnose.jsonl")
     }
+    # 热 TLB 那一景自己那几份同上（导出名是全机共用的那一个）。
+    if $scene == "memory-transfer-tlb" {
+      rm --force ($repo | path join "sqware-diagnose.jsonl")
+      rm --force $cap
+      rm --force ($trapdir | path join "scene-memory-transfer-tlb-summary.json")
+      rm --force ($trapdir | path join "scene-memory-transfer-tlb-diagnose.jsonl")
+    }
     $env.FEED_HELPER = $helper
     $env.FEED_PID = $pid_file
     $env.FEED_PORTFILE = $port_file
@@ -356,6 +365,21 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     for proof in ["memory-transfer: acceptance passed" "memory-transfer: run passed"] {
       let at = $"^exit tid=[0-9]+ reason=0x0 note: ($proof)"
       if ($console | where {|line| $line =~ $at } | is-empty) {
+        print $"本景未成功完成：缺少 ($proof)"
+        $code = 1
+      }
+    }
+  }
+
+  if $code == 0 and $scene == "memory-transfer-tlb" {
+    # 两句都是本景独有的串：引导那一台报收尾（本景的成功证明），
+    # 读者那一台报自己也真的出过那段热窗口。后者走 semihosting，没有 `exit tid=` 前缀。
+    let console = (open --raw $env.QEMU_TEE_LOG | lines)
+    for proof in [
+      "^exit tid=[0-9]+ reason=0x0 note: memory-transfer-tlb: acceptance passed"
+      "^memory-transfer-tlb: reader left"
+    ] {
+      if ($console | where {|line| $line =~ $proof } | is-empty) {
         print $"本景未成功完成：缺少 ($proof)"
         $code = 1
       }

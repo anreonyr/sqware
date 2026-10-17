@@ -16,11 +16,13 @@
 //! 判定权在宿主：结构化诊断里看到本阶段该看到的真实事件之前，门不会开。
 //! 程序侧不睡固定时长、不拿「即将访存」的标志冒充已入队；收不到门就是失败。
 
-mod console;
-mod fault;
+// 三份身子在**同族的另一个景**（`memory_transfer_tlb`）里也要用：那条景同样要一段私有来源、
+// 同一份花纹与同一台串口。故只在本族（`probe`）之内放开模块名，不是对外接口。
+pub(in crate::harness::probe) mod console;
+pub(in crate::harness::probe) mod fault;
 mod gate;
 mod phase;
-mod source;
+pub(in crate::harness::probe) mod source;
 
 use crate::boot::{Accounts, Catalog};
 use crate::system::loader::{Image, Loader};

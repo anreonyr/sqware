@@ -884,8 +884,8 @@ worker 实跑不加过滤器时 12 passed / 57 failed（前次 10 / 59），均�
 
 磁盘清理恢复后，父代理补跑无 semihosting 的精确负对照：
 driver 报缺等待事件，固件退出 101，qtest 脚本最终退出 1（30.27s）；
-当场断言本轮没有 summary 或归档 trace，旧成功产物未残留。为此仅在本景
-QEMU 启动前一并清理固定名 summary/归档，其他景不变。
+当场断言本轮没有 summary 或归档 trace；这是无导出的负对照，不代表失败轮不能归档。
+为防旧成功产物残留，仅在本景 QEMU 启动前清理固定名 summary/归档，其他景不变。
 随后恢复正常精确命令 1 passed（0.42s）、带护栏过滤命令 1 passed /
 68 filtered（0.87s）、13 个宿主回归再次通过（0.042s），两处注释格式与
 diff check 通过；其余基线与场景读数仍为上述主树 observer 收口后的读数。
@@ -895,3 +895,80 @@ worker 的不发门负对照仍只引用其报告，父代理没有重复。
 仍不证明 Fresh 失败回退/晚到者、精确 probe↔materialize Busy 交错、
 热多 Hart 旧 TLB、pend 跨 shootdown 活性、入口 Seal 并发编排或设备/DMA 迁移，
 不作为 T4/T5 全部完成或发布许可。
+
+### T5A 热远端 TLB 场景（已取证并通过集中复审）
+
+新增 `memory-transfer-tlb` 景。控制者与 raw 读者在同 Team/非内核 ASID，
+普通来源仅有一个源 View；预先物化并填入花纹后才放行读者。
+读者在测试侧汇编窗口内清 SIE、安装私有向量、真实 load 热身并发布 warmed；
+窗口内没有 ecall、分配、调度、satp 写入或本地 sfence。
+控制者看到 warmed 后只执行一次真实 Transfer，成功返回后才打开采样门。
+读者不让出 hart，控制者却能完成这段动作，构成远端执行的因果证据。
+`spawn.h`/`exit.h` 只存入 summary 的 boundary，不作采样 hart 判据：
+恢复 SIE 后任务可能迁移，同核的两个边界事件不能据此否决这次测试。
+
+采样后的私有向量记录原始 cause/stval/sepc，不重执行 fault load，
+而是 sret 到统一出口；出口恢复原 stvec/sstatus，之后真实 ecall 收工。
+宿主最终核对 reader 的正常 Exit 与 Reap 恰一次、同 VA 没有进入生产内核的
+Load 缺页，并等待 EOF 后才写 summary/归档。读者收工只印固定标记，不分配。
+窗口期限由 DTB 的 timebase-frequency 预先换算，窗口内只读 rdtime，
+不用会进入生产 trap、顺带刷新 TLB 的计时接口。
+
+通过判据是 Trapped、cause=13、stval=公告 VA、sepc=sample_at、
+warm=预置花纹，且 VA/warm_at/sample_at/sepc 均非零、两条 load 地址互异、
+入口 SIE 原本开启。首次复审发现 status 在数据栅栏前发布：
+返工改为三条出口只向 caller-saved t4 写结论，统一出口唯一一处
+`fence rw,rw → sd status`，控制者以 Acquire 读取后再读载荷。
+宿主回归明确拒绝 cause/stval 正确但 sample=sepc=0 的伪通过；
+程序侧同规则是防御支，未有端到端零地址复现器。
+
+生产修改仅在 lease 发布后、shootdown 本地 sfence/lease 扫描前各加完整数据
+fence；没有改 lease 选择、SBI ABI、PTE 退休或迁移提交规则。
+显式数据排序不能只用本地 sfence 代替，lease 的 Release/Acquire 也不能把
+“扫描未观察到租约”变成同步关系。两侧均保留 fence，不凭 QEMU 的表现删减。
+occupy 与 satp 的相对次序仍由调用点负责，不假设内核入口先 occupy 后 satp。
+
+父代理在返工主树实际执行：
+
+```sh
+nu scripts/qtest.nu --package kernel --scene memory-transfer-tlb \
+  --feed-script programs/tests/memory-transfer/tlb.py -- --features semihosting
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
+  --scene memory-transfer-tlb --feed-script programs/tests/memory-transfer/tlb.py \
+  -- --features semihosting -- scene
+python3 -B -m unittest discover -s programs/tests/memory-transfer -p 'test_*.py' -v
+```
+
+- 常规 1 passed（0.17s）；带护栏 1 passed / 68 filtered（10.49s）。
+  后者实测 warm=0x7、cause=13、status=1、stval=VA=0x67000、
+  sample=sepc=0x14916、warm_at=0x148ca；无生产 Load 缺页。
+- 25 个宿主回归通过（13 个既有、12 个本景）；使用 socketpair 检查真实字节流
+  EOF，不模拟 KernelTask 或 QEMU。workspace offline dev/release、
+  kernel semihosting all-targets dev/release 检查通过，programs 10 组、
+  kernel release 6 组既有告警；diff check 通过，未全树重排。
+- 同一 T5A 集成树的 D1 1 passed（0.42s）、accept 1 passed（10.39s）、
+  product 1 passed（5.33s）、system-fault 1 passed（13.49s）；
+  默认健康面 68 passed + 缺 initrd 哨兵 1 failed，退出 101（5.90s）。
+  这组回归在 status 返工前执行，返工只动本景及 fence 注释。
+- 独立 reviewer 在返工后的父树只读副本重跑常规 1 passed（0.17s）、
+  带护栏 1 passed / 68 filtered（10.49s）、宿主 25 passed（0.044s）；
+  D1/accept/product/system-fault 各 1 passed（0.42s/10.34s/5.33s/13.45s），
+  健康面仍为 68 passed + 哨兵 1 failed，退出 101（5.84s）。
+  私有向量的寄存器保存、t4 caller-saved 结论、CSR 恢复次序均通过定向审查。
+- 独立 reviewer 在初审副本中分别删除全部远端 RFENCE、仅删除 lease 定向选择
+  而保留内核全局刷新，两次都得到 Stale byte=0x7，排除了旁路全局刷新掩盖。
+  worker 在返工树保留本地 flush、跳过远端 RFENCE 后也真实失败，恢复生产文件，
+  并核对本轮无成功 summary；这些负对照不是父代理重跑的读数。
+  驱动失败时仍会归档已存在的诊断文件，它是失败证据，不代表本轮通过。
+- reviewer 在返工副本再次验证 lease-only 变体为 Stale，失败轮有诊断归档、
+  无 summary；无 semihosting 的另一轮则两者皆无。`QEMU_SMP=1` 实跑退出 1、
+  status=Timeout、采样门始终未打开，补强了远端执行判据。
+  删除统一出口的发布 fence 后仍 1 passed（0.17s），明确本景不能检测这个排序缺陷。
+  变体只在独立副本执行，生产树保留两侧 fence 与唯一 status 发布 fence。
+
+范围只覆盖当前 QEMU 与仓库 SBI.bin 的热远端撤页及 caller.pend 横跨同步时的进展。
+实际汇编中 fence 位于发布前是排序证据，QEMU 通过不等于真实硬件弱内存已验证；
+不从 SBI.elf 反推 SBI.bin 的指令（两者转出的 binary 不同），也不宣称所有 SEE
+均已验证远端同步完成契约。Fresh 失败回退/晚到者、Seal 并发、设备/DMA、
+真实 Platform 产品接线及 T4/T5 全部验收仍未完成。本景无等待者，不覆盖等待链
+与 shootdown 的交互。独立审查批准本地封存，不构成共享分支合并或推送许可。
