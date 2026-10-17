@@ -20,8 +20,14 @@ const LEAF: u64 = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 4) | (1 << 6) | (1 << 7
 /// 三级表页取 `pages` 里的 `root` / `middle` / `leaf` 三页；本手只写这一条路径。
 pub fn map(pages: &Pages, root: usize, middle: usize, leaf: usize, iova: usize, physical: usize) {
     let index = |level: usize| (iova >> (12 + INDEX_BITS * level)) & (PTES - 1);
-    write(pages.at(root, index(2) * 8), pte(BRANCH, pages.physical(middle)));
-    write(pages.at(middle, index(1) * 8), pte(BRANCH, pages.physical(leaf)));
+    write(
+        pages.at(root, index(2) * 8),
+        pte(BRANCH, pages.physical(middle)),
+    );
+    write(
+        pages.at(middle, index(1) * 8),
+        pte(BRANCH, pages.physical(leaf)),
+    );
     write(pages.at(leaf, index(0) * 8), pte(LEAF, physical));
 }
 

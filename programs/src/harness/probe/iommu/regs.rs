@@ -33,6 +33,10 @@ pub const QUEUE_OVERFLOW: u32 = 1 << 9;
 pub const QUEUE_ON: u32 = 1 << 16;
 pub const QUEUE_BUSY: u32 = 1 << 17;
 
+/// 命令队列 CSR 特有的那两位（故障/页请求队列的 [9] 是溢出，不是这个）。
+pub const QUEUE_CMD_TO: u32 = 1 << 9;
+pub const QUEUE_CMD_ILL: u32 = 1 << 10;
+
 /// `DDTP.mode`：Off = 设备访存不翻译（隔离态）；1LVL = 一级设备目录表。
 pub const DDTP_MODE_OFF: u64 = 0;
 pub const DDTP_MODE_1LVL: u64 = 2;
@@ -49,6 +53,9 @@ pub const TR_DID_SHIFT: u32 = 40;
 /// 翻译响应位：fault[0]、ppn[53:10]。
 pub const TR_FAULT: u64 = 1 << 0;
 pub const TR_PPN_FIELD: u64 = ((1u64 << 44) - 1) << 10;
+/// `TR_RESPONSE` 在 FAULT 置起时，原因码落在 ppn 那几格（`riscv_iommu_process_dbg`）。
+/// 256 = `DMA_DISABLED`：这台设备此刻不被翻译。
+pub const DMA_DISABLED: u64 = 256;
 
 pub fn read32(base: usize, at: usize) -> u32 {
     // SAFETY: `base` 是一段已授权、已映射的设备寄存器窗口，`at` 是表内的对齐偏移。

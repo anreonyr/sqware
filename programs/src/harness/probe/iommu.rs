@@ -87,7 +87,9 @@ pub fn acceptance() {
     ));
 
     let mut queues = CommandQueue::new(base, &pages, COMMANDS, FAULTS, FENCE);
-    queues.enable().unwrap_or_else(|fail| panic!("iommu-probe: {fail}"));
+    queues
+        .enable()
+        .unwrap_or_else(|fail| panic!("iommu-probe: {fail}"));
 
     // ③ 把设备目录表接上：一级 DDT + 回读确认。
     let ddtp = regs::DDTP_MODE_1LVL | (regs::page_number(pages.physical(DDT)) << regs::PPN_SHIFT);
@@ -109,48 +111,54 @@ pub fn acceptance() {
         "iommu-probe: ddtp_on={ddtp_on} ddtp={programmed:#x} fenced={fenced} cqh={command_head} fqh={fault_head} cqcsr={command_csr_after:#x} fqcsr={fault_csr_after:#x} cqb={command_base:#x} fqb={fault_base:#x} response={translated:#x} faults={faults} cause={cause}",
     ));
     let mapped = translated & regs::TR_FAULT == 0
-        && (translated & regs::TR_PPN_FIELD)
-            == (regs::page_number(data) << regs::PPN_SHIFT);
+        && (translated & regs::TR_PPN_FIELD) == (regs::page_number(data) << regs::PPN_SHIFT);
     let published = command_base == regs::page_number(pages.physical(COMMANDS))
         && fault_base == regs::page_number(pages.physical(FAULTS));
 
-    // ⑥ 拆除：DDTP Off 与三个队列各自确认（「停」与「忙已清」是两件事）。
+    // ⑥ 拆除：DDTP Off 与两个**已启用**的队列各自确认。
+    // 页请求队列本景从未启用（没有 ATS 请求），故不写它、也不把它当“停过”的证。
     regs::write64(base, regs::DDTP, regs::DDTP_MODE_OFF);
     let stopped = regs::read64(base, regs::DDTP);
     let (command_csr, fault_csr) = queues.disable();
     drop(queues);
-    regs::write32(base, regs::PQCSR, 0);
     let page_csr = regs::read32(base, regs::PQCSR);
     let isolated = stopped & 0xF == regs::DDTP_MODE_OFF && stopped & regs::DDTP_BUSY == 0;
     let commands_off = queue::quiet(command_csr, regs::QUEUE_ON);
     let faults_off = queue::quiet(fault_csr, regs::QUEUE_ON);
-    let page_off = queue::quiet(page_csr, regs::QUEUE_ON);
-    let queue_errors = queue::queue_error(command_csr)
+    let page_unused = page_csr & (regs::QUEUE_ENABLE | regs::QUEUE_ON) == 0;
+    let queue_errors = queue::command_error(command_csr)
         || queue::queue_error(fault_csr)
         || queue::queue_error(page_csr);
 
-    // ⑦ 负证：同一 requester、同一 IOVA 再译一次必须被拒（不是拿复位默认值充数）。
+    // ⑦ 负证：同一 requester、同一 IOVA 再译一次必须被拒，且**原因码就是 DMA_DISABLED**
+    // （只看故障位不够：页表坏掉也是故障，实测那种情形报 13 = RD_FAULT_S）。
     let denied = translate(base);
     note(&format!(
         "iommu-probe: ddtp_off={stopped:#x} cqcsr={command_csr:#x} fqcsr={fault_csr:#x} pqcsr={page_csr:#x} isolated_response={denied:#x}",
     ));
-    let refused = denied & regs::TR_FAULT != 0;
+    let refused = denied & regs::TR_FAULT != 0
+        && (denied & regs::TR_PPN_FIELD) >> regs::PPN_SHIFT == regs::DMA_DISABLED;
 
-    pages.close().unwrap_or_else(|fail| panic!("iommu-probe: {fail}"));
+    pages
+        .close()
+        .unwrap_or_else(|fail| panic!("iommu-probe: {fail}"));
 
     let checks: [(&str, bool); 12] = [
         ("ddtp programmed to 1LVL", ddtp_on),
         ("queue bases hold the retained pages", published),
         ("command fence completed", fenced),
-        ("hardware consumed both commands", command_head == 2 && fault_head == 0),
+        (
+            "hardware consumed both commands",
+            command_head == 2 && fault_head == 0,
+        ),
         ("translation returned the retained page", mapped),
         ("no fault recorded while translating", faults == 0),
         ("ddtp off", isolated),
         ("command queue off", commands_off),
         ("fault queue off", faults_off),
-        ("page request queue off", page_off),
+        ("page request queue never enabled", page_unused),
         ("no queue error bit set", !queue_errors),
-        ("same request refused after isolation", refused),
+        ("same request refused as dma-disabled", refused),
     ];
     if let Some((name, _)) = checks.iter().find(|(_, ok)| !ok) {
         panic!("iommu-probe: {name}");

@@ -28,6 +28,8 @@ pub mod guest;
 pub mod hang;
 #[path = "../service/hub/program.rs"]
 pub mod hub;
+#[path = "../harness/probe/iommu/program.rs"]
+pub mod iommu_probe;
 #[path = "../harness/bench/load/load/program.rs"]
 pub mod load;
 #[path = "../harness/guest/lodger/program.rs"]
@@ -42,8 +44,6 @@ pub mod memory_transfer;
 pub mod memory_transfer_fresh;
 #[path = "../harness/probe/memory_transfer_tlb/program.rs"]
 pub mod memory_transfer_tlb;
-#[path = "../harness/probe/iommu/program.rs"]
-pub mod iommu_probe;
 #[path = "../harness/bench/load/park/program.rs"]
 pub mod park;
 #[path = "../harness/guest/passer/program.rs"]

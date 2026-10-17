@@ -21,7 +21,8 @@ impl Pages {
     ///
     /// 保留那一份是这一段的真实强持，`traverse` 与设备地址发布都以它为准。
     pub fn take(retention: PieToken, count: usize) -> Result<Self, &'static str> {
-        let pole = resource::raw::pole(count * PAGE_SIZE, true).map_err(|_| "iommu-probe: page pole")?;
+        let pole =
+            resource::raw::pole(count * PAGE_SIZE, true).map_err(|_| "iommu-probe: page pole")?;
         let reference = Reference::acquire(
             AcquireSource::Source {
                 token: pole,
@@ -45,7 +46,9 @@ impl Pages {
         let handle = reference.handle().map_err(|_| "iommu-probe: page handle")?;
         let range = ReferenceRange::new(handle, 0, count).ok_or("iommu-probe: page range")?;
         let mut physical = Vec::new();
-        physical.try_reserve_exact(count).map_err(|_| "iommu-probe: page table")?;
+        physical
+            .try_reserve_exact(count)
+            .map_err(|_| "iommu-probe: page table")?;
         physical.resize(count, 0);
         traverse(retention, range, &mut physical).map_err(|_| "iommu-probe: physical export")?;
         // 页是新取的匿名页：先清零，免得把上一轮残留当内容。
@@ -71,6 +74,8 @@ impl Pages {
     /// 显式结清：先撤本域的图，再放下保留。
     pub fn close(mut self) -> Result<(), &'static str> {
         self.view.close().map_err(|_| "iommu-probe: view close")?;
-        self.reference.release().map_err(|_| "iommu-probe: page release")
+        self.reference
+            .release()
+            .map_err(|_| "iommu-probe: page release")
     }
 }

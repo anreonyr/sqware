@@ -963,6 +963,7 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
 - **真实 IOMMU / DMAC 寄存器仍未启用**（属 PR7）；没有以模拟结果宣称真实硬件已隔离。
   当前原生和宿主模拟都有独立、有状态且真的执行访存/停止的正面，不是 `VEST`
   橡皮章，也不是永远 `Denied` 的假 cap。普通产品场景没有启用任何硬件外访存范围。
+  （PR7 已把 IOMMU 寄存器段接上：见本文件末「PR 7 第一段」那一节；**DMAC 端点与产品 `Platform` 仍未接**。）
 - PR7 必须安装独立平台控制者，把真实数据/描述符/表/队列逐段登记后才发布。
   IOMMU Off + busy 的数据隔离与 CQ/FQ/PQ 各自 on/busy 的控制页停用分别确认；
   仅清 CPU PTE、仅屏蔽 IRQ、仅写 Offline、切 Bare 都不能满足 `Platform` 合同。
@@ -1028,10 +1029,25 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 由硬件写回（`FENCE_DATA`）；`response=0x23f9a800` 的 FAULT 位为 0、PPN 字段 = `0x8fe6a`，
 就是 `data` 那一页的页号 ⇒ 硬件**按我们写下的 DDT/DC/Sv39 表把 IOVA 翻到了保留页**；
 `cqb=0x8fe67` / `fqb=0x8fe68` 说明编程进去的基址正是保留窗里那两页；
-拆除后 `ddtp_off=0x0` 且三个队列 CSR 全 0（`on` 落了、`busy` 也清了，**分开确认**）；
-`isolated_response=0x40001` 的 FAULT 位为 1、原因码 256 = `DMA_DISABLED` ⇒ 同一请求
-随后被拒。这些判据都在景内逐条断言（`iommu-probe: <哪一条>` 就是失败名），
-不是拿复位默认值充负例。
+拆除后 `ddtp_off=0x0`，两个**已启用**的队列 CSR 回读 0（`on` 落了、`busy` 也清了），
+页请求队列本景从未启用（`pqcsr=0x0`，没有 ATS 请求，也没有它的页）；
+`isolated_response=0x40001` = `FAULT[0]` 置起且原因码 `bits[53:10]` = 256 = `DMA_DISABLED`
+⇒ 同一请求随后被拒，且**不是**拿“页表坏了也是故障”充数（那种情形实测报 13 = `RD_FAULT_S`）。
+这些判据都在景内逐条断言（`iommu-probe: <哪一条>` 就是失败名），不是拿复位默认值充负例。
+
+两处口径要说明白，别当成硬件已立的证据：
+
+- **`busy` 位在 QEMU v11.1.2 里是白送的**：`riscv_iommu_write_ddtp` 先清 BUSY 再写，
+  `riscv_iommu_process_cq_control` 停用时同步清 `BUSY|ON`，故 `ddtp_on` / `isolated` /
+  `*_off` 里的 busy 半边在这里恒成立；而且本景没走规范那套 DDTP 握手
+  （写 busy=1 → 轮询 → 写 mode → 轮询 busy 落），是写后单次读。
+  真硬件真拉 busy 时，这一读会假红——下一段要补握手。
+- **发布与门铃之间没有显式内存序**：写 DDT/DC/PTE、写队列基址、写命令字后写 `CQT`
+  之间，以及看到完成记录后再读 `CQH`/`FQH` 之前，都没有 `fence`。QEMU 单线程 + BQL 下成立，
+  真硬件要显式序。
+
+后续项：DDTP 从 `1LVL` 到 Off 之间现在只靠线性代码保证停机；这一窗口里唯一会 panic 的是
+那句诊断 `format!`（分配失败），故不可达，但往这段插可失败步骤就会开洞——应把停机放进 guard（Drop）。
 
 ### 跨主体精确 BAR：实测缺口（已补，见下节）
 

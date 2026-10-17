@@ -38,7 +38,13 @@ pub struct CommandQueue<'a> {
 impl<'a> CommandQueue<'a> {
     /// 三个页都用**保留窗里的页号**指：窗同时知道本域地址与真实物理起址，
     /// 于是写命令用前者、编程给设备用后者，不会把两者弄混。
-    pub fn new(base: usize, pages: &'a Pages, commands: usize, faults: usize, fence: usize) -> Self {
+    pub fn new(
+        base: usize,
+        pages: &'a Pages,
+        commands: usize,
+        faults: usize,
+        fence: usize,
+    ) -> Self {
         Self {
             base,
             pages,
@@ -51,8 +57,8 @@ impl<'a> CommandQueue<'a> {
 
     /// 开两个队列：先故障队列（故障得有地方记），再命令队列；各自确认「活动且不忙」。
     pub fn enable(&mut self) -> Result<(), &'static str> {
-        let faults = (regs::page_number(self.pages.physical(self.faults)) << regs::PPN_SHIFT)
-            | FAULT_LOG2SZ;
+        let faults =
+            (regs::page_number(self.pages.physical(self.faults)) << regs::PPN_SHIFT) | FAULT_LOG2SZ;
         regs::write64(self.base, regs::FQB, faults);
         regs::write32(self.base, regs::FQCSR, regs::QUEUE_ENABLE);
         if !active(regs::read32(self.base, regs::FQCSR), regs::QUEUE_ON) {
@@ -130,7 +136,8 @@ impl<'a> CommandQueue<'a> {
         }
         let slot = ((count - 1) % FAULT_ENTRIES) as usize * FAULT_BYTES;
         // SAFETY: 故障队列页是本域刚取的可写页，记录按 32 字节排。
-        let header = unsafe { core::ptr::read_volatile(self.pages.at(self.faults, slot) as *const u64) };
+        let header =
+            unsafe { core::ptr::read_volatile(self.pages.at(self.faults, slot) as *const u64) };
         (count, (header & 0xFFF) as u32)
     }
 
@@ -157,7 +164,15 @@ pub fn quiet(csr: u32, on: u32) -> bool {
     csr & on == 0 && csr & regs::QUEUE_BUSY == 0
 }
 
-/// 队列自己报的内存故障 / 溢出位。
+/// 命令队列自己的错：内存故障 / 命令超时 / 非法命令。
+///
+/// `CQCSR[9]` 是 `CMD_TO`、`[10]` 是 `CMD_ILL`——两个名字与故障/页请求队列的溢出位**不同一件事**，
+/// 故两者不共用一条判据。
+pub fn command_error(csr: u32) -> bool {
+    csr & (regs::QUEUE_MEM_FAULT | regs::QUEUE_CMD_TO | regs::QUEUE_CMD_ILL) != 0
+}
+
+/// 故障队列 / 页请求队列自己的错：内存故障 / 溢出。
 pub fn queue_error(csr: u32) -> bool {
     csr & (regs::QUEUE_MEM_FAULT | regs::QUEUE_OVERFLOW) != 0
 }
