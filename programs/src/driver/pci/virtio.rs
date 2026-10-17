@@ -11,7 +11,7 @@
 //! **发布那一侧**（`ring`）不建驱动——队列与描述符由别人布好，它只做“推一下”那件事。
 
 use super::ecam::{self, Ecam};
-use super::order;
+use crate::driver::iommu::order;
 
 /// 那一张能力表里属 virtio 的四格：BAR 内偏移与通知乘数（**不含 BAR 号**——
 /// 那是发现那一侧的事，`read` 把它一并交出来）。
@@ -112,7 +112,7 @@ impl Caps {
                     device,
                 },
             )),
-            _ => Err("iommu-dma: virtio caps"),
+            _ => Err("pci: virtio caps"),
         }
     }
 }
@@ -142,7 +142,7 @@ impl Virtio {
         virtio.write32(FEATURE_SELECT_DEVICE, 1);
         let offered = virtio.read32(FEATURE_DEVICE);
         if offered & FEATURE_VERSION_1 == 0 {
-            return Err("iommu-dma: virtio version 1");
+            return Err("pci: virtio version 1");
         }
         virtio.write32(FEATURE_SELECT_DRIVER, 0);
         virtio.write32(FEATURE_DRIVER, 0);
@@ -156,12 +156,12 @@ impl Virtio {
             STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK,
         );
         if virtio.read8(STATUS) & STATUS_FEATURES_OK == 0 {
-            return Err("iommu-dma: virtio features rejected");
+            return Err("pci: virtio features rejected");
         }
         // `device` 那一格的偏移本景不用（本驱动不读设备配置），但发现它必须成功：
         // 四格缺一就说明这不是本层认的那张能力表。
         if caps.device == 0 {
-            return Err("iommu-dma: virtio device region");
+            return Err("pci: virtio device region");
         }
         Ok(virtio)
     }
@@ -175,7 +175,7 @@ impl Virtio {
         self.write16(QUEUE_SELECT, 0);
         let size = self.read16(QUEUE_SIZE);
         if size == 0 || !size.is_power_of_two() {
-            return Err("iommu-dma: virtio queue size");
+            return Err("pci: virtio queue size");
         }
         self.write16(QUEUE_SIZE, size);
         self.write16(QUEUE_MSIX, NO_VECTOR);
@@ -191,7 +191,7 @@ impl Virtio {
             STATUS_ACKNOWLEDGE | STATUS_DRIVER | STATUS_FEATURES_OK | STATUS_DRIVER_OK,
         );
         if self.read16(QUEUE_ENABLE) != 1 {
-            return Err("iommu-dma: virtio queue did not come up");
+            return Err("pci: virtio queue did not come up");
         }
         Ok(size)
     }

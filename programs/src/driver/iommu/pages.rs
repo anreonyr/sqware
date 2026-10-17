@@ -22,7 +22,7 @@ impl Pages {
     /// 保留那一份是这一段的真实强持，`traverse` 与设备地址发布都以它为准。
     pub fn take(retention: PieToken, count: usize) -> Result<Self, &'static str> {
         let pole =
-            resource::raw::pole(count * PAGE_SIZE, true).map_err(|_| "iommu-probe: page pole")?;
+            resource::raw::pole(count * PAGE_SIZE, true).map_err(|_| "iommu: page pole")?;
         let reference = Reference::acquire(
             AcquireSource::Source {
                 token: pole,
@@ -31,8 +31,8 @@ impl Pages {
             },
             retention,
         )
-        .map_err(|_| "iommu-probe: retained window")?;
-        let placement = Placement::lowest(PAGE_SIZE).ok_or("iommu-probe: page placement")?;
+        .map_err(|_| "iommu: retained window")?;
+        let placement = Placement::lowest(PAGE_SIZE).ok_or("iommu: page placement")?;
         let view = reference
             .attach(
                 TeamId::new(0),
@@ -42,15 +42,15 @@ impl Pages {
                 READ_WRITE,
                 ViewControl::Caller,
             )
-            .map_err(|_| "iommu-probe: page view")?;
-        let handle = reference.handle().map_err(|_| "iommu-probe: page handle")?;
-        let range = ReferenceRange::new(handle, 0, count).ok_or("iommu-probe: page range")?;
+            .map_err(|_| "iommu: page view")?;
+        let handle = reference.handle().map_err(|_| "iommu: page handle")?;
+        let range = ReferenceRange::new(handle, 0, count).ok_or("iommu: page range")?;
         let mut physical = Vec::new();
         physical
             .try_reserve_exact(count)
-            .map_err(|_| "iommu-probe: page table")?;
+            .map_err(|_| "iommu: page table")?;
         physical.resize(count, 0);
-        traverse(retention, range, &mut physical).map_err(|_| "iommu-probe: physical export")?;
+        traverse(retention, range, &mut physical).map_err(|_| "iommu: physical export")?;
         // 页是新取的匿名页：先清零，免得把上一轮残留当内容。
         // SAFETY: 这一段是本域刚挂上的可读写 View，`count` 页连成一片。
         unsafe { core::ptr::write_bytes(view.address() as *mut u8, 0, count * PAGE_SIZE) };
@@ -78,9 +78,9 @@ impl Pages {
 
     /// 显式结清：先撤本域的图，再放下保留。
     pub fn close(mut self) -> Result<(), &'static str> {
-        self.view.close().map_err(|_| "iommu-probe: view close")?;
+        self.view.close().map_err(|_| "iommu: view close")?;
         self.reference
             .release()
-            .map_err(|_| "iommu-probe: page release")
+            .map_err(|_| "iommu: page release")
     }
 }

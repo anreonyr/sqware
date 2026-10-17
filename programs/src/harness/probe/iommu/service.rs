@@ -16,9 +16,10 @@ use core::sync::atomic::Ordering;
 use env::{EXIT_OK, PAGE_SIZE, PieToken, TaskId, TeamId};
 use resource::dock::Dock;
 
+use crate::driver::pci::virtio::{Caps, Virtio};
+
 use super::dma::await_used_at;
 use super::handoff::HANDOFF;
-use super::virtio::{Caps, Virtio};
 
 /// 服务自己的人读那几格（放开之前写死，故不取 Acquire 那一套）。
 const READY: Ordering = Ordering::Relaxed;

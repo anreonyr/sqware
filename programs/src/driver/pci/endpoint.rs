@@ -15,16 +15,16 @@ impl Endpoint {
     /// 落位从窗口里按 BAR 的直径对齐取一段；放不下当场拒（不硬塞、不另找地方）。
     /// 落位之后打开内存空间与 bus master：这是后端真能发起 DMA 的前提。
     pub fn claim(ecam: &Ecam, index: u8, window: (u64, u64)) -> Result<Self, &'static str> {
-        let (size, wide) = ecam.bar_size(index).ok_or("iommu-dma: endpoint bar")?;
+        let (size, wide) = ecam.bar_size(index).ok_or("pci: endpoint bar")?;
         if !wide || size == 0 {
-            return Err("iommu-dma: endpoint bar width");
+            return Err("pci: endpoint bar width");
         }
         let address = window.0.div_ceil(size) * size;
         let end = address
             .checked_add(size)
-            .ok_or("iommu-dma: bar placement")?;
+            .ok_or("pci: bar placement")?;
         if end > window.0 + window.1 {
-            return Err("iommu-dma: bar placement");
+            return Err("pci: bar placement");
         }
         ecam.place_bar(index, address, wide);
         ecam.command_or(ecam::COMMAND_MEMORY | ecam::COMMAND_MASTER);

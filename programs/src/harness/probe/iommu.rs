@@ -1,5 +1,6 @@
-//! 真实 RISC-V IOMMU（`riscv-iommu-sys`）那两景共用的一片：寄存器格、设备上下文、
-//! Sv39 表、命令/故障队列，以及把一台 PCI 端点接上来的那三个模块。
+//! 真实 RISC-V IOMMU（`riscv-iommu-sys`）那两景的**判据**：机制已经迁到
+//! [`crate::driver::iommu`]（寄存器格 / 设备上下文 / Sv39 表 / 队列）与 [`crate::driver::pci`]
+//! （ECAM / BAR 落位 / virtio），本模块与 `dma` / `service` 只剩“跑一遍、判一遍”。
 //!
 //! `iommu-probe`：本域取设备区 → 建 DDT / DC / Sv39 表 / 队列 → 编程 → 硬件按我们写下的表
 //! 翻译一次（正证）→ 拆除时 **DDTP Off 与队列 on/busy 分别确认** → 同一 requester 与同一 IOVA
@@ -8,29 +9,22 @@
 //! `iommu-dma`：同一片寄存器路径 ＋ 一台**真实 PCI 端点**（`virtio-blk-pci`）——
 //! ECAM 发现、BAR 落位、精确 BAR 交给驱动，再让端点按 IOVA 真写内存。
 
-mod context;
-pub mod dma;
-mod ecam;
-mod endpoint;
 mod handoff;
-mod order;
-mod pages;
-mod queue;
-mod regs;
+pub mod dma;
 mod service;
-mod table;
-mod virtio;
 
 use alloc::format;
 
 use env::{Call, Name, Page};
 use resource::dock::Dock;
 
-use context::DeviceContext;
-use pages::Pages;
-use queue::CommandQueue;
-
 use crate::boot::Accounts;
+use crate::driver::iommu::{
+    context::DeviceContext,
+    pages::Pages,
+    queue::{self, CommandQueue},
+    regs, table,
+};
 
 /// 这台机器的 `riscv,iommu` 节点坐标（设备树 `reg` 里的那一段）。
 const IOMMU_BASE: u64 = 0x301_0000;

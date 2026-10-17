@@ -32,13 +32,13 @@ pub fn map_pages(
     count: usize,
 ) -> Result<(), &'static str> {
     if count == 0 || !iova_base.is_multiple_of(PAGE_SIZE) {
-        return Err("iommu-dma: iova window");
+        return Err("iommu: iova window");
     }
     let index = |iova: usize, level: usize| (iova >> (12 + INDEX_BITS * level)) & (PTES - 1);
     let last = iova_base + (count - 1) * PAGE_SIZE;
     let shared = index(iova_base, 2) == index(last, 2) && index(iova_base, 1) == index(last, 1);
     if !shared || first + count > pages.count() {
-        return Err("iommu-dma: iova window");
+        return Err("iommu: iova window");
     }
     write(
         pages.at(root, index(iova_base, 2) * 8),
