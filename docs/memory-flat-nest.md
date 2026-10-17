@@ -1509,3 +1509,46 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 - **留给后续**：同一景里 `bar=` 一个名字指四种事实（PCI 地址 / 本域映射基址 / 另一域窗口基址 /
   BAR 序号），相邻两行数值还不一样——按“一个事实一个名字”该单开一笔改名（`mapped=` / `index=`），
   它牵动本节与阶段 0 那段的引文，故不夹在本笔里。
+
+## 架构回正 · 阶段 2：保留的身份换成 ScopeId/RetentionId，核心搬进 crates/resource
+
+封存对象：本节与提交 `19aba48e`（在阶段 1 的 `8b1c1fae` 之上）。独立复核 acceptable：合同九条逐条落地，
+重跑五个宿主档与七个景，独立重做四个变异（全承重）＋ 自选三个（两个承重，一个证明“重复发布守卫”无场景）。
+
+- **旧职责**：`programs/src/system/supply/retention/` 里那套“引用活到停机权威确认”的核心——以
+  `DeviceRange` 数值认范围（不同地址域同 IOVA 会被当成同一资源），以裸 `usize` 认每一份引用，
+  逐份只有一个 `published` 布尔，阶段只有 `Open/Closing/Stopped`。
+- **搬到哪**：整目录 → `crates/resource/src/retention/`（一型一文件）；核心只依赖 `env` 与 `alloc`、
+  模块内无 `crate::` 路径、无 PCI/virtio/IOMMU 词汇；两份宿主（`programs/tests/retention/lib.rs`、
+  `kernel/tests/health/mod.rs`）按 `#[path]` 编进各自 crate。身份分三个命名空间：`ScopeId` /
+  `RetentionId` 只由表发放、单调不复用；`DomainId` 由控制者给、核心只做等值比较；`DeviceRange`
+  改名 `AddressRange`，attach 的一致性单位是 `DomainRange { domain, range }`。
+- **为何通用**：这份生命周期讲的是“引用活到受信任权威确认外部访问者停下”——没有设备词汇，
+  `MemoryEffects` 与 `Platform` 都是控制者侧实现的契约，故属通用资源层而非 System。
+- **保留的安全证据**：逐份 `Held→Reachable`（标记在交出引用**之前**点上、不可逆）＋ 逐 scope
+  `Open → Stopping(Close) → Stopped → Released`；`progress` 只在“至少一份 `Reachable`”时才叫平台，
+  确认失败记 `failure` 且引用一格不动；关闭档只升不降；同域重叠才冲突、跨域同 IOVA 各成一格；
+  引用清空才 `Released` 并放下 `platform`。八个宿主例（原六例逐条钉同一件事，两处随判据等价改写）
+  ＋ 两个新例（跨域同 IOVA、确认 Pending 时不释放）＋ 七个景与健康面照过；四次承重变异（跨域判重叠
+  改回全局、`Err` 不保留引用、标记改成“只有成功才点”、已释放也占覆盖）各自红在预期断言上。
+- **两处可观察变化**（都不是缺陷，但记在明处）：
+  1. **释放过的覆盖不再占着**——旧 scope 进 `Released` 之后同一段范围可以重新 attach（活的 scope
+     仍冲突）。阶段 4 的“设备重新可认领”要它；旧断言“已释放仍冲突”已改成“可重挂 ＋ 活的仍冲突”。
+  2. **`occupied()` 的判据由“有引用才算”改成 `phase != Released`**——零引用的活 scope 也会在册。
+     七个景里没有多出报告行（attach 与 register 同帧完成），`reclaim` 的门仍能收敛。
+- **不受证明覆盖**（代码级保证，非被见证）：
+  - `dma.rs` 的 attach 失败路径（`scope` 为 `None`、`coverage` 为 `Some`）：收尾仍会关掉那 13 页本域
+    映射与三段图，但七个景里 `no registered scope` 出现 0 次，只有读证。
+  - `publish_begin` 的重复发布守卫（已 `Reachable` ⇒ `Conflict`）：删掉它八个宿主例全绿、无一景二次发布。
+  - `progress` 里“有 `Reachable` 却没有平台”那一支（按公开 API 不可达，留作 fail-closed）。
+  - `Failure::Full` 三处、`register`/`close` 对未知 id 的 `Unknown`、`retry` 的“A→B 新失败”、
+    `release` 的“一份失败其余继续”多份混合成败。
+  - `served` 为真时 `scope` 为 `None` 不可达，但那是隐式耦合：那句 “confirmed and released” 只由占用
+    查询把关，而查询在 `scope` 为 `None` 时被跳过。
+- **取代上文哪几处**（那些节是 `6d9ecf68` / `a6d626fb` 的封存，不改写）：`878`（旧目录路径）、
+  `882`（`DeviceRange` 那个名字）、`1348`（“retention 6 例”与那条 `retention/mod.rs:17` 的既有
+  `unused import` 告警——后者随搬迁消失，前者现在是 8 例）、`1431-1432`（样例输出：
+  `phase=Closing(Fault)` 现在是 `Stopping(Fault)`，且多了 `scope=`/`domain=` 两个字段）。
+- **留给后续**：`resource::retention` 的模块头注仍是英文（继承来的），与 crate 其余中文 doc 不一致；
+  `Memory` 这个名字与内核 memory 词汇同形；加上阶段 1 记的 `bar=` 四种事实与平台那枚 `EndpointDrain`
+  副本——都在整轮重构之后的改名/清理一趟里处理。
