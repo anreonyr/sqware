@@ -1,8 +1,8 @@
 use crate::boot::Accounts;
 use crate::system::control::unit::Service;
 use crate::system::control::unit::start::Error;
-use crate::system::supply::retention::{DeviceRange, Failure, Holds, Registration};
 use env::{Call, Mark, Name, Page, Permission, Wait};
+use resource::retention::{Failure, Holds, Registration, RetentionId, ScopeId};
 use system_api::supply::{Key, LeaseId, LeaseIds, State};
 
 struct Provider {
@@ -278,16 +278,16 @@ impl Supplies {
 
     pub(crate) fn retain_memory(
         &mut self,
-        range: DeviceRange,
+        scope: ScopeId,
         source: env::AcquireSource,
-    ) -> Result<usize, Failure> {
+    ) -> Result<RetentionId, Failure> {
         let authority = self
             .accounts
             .token(Name::Call(Call::Retain))
             .ok_or(Failure::Denied)?;
         self.retention.register(
             Registration {
-                range,
+                scope,
                 source,
                 retention: authority,
             },

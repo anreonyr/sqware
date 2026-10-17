@@ -37,7 +37,7 @@ use crate::driver::iommu::{
     regs,
 };
 use crate::driver::pci::virtio;
-use crate::system::supply::retention::{DeviceRange, Failure, Platform};
+use resource::retention::{DomainRange, Failure, Platform};
 
 use super::endpoint_drain::EndpointDrain;
 use super::step::Step;
@@ -45,7 +45,7 @@ use super::stop::Stop;
 
 /// System 里那一枚 IOMMU 的停机权威：一段设备范围 ＋ 一枚随时可发命令的队列。
 pub struct IommuPlatform {
-    range: DeviceRange,
+    domain_range: DomainRange,
     /// 寄存器窗在本域的起址（已授权、已映射）。
     base: usize,
     /// 命令/故障/完成记录那三页（本域地址与真实物理页起址都在里面）。
@@ -63,10 +63,14 @@ pub struct IommuPlatform {
 }
 
 impl IommuPlatform {
-    pub fn new(range: DeviceRange, queue: CommandQueue, endpoint: Option<EndpointDrain>) -> Self {
+    pub fn new(
+        domain_range: DomainRange,
+        queue: CommandQueue,
+        endpoint: Option<EndpointDrain>,
+    ) -> Self {
         let base = queue.base();
         Self {
-            range,
+            domain_range,
             base,
             queue,
             endpoint,
@@ -79,8 +83,8 @@ impl IommuPlatform {
 }
 
 impl Platform for IommuPlatform {
-    fn range(&self) -> DeviceRange {
-        self.range
+    fn domain_range(&self) -> DomainRange {
+        self.domain_range
     }
 
     /// 正常关闭：与隔离那一档走**同一条**停止链（释放前的凭据不更低）。

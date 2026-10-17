@@ -1,10 +1,10 @@
 use alloc::{boxed::Box, vec::Vec};
 use env::TaskId;
 
-use super::{DeviceRange, Failure, Phase, Platform, memory::Memory};
+use super::{DomainRange, Failure, Phase, Platform, memory::Memory};
 
 pub struct Scope {
-    pub(super) range: DeviceRange,
+    pub(super) domain_range: DomainRange,
     pub(super) controller: TaskId,
     pub(super) platform: Option<Box<dyn Platform>>,
     pub(super) phase: Phase,
@@ -14,12 +14,12 @@ pub struct Scope {
 
 impl Scope {
     pub fn new(
-        range: DeviceRange,
+        domain_range: DomainRange,
         controller: TaskId,
         platform: Option<Box<dyn Platform>>,
     ) -> Self {
         Self {
-            range,
+            domain_range,
             controller,
             platform,
             phase: Phase::Open,

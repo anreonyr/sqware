@@ -3,7 +3,7 @@
 extern crate alloc;
 
 #[cfg(test)]
-#[path = "../../src/system/supply/retention/mod.rs"]
+#[path = "../../../crates/resource/src/retention/mod.rs"]
 mod retention;
 
 #[cfg(test)]

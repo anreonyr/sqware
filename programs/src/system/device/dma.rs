@@ -46,8 +46,10 @@ use crate::system::device::stage::Stage;
 use crate::system::device::start::Start;
 use crate::system::device::started::Started;
 use crate::system::loader::{Image, Loader};
-use crate::system::supply::retention::{Close, DeviceRange, Failure, Platform, Scope};
 use crate::system::supply::{Origin, PrivateRoot, RootAssignment, RootRequest};
+use resource::retention::{
+    AddressRange, Close, DomainId, DomainRange, Failure, Platform, RetentionId, Scope, ScopeId,
+};
 
 /// 设备树里 `riscv,iommu` 那段 `reg` 的起址。
 const IOMMU_BASE: u64 = 0x301_0000;
@@ -125,13 +127,12 @@ pub struct Dma {
     retention: PieToken,
     aperture: PieToken,
     base: usize,
-    range: Option<DeviceRange>,
-    /// 这一范围是否真的在 `Holds` 上登记过（`close` 只对登记过的认账）。
-    attached: bool,
-    /// 发布门是否已经点上——没点上 = 设备从来没可达过。
-    published: bool,
-    /// 那一份登记在 `Holds` 上的编号（发布门的成败都记在它那一格）。
-    retained: Option<usize>,
+    /// 本域定义的设备可达窗：域 ＋ IOVA 窗。
+    coverage: Option<DomainRange>,
+    /// 这份工作内存的登记编号。
+    retained: Option<RetentionId>,
+    /// 该覆盖在表里的编号；`None` = 没登记过。
+    scope: Option<ScopeId>,
     /// 收子任务那两条命令已经发出去了（每帧 `join` 探它落地，不重发）。
     reclaim_sent: bool,
     pages: Option<Pages>,
@@ -188,10 +189,9 @@ impl Dma {
             retention: PieToken::NONE,
             aperture: PieToken::NONE,
             base: 0,
-            range: None,
-            attached: false,
-            published: false,
+            coverage: None,
             retained: None,
+            scope: None,
             reclaim_sent: false,
             pages: None,
             queues: None,
@@ -247,8 +247,8 @@ impl Dma {
                 Ok(Stage::Done(started)) => return Ok(started),
                 Err(failure) => {
                     self.start = Start::Failed;
-                    // 发布门的成败记在它自己那一格（发布之后失败先记上，再回退）。
-                    if let Some(id) = self.retained.filter(|_| self.published) {
+                    // 起手失败按发布门交回结果；过没过门由表判。
+                    if let Some(id) = self.retained {
                         let _ = supplies.retention.publish_end(id, Err(failure));
                     }
                     self.rollback(supplies);
@@ -258,30 +258,25 @@ impl Dma {
         }
     }
 
-    /// 起手失败的回退：**主动**把子任务收进既有死亡路径、把范围关成 `Fault`。
+    /// 起手失败的回退：主动把子任务收进死亡路径，把登记关成 `Fault`。
     ///
-    /// 收不干净就把手柄**留着**（不 `take` 掉），下一帧接着收：`doom`/`slay` 的真实结果
-    /// 要报出来，不能用 `let _` 吐成“已清”而无凭据。
-    ///
-    /// 范围：登记过（`attached`）才关得了，没 attach 过时不假装关过（`close` 只会答
-    /// `Unknown`，那一格不能按“已关”打印）；`close` 的结果也按真实报。关成 `Fault` 之后
-    /// `Holds` 会把它推到 `Stopped` 并把登记释放，故不会有一个空转在 `Open` 的范围。
-    ///
-    /// 本地所有者：**发布之前**失败 = 设备从来没可达过，本域那几段页归 `settle` 直接
-    /// 结清；**发布之后**失败 = 停机凭据归平台，`pages` 也要留到 `settle` 确认之后才还。
-    /// 两档都归 `settle`——那里才是“最后一次读 MMIO”之后（见 [`Dma::finish`]）。
+    /// 收不干净就把手柄留着下一帧接着收；`doom`/`slay` 的结果原样报出。
+    /// 没登记过的范围不假装关过（`close` 只会答 `Unknown`）。
     fn rollback(&mut self, supplies: &mut Supplies) {
         self.reclaim();
-        if let Some(range) = self.range {
-            if !self.attached {
-                self.say("system-dma: startup failed, no registered scope");
-            } else if !self.closing {
-                self.closing = true;
-                let closed = supplies.retention.close(range, Close::Fault);
-                self.say(&alloc::format!(
-                    "system-dma: startup failed, range close={closed:?}"
-                ));
-            }
+        if self.coverage.is_none() {
+            return;
+        }
+        let Some(scope) = self.scope else {
+            self.say("system-dma: startup failed, no registered scope");
+            return;
+        };
+        if !self.closing {
+            self.closing = true;
+            let closed = supplies.retention.close(scope, Close::Fault);
+            self.say(&alloc::format!(
+                "system-dma: startup failed, range close={closed:?}"
+            ));
         }
     }
 
@@ -313,13 +308,12 @@ impl Dma {
         }
     }
 
-    /// 本域对设备那几段图的**最后一次访问**已经过完：显式把寄存器 / ECAM / BAR 三段图关掉，
-    /// 并把 `range` 与 `endpoint` 放掉——之后 `settle` 再进来就不会再读 MMIO（`range` 为 `None` 直接 `Done`）。
+    /// 本域对那三段图的**最后一次访问**已经过完：关掉寄存器 / ECAM / BAR，放下覆盖与端点。
     ///
-    /// 现在才关是因为平台对象只持本域地址（`usize`），而 `settle` 的停机现场要从这三段读；
-    /// 图一关再读就是悬空。
+    /// 之后 `settle` 再进来就不会再读 MMIO（`coverage` 为 `None` 直接 `Done`）。
     fn finish(&mut self) {
-        self.range = None;
+        self.coverage = None;
+        self.scope = None;
         self.endpoint = None;
         if let Some(dock) = self.iommu.take() {
             let _ = dock.shut();
@@ -416,10 +410,13 @@ impl Dma {
         // 这一轮的范围是**设备能经 IOMMU 到的那一段内存**（不是 BAR 那一段 MMIO）：
         // 要停住的“外部访问”正是它。
         let base = IOVA_BASE;
-        let range = DeviceRange::new(base as u64, (DEVICE_PAGES * PAGE_SIZE) as u64)
-            .ok_or(Failure::Denied)?;
-        // 范围一旦定下就记在管理者身上：后面任何一步失败都能把它关成 `Fault`。
-        self.range = Some(range);
+        let coverage = DomainRange {
+            domain: DomainId::new(IOMMU_BASE),
+            range: AddressRange::new(base as u64, (DEVICE_PAGES * PAGE_SIZE) as u64)
+                .ok_or(Failure::Denied)?,
+        };
+        // 覆盖一旦定下就记在管理者身上：后面任何一步失败都能把它关成 `Fault`。
+        self.coverage = Some(coverage);
 
         // 先把那台服务任务立起来（**按住**：坐标没铺好之前不放它跑）。
         let (Some(image), Some(kind)) = (self.image, self.kind) else {
@@ -469,7 +466,7 @@ impl Dma {
         let pages = self.pages.as_ref().ok_or(Failure::Unknown)?;
         let queue = CommandQueue::new(self.base, pages, COMMANDS, FAULTS, FENCE);
         let inner = IommuPlatform::new(
-            range,
+            coverage,
             queue,
             Some(EndpointDrain {
                 endpoint,
@@ -483,12 +480,12 @@ impl Dma {
         } else {
             Box::new(inner)
         };
-        supplies
+        let scope = supplies
             .retention
-            .attach(Scope::new(range, service, Some(platform)))?;
-        self.attached = true;
+            .attach(Scope::new(coverage, service, Some(platform)))?;
+        self.scope = Some(scope);
         let id = supplies.retain_memory(
-            range,
+            scope,
             AcquireSource::Source {
                 token: pages.source(),
                 offset: 0,
@@ -496,15 +493,14 @@ impl Dma {
             },
         )?;
         self.retained = Some(id);
-        // 受控注入（只这一景）：`spawn` 之后、发布之前停一次——范围已登记、可达标记
-        // 还没点。它验的是“部分发布的失败真的被隔断”，不是“硬件超时”。
+        // 受控注入（只这一景）：`spawn` 之后、发布之前停一次——覆盖已登记、可达标记
+        // 还没点。
         if self.path == Path::StartupBeforePublish {
             self.say("system-dma: startup fault injected before publish");
             return Err(Failure::Unavailable);
         }
         // 发布门：**先把可达标记点上**（执行发布之前），再铺表、描述符。
         supplies.retention.publish_begin(id)?;
-        self.published = true;
         let context = DeviceContext::first_stage(pages.physical(ROOT));
         let requester = endpoint.requester() as usize;
         for (index, word) in context.words().iter().enumerate() {
@@ -698,9 +694,10 @@ impl Dma {
     /// 但“还在保留”与“已释放确认”是**两个不同状态**，各报各的，不统一算绿。
     pub fn settle(&mut self, supplies: &mut Supplies) -> ::schedule::Progress {
         use ::schedule::Progress;
-        let Some(range) = self.range else {
+        // 覆盖已定 = 收尾要做完；`scope` 只用来查/关保留。
+        if self.coverage.is_none() {
             return Progress::Done;
-        };
+        }
         // 完成记录：读一轮，报一次正证。
         if let Some(pages) = self.pages.as_ref() {
             let (used, len, status) = completion(pages);
@@ -721,8 +718,10 @@ impl Dma {
             // 故它与释放后那一行对照起来才看得出判据不是白给的真。
             self.say(&alloc::format!("system-dma: at close {}", self.stopped()));
             if self.path != Path::Fault {
-                let _ = supplies.retention.close(range, Close::Normal);
-                self.say("system-dma: requested Close::Normal");
+                if let Some(scope) = self.scope {
+                    let _ = supplies.retention.close(scope, Close::Normal);
+                    self.say("system-dma: requested Close::Normal");
+                }
             } else if let Some(service) = self.service {
                 let doom = env::room::doom(service).map_err(|error| error.source);
                 let slay = self
@@ -734,18 +733,23 @@ impl Dma {
             }
         }
         // 确认没过的现场：保留、报一次、**不**往下走也不重启业务。
-        let held = supplies
-            .retention
-            .occupied()
-            .find(|(held, ..)| *held == range);
-        if let Some((_, _, phase, count, failure)) = held {
-            if failure.is_some() && !self.pending_seen {
-                self.pending_seen = true;
-                self.say(&alloc::format!(
-                    "system-dma: NOT released holds={count} phase={phase:?} failure={failure:?}"
-                ));
+        if let Some(scope) = self.scope {
+            if let Some(held) = supplies
+                .retention
+                .occupied()
+                .find(|held| held.scope == scope)
+            {
+                if held.failure.is_some() && !self.pending_seen {
+                    self.pending_seen = true;
+                    self.say(&alloc::format!(
+                        "system-dma: NOT released holds={} phase={:?} failure={:?}",
+                        held.references,
+                        held.phase,
+                        held.failure
+                    ));
+                }
+                return Progress::Done;
             }
-            return Progress::Done;
         }
         // 到这里保留已放下 = 平台确认过了。**独立核一遍现场**（映射与保留在这一刻
         // 都还活着）：目录表 Off、两台队列的 `on` 落了、端点 bus-master 清了、设备

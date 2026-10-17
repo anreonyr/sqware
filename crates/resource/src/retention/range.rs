@@ -1,10 +1,10 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DeviceRange {
+pub struct AddressRange {
     base: u64,
     length: u64,
 }
 
-impl DeviceRange {
+impl AddressRange {
     pub const fn new(base: u64, length: u64) -> Option<Self> {
         if length == 0 || base.checked_add(length - 1).is_none() {
             return None;

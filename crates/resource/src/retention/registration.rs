@@ -1,9 +1,9 @@
 use env::{AcquireSource, PieToken};
 
-use super::DeviceRange;
+use super::ScopeId;
 
 pub struct Registration {
-    pub range: DeviceRange,
+    pub scope: ScopeId,
     pub source: AcquireSource,
     pub retention: PieToken,
 }

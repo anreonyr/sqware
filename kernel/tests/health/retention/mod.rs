@@ -2,7 +2,9 @@ mod accessor;
 mod effects;
 mod platform;
 
-use super::super::retention_core::{DeviceRange, Failure, Holds, Registration, Scope};
+use super::super::retention_core::{
+    AddressRange, DomainId, DomainRange, Failure, Holds, Registration, Scope,
+};
 use super::{Caller, KVirt, PAGE_SIZE, pend};
 use alloc::{boxed::Box, rc::Rc, sync::Arc};
 use core::cell::Cell;
@@ -44,14 +46,17 @@ pub fn accept() {
     )
     .unwrap();
     let cap = crate::entry::boot::resources::grant_retention(&system.task).unwrap();
-    let range = DeviceRange::new(0x1000_0000, 4096).unwrap();
+    let domain_range = DomainRange {
+        domain: DomainId::new(0x301_0000),
+        range: AddressRange::new(0x1000_0000, 4096).unwrap(),
+    };
     let mut holds = Holds::new();
-    holds
+    let scope = holds
         .attach(Scope::new(
-            range,
+            domain_range,
             driver.task.ident.id,
             Some(Box::new(platform::Device {
-                range,
+                domain_range,
                 accessor: external.clone(),
             })),
         ))
@@ -61,7 +66,7 @@ pub fn accept() {
         let id = holds
             .register(
                 Registration {
-                    range,
+                    scope,
                     source: AcquireSource::Source {
                         token: grant,
                         offset,
@@ -102,8 +107,11 @@ pub fn accept() {
     holds.offline(driver.task.ident.id);
     external.timeout.set(true);
     assert!(holds.retry(&mut effects));
-    assert_eq!(holds.occupied().next().unwrap().3, 7);
-    assert_eq!(holds.occupied().next().unwrap().4, Some(Failure::Pending));
+    assert_eq!(holds.occupied().next().unwrap().references, 7);
+    assert_eq!(
+        holds.occupied().next().unwrap().failure,
+        Some(Failure::Pending)
+    );
     assert!(
         external.write(0x63),
         "isolation timeout retains externally reachable RAM"

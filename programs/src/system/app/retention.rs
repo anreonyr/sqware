@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use env::{AcquireSource, FlatReference, PieToken, Wait};
 use schedule::{Progress, Res, ResMut};
 
-use crate::system::supply::retention::{Failure, MemoryEffects};
+use resource::retention::{Failure, MemoryEffects, Occupancy};
 
 use super::{Fault, policy::Flow, supplies::Supplies};
 
@@ -43,11 +43,21 @@ pub(crate) fn sweep(mut supplies: ResMut<Supplies>) -> Result<Progress, Fault> {
 }
 
 pub(crate) fn report(supplies: &Supplies) {
-    for (range, controller, phase, pages, failure) in supplies.retention.occupied() {
+    for held in supplies.retention.occupied() {
+        let Occupancy {
+            scope,
+            domain_range,
+            controller,
+            phase,
+            references,
+            failure,
+        } = held;
         programs::debug::put(&alloc::format!(
-            "system: device memory held base={:#x} length={:#x} tid={} phase={phase:?} references={pages} failure={failure:?}",
-            range.base(),
-            range.length(),
+            "system: device memory held scope={} domain={:#x} base={:#x} length={:#x} tid={} phase={phase:?} references={references} failure={failure:?}",
+            scope.get(),
+            domain_range.domain.get(),
+            domain_range.range.base(),
+            domain_range.range.length(),
             controller.get(),
         ));
     }

@@ -4,7 +4,7 @@
 //! 那一条。它**不**改生产平台，也**不**替真硬件超时作证：注入是装配的事，
 //! 真实 `Pending` 的证据归真实平台。
 
-use crate::system::supply::retention::{DeviceRange, Failure, Platform};
+use resource::retention::{DomainRange, Failure, Platform};
 
 /// 包着一枚真平台：第一次叫它停就答 `Pending`，第二次起原样转发。
 pub struct FaultOnce<P> {
@@ -22,8 +22,8 @@ impl<P> FaultOnce<P> {
 }
 
 impl<P: Platform> Platform for FaultOnce<P> {
-    fn range(&self) -> DeviceRange {
-        self.inner.range()
+    fn domain_range(&self) -> DomainRange {
+        self.inner.domain_range()
     }
 
     fn synchronize(&mut self) -> Result<(), Failure> {

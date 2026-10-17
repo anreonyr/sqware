@@ -41,7 +41,7 @@ pub mod permit;
 pub mod pole;
 pub mod residency;
 #[allow(dead_code)]
-#[path = "../../../programs/src/system/supply/retention/mod.rs"]
+#[path = "../../../crates/resource/src/retention/mod.rs"]
 pub(crate) mod retention_core;
 pub mod shell;
 pub mod source_views;

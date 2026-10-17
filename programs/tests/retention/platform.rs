@@ -2,17 +2,17 @@ use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     accessor::Accessor,
-    retention::{DeviceRange, Failure, Platform},
+    retention::{DomainRange, Failure, Platform},
 };
 
 pub struct Device {
-    pub range: DeviceRange,
+    pub domain_range: DomainRange,
     pub accessor: Rc<RefCell<Accessor>>,
 }
 
 impl Platform for Device {
-    fn range(&self) -> DeviceRange {
-        self.range
+    fn domain_range(&self) -> DomainRange {
+        self.domain_range
     }
 
     fn synchronize(&mut self) -> Result<(), Failure> {

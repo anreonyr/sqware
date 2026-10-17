@@ -1,17 +1,17 @@
 use super::{
-    super::super::retention_core::{DeviceRange, Failure, Platform},
+    super::super::retention_core::{DomainRange, Failure, Platform},
     accessor::Accessor,
 };
 use alloc::rc::Rc;
 
 pub(super) struct Device {
-    pub range: DeviceRange,
+    pub domain_range: DomainRange,
     pub accessor: Rc<Accessor>,
 }
 
 impl Platform for Device {
-    fn range(&self) -> DeviceRange {
-        self.range
+    fn domain_range(&self) -> DomainRange {
+        self.domain_range
     }
     fn synchronize(&mut self) -> Result<(), Failure> {
         self.isolate()
