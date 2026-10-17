@@ -97,8 +97,6 @@ const DESC_WRITE: u16 = 2;
 const SENTINEL: u8 = 0x5A;
 /// 交给服务的那一帧坐标的字数。
 const COORD_WORDS: usize = 9;
-/// 等服务、等收工的期限（毫秒）。
-const WAIT_MS: usize = 2000;
 /// 确认之后等设备再推一次的帧数（System 的一帧一帧，不阻塞）。
 const PROVE_FRAMES: usize = 8;
 
@@ -417,6 +415,8 @@ impl Dma {
         ));
 
         // 坐标只经那一枚孔过去：种子、页数、能力表四格、三段 IOVA。
+        // 服务还按着（没 embark），故是一个**非阻塞的一次尝试**：装不下就当场失败
+        // 回退，不在 System 的一帧里 park。
         let (common, notify, multiplier, device) = caps.parts();
         let writer = ipc::session::establish::give(service, COORD_MARK)
             .map_err(|_| Failure::Conflict)?;
@@ -436,7 +436,7 @@ impl Dma {
             bytes[at * 8..at * 8 + 8].copy_from_slice(&word.to_le_bytes());
         }
         Hole::from_raw(writer)
-            .push(&bytes, Wait::AtMost(WAIT_MS))
+            .push(&bytes, Wait::POLL)
             .map_err(|_| Failure::Pending)?;
 
         env::unit::embark_task(service).map_err(|_| Failure::Pending)?;
