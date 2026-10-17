@@ -1180,7 +1180,7 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 ABI 槽号及安全验收门见 [实施计划](memory-transfer-traverse.md)。
 这不把原 PR7 的真实硬件接线或产品验收自动标记为完成。
 
-## 当前交付状态：产品链已接（HEAD `7237712b`）
+## 当前交付状态：产品链已接（代码封存 `6d9ecf68`；上一封存 `7237712b`）
 
 本节记的是**当前**产品链的交付状态与可复跑的验收命令；前面各 PR 段落的执行记录
 仍作各方当时的基线保留，与本节不一致处以本节为准。
@@ -1236,6 +1236,12 @@ System 起一个**跨 Team** 的端点服务（镜像 `system-dma`），把**精
 | `cargo check -p programs --release` | 通过，零告警 |
 
 本节三笔提交：`75d08d67` 非阻塞产品帧、`615356b3` 两条受控起手失败、`7237712b` 窗口分派承重测试。
+**其后两项裁决已落地（提交 `6d9ecf68`）**：文件按“一型一文件”机械归位（行为未改，只改了可见性与
+导入路径），以及**发布之前失败也撤端点发起权限**（回退清 ECAM bus-master 并按平台 drain
+同一形状回读；已发布那一档仍走完整 Platform 链，不用清 master 冒充排空）。因此
+`iommu-product-start-before` 的现场现在是 `endpoint bus-master=0x0` 与
+`master=0x0 … stopped=true`（master 也归 0 之后五项读数全落到停止值），
+`start-after` 另加一条“回退自己那一行不得出现”的反向断言。**这一笔尚待增量复核。**
 
 ### 仍未覆盖
 
@@ -1244,12 +1250,17 @@ System 起一个**跨 Team** 的端点服务（镜像 `system-dma`），把**精
   （`inspect` 在宿主上是真 ecall）；`iommu-queue` 桩也见证不到 `enable` 成功路径与“busy 抬起再落”。
 - 自然 `Handshake` 到期（平台报 `stop pending`）没有端到端场景见证（QEMU 必答）。
 - `reset endpoint idle` 仍不敏感，只当“复位后端点闲”命名，不是 IOMMU-only 负证。
+- `!self.attached` 那一条（`startup failed, no registered scope`）**仍无场景**：三个起手分支里两个
+  已见证，第三档与前面的裁断一致——要它就得各自的小景/进程。
+- 物理 PCIe 的 posted-write 排空仍未覆盖（见上“停止依据与它的边界”）；未发布那一档现在不留
+  发起权限，但那是**撤回我们自己写下的 PCI 配置**，不是 interconnect-specific fence。
 
 ### 独立审查结果与已记录的边界
 
 同组独立 reviewer 对 sealed `HEAD = 7237712b`（blob `ccfe78adce6b` / `3bfe0c40f5b7` /
 `ff8f8e66b92b` / `e8c6b1804393` / `06c80a42dc18` / `dd2cbf6b55ec`）与文档提交 `88ef1072`
-（仅 docs，+71）给出了结论：**acceptable，无阻塞**。独立复跑：四个场景各 1 passed（两档起手
+（仅 docs，+71）给出了结论：**acceptable，无阻塞**——**接受的正是 `7237712b` 那一版**；
+其后的 `6d9ecf68`（一型一文件 ＋ 发布前撤发起权限）是这两项裁决的落地，尚待小增量复核。独立复跑：四个场景各 1 passed（两档起手
 失败的现场与上面逐字相同），iommu-queue 15 / lease-window 2 / retention 6 passed。
 三个关键负例都真红：`fence_step` 每次重发→15 例中 6 例红；`IommuPlatform::stop()` 换成空实现
 → `iommu-product` 红且 `confirmed and released … stopped=true` 与 `reset endpoint idle …`
