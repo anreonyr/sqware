@@ -1145,6 +1145,10 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 
 ### 未做（不宣称已完成）
 
+> **本节是历史定位。** 下面记的是 PR7 第一段那个基线（`HEAD = 73af1c13…`）当时的状态；“产品接线”
+> 与“供给/租约无调用点”两条已被后来的工作接上，以本文件末节
+> [「当前交付状态」](#当前交付状态产品链已接head-7237712b) 为准（本条不重写旧记录，只定位）。
+
 - **产品接线**：`programs/src/system/` 没有安装真实 `Platform`，也没有独立 DMAC 服务，
   故「服务死亡 → System 不依赖死服务独立隔离」这条路径在**产品组合**里仍未接上
   （PR6 的 `Holds`/`Platform` 机制仍在，但没有真实寄存器实现挂上去）。`iommu-dma` 景里
@@ -1175,3 +1179,70 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 物理页迁移与 PA 出口采用 `Transfer / Traverse`；追加顺序、驻留保证、
 ABI 槽号及安全验收门见 [实施计划](memory-transfer-traverse.md)。
 这不把原 PR7 的真实硬件接线或产品验收自动标记为完成。
+
+## 当前交付状态：产品链已接（HEAD `7237712b`）
+
+本节记的是**当前**产品链的交付状态与可复跑的验收命令；前面各 PR 段落的执行记录
+仍作各方当时的基线保留，与本节不一致处以本节为准。
+
+### 产品链（已验证的形状）
+
+System 起一个**跨 Team** 的端点服务（镜像 `system-dma`），把**精确到那一根 BAR** 的窗口
+（实测 4 页 / 16KiB）经 `RootAssignment.window` + `NativePieEffects` 交给它；服务手里没有
+任何裸 VA，只有那一枚窗口与几个 IOVA。内存那一半（DDT / DC / Sv39 表 / 三类队列 /
+描述符 / 数据，共 13 页）由 System 保留并发布，`Holds` 是唯一的收口权威。
+
+- **正证**：真 `virtio-blk` 读 512B —— `system-dma: served used=1 len=513 status=0 written_ok=true sector_ok=true`。
+- **正常收口**：显式 `Close::Normal` → `system-dma: confirmed and released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true`。
+- **故障收口**：杀掉服务 → `service doomed doom=Ok(()) slay=Some(Ok(()))`，
+  第一次停住答 `Pending` 时保留全部（`NOT released holds=1 phase=Closing(Fault) failure=Some(Pending)`），
+  恢复真确认后才释放（同一行 `stopped=true`）。
+- **起手受控失败**（两档各自的景）：`spawn` 后·发布前读 `master=0x4 … stopped=false`（设备从未接上，
+  停机链不走）；发布后读 `stopped=true`（平台真把设备停了才释放）。两档都报 `child reclaimed`
+  （`join_task` 看见子任务真被回收才计数）与 `range close=Ok(())`。
+
+### 停止依据与它的边界
+
+停链次序是 `DDTP` 落 Off → `IOTINVAL` → `IOFENCE.C` 等本次完成 → 端点 bus-master ＋
+`virtio` 复位回读 → 两台队列停机确认。**端点侧那一步是本所选平台能给的凭据**：QEMU v11.1.2 下
+`status = 0` 同步走到 `virtio_blk_reset` 的 `blk_drain()` 并摘掉排队请求（BQL 下在那一刻写完），
+故回读那两格可作本设备“无在途”的凭据；本机也**没有** posted-write 模型层。
+**边界**：物理 PCIe 上“已到线、未落内存”那一档要 interconnect-specific fence，本平台给不出，
+本节也不为它作保。
+
+### 受控注入与自然超时分得开
+
+两个起手故障点是**装配的注入**（由景名给出 `Dma::Path`，生产无数常开的后门），它自己报
+`startup fault injected …`；**自然超时**走的是同一个驱动层期限（`regs::Handshake`），
+报的是 `system-dma: stop pending at …`。两者不是同一件事，不能互相代替。
+
+### 验收命令与读数
+
+| 检查 | 结果 |
+|---|---|
+| `nu scripts/qtest.nu --package kernel` | 77 例：**76 passed / 1 failed**（缺 initrd 的 `scene` 哨兵，**不是全绿**，与基线一致） |
+| `nu scripts/qtest.nu --package kernel --scene iommu-product` | 1 passed |
+| `nu scripts/qtest.nu --package kernel --scene iommu-product-fault` | 1 passed |
+| `nu scripts/qtest.nu --package kernel --scene iommu-product-start-before` | 1 passed |
+| `nu scripts/qtest.nu --package kernel --scene iommu-product-start-after` | 1 passed |
+| `nu scripts/qtest.nu --package kernel --scene iommu-dma` | 1 passed |
+| `nu scripts/qtest.nu --package kernel --scene iommu-probe` | 1 passed |
+| `nu scripts/qtest.nu --package kernel --scene product` | 1 passed（无设备那一档，行为不变） |
+| `cargo test --manifest-path programs/tests/iommu-queue/Cargo.toml --target x86_64-unknown-linux-gnu` | 15 passed |
+| `cargo test --manifest-path programs/tests/retention/Cargo.toml --target x86_64-unknown-linux-gnu` | 6 passed |
+| `cargo test --manifest-path programs/tests/supply/Cargo.toml --target x86_64-unknown-linux-gnu` | 23 passed |
+| `cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_64-unknown-linux-gnu` | 18 passed |
+| `cargo test --manifest-path programs/tests/lease-window/Cargo.toml --target x86_64-unknown-linux-gnu` | 2 passed |
+| `cargo check -p programs --release` | 通过，零告警 |
+
+本节三笔提交：`75d08d67` 非阻塞产品帧、`615356b3` 两条受控起手失败、`7237712b` 窗口分派承重测试。
+
+### 仍未覆盖
+
+- 物理 PCIe 的 posted-write 排空（见上“停止依据与它的边界”）。
+- `NativePieEffects` 的 `inspect`/`revoke` 两半与 `PrivateRoot::derive` 那道门没有宿主见证
+  （`inspect` 在宿主上是真 ecall）；`iommu-queue` 桩也见证不到 `enable` 成功路径与“busy 抬起再落”。
+- 自然 `Handshake` 到期（平台报 `stop pending`）没有端到端场景见证（QEMU 必答）。
+- `reset endpoint idle` 仍不敏感，只当“复位后端点闲”命名，不是 IOMMU-only 负证。
+- 最终增量审查尚未返回（sealed `HEAD = 7237712b`）；在此之前本节只记已验证的读数，
+  不写审查结论。
