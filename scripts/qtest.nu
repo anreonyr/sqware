@@ -299,8 +299,16 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   }
 
   # 参数表**唯一出处**：串口那一格也归它（`--serial`），本文件不写板子字面量。
+  # `--iommu` 也只经它那一口传：只有要那件硬件的景（`iommu-*`）才开。
   let serial_argv = if ($serial | is-empty) { [] } else { ["--serial" $serial] }
-  let board = (^nu ($script_dir | path join "qemu-args.nu") --board-only ...$serial_argv
+  let iommu_argv = if ($scene | is-empty) {
+    []
+  } else if ($scene | str starts-with "iommu") {
+    ["--iommu"]
+  } else {
+    []
+  }
+  let board = (^nu ($script_dir | path join "qemu-args.nu") --board-only ...$iommu_argv ...$serial_argv
       | lines | where { |l| ($l | str trim) != "" })
   let qemu_args = ($board | each { |a| $"--qemu-arg=($a)" })
   let pkg = if ($package | is-empty) { [] } else { ["--package" $package] }
@@ -407,6 +415,16 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     # 本景的成功证明（逐格判据在宿主驱动那一侧）。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
     let proof = "^exit tid=[0-9]+ reason=0x0 note: memory-transfer-fresh: acceptance passed"
+    if ($console | where {|line| $line =~ $proof } | is-empty) {
+      print $"本景未成功完成：缺少 ($proof)"
+      $code = 1
+    }
+  }
+
+  if $code == 0 and $scene == "iommu-probe" {
+    # 引导那一台报收尾：拆除与隔离判据都在它自己那一侧逐条核过（身子见 `probe/iommu.rs`）。
+    let console = (open --raw $env.QEMU_TEE_LOG | lines)
+    let proof = "^exit tid=[0-9]+ reason=0x0 note: iommu-probe: acceptance passed"
     if ($console | where {|line| $line =~ $proof } | is-empty) {
       print $"本景未成功完成：缺少 ($proof)"
       $code = 1

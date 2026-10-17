@@ -115,6 +115,14 @@ test = false
 bench = false
 doctest = false
 
+# 真实 RISC-V IOMMU 寄存器那一景的引导镜像：它自己就是控制者，取设备区、建表、编程、拆除。
+[[bin]]
+name = "prog-iommu-probe"
+path = "src/harness/probe/iommu/main.rs"
+test = false
+bench = false
+doctest = false
+
 [[bin]]
 name = "prog-router"
 path = "src/driver/router/main.rs"

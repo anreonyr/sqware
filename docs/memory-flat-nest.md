@@ -982,6 +982,95 @@ reviewer 的范围异议仍保留：生产组合目前不登记设备工作范�
 data/descriptor/DDT/页表/三类队列的硬件闭环必须在 PR7 完成。
 在真实接线审查通过前不把这个机制检查点单独推送为 PR6 完成。
 
+## PR 7 第一段：真实 RISC-V IOMMU 的寄存器与隔离确认（部分完成）
+
+基线 `HEAD = 73af1c13d1bfeaffa787f29cb0952ee77e3728bc`。这一段的实际状态：
+**用户态**在真实硬件上把 DDT / DC / Sv39 表 / 队列建起来、编程、让硬件翻一次、
+再拆除并确认隔离；**端点真 DMA、产品 `Platform` 安装与跨主体精确 BAR 窗口尚未做**
+（下面「未做」一节逐条列，不以本段代替那些验收）。
+
+### 选定的硬件与实测坐标
+
+| 事实 | 证据 |
+|---|---|
+| 这台机器有一颗真实 RISC-V IOMMU：`-M virt,iommu-sys=on` | FDT `/soc/iommu@3010000` `reg = <0x0 0x3010000 0x0 0x1000>` `compatible = "riscv,iommu"`；`riscv_iommu_pci_setup_iommu` 把它装到 PCI 根总线，PCI 端点的 DMA 因此过它 |
+| 它的寄存器窗是设备树里的一段 `reg` | 与其它设备同一条路登记成 `Page::Region(0x3010000)`，交给引导镜像；`programs/src/support/machine.rs::platform_window` 已把它与 PCI 宿主挡在设备账外（不发给驱动） |
+| 复位后 DDTP = Off（设备访存不翻译） | 本景实读 `ddtp_reset=0x0 mode=0 busy=false`；QEMU 属性默认 `off=TRUE`（`riscv-iommu.c`），sys 变体不覆盖它 |
+| 固件不挡这一段 | 固件 banner 实测 `Domain0 Region06 : 0x0-0xffffffffffffffff S/U: (R,W,X)`（S/U 可访任何物理地址）；console 走 semihosting，故裸 `-serial stdio` 看不到 banner |
+| 寄存器表 | QEMU `hw/riscv/riscv-iommu-bits.h`（规范 1.0）：CAP 0x0000 / DDTP 0x0010 / CQB 0x0018 / CQH 0x0020 / CQT 0x0024 / FQB 0x0028 / FQH 0x0030 / FQT 0x0034 / CQCSR 0x0048 / FQCSR 0x004C / PQCSR 0x0050；队列 CSR `enable[0] / on[16] / busy[17]`；`DDTP.mode` Off=0 / 1LVL=2，busy[4] |
+| DC 与命令的格式 | DC 是 64 字节扩展格式（`intremap` 默认开 ⇒ `dc_fmt = !enable_msi = 0`），一级 DDT 按 `devid * 64` 索引、`devid < 64`；`tc.V[0]`、`fsc = mode[63:60] | ppn[43:0]`、`iohgatp` mode 0 = Bare；无 process id（`tc.PDTV=0`）时 process id 必须是 NOPROCID(=0) |
+| IOFENCE.C | `dword0 = 2 | AV[10] | DATA[63:32]`，`dword1 = 完成记录地址 >> 2`；完成记录是硬件写回内存的 4 字节存储（`riscv_iommu_iofence` 的 `dma_memory_write(target_as, addr, &data, 4)`） |
+| 叶 PTE 必须带 `U` | 没有 process id 时硬件把访问当用户态：`riscv_iommu_spa_fetch` 里 `!(pte & PTE_U) && !pv` 直接判故障（实测：不带 U 时报 `RD_FAULT_S`(13)） |
+| 翻译响应里的页号是 PPN | `PPN_DOWN(phy) = phy >> 12`，故 `TR_RESPONSE.PPN[53:10]` 装的是页号本身，不是页对齐地址 |
+
+### 这一段实际做了什么（`iommu-probe` 景）
+
+一台 supervisor 引导镜像（`programs/src/harness/probe/iommu*`）：从**引导账**取
+IOMMU 寄存器窗与内核铸的保留授权 → `Dock::open` 把设备区映进本域 → 用
+`resource::raw::pole` + 带保留的 `AcquireSource::Source` 取八页，并由
+`execution::memory::traverse` 读回**真实物理页起址** → 写 DDT/DC/Sv39 表/队列 →
+开 FQ 与 CQ → `DDTP = 1LVL` → `IOTINVAL.VMA` 与 `IOFENCE.C` → 用调试翻译口让硬件
+按我们写下的表翻一次 → 拆除（DDTP Off 与三个队列各自确认）→ 同一 requester、
+同一 IOVA 再翻一次必须被拒 → 显式撤图并放下保留。
+
+实跑读数（`nu scripts/qtest.nu --package kernel --scene iommu-probe`，release，1 passed）：
+
+```text
+cap=0x78e2cf4f10 version=16 pas=56 ddtp_reset=0x0 mode=0 busy=false
+ddt=0x8fe63000 root=0x8fe64000 commands=0x8fe67000 faults=0x8fe68000 fence=0x8fe69000 data=0x8fe6a000 iova=0x200000000
+ddtp_on=true ddtp=0x23f98c02 fenced=true cqh=2 fqh=0 cqcsr=0x10001 fqcsr=0x10001 cqb=0x8fe67 fqb=0x8fe68 response=0x23f9a800 faults=0 cause=0
+ddtp_off=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 isolated_response=0x40001
+translated 0x200000000 -> 0x8fe6a000
+exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
+```
+
+逐条对应：`cqh=2` 说明硬件**真消费了两条命令**；`fenced=true` 说明 IOFENCE 的完成记录
+由硬件写回（`FENCE_DATA`）；`response=0x23f9a800` 的 FAULT 位为 0、PPN 字段 = `0x8fe6a`，
+就是 `data` 那一页的页号 ⇒ 硬件**按我们写下的 DDT/DC/Sv39 表把 IOVA 翻到了保留页**；
+`cqb=0x8fe67` / `fqb=0x8fe68` 说明编程进去的基址正是保留窗里那两页；
+拆除后 `ddtp_off=0x0` 且三个队列 CSR 全 0（`on` 落了、`busy` 也清了，**分开确认**）；
+`isolated_response=0x40001` 的 FAULT 位为 1、原因码 256 = `DMA_DISABLED` ⇒ 同一请求
+随后被拒。这些判据都在景内逐条断言（`iommu-probe: <哪一条>` 就是失败名），
+不是拿复位默认值充负例。
+
+### 跨主体精确 BAR：实测缺口（本段未补）
+
+现有接口**只能把精确子窗口给持有者自己**：
+`AcquireSource::Source { token, offset, count }`（`kernel/src/entry/call/memory.rs::acquire`）
+与 `execution::memory::map(team, at, size, pole, offset, …)` 都按页偏移在**本任务**的
+授权里取子窗口。交给**别的**任务时只有整段：`PrivateRoot::derive/Accord`
+（`programs/src/system/supply/lease.rs`）只带权限子集、不带 offset/size；
+`create_pole`（`kernel/src/entry/call/pie.rs`）明确要求「整段来源 + 私有阶段 +
+一次性资格」（`offset == 0 && count == source.page_count()`、`private_owner`、
+`hold.branch().is_none()`），且设备区在引导期已 `adopt` 到根 Grant，故从它铸不出新根。
+⇒ 把 PCI aperture 交给某个驱动只能是**整段**，这与「只给必需 BAR」冲突。
+最小补法（待裁决）：由**源的真实管理者**派生一段有界只 RW/NX 的子窗口并沿既有交付链
+给指定主体，复用源的撤销与生命周期，不放宽 `create_pole` 的三条限制。
+
+### 未做（不宣称已完成）
+
+- **端点真 DMA**：本段只用 IOMMU 的调试翻译口做翻译正证，没有端点按 IOVA 真写内存。
+  验收要的「先翻译下 DMA 成功、再同一端点隔离后失败/目标未变」尚未跑；
+  端点驱动（PCI 配置空间发现 BAR + 置 MEM/BUSYMASTER）也尚未写。
+- **产品接线**：`programs/src/system/` 没有安装真实 `Platform`，也没有独立 DMAC 服务，
+  故「服务死亡 → System 不依赖死服务独立隔离」这条路径在产品组合里仍未接上
+  （PR6 的 `Holds`/`Platform` 机制仍在，但没有真实寄存器实现挂上去）。
+- **跨主体精确 BAR 窗口**：上面那一节的能力尚未实现。
+- 多 hart 交错、真实在途发布竞态、ATS/PRI、二级（G 阶段）翻译都不在证据里。
+- 端点用 QEMU 的 `iommu-testdev` 还是真 `virtio-*-pci`：本段**没有**把任何测试设备
+  写进板子默认参数（`--iommu` 只在 `iommu-*` 景打开），端点选择留给下一段。
+
+### 验证命令与读数
+
+| 检查 | 结果 |
+|---|---|
+| `nu scripts/qtest.nu --package kernel` | 74 passed / 1 failed（缺 initrd 的 `scene` 哨兵，与基线逐字相同） |
+| `nu scripts/qtest.nu --package kernel --scene iommu-probe` | 1 passed（读数见上） |
+| `nu scripts/qtest.nu --package kernel --scene accept`（带 `iommu-sys=on` 的预跑） | 1 passed，10.39s |
+| `cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_64-unknown-linux-gnu` | 18 passed |
+| `cargo build -p programs --release` | 通过；新代码无新增告警（既有 10 项保留） |
+| `git diff --check` | 通过 |
+
 ## 追加：Transfer / Traverse
 
 物理页迁移与 PA 出口采用 `Transfer / Traverse`；追加顺序、驻留保证、

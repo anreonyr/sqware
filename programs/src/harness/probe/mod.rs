@@ -23,6 +23,10 @@ pub mod memory_transfer_tlb;
 // 新清零页；握手页那一面与内核夹具共用同一份线格式（见 `memory_transfer_fresh/handshake.rs`）。
 pub mod memory_transfer_fresh;
 
+// 换到硬件那一面：这台机器真的有一颗 RISC-V IOMMU。它证的是“我们写下的 DDT / DC / Sv39 表
+// 真能翻”，以及拆除时 DDTP Off 与三个队列 on/busy 各自确认、同一请求随后被拒。
+pub mod iommu;
+
 pub(crate) mod fixture;
 
 /// Run the full system acceptance image from the in-crate fixture.

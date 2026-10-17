@@ -31,7 +31,7 @@
 # `--serial <后端>` = 换掉串口那一格（默认 `stdio`）。整机用例要把串口搬到一条**能喂输入**
 # 的通道上（`cargo-qtest` 把 QEMU 的 stdin 钉成 null），见 [`qtest.nu`](qtest.nu) 的头注；
 # **串口这一格因此只有一个出处**——`-serial` 不是"后者胜"，写两次会多出一枚串口（实测踩过）。
-export def args [elf?: path, --board-only, --serial: string] {
+export def args [elf?: path, --board-only, --serial: string, --iommu] {
   let root = ($env.FILE_PWD | path dirname)
   let elf = if ($elf | is-empty) { null } else { ($elf | path expand) }
   let extra = ($env.QEMU_EXTRA_ARGS? | default "" | split row -r '\s+' | where { |s| $s != "" })
@@ -69,8 +69,15 @@ export def args [elf?: path, --board-only, --serial: string] {
 
   let serial_arg = if ($serial | is-empty) { ["-serial", "stdio"] } else { ["-serial", $serial] }
 
+  # 平台总线上的 RISC-V IOMMU：**只有要它的那一景**才加（`--iommu`）。
+  # 它一开，PCI 根总线的端点 DMA 就都过它，而复位态是 Off（设备访存不翻译）——
+  # 故不加这一格的那些轮次里，机器上没有任何端点过 IOMMU。
+  # 它的寄存器窗口是设备树里的一段 `reg`（与其它设备同一条路登记、`platform_window`
+  # 已把它挡在设备账外），不占 PCI aperture。
+  let machine = if $iommu { "virt,iommu-sys=on" } else { "virt" }
+
   [
-    "-machine", "virt"
+    "-machine", $machine
     "-bios", ($root | path join "SBI.bin")
     ...$kernel_arg
     "-display", "none"
@@ -89,6 +96,6 @@ export def args [elf?: path, --board-only, --serial: string] {
 }
 
 # 给外壳消费者用：一行一个参数（`qtest.nu` 靠它拼 `--qemu-arg=`）。
-def main [elf?: path, --board-only, --serial: string] {
-  for a in (args $elf --board-only=$board_only --serial=$serial) { print $a }
+def main [elf?: path, --board-only, --serial: string, --iommu] {
+  for a in (args $elf --board-only=$board_only --serial=$serial --iommu=$iommu) { print $a }
 }

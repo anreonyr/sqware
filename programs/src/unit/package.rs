@@ -49,6 +49,7 @@ pub const PACKAGES: &[Package] = &[
     package!("memory-transfer-unit"),
     package!("memory-transfer-tlb"),
     package!("memory-transfer-fresh"),
+    package!("iommu-probe"),
     package!("probe-owner"),
     package!("probe-rule"),
     package!("probe-rule-other"),

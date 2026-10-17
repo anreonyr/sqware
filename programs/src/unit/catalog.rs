@@ -42,6 +42,8 @@ pub mod memory_transfer;
 pub mod memory_transfer_fresh;
 #[path = "../harness/probe/memory_transfer_tlb/program.rs"]
 pub mod memory_transfer_tlb;
+#[path = "../harness/probe/iommu/program.rs"]
+pub mod iommu_probe;
 #[path = "../harness/bench/load/park/program.rs"]
 pub mod park;
 #[path = "../harness/guest/passer/program.rs"]
@@ -144,6 +146,9 @@ pub const PROGRAMS: &[&UnitFile] = &[
     // fresh 失败回退那一景：同样**一台**（supervisor 引导镜像＝控制者），
     // 两阶段的读者都是它同 Team 里真起的任务。
     &memory_transfer_fresh::PROGRAM,
+    // 真实 RISC-V IOMMU 那一景：**一台**（supervisor 引导镜像＝控制者），
+    // 从引导账取设备区、建 DDT/DC/Sv39 表与队列，编程后由硬件翻一次并回读物理页号。
+    &iommu_probe::PROGRAM,
     &probe_owner::PROBE_OWNER,
     &probe_rule::PROBE_RULE,
     &probe_rule_other::PROBE_RULE_OTHER,
