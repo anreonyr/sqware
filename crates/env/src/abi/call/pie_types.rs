@@ -119,6 +119,11 @@ impl Wire for ReleaseMode {
 }
 
 /// Seven whole words; no Rust struct padding crosses the ABI.
+///
+/// **窗口不可回读**：带窗口的分支与整段来源在这一张表里长得一样——窗口只经 `Open`
+/// 可观测，而 `Open` 只报**长度**（那一段自己的长度），`offset`（它在来源里的起点）不在这里，
+/// 也不在 `Inspect` / `Collect` 里。故交付方必须把必要的那几个坐标（哪一段、给谁）说清；
+/// 拿到窗口的一方丢了数字推不回来。扩这两个字是一次 ABI 变更，本段不做。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PieInfo {
     pub token: PieToken,

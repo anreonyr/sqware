@@ -65,17 +65,22 @@ impl PieSnapshot {
         &self.meta
     }
 
-    pub(crate) fn vest(&self, mark: Mark, permission: Permission) -> Result<Pie, env::PieFail> {
-        self.vest_window(mark, permission, None)
-    }
-
     /// 同 `vest`，但给这一枚子分支一个**有效窗口**（相对来源起点的绝对页偏移与页数）。
     pub(crate) fn vest_window(
         &self,
         mark: Mark,
         permission: Permission,
-        window: Option<(crate::core::memory::address::PageOffset, crate::core::memory::address::PageCount)>,
+        window: Option<(
+            crate::core::memory::address::PageOffset,
+            crate::core::memory::address::PageCount,
+        )>,
     ) -> Result<Pie, env::PieFail> {
-        Pie::try_new_window(self.meta.clone(), mark, permission, Some(self.token), window)
+        Pie::try_new_window(
+            self.meta.clone(),
+            mark,
+            permission,
+            Some(self.token),
+            window,
+        )
     }
 }

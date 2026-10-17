@@ -960,10 +960,10 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
 
 ### 限制与未做（不宣称已验证的东西）
 
-- **真实 IOMMU / DMAC 寄存器仍未启用**（属 PR7）；没有以模拟结果宣称真实硬件已隔离。
-  当前原生和宿主模拟都有独立、有状态且真的执行访存/停止的正面，不是 `VEST`
-  橡皮章，也不是永远 `Denied` 的假 cap。普通产品场景没有启用任何硬件外访存范围。
-  （PR7 已把 IOMMU 寄存器段接上：见本文件末「PR 7 第一段」那一节；**DMAC 端点与产品 `Platform` 仍未接**。）
+- **真实 IOMMU 寄存器已接**（见本文件末「PR 7 第一段」与「真实端点」两节）：寄存器、
+  DDT/DC/Sv39 表、队列、`IOFENCE` 完成记录与调试口都是真读数；**端点真 DMA 也已接**
+  （`iommu-dma` 景）。仍未接的是**产品那一侧**：`programs/src/system/` 没有安装真实
+  `Platform`、也没有独立 DMAC 服务，故「服务死亡 → System 独立隔离」在产品组合里仍没接上。
 - PR7 必须安装独立平台控制者，把真实数据/描述符/表/队列逐段登记后才发布。
   IOMMU Off + busy 的数据隔离与 CQ/FQ/PQ 各自 on/busy 的控制页停用分别确认；
   仅清 CPU PTE、仅屏蔽 IRQ、仅写 Offline、切 Bare 都不能满足 `Platform` 合同。
@@ -1038,16 +1038,17 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 两处口径要说明白，别当成硬件已立的证据：
 
 - **`busy` 位在 QEMU v11.1.2 里是白送的**：`riscv_iommu_write_ddtp` 先清 BUSY 再写，
-  `riscv_iommu_process_cq_control` 停用时同步清 `BUSY|ON`，故 `ddtp_on` / `isolated` /
-  `*_off` 里的 busy 半边在这里恒成立；而且本景没走规范那套 DDTP 握手
-  （写 busy=1 → 轮询 → 写 mode → 轮询 busy 落），是写后单次读。
-  真硬件真拉 busy 时，这一读会假红——下一段要补握手。
-- **发布与门铃之间没有显式内存序**：写 DDT/DC/PTE、写队列基址、写命令字后写 `CQT`
-  之间，以及看到完成记录后再读 `CQH`/`FQH` 之前，都没有 `fence`。QEMU 单线程 + BQL 下成立，
-  真硬件要显式序。
-
-后续项：DDTP 从 `1LVL` 到 Off 之间现在只靠线性代码保证停机；这一窗口里唯一会 panic 的是
-那句诊断 `format!`（分配失败），故不可达，但往这段插可失败步骤就会开洞——应把停机放进 guard（Drop）。
+  `riscv_iommu_process_cq_control` 停用时同步清 `BUSY|ON`。本段已按规范那一手走
+  （`regs::ddtp_set` / `queue::raise`/`lower`：写 → **有界轮询**到 busy 落 → 回读校验，
+  与 Linux `drivers/iommu/riscv/iommu.c` 同一口径），但在这台机器上 busy 半边恒成立
+  ⇒ 握手本身**没有被这台硬件证过**；真硬件真拉 busy 时才会显出差别。
+- **次序现在是显式的**：表页 / 描述符 / 命令与门铃之间、看到完成与读回载荷之间都过
+  `order::sync()`（`fence iorw, iorw`——设备 I/O 与内存同在一条栅栏下才有序）。QEMU 单线程 +
+  BQL 下不给栅栏也成立，故这一条在这里同样**证不了**：它是按规范写下来的，不是量出来的。
+- **这一段是线性代码，不是故障安全**：保留在发布之前取得、`close()` 在确认之后才调用，
+  但本域被 abort / 杀任务时这里一行都不跑（**Drop 也不跑**，故不把停机寄托在 guard 上）。
+  这一窗里能想到的失败不止 `format!` 那一句；真正的答案是产品那一侧 System **独立**持保留、
+  并在确认停住之后才释放——服务死掉不改变这一点。
 
 ### 跨主体精确 BAR：实测缺口（已补，见下节）
 
@@ -1071,12 +1072,19 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 | 面 | 事实 |
 |---|---|
 | 窗口的坐标 | `Grant.window: Option<(PageOffset, PageCount)>`，用**相对来源起点的绝对页偏移**（不是相对父分支的偏移）⇒ 嵌套派生不会叠加两层偏移 |
-| 建窗口的唯一入口 | 新子操作 `PieCall::AccordWindow { src, dst, subset, mark, offset, count }`（slot 11）。旧 `Accord` 的形状与语义**一字未动**（它派生出来的窗口仍是 `None` = 整段） |
+| 建窗口的唯一入口 | 新子操作 `PieCall::AccordWindow { src, dst, subset, mark, offset, count }`（slot 11）。旧 `Accord` 的**形状**一字未动（slot 4 的四个字段与语义照旧）；**行为**有一处收紧：
+父带窗口时它派生出来的子**继承**那一段（不再是
+`None` = 整段），父不带窗口时仍是 `None` = 整段（承重用例 `window_inheritance`）|
 | 单调收窄 | `effective_window`：不请求就继承父的有效窗口；请求的必须落在父的有效窗口里（父无窗口就是整段来源），空长与溢出当场拒。非 Pole（无真实来源）上请求窗口一律拒 |
 | 使用路径都守窗口 | `acquire`（`AcquireSource::Source`）在解析出源坐标后再核一次窗口（越窗 `Denied`）；`pole::open` 只映窗口那一段，报出的长度与关系也都只是它（本域看不到窗口外的页） |
 | 不放大 | 窗口不动 `Access` 上限：`open` 的访问仍由门闩权限折出（只读 / 读写），MMIO 永不可执行；窗口不放宽 `subset` 之外任何一位 |
 | 生命周期 | 窗口就在那一枚 Grant 上：撤销 / 封印 / 交回照旧令分支及其 Views 失效，窗口不另开一条命 |
 | 仍拒建根 | 带窗口的分支 `hold.branch().is_some()` ⇒ `create_pole` 照旧 `Denied` |
+
+窗口的两条边界要写清（都不是“整张任务图”那一种）：
+
+- 窗口属于**那一枚分支**：同一任务手里可以有同源的几枚 token，各自有自己那一段（权限与窗口各算各的，不并成一张本任务的图）。`AcquireSource::Source` 当场核窗；`AcquireSource::Reference` **不另核**——引用建立时走的就是 `Source` 那条路，其范围已落在建它的那一枚分支的窗口里，`hold.branch()` 也就是那一枚（同任务另一枚更宽的 token 换不掉这个边界）；将来若添直接建引用的入口，同样要从按窗口筛过的分支上建，这条不变量才继续成立。
+- 窗口**不可回读**：`PieInfo` 里没有它（`Open` 只报这一段自己的长度，起点不报），故交付方必须把必要坐标说清；给 `PieInfo` 加窗口两字是一次 ABI 变更，本段不做。
 
 实测（`nu scripts/qtest.nu --package kernel`，新增用例 `branch_window_narrows_and_binds` 走**真实调用面**
 `EnvCall::Pie` / `EnvCall::Memory`）：越窗 `(2,3)`/`(4,1)` 与嵌套放宽 `(0,2)`/`(2,2)`/`(1,3)` 均 `Denied`、
@@ -1091,25 +1099,51 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 仍未做：**供给 / 租约那一层还不带窗口**（`PrivateRoot::derive` / `Accord` / `RootRequest` 仍只传权限子集），
 故产品里的“System 把精确 BAR 交给某个驱动”还差这一段接线（`env::pie::accord_window` 已在 ABI 上可用）。
 
+### 真实端点在 IOMMU 翻译下 DMA（本段）
+
+`iommu-probe` 只证了「我们写下的表能翻」；**端点按 IOVA 真访存**是这一景（`--scene iommu-dma`）。
+
+| 面 | 事实 |
+|---|---|
+| 端点 | QEMU `virt` 上的 `virtio-blk-pci,drive=…,iommu_platform=on,disable-legacy=on`：**真实设备**（不是测具），盘是脚本每次按同一花纹重建的小镜像（`<TRACE_OUT>/iommu-dma.img`，只读挂上） |
+| 发现 | `ecam.rs` 在设备树 `pci@…` 那段 `reg`（ECAM）上扫 `1af4:1001`/`1af4:1042`；`virtio.rs` 读能力表拿四个区与 BAR 号；`endpoint.rs` 按标准那一手量长度并落进 64 位 PCI 窗口 |
+| 精确交付 | 从 `Page::Region(0x4_0000_0000)` 那一枚门闩上 `PieCall::AccordWindow` 派生**正好那一根 BAR**（16KiB = 4 页）的有界窗口（RW、不可执行、可再授出）；`Open` 出来的视图长度就是它 |
+| 发布 | 硬件到得了的六页（desc/avail/used/data/header/status）先经保留强持，再映到**另一段 IOVA**（`0x2_0000_0000`，不是物理地址）；DDT/DC/页表/队列都用真实物理页起址 |
+| 正证 | 队列三段指向那三个 IOVA；一轮 `VIRTIO_BLK_T_IN` 读扇区 0 → `used=1 id=0 len=513 status=0`，数据页 512 字节与镜像花纹逐字节相同，FQ 无记录，调试口 `translate` 指回同一物理页、另一 requester 被拒 |
+| 负证 | 先 `IOTINVAL` ＋ `IOFENCE.C`（拿到完成记录），再把 `DDTP` 落 Off 并回读确认；同一端点、同一段数据再打一次门铃 → 不再前进（`idle=1`）、哨兵页一字节未动、状态字节未被改写、调试口同一条请求报 `0x40001`（cause 256 = `DMA_DISABLED`） |
+| 收口 | `IOFENCE.C` 再走一遍（队列还活着时它能完成），再按握手停两台队列；确认到位之后才 `close()` 归还保留 |
+
+**QEMU 那两格不上不行的**（都实测过）：`iommu_platform=on` 才让设备的 DMA 走那台 IOMMU——
+`virtio_bus_device_plugged` 默认给的是 `address_space_memory`，不开它时 `riscv_iommu_dma`
+一次都不出现、设备静默停在读不到可用环那一格；`disable-legacy=on` 是它的代价
+（QEMU 不给过渡态同时开这两样）。两格都只写进 `scripts/qemu-args.nu` 的 `--endpoint` 那一口，
+板子默认参数没动（`--iommu` 仍只在 `iommu-*` 景打开）。
+
+**证据**（`nu scripts/qtest.nu --package kernel --scene iommu-dma`，release）：
+`cap=0x78e2cf4f10` / `requester=8 bar=4 probe=Some((16384, true))` / `address=0x400000000` /
+`ddtp=0x23feac02`（1LVL）`capacity=256 used=1 id=0 len=513 status=0 faults=0` /
+`translate=0x23fed800`（＝数据页的页号）`neighbour=0x40001` /
+`ddtp_off=0x0 idle=1 refused=0x40001 refused_cause=256`，末行 `iommu-dma: acceptance passed`。
+
 ### 未做（不宣称已完成）
 
-- **端点真 DMA**：本段只用 IOMMU 的调试翻译口做翻译正证，没有端点按 IOVA 真写内存。
-  验收要的「先翻译下 DMA 成功、再同一端点隔离后失败/目标未变」尚未跑；
-  端点驱动（PCI 配置空间发现 BAR + 置 MEM/BUSYMASTER）也尚未写。
 - **产品接线**：`programs/src/system/` 没有安装真实 `Platform`，也没有独立 DMAC 服务，
   故「服务死亡 → System 不依赖死服务独立隔离」这条路径在产品组合里仍未接上
-  （PR6 的 `Holds`/`Platform` 机制仍在，但没有真实寄存器实现挂上去）。
-- **跨主体精确 BAR 窗口**：上面那一节的能力尚未实现。
+  （PR6 的 `Holds`/`Platform` 机制仍在，但没有真实寄存器实现挂上去）。`iommu-dma` 景里
+  驱动与 System 仍是同一台程序（同一 Team、同一 AS）：窗口那一枚门闩只给驱动那一份，
+  但内存还没分成两个域。
+- **供给 / 租约那一层仍不带窗口**：`PrivateRoot::derive` / `RootRequest` / `LeaseRequest`
+  与 `resource::capability::Loan::accord` 都还只传权限子集；`env::pie::accord_window`
+  在 ABI 上可用，产品那一层的接线仍未做。
 - 多 hart 交错、真实在途发布竞态、ATS/PRI、二级（G 阶段）翻译都不在证据里。
-- 端点用 QEMU 的 `iommu-testdev` 还是真 `virtio-*-pci`：本段**没有**把任何测试设备
-  写进板子默认参数（`--iommu` 只在 `iommu-*` 景打开），端点选择留给下一段。
 
 ### 验证命令与读数
 
 | 检查 | 结果 |
 |---|---|
-| `nu scripts/qtest.nu --package kernel` | 74 passed / 1 failed（缺 initrd 的 `scene` 哨兵，与基线逐字相同） |
+| `nu scripts/qtest.nu --package kernel` | 75 passed / 1 failed（缺 initrd 的 `scene` 哨兵，与基线逐字相同） |
 | `nu scripts/qtest.nu --package kernel --scene iommu-probe` | 1 passed（读数见上） |
+| `nu scripts/qtest.nu --package kernel --scene iommu-dma` | 1 passed（端点真 DMA 的正证与隔离负证，读数见「真实端点」那一节） |
 | `nu scripts/qtest.nu --package kernel --scene accept`（带 `iommu-sys=on` 的预跑） | 1 passed，10.39s |
 | `cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_64-unknown-linux-gnu` | 18 passed |
 | `cargo build -p programs --release` | 通过；新代码无新增告警（既有 10 项保留） |

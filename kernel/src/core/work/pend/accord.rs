@@ -12,8 +12,10 @@ use crate::core::work::unit::task::Task;
 
 /// 这一枚子分支的有效窗口。
 ///
-/// 不请求就继承父的那一段；请求的那一段必须落在父的有效窗口里（父没有窗口就是整段来源），
-/// 空长与溢出一律拒。窗口只在 Pole（有真实来源）上成立。
+/// 不请求就**继承**父的那一段（带窗口的父派生出来的子仍带那一段，不是整段来源）；
+/// 请求的那一段必须落在父的有效窗口里（父没有窗口就是整段来源），越窗与溢出一律拒。
+/// 空长在这一层见不到：ABI 那一格先把它折成 `NotAligned`（`PageCount::new`，见 `entry/call/pie.rs`）。
+/// 窗口只在 Pole（有真实来源）上成立。
 fn effective_window(
     pie: &PieSnapshot,
     requested: Option<(PageOffset, PageCount)>,
@@ -21,9 +23,6 @@ fn effective_window(
     let Some(requested) = requested else {
         return Ok(pie.grant().window());
     };
-    if requested.1.get() == 0 {
-        return Err(PieFail::Denied);
-    }
     let meta = pie.mail().pole().ok_or(PieFail::Denied)?;
     let outer = pie
         .grant()
@@ -56,6 +55,7 @@ pub(crate) fn accord(
 ///
 /// 请求的那一段用**相对来源起点的绝对页偏移**说（不是相对父分支的偏移），
 /// 且必须落在父的有效窗口里：重复与嵌套派生只能单调收窄，没有放宽的路。
+/// 不请求（旧 `Accord`）则**继承**父的有效窗口——带窗口的父交出去的仍是那一段。
 pub(crate) fn accord_window(
     caller: &Arc<Task>,
     src: PieToken,

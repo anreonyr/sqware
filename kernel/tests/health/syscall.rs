@@ -2365,10 +2365,11 @@ pub fn branch_window() {
         "the page after the window is not mapped"
     );
     assert!(
-        !peer
-            .team
-            .space
-            .validate_access(KVirt::wrap(windowed as usize), PAGE_SIZE, Access::EXECUTE),
+        !peer.team.space.validate_access(
+            KVirt::wrap(windowed as usize),
+            PAGE_SIZE,
+            Access::EXECUTE
+        ),
         "a windowed device window is never mapped executable"
     );
 
@@ -2396,10 +2397,7 @@ pub fn branch_window() {
     );
 
     // 撤销令这一枚与它的 Views 一起失效（窗口不另开一条命）。
-    assert_eq!(
-        pie_call(&owner, PieCall::Revoke { dst, token: child }),
-        0
-    );
+    assert_eq!(pie_call(&owner, PieCall::Revoke { dst, token: child }), 0);
     assert!(pend::locate(&peer.task, child).is_none());
     assert!(pend::locate(&owner.task, grand).is_none());
     assert!(
@@ -2442,6 +2440,174 @@ pub fn branch_window() {
         "a plain accord still hands the whole source"
     );
     assert_eq!(open_pair(&peer, legacy).1, 4 * PAGE_SIZE);
+}
+
+/// 继承那一条路（旧 `Accord`）也要**承重**：带窗口的父派生出的子，有效窗口必须还是父那一段。
+///
+/// 这一条原先没有判据——把 `effective_window` 的“不请求就继承”改成 `Ok(None)`（于是旧
+/// `Accord` 把整段来源交出去）全量测试照绿。故这里三样都量：子枚的 `window()`、
+/// `Open` 的长度与首 PA、窗外 `Acquire` 仍拒；再经一层旧 `Accord` 与一层收窄之后仍不放大。
+pub fn window_inheritance() {
+    use crate::entry::call::pie::create_pole;
+    use env::{AcquireSource, MemoryFail, PieCall, PieFail, PieToken, UnsealArgs};
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let owner = Caller::new(false);
+    let peer = Caller::new(false);
+    let subset = Permission::FETCH | Permission::STORE | Permission::VEST;
+    let dst = peer.task.ident.id;
+
+    let token = |code: isize| {
+        assert!(code > 0, "token: {code}");
+        PieToken::mint(code as usize)
+    };
+    let (_, _, source_reference) = owner.attach_alloc_reference(4 * PAGE_SIZE, 6);
+    let root = token(pie_call(
+        &owner,
+        PieCall::Unseal {
+            args: UnsealArgs::Pole {
+                reference: source_reference,
+                shared: true,
+            },
+        },
+    ));
+    assert_eq!(
+        owner.call(EnvCall::Memory(MemoryCall::Release {
+            reference: source_reference
+        })),
+        0
+    );
+
+    // 一段 (1,2) 的窗口给对端；接下来每一次派生都是旧 `Accord`。
+    let child = token(pie_call(
+        &owner,
+        PieCall::AccordWindow {
+            src: root,
+            dst,
+            subset,
+            mark: env::Mark::NONE,
+            offset: 1,
+            count: 2,
+        },
+    ));
+    let window = Some((PageOffset::new(1), PageCount::new(2).unwrap()));
+    assert_eq!(
+        pend::locate(&peer.task, child).unwrap().grant().window(),
+        window
+    );
+
+    let inherited = token(pie_call(
+        &peer,
+        PieCall::Accord {
+            src: child,
+            dst: owner.task.ident.id,
+            subset,
+            mark: env::Mark::NONE,
+        },
+    ));
+    assert_eq!(
+        pend::locate(&owner.task, inherited)
+            .unwrap()
+            .grant()
+            .window(),
+        window,
+        "an old accord must inherit the parent's window"
+    );
+
+    // 再经一层旧 `Accord` 回到对端：仍不放大。
+    let again = token(pie_call(
+        &owner,
+        PieCall::Accord {
+            src: inherited,
+            dst,
+            subset,
+            mark: env::Mark::NONE,
+        },
+    ));
+    assert_eq!(
+        pend::locate(&peer.task, again).unwrap().grant().window(),
+        window
+    );
+
+    // 收窄一层之后，旧 `Accord` 继承的是**收窄后**那一段（子段只能更窄）。
+    let narrow = token(pie_call(
+        &peer,
+        PieCall::AccordWindow {
+            src: again,
+            dst: owner.task.ident.id,
+            subset,
+            mark: env::Mark::NONE,
+            offset: 1,
+            count: 1,
+        },
+    ));
+    let tight = Some((PageOffset::new(1), PageCount::new(1).unwrap()));
+    let inherited_narrow = token(pie_call(
+        &owner,
+        PieCall::Accord {
+            src: narrow,
+            dst,
+            subset,
+            mark: env::Mark::NONE,
+        },
+    ));
+    assert_eq!(
+        pend::locate(&peer.task, inherited_narrow)
+            .unwrap()
+            .grant()
+            .window(),
+        tight
+    );
+
+    // 观测面：继承来的那一枚只映父那一段（长度 2 页、首 PA = 来源第 1 页），窗外取不到。
+    let (whole, whole_size) = open_pair(&owner, root);
+    assert!(whole > 0, "open root: {whole}");
+    assert_eq!(whole_size, 4 * PAGE_SIZE);
+    let source_page_1 = owner
+        .team
+        .space
+        .nest
+        .physical_at(KVirt::wrap(whole as usize + PAGE_SIZE))
+        .unwrap();
+    let (at, size) = open_pair(&peer, again);
+    assert!(at > 0, "open inherited: {at}");
+    assert_eq!(
+        size,
+        2 * PAGE_SIZE,
+        "an inherited window opens only its window"
+    );
+    assert_eq!(
+        peer.team.space.nest.physical_at(KVirt::wrap(at as usize)),
+        Some(source_page_1),
+        "the inherited window still starts at the source's first page in it"
+    );
+    let acquire = |token: PieToken, offset: usize, count: usize| {
+        peer.call(EnvCall::Memory(MemoryCall::Acquire {
+            source: AcquireSource::Source {
+                token,
+                offset,
+                count,
+            },
+            retention: PieToken::NONE,
+        }))
+    };
+    assert_eq!(acquire(again, 0, 1), MemoryFail::Denied.code() as isize);
+    assert_eq!(acquire(again, 2, 2), MemoryFail::Denied.code() as isize);
+    assert!(
+        acquire(again, 1, 2) > 0,
+        "acquire inside an inherited window"
+    );
+    assert_eq!(
+        acquire(inherited_narrow, 2, 1),
+        MemoryFail::Denied.code() as isize,
+        "the narrowed branch stays narrowed after inheriting"
+    );
+
+    // 继承出来的那一枚仍然不能建独立根（窗口的规矩跟的是分支，不是哪一次派生）。
+    assert_eq!(
+        create_pole(&peer.task, reference(acquire(again, 1, 2) as usize), true).unwrap_err(),
+        PieFail::Denied
+    );
 }
 
 /// 一次 `Open` 的两个返回值（地址与长度）——`pair` 只认 Memory 域。

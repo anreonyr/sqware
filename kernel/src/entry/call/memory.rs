@@ -603,6 +603,17 @@ fn require_retention(task: &Arc<Task>, token: PieToken) -> Result<(), MemoryFail
 /// 新的 `Allocation` 建立来源持有与一份一次性创建资格；已有引用的子范围与它
 /// **共享**同一份来源授权（同一来源、同一上限、同一撤销依赖），不复制资格，
 /// 也不因 VA 可读就授权。
+///
+/// # 窗口守在哪几条路上
+///
+/// **有效窗口属于那一枚分支，不属于任务**：同一任务手里可以有同源的几枚 token，
+/// 每一枚各自有自己那一段（权限与窗口都是各自那份，不是并成一张"本任务的图"）。
+/// 故取值要按**那一枚**分支算：
+/// - `AcquireSource::Source` 解析出源坐标后当场核窗口（越窗 `Denied`）；
+/// - `AcquireSource::Reference` **不另核**：引用是早先经 `Source` 那条路建的，
+///   它的范围建立时就已落在**建它的那一枚**分支的窗口里，且 `hold.branch()` 就是
+///   那一枚（子段只在这个既有范围里取）。同任务另一枚更宽的 token 换不掉这个边界。
+///   将来若添直接建引用的入口，它必须同样从一枚按窗口筛过的分支上建，这条不变量才继续成立。
 fn acquire(
     source: AcquireSource,
     retention: PieToken,
