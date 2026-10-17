@@ -82,11 +82,29 @@ impl Holds {
 
     /// Mark reachable before executing publication: even a partial failure needs isolation.
     /// The callback must not publish any other memory or retain a path around this gate.
+    ///
+    /// 同步那一档：宿主夹具与将来一次做完的调用方用它；产品那一侧要跨帧，
+    /// 走 [`Holds::publish_begin`] + [`Holds::publish_end`]。
+    #[allow(
+        dead_code,
+        reason = "Synchronous publication; the frame-driven manager uses publish_begin."
+    )]
     pub fn publish(
         &mut self,
         id: usize,
         publish: impl FnOnce(FlatReference) -> Result<(), Failure>,
     ) -> Result<(), Failure> {
+        let reference = self.publish_begin(id)?;
+        let result = publish(reference);
+        self.publish_end(id, result)
+    }
+
+    /// 发布门的第一步：**先把可达标记点上**，再把引用交出来。
+    ///
+    /// 返回调用方自己执行发布（铺表、立队列、编程 `DDTP`），这件事可以**跨帧**做完；
+    /// 做完无论成败都回用 [`Holds::publish_end`] 交结果。标记在**执行发布之前**点上，
+    /// 故部分失败仍会被隔离。
+    pub fn publish_begin(&mut self, id: usize) -> Result<FlatReference, Failure> {
         if self.closed {
             return Err(Failure::Closed);
         }
@@ -110,8 +128,17 @@ impl Holds {
             return Err(Failure::Conflict);
         }
         memory.published = true;
-        let result = publish(memory.reference);
+        Ok(memory.reference)
+    }
+
+    /// 发布门的结果：失败就进 `Closing(Fault)`（这一档仍会走平台停机），成功不动状态。
+    pub fn publish_end(&mut self, id: usize, result: Result<(), Failure>) -> Result<(), Failure> {
         if let Err(failure) = result {
+            let scope = self
+                .scopes
+                .iter_mut()
+                .find(|scope| scope.memory.iter().any(|memory| memory.id == id))
+                .ok_or(Failure::Unknown)?;
             scope.phase = Phase::Closing(Close::Fault);
             scope.failure = Some(failure);
         }

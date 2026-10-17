@@ -6,9 +6,15 @@
 //! 两台队列的开关都走规范那一手（同 Linux `iommu/riscv/iommu.c` 的
 //! `riscv_iommu_queue_enable`/`_disable`）：写 CSR → **有界轮询到 busy 落** → 校验活动位。
 //! 写后单次读不算走完协议。
+//!
+//! **两档入口，同一套机制**：
+//! - `enable`/`disable`/`fence` 是**同步**那一档（探针/引导：等完再往下走）；
+//! - `raise`/`lower`/`fence_step` 是**一步**那一档（System 的帧：写只写一次，回读
+//!   每帧一次，没等到就把 [`regs::Handshake`] 与在途的那条命令原样留到下一帧）。
+//! 两档共用同一次写入与同一条 `busy` 判据，故不是两套协议。
 
 use super::pages::Pages;
-use super::regs;
+use super::regs::{self, Handshake};
 
 /// 命令项 16 字节；故障记录 32 字节。
 const COMMAND_BYTES: usize = 16;
@@ -44,16 +50,36 @@ const IOFENCE_NOTIFY: u64 = 1 << 10;
 const IOFENCE_PR: u64 = 1 << 12;
 const IOFENCE_PW: u64 = 1 << 13;
 
-/// 三个页都用**保留窗里的页号**指，构造时就从窗里取走这两组数：本域地址
-/// （写命令项 / 读故障记录 / 读完成记录）与真实物理页起址（编程 CSR）。
-///
-/// 它**不持窗、也不持自己的尾**：命令尾每次都从 `CQT` 回读（硬件才知道消费到哪），
-/// 故持有者可以各持一枚而不会分叉——产品那一侧 System 与它的平台各持一枚。
 /// 等一条 `IOFENCE.C` 完成的上限（纳秒）。
 const FENCE_NS: u64 = 2_000_000_000;
 /// 等一台队列立起来 / 停下来与 `DDTP` 握手的上限（纳秒）。
 const HANDSHAKE_NS: u64 = 2_000_000_000;
 
+/// 在途的那一条 `IOFENCE.C`：它在完成记录页的那一槽、本域给它的完成值，
+/// 以及**那一条**的等待期限。重试只继续等它，不重提新命令、也不重置这条期限。
+struct Outstanding {
+    slot: usize,
+    cookie: u32,
+    handshake: Handshake,
+}
+
+/// 一次 `IOFENCE.C` 在途时的**单步**读数。
+///
+/// 「还没到」与「过了期限还没到」是两件事：前者下一帧接着读，后者要按期限收场。
+pub enum Fence {
+    /// 本次的完成记录到了。
+    Settled,
+    /// 还没到，在途且期限内。
+    Waiting,
+    /// 在途那一条过了期限还没到。
+    Expired,
+}
+
+/// 三个页都用**保留窗里的页号**指，构造时就从窗里取走这两组数：本域地址
+/// （写命令项 / 读故障记录 / 读完成记录）与真实物理页起址（编程 CSR）。
+///
+/// 它**不持窗、也不持自己的尾**：命令尾每次都从 `CQT` 回读（硬件才知道消费到哪），
+/// 故持有者可以各持一枚而不会分叉——产品那一侧 System 与它的平台各持一枚。
 pub struct CommandQueue {
     base: usize,
     commands: usize,
@@ -62,21 +88,14 @@ pub struct CommandQueue {
     command_page: usize,
     fault_page: usize,
     fence_page: usize,
-    /// 在途的那一条 `IOFENCE.C`：它在完成记录页的那一槽与本域给它的完成值。
-    /// 重试只**继续等它**，不重提新命令。
-    pending: Option<(usize, u32)>,
+    /// 在途的那一条 `IOFENCE.C`（见 [`Outstanding`]）；重试只继续等它。
+    pending: Option<Outstanding>,
     /// 本域自增的完成值计数（单调，不与被掩过码的环下标挂钩）。
     cookie: u32,
 }
 
 impl CommandQueue {
-    pub fn new(
-        base: usize,
-        pages: &Pages,
-        commands: usize,
-        faults: usize,
-        fence: usize,
-    ) -> Self {
+    pub fn new(base: usize, pages: &Pages, commands: usize, faults: usize, fence: usize) -> Self {
         Self {
             base,
             commands: pages.at(commands, 0) as usize,
@@ -100,47 +119,58 @@ impl CommandQueue {
     /// 每一台都走完协议：写 `ENABLE|MEM_FAULT`（顺手清掉粘住的内存故障位）→ 轮询到 busy 落
     /// → 校验 `ON` 真的立起来。**不开**中断位（本景轮询，没有 IOMMU 的中断向量）。
     pub fn enable(&mut self) -> Result<(), &'static str> {
-        let faults =
-            (regs::page_number(self.fault_page) << regs::PPN_SHIFT) | FAULT_LOG2SZ;
-        regs::write64(self.base, regs::FQB, faults);
-        let seen = self.raise(regs::FQCSR);
-        if !active(seen, regs::QUEUE_ON) || seen & regs::QUEUE_MEM_FAULT != 0 {
+        let faults = self.raise(regs::FQCSR).wait(
+            || regs::read32(self.base, regs::FQCSR),
+            |seen| seen & regs::QUEUE_BUSY == 0,
+        );
+        if !active(faults, regs::QUEUE_ON) || faults & regs::QUEUE_MEM_FAULT != 0 {
             return Err("iommu: fault queue did not come up");
         }
-        let commands = (regs::page_number(self.command_page) << regs::PPN_SHIFT) | COMMAND_LOG2SZ;
-        regs::write64(self.base, regs::CQB, commands);
-        let seen = self.raise(regs::CQCSR);
-        if !active(seen, regs::QUEUE_ON) || seen & regs::QUEUE_MEM_FAULT != 0 {
+        let commands = self.raise(regs::CQCSR).wait(
+            || regs::read32(self.base, regs::CQCSR),
+            |seen| seen & regs::QUEUE_BUSY == 0,
+        );
+        if !active(commands, regs::QUEUE_ON) || commands & regs::QUEUE_MEM_FAULT != 0 {
             return Err("iommu: command queue did not come up");
         }
         Ok(())
     }
 
-    /// 落两个队列（先命令、后故障）：写 0 → 轮询到 busy 落；返最后那一刻的真实读数。
+    /// 抬一台队列的第一步：写它的基址、写 `ENABLE|MEM_FAULT`（顺手清掉粘住的内存故障位），
+    /// 并起一次握手。之后自己按帧用 [`regs::read32`] **单次读**它落没落。
+    ///
+    /// `csr` 只认故障队列或命令队列：两台各自写自己那一格基址与那一档长度。
+    pub fn raise(&self, csr: usize) -> Handshake {
+        let (base_csr, page, log2sz) = if csr == regs::FQCSR {
+            (regs::FQB, self.fault_page, FAULT_LOG2SZ)
+        } else {
+            (regs::CQB, self.command_page, COMMAND_LOG2SZ)
+        };
+        let value = (regs::page_number(page) << regs::PPN_SHIFT) | log2sz;
+        regs::write64(self.base, base_csr, value);
+        regs::write32(self.base, csr, regs::QUEUE_ENABLE | regs::QUEUE_MEM_FAULT);
+        Handshake::new(HANDSHAKE_NS)
+    }
+
+    /// 落两台队列（先命令、后故障）：写 0 → 轮询到 busy 落；返最后那一刻的真实读数。
     ///
     /// 「停」与「忙已清」仍然是两件事，故判定在外面（要的是各自那一对读数）。
     pub fn disable(&mut self) -> (u32, u32) {
-        let commands = self.lower(regs::CQCSR);
-        let faults = self.lower(regs::FQCSR);
+        let commands = self.lower(regs::CQCSR).wait(
+            || regs::read32(self.base, regs::CQCSR),
+            |seen| seen & regs::QUEUE_BUSY == 0,
+        );
+        let faults = self.lower(regs::FQCSR).wait(
+            || regs::read32(self.base, regs::FQCSR),
+            |seen| seen & regs::QUEUE_BUSY == 0,
+        );
         (commands, faults)
     }
 
-    /// 抬一台队列并等它真的立起来：写 `ENABLE|MEM_FAULT`（清粘住的故障），轮询 busy 落。
-    fn raise(&self, csr: usize) -> u32 {
-        regs::write32(self.base, csr, regs::QUEUE_ENABLE | regs::QUEUE_MEM_FAULT);
-        poll(
-            || regs::read32(self.base, csr),
-            |seen| seen & regs::QUEUE_BUSY == 0,
-        )
-    }
-
-    /// 落一台队列并等它真的停下来（同样有界）。
-    fn lower(&self, csr: usize) -> u32 {
+    /// 落一台队列的第一步：写 0 并起一次握手（与 [`CommandQueue::raise`] 对称，只是要落的数不同）。
+    pub fn lower(&self, csr: usize) -> Handshake {
         regs::write32(self.base, csr, 0);
-        poll(
-            || regs::read32(self.base, csr),
-            |seen| seen & regs::QUEUE_BUSY == 0,
-        )
+        Handshake::new(HANDSHAKE_NS)
     }
 
     /// 让这个 IOMMU 忘掉此前翻译出来的那些项。
@@ -156,40 +186,52 @@ impl CommandQueue {
     /// 期限内没等到则返 `false` 并**保留那条在途命令**：下一次调用继续等它，
     /// 不重提新命令、不把已有的完成丢掉。
     pub fn fence(&mut self) -> bool {
-        let (slot, cookie) = match self.pending {
-            Some(pending) => pending,
-            None => {
-                let slot = (self.cookie % FENCE_SLOTS) as usize * 4;
-                let cookie = FENCE_DATA.wrapping_add(self.cookie);
-                self.cookie = self.cookie.wrapping_add(1);
-                // 旧完成（含可能迟到的旧存储）不得冒充本次。
-                // SAFETY: 完成记录页是本域刚取的可写页。
-                unsafe { core::ptr::write_volatile((self.fence + slot) as *mut u32, 0) };
-                super::order::sync();
-                let dword0 = IOFENCE_C
-                    | IOFENCE_NOTIFY
-                    | IOFENCE_PR
-                    | IOFENCE_PW
-                    | ((cookie as u64) << 32);
-                let dword1 = ((self.fence_page + slot) as u64) >> FENCE_ADDRESS_SHIFT;
-                self.submit(dword0, dword1);
-                self.pending = Some((slot, cookie));
-                (slot, cookie)
-            }
-        };
-        let record = (self.fence + slot) as *const u32;
-        let until = env::chrono::clock().saturating_add(FENCE_NS);
         loop {
-            // SAFETY: 完成记录页是本域刚取的可写页。
-            let seen = unsafe { core::ptr::read_volatile(record) };
-            if seen == cookie {
-                self.pending = None;
-                return true;
-            }
-            if env::chrono::clock() >= until {
-                return false;
+            match self.fence_step() {
+                Fence::Settled => return true,
+                Fence::Expired => return false,
+                Fence::Waiting => {}
             }
         }
+    }
+
+    /// `IOFENCE.C` 的**一步**：没有在途的就提交一条（提交只做一次），
+    /// 然后**单次读**它自己那一格。
+    ///
+    /// 在途那一条连同它的期限一起保留：重复调用只继续等它，**既不重发也不重置时限**。
+    /// 「还没到」是 [`Fence::Waiting`]（下一帧接着读），「过了期限还没到」是
+    /// [`Fence::Expired`]（那条命令仍在途，只是这一次等到头了）。
+    pub fn fence_step(&mut self) -> Fence {
+        if self.pending.is_none() {
+            let slot = (self.cookie % FENCE_SLOTS) as usize * 4;
+            let cookie = FENCE_DATA.wrapping_add(self.cookie);
+            self.cookie = self.cookie.wrapping_add(1);
+            // 旧完成（含可能迟到的旧存储）不得冒充本次。
+            // SAFETY: 完成记录页是本域刚取的可写页。
+            unsafe { core::ptr::write_volatile((self.fence + slot) as *mut u32, 0) };
+            super::order::sync();
+            let dword0 =
+                IOFENCE_C | IOFENCE_NOTIFY | IOFENCE_PR | IOFENCE_PW | ((cookie as u64) << 32);
+            let dword1 = ((self.fence_page + slot) as u64) >> FENCE_ADDRESS_SHIFT;
+            self.submit(dword0, dword1);
+            self.pending = Some(Outstanding {
+                slot,
+                cookie,
+                handshake: Handshake::new(FENCE_NS),
+            });
+        }
+        let pending = self.pending.as_ref().expect("just submitted");
+        let record = (self.fence + pending.slot) as *const u32;
+        // SAFETY: 完成记录页是本域刚取的可写页。
+        let seen = unsafe { core::ptr::read_volatile(record) };
+        if seen == pending.cookie {
+            self.pending = None;
+            return Fence::Settled;
+        }
+        if pending.handshake.expired() {
+            return Fence::Expired;
+        }
+        Fence::Waiting
     }
 
     /// 硬件消费到哪了：两个队列的头。
@@ -259,16 +301,6 @@ impl CommandQueue {
         super::order::sync();
         regs::write32(self.base, regs::CQT, tail.wrapping_add(1));
     }
-}
-
-/// 有界轮询一台队列 CSR 直到 `done`（返最后那一刻的读数；到期限就把它原样交出去）。
-fn poll(mut read: impl FnMut() -> u32, done: impl Fn(u32) -> bool) -> u32 {
-    let mut seen = read();
-    let until = env::chrono::clock().saturating_add(HANDSHAKE_NS);
-    while !done(seen) && env::chrono::clock() < until {
-        seen = read();
-    }
-    seen
 }
 
 /// 队列已活动且不忙。

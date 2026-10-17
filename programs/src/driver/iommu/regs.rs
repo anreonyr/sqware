@@ -104,17 +104,54 @@ pub fn page_number(physical: usize) -> u64 {
     (physical as u64 >> 12) & (PPN_FIELD >> PPN_SHIFT)
 }
 
-/// 有界轮询：写完之后等硬件把 `BUSY` 落下去。
+/// 一次有界握手的期限：建立时定下，**跨帧保留**。
+///
+/// 交出去之后可以反复问（[`Handshake::expired`]），期限不再变——这正是
+/// 「一帧只读一次、没等到就留到下一帧」与「重复调用不重置时限」共同要的那一格。
+#[derive(Clone, Copy)]
+pub struct Handshake {
+    until: u64,
+}
+
+impl Handshake {
+    /// 从这一刻起给这次握手 `limit` 纳秒。
+    pub fn new(limit: u64) -> Self {
+        Self {
+            until: env::chrono::clock().saturating_add(limit),
+        }
+    }
+
+    /// 期限过了没有。
+    pub fn expired(&self) -> bool {
+        env::chrono::clock() >= self.until
+    }
+
+    /// 同步那一档：读到 `done` 成立或到期限为止，返最后那一刻的读数。
+    /// 跨帧那一档不用它——那一路每帧只读一次，期限由 [`Handshake::expired`] 判。
+    pub fn wait<T: Copy>(&self, mut read: impl FnMut() -> T, done: impl Fn(T) -> bool) -> T {
+        let mut seen = read();
+        while !done(seen) && !self.expired() {
+            seen = read();
+        }
+        seen
+    }
+}
+
+/// `DDTP` 写下去之后等 `busy` 落的期限。
 ///
 /// 与 Linux `iommu/riscv/iommu.c` 同一条口径（`RISCV_IOMMU_DDTP_TIMEOUT`）：
-/// 写下去还要轮询到 busy 落，写后单次读不算走完协议。
-const POLL_LIMIT: usize = 10_000_000;
+/// 写后单次读不算走完协议。原来是十的七次方次**自旋计数**，现在是一条期限：
+/// 跨帧那一档靠 [`Handshake::expired`] 到点，同步那一档靠 [`Handshake::wait`] 到点。
+const DDTP_NS: u64 = 2_000_000_000;
 
-/// 换 `DDTP`：`mode` 与（`xLVL` 时的）根表页号，按规范那一手走完——
-/// 写 → 有界轮询到 busy 落 → 回读校验 mode 真的是要的那一档。
+/// 换 `DDTP` 的第一步：校验参数、写下 `mode`（`xLVL` 时带上根表页号），并起一次握手。
 ///
-/// 返最后那一刻的真实读数（失败现场也要有数）。
-pub fn ddtp_set(base: usize, mode: u64, root: Option<usize>) -> Result<u64, (&'static str, u64)> {
+/// 与 [`ddtp_poll`] 成对：写只做一次，回读归单次那一格。
+pub fn ddtp_start(
+    base: usize,
+    mode: u64,
+    root: Option<usize>,
+) -> Result<Handshake, (&'static str, u64)> {
     if mode > DDTP_MODE_BARE && root.is_none() {
         return Err(("iommu: ddtp root", 0));
     }
@@ -123,14 +160,35 @@ pub fn ddtp_set(base: usize, mode: u64, root: Option<usize>) -> Result<u64, (&'s
         value |= page_number(root) << PPN_SHIFT;
     }
     write64(base, DDTP, value);
-    let mut seen = read64(base, DDTP);
-    let mut left = POLL_LIMIT;
-    while seen & DDTP_BUSY != 0 && left > 0 {
-        seen = read64(base, DDTP);
-        left -= 1;
+    Ok(Handshake::new(DDTP_NS))
+}
+
+/// 换 `DDTP` 的下一步：**单次读**。`busy` 落了且 mode 真的是要的那一档 → `Ok(seen)`。
+///
+/// `busy` 还挂着 = 这一步还没走完，返 `("iommu: ddtp busy", seen)`——调用方按 [`Handshake`]
+/// 判「再等一帧」还是「期限到了」。`busy` 落了但 mode 不对 = 不认识的现场，
+/// 返 `("iommu: ddtp handshake", seen)`。
+pub fn ddtp_poll(base: usize, mode: u64) -> Result<u64, (&'static str, u64)> {
+    let seen = read64(base, DDTP);
+    if seen & DDTP_BUSY != 0 {
+        return Err(("iommu: ddtp busy", seen));
     }
-    if seen & DDTP_BUSY != 0 || seen & 0xF != mode {
+    if seen & 0xF != mode {
         return Err(("iommu: ddtp handshake", seen));
     }
     Ok(seen)
+}
+
+/// 换 `DDTP` 的同步那一档（探针/引导）：写 → 轮询到 busy 落 → 回读校验 mode。
+///
+/// 返最后那一刻的真实读数（失败现场也要有数）。
+pub fn ddtp_set(base: usize, mode: u64, root: Option<usize>) -> Result<u64, (&'static str, u64)> {
+    let handshake = ddtp_start(base, mode, root)?;
+    loop {
+        match ddtp_poll(base, mode) {
+            Ok(seen) => return Ok(seen),
+            Err((_, seen)) if seen & DDTP_BUSY != 0 && !handshake.expired() => continue,
+            Err((_, seen)) => return Err(("iommu: ddtp handshake", seen)),
+        }
+    }
 }

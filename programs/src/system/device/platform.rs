@@ -18,7 +18,9 @@
 //!   物理 PCIe 上“已到线、未落内存”那一档要 interconnect-specific fence，
 //!   本平台给不出，也不在本凭据的范围里（不得拿它给物理硬件作保）。
 //!
-//! 三次“等”都是有界进展步骤：期限内没等到就返 `Pending`，引用原样保留、下次接着来。
+//! 三次“等”都是有界进展步骤，且**一帧只推一格**：`stop` 每次调用把当前那一步做到
+//! 「完成 / 要等 / 硬失败」之一，要等就返 `Pending`、引用原样保留，下一帧接着来。
+//! 期限随那一步保留（[`Handshake`]），重复调用既不重置它、也不重发在途的那条命令。
 //! `synchronize` 与 `isolate` 走**同一条**停止链：一次性设备生命周期里没有比它更弱的
 //! “正常”那一档，释放前的凭据不许偷弱化。
 //!
@@ -29,8 +31,8 @@
 
 use crate::driver::iommu::{
     order,
-    queue::{self, CommandQueue},
-    regs,
+    queue::{self, CommandQueue, Fence},
+    regs::{self, Handshake},
 };
 use crate::driver::pci::ecam::{self, Ecam};
 use crate::driver::pci::virtio::{self, Caps};
@@ -46,6 +48,41 @@ pub struct EndpointDrain {
     pub caps: Caps,
 }
 
+/// 停链走到哪一步（照 IOMMU 规范那条 NOTE 的次序）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Stop {
+    /// ① 撤访问权：`DDTP` 落 Off，等 busy 落并回读确认。
+    Revoke,
+    /// ② 改动全局可见之后失效（`IOTINVAL.VMA`，一次提交）。
+    Invalidate,
+    /// ③ `IOFENCE.C` 并等**本次**完成记录。
+    Fence,
+    /// ④ 端点侧不再发起：清 bus-master、按 virtio 那一手复位（各自回读确认）。
+    Drain,
+    /// ⑤ 两台立过的队列停机确认（on 落了、busy 也清了）。
+    Queues,
+    /// ⑥ 回读两个队列的故障位与页请求队列。
+    Confirm,
+    /// 整条链走完。
+    Done,
+}
+
+/// 链路一步的结果。
+///
+/// 「完成」与「硬失败」是两件事，而「还没确认」一律是 `Waiting`：无论它是「在期限内
+/// 再等一帧」还是「期限到头了」——两种都**保留**这一枚引用，只是后者的凭据得写成
+/// 不可用（不冒充已停）。
+enum Step {
+    /// 这一步完成了，接着走下一步。
+    Continue,
+    /// 这一步要等硬件；没到期限就留到下一帧。
+    Waiting,
+    /// 硬件没按协议回答 = 这一步没走完，拿不到凭据。
+    Failed,
+    /// 整条链走完了。
+    Done,
+}
+
 /// System 里那一枚 IOMMU 的停机权威：一段设备范围 ＋ 一枚随时可发命令的队列。
 pub struct IommuPlatform {
     range: DeviceRange,
@@ -55,22 +92,27 @@ pub struct IommuPlatform {
     queue: CommandQueue,
     /// 端点侧不再发起那两个数；没有端点访问权时是 `None`（只停 IOMMU 那一侧）。
     endpoint: Option<EndpointDrain>,
+    /// 停链走到哪一步。
+    stage: Stop,
+    /// ① 那一步的握手（写过之后留着，跨帧不重置）。
+    revoke: Option<Handshake>,
+    /// ⑤ 那一步的握手。
+    queues: Option<Handshake>,
     /// 失败现场的诊断只报一次。
     reported: bool,
 }
 
 impl IommuPlatform {
-    pub fn new(
-        range: DeviceRange,
-        queue: CommandQueue,
-        endpoint: Option<EndpointDrain>,
-    ) -> Self {
+    pub fn new(range: DeviceRange, queue: CommandQueue, endpoint: Option<EndpointDrain>) -> Self {
         let base = queue.base();
         Self {
             range,
             base,
             queue,
             endpoint,
+            stage: Stop::Revoke,
+            revoke: None,
+            queues: None,
             reported: false,
         }
     }
@@ -93,84 +135,161 @@ impl Platform for IommuPlatform {
 }
 
 impl IommuPlatform {
-    /// 停住这个范围并给出凭据；任何一步没确认就返错、引用保留重试。
+    /// 推停链：能走几步走几步，要等就返 `Pending`，走完才返 `Ok(())`。
     ///
-    /// 步骤可重入：队列立过才失效/排空（没立过就没有在途命令），`DDTP` Off 幂等。
+    /// 任何一步没确认都返错、引用保留重试；【`Stop`】记着走到哪，故重复调用幂等。
     fn stop(&mut self) -> Result<(), Failure> {
-        match self.steps() {
-            Ok(()) => Ok(()),
-            Err((why, failure)) => {
-                if !self.reported {
-                    self.reported = true;
-                    crate::debug::put(&alloc::format!(
-                        "system-dma: stop pending at {why} ({failure:?})"
-                    ));
-                }
-                Err(failure)
+        loop {
+            let (why, failure) = match self.step() {
+                Step::Done => return Ok(()),
+                Step::Continue => continue,
+                Step::Waiting => (self.at(), Failure::Pending),
+                Step::Failed => (self.at(), Failure::Unavailable),
+            };
+            if !self.reported {
+                self.reported = true;
+                crate::debug::put(&alloc::format!(
+                    "system-dma: stop pending at {why} ({failure:?})"
+                ));
             }
+            return Err(failure);
         }
     }
 
-    fn steps(&mut self) -> Result<(), (&'static str, Failure)> {
-        // ① 撤设备访问授权：目录表落 Off（幂等），回读确认 mode 与 busy。
-        let stopped = match regs::ddtp_set(self.base, regs::DDTP_MODE_OFF, None) {
-            Ok(seen) => seen,
-            // 握手超时：busy 还挂着 = 还没停，可重试。
-            Err((_, seen)) if seen & regs::DDTP_BUSY != 0 => {
-                return Err(("ddtp busy", Failure::Pending));
-            }
-            // 其余回读 = 不认识的现场：保留并报不可用（不冒充已停）。
-            Err((_, _)) => return Err(("ddtp handshake", Failure::Unavailable)),
+    /// 当前那一步的名字（停链报告用）。
+    fn at(&self) -> &'static str {
+        match self.stage {
+            Stop::Revoke => "ddtp off",
+            Stop::Invalidate => "invalidate",
+            Stop::Fence => "fence incomplete",
+            Stop::Drain => "endpoint drain",
+            Stop::Queues => "queues not quiet",
+            Stop::Confirm => "queue confirm",
+            Stop::Done => "done",
+        }
+    }
+
+    /// 当前那一步推一格。
+    fn step(&mut self) -> Step {
+        match self.stage {
+            Stop::Revoke => self.revoke(),
+            Stop::Invalidate => self.invalidate(),
+            Stop::Fence => self.fence(),
+            Stop::Drain => self.drain(),
+            Stop::Queues => self.queues(),
+            Stop::Confirm => self.confirm(),
+            Stop::Done => Step::Done,
+        }
+    }
+
+    /// ① 撤设备访问授权：目录表落 Off（写只一次），之后每帧**单次读**到 busy 落。
+    fn revoke(&mut self) -> Step {
+        let handshake = match self.revoke {
+            Some(handshake) => handshake,
+            None => match regs::ddtp_start(self.base, regs::DDTP_MODE_OFF, None) {
+                Ok(handshake) => {
+                    self.revoke = Some(handshake);
+                    handshake
+                }
+                Err(_) => return Step::Failed,
+            },
         };
-        if stopped & regs::DDTP_BUSY != 0 {
-            return Err(("ddtp still busy", Failure::Pending));
+        match regs::ddtp_poll(self.base, regs::DDTP_MODE_OFF) {
+            Ok(_) => {
+                self.stage = Stop::Invalidate;
+                Step::Continue
+            }
+            // busy 还挂着 = 还没停：期限内接着等，到期限就不冒充已停。
+            Err((_, seen)) if seen & regs::DDTP_BUSY != 0 => {
+                if handshake.expired() {
+                    Step::Failed
+                } else {
+                    Step::Waiting
+                }
+            }
+            // 其余回读 = 不认识的现场：保留并报不可用。
+            Err(_) => Step::Failed,
         }
-        if stopped & 0xF != regs::DDTP_MODE_OFF {
-            return Err(("ddtp not off", Failure::Unavailable));
-        }
-        // ② 改动全局可见之后才失效；③ 用完成记录作“前序命令已完”的凭据。
-        //    队列从未立过（发布早就失败）就没有在途命令，两步都跳过。
-        let commands_up = regs::read32(self.base, regs::CQCSR) & regs::QUEUE_ENABLE != 0;
-        if commands_up {
+    }
+
+    /// ② 改动全局可见之后才失效；队列从未立过（发布早就失败）就没有在途命令，两步都跳过。
+    fn invalidate(&mut self) -> Step {
+        if regs::read32(self.base, regs::CQCSR) & regs::QUEUE_ENABLE != 0 {
             order::sync();
             self.queue.invalidate_all();
-            if !self.queue.fence() {
-                return Err(("fence incomplete", Failure::Pending));
-            }
+            self.stage = Stop::Fence;
+        } else {
+            self.stage = Stop::Drain;
         }
-        // ④ 端点侧不再发起：先清 bus-master（回读确认），再按 virtio 那一手复位设备
-        //    并回读确认。两者任一没确认就保留——不冒充已停。
-        //    （这两步证的是“端点不再发起新请求”；已发出的写在途那一档见文件头。）
+        Step::Continue
+    }
+
+    /// ③ 等**本次**那条 `IOFENCE.C` 的完成记录（在途那一条原样留着）。
+    fn fence(&mut self) -> Step {
+        match self.queue.fence_step() {
+            Fence::Settled => {
+                self.stage = Stop::Drain;
+                Step::Continue
+            }
+            Fence::Waiting => Step::Waiting,
+            Fence::Expired => Step::Failed,
+        }
+    }
+
+    /// ④ 端点侧不再发起：先清 bus-master（回读确认），再按 virtio 那一手复位设备
+    ///    并回读确认。两者任一没确认就保留——不冒充已停。
+    ///    （这两步证的是“端点不再发起新请求”；已发出的写在途那一档见文件头。）
+    fn drain(&mut self) -> Step {
         if let Some(endpoint) = self.endpoint {
             let scan = Ecam::new(endpoint.ecam, endpoint.requester);
             scan.command_and(ecam::COMMAND_MASTER);
             if scan.read16(ecam::COMMAND) & ecam::COMMAND_MASTER != 0 {
-                return Err(("endpoint bus-master", Failure::Unavailable));
+                return Step::Failed;
             }
             if !virtio::reset(endpoint.bar, &endpoint.caps) {
-                return Err(("endpoint reset", Failure::Unavailable));
+                return Step::Failed;
             }
         }
-        // ⑤ 两台立过的队列各自停（on 落了、busy 也清了）；页请求队列若开着 = fail
-        //    closed（本 slice 不支持 ATS/PRI，不称已停）。
-        let faults_up = regs::read32(self.base, regs::FQCSR) & regs::QUEUE_ENABLE != 0;
-        if commands_up || faults_up {
-            let (commands, faults) = self.queue.disable();
-            if !queue::quiet(commands, regs::QUEUE_ON) || !queue::quiet(faults, regs::QUEUE_ON) {
-                return Err(("queues not quiet", Failure::Pending));
+        self.stage = Stop::Queues;
+        Step::Continue
+    }
+
+    /// ⑤ 两台立过的队列各自停（on 落了、busy 也清了）：写 0 只写一次，之后单次读到静。
+    fn queues(&mut self) -> Step {
+        let handshake = match self.queues {
+            Some(handshake) => handshake,
+            None => {
+                let handshake = self.queue.lower(regs::CQCSR);
+                self.queue.lower(regs::FQCSR);
+                self.queues = Some(handshake);
+                handshake
             }
+        };
+        let (commands, faults) = self.queue.status();
+        if queue::quiet(commands, regs::QUEUE_ON) && queue::quiet(faults, regs::QUEUE_ON) {
+            self.stage = Stop::Confirm;
+            return Step::Continue;
         }
+        if handshake.expired() {
+            Step::Failed
+        } else {
+            Step::Waiting
+        }
+    }
+
+    /// ⑥ 页请求队列若开着 = fail closed（本 slice 不支持 ATS/PRI，不称已停）；
+    ///    两个队列的故障位也在这里回读。
+    fn confirm(&mut self) -> Step {
         let (commands, faults) = self.queue.status();
         let page_request = regs::read32(self.base, regs::PQCSR);
-        if page_request & (regs::QUEUE_ENABLE | regs::QUEUE_ON) != 0 {
-            return Err(("page request queue active", Failure::Unavailable));
+        if page_request & (regs::QUEUE_ENABLE | regs::QUEUE_ON) != 0
+            || queue::command_error(commands)
+            || queue::queue_error(faults)
+            || queue::queue_error(page_request)
+        {
+            return Step::Failed;
         }
-        if queue::command_error(commands) || queue::queue_error(faults) {
-            return Err(("queue error bit", Failure::Unavailable));
-        }
-        if queue::queue_error(page_request) {
-            return Err(("page queue error bit", Failure::Unavailable));
-        }
-        Ok(())
+        self.stage = Stop::Done;
+        Step::Done
     }
 }

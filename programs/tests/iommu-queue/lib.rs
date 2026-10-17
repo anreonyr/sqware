@@ -9,6 +9,16 @@
 //! What this fixture is **not**: there is no IOMMU, no PCIe, no second domain and no
 //! real time. `tests.rs` records, per case, which part of the production path the
 //! fixture can witness and which part it cannot.
+//!
+//! Run it with the host target spelled out:
+//!
+//! ```text
+//! cargo test --manifest-path programs/tests/iommu-queue/Cargo.toml --target x86_64-unknown-linux-gnu
+//! ```
+//!
+//! A bare `cargo test` from this directory walks up to the repository's
+//! `.cargo/config.toml` and inherits the riscv64 target, which a host binary cannot
+//! link (`no global allocator` / `no panic handler`).
 
 extern crate alloc;
 extern crate self as env;

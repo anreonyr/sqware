@@ -11,6 +11,11 @@
 //!   设备写回的 `used` 环在 System 保留的页里，由 System 自己看。
 //!
 //! 换页/寄存器右键仍是 `crate::driver::iommu` 与 `crate::driver::pci` 那两套机制。
+//!
+//! **一帧一格，不阻塞**：起手那一串要等硬件的步骤（抬两台队列、`IOFENCE.C` 完成、
+//! `DDTP` 回读）每帧只推一格，期限随那一格保留（[`regs::Handshake`]）；没等到就把
+//! 引用原样留着，下一帧接着来。System 的帧因此从不因等待而停（见
+//! [`crate::system::app::device::begin`]）。
 
 use alloc::boxed::Box;
 
@@ -24,8 +29,9 @@ use crate::driver::iommu::{
     context::DeviceContext,
     order,
     pages::Pages,
-    queue::CommandQueue,
-    regs, table,
+    queue::{self, CommandQueue, Fence},
+    regs::{self, Handshake},
+    table,
 };
 use crate::driver::pci::ecam::{self, Ecam};
 use crate::driver::pci::endpoint::Endpoint;
@@ -95,13 +101,62 @@ const DESC_NEXT: u16 = 1;
 const DESC_WRITE: u16 = 2;
 /// 负证那一轮先铺在数据页里的哨兵。
 const SENTINEL: u8 = 0x5A;
+/// 一轮的起手：先摆好第一轮那一段请求。
+const ROUND_FIRST: u16 = 0;
 /// 交给服务的那一帧坐标的字数。
 const COORD_WORDS: usize = 9;
 /// 确认之后等设备再推一次的帧数（System 的一帧一帧，不阻塞）。
 const PROVE_FRAMES: usize = 8;
 
+/// 起手走到哪一步。
+///
+/// 除了 `Fresh` 与装配，后面每一格都是“要等硬件”的一步：每帧只推一格，
+/// 一个帧推完就往下走，要等就留在这一格里。
+enum Start {
+    /// 还没起手。
+    Fresh,
+    /// 装配完了，等硬件武装：先抬故障队列。
+    Faults,
+    /// 等命令队列立起来。
+    Commands,
+    /// 提交 `IOTINVAL` 与一条 `IOFENCE.C`，等本次完成记录。
+    Fence,
+    /// 编程 `DDTP` 到 1LVL 并回读确认。
+    Ddtp,
+    /// 武装完了，等交付坐标、放开服务。
+    Armed,
+    /// 服务已放开，这一轮在跑。
+    Running,
+    /// 本机没有这台设备（普通产品保持行为）。
+    Absent,
+    /// 起手失败过：封口不重试（只把子任务收干净）。
+    Failed,
+}
+
+/// 一帧推一步的结果。
+enum Stage {
+    /// 又推进了一步，接着走。
+    Continue,
+    /// 这一步要等硬件：本帧到此，下一帧接着来。
+    Waiting,
+    /// 收工。
+    Done(Started),
+}
+
+/// 一次开始的结果：设备在不在。
+pub enum Started {
+    /// 本机没有这台设备（普通产品保持行为）。
+    Absent,
+    /// 还在装配/武装：本帧推到哪里算哪里，下一帧接着来。
+    Starting,
+    /// 已经保留、发布并放开了服务。
+    Running,
+}
+
 /// 产品 DMA 管理者：一次只跑一台端点。
 pub struct Dma {
+    /// 起手走到哪一步（见 [`Start`]）。
+    start: Start,
     iommu: Option<Dock>,
     ecam: Option<Dock>,
     /// System 自己那一枚 BAR 窗口：收口时由它打响那一次门铃（不经过任何服务）。
@@ -110,12 +165,27 @@ pub struct Dma {
     aperture: PieToken,
     base: usize,
     range: Option<DeviceRange>,
+    /// 这一范围是否真的在 `Holds` 上登记过（`close` 只对登记过的认账）。
+    attached: bool,
+    /// 发布门是否已经点上——没点上 = 设备从来没可达过。
+    published: bool,
+    /// 那一份登记在 `Holds` 上的编号（发布门的成败都记在它那一格）。
+    retained: Option<usize>,
     pages: Option<Pages>,
+    /// 武装那一串用的队列（`setup` 里建好，一帧推一格）。
+    queues: Option<CommandQueue>,
+    /// 当前那一格等硬件的期限（跨帧保留）。
+    handshake: Option<Handshake>,
     caps: Option<Caps>,
     requester: u16,
     service: Option<TaskId>,
     /// 服务那一 Team（收工时按 Team 收，与 `ruin` 同一条路）。
     team: Option<env::TeamId>,
+    /// 管理者自己那一枚精确 BAR 窗口（交付时从它派生给服务那一枚）。
+    window: PieToken,
+    /// 那一窗在 aperture 里从第几页起、共几页。
+    first: usize,
+    pages_in_bar: usize,
     /// 第一轮已完成（设备真的写回了 `used` 环）。
     served: bool,
     /// 已经请求收口（正常关闭或收服务）；不重发。
@@ -137,18 +207,8 @@ pub struct Dma {
     /// 服务那一台镜像（装配期就从清单里取好，运行期不重查）。
     image: Option<&'static [u8]>,
     kind: Option<env::ProgramKind>,
-    /// 开过就失败过：不在旧范围上反复重试。
-    failed: bool,
     /// 确认后验也报过了。
     done: bool,
-}
-
-/// 一次开始的结果：设备在不在。
-pub enum Started {
-    /// 本机没有这台设备（普通产品保持行为）。
-    Absent,
-    /// 已经保留、发布并放开了服务。
-    Running,
 }
 
 impl Dma {
@@ -160,6 +220,7 @@ impl Dma {
         fault: bool,
     ) -> Self {
         Self {
+            start: Start::Fresh,
             iommu: None,
             ecam: None,
             bar: None,
@@ -167,11 +228,19 @@ impl Dma {
             aperture: PieToken::NONE,
             base: 0,
             range: None,
+            attached: false,
+            published: false,
+            retained: None,
             pages: None,
+            queues: None,
+            handshake: None,
             caps: None,
             requester: 0,
             service: None,
             team: None,
+            window: PieToken::NONE,
+            first: 0,
+            pages_in_bar: 0,
             served: false,
             closing: false,
             pending_seen: false,
@@ -183,18 +252,18 @@ impl Dma {
             inject: fault,
             image,
             kind,
-            failed: false,
             done: false,
         }
     }
 
     pub fn running(&self) -> bool {
-        self.service.is_some()
+        matches!(self.start, Start::Running)
     }
 
-    /// 发现 → 保留 → 发布 → 交付 → 放开服务。
+    /// 发现 → 保留 → 发布 → 交付 → 放开服务，**一帧推一步**。
     ///
-    /// 不在任何一步阻塞等设备：这是 System 的一帧，测得出来就往下走、测不出来就留着。
+    /// 不在任何一步阻塞等设备：要等硬件的那几步（抬队列、`IOFENCE` 完成、`DDTP` 回读）
+    /// 本帧只做一次写入/一次回读，没等到就返 [`Started::Starting`]，下一帧接着推。
     /// 起手失败一次就**封口不再重试**，但把已经拿到的东西**主动**交回去
     /// （见 [`Dma::rollback`]）——不指望一个还没放开的任务自己死。
     pub fn begin(
@@ -202,57 +271,132 @@ impl Dma {
         loader: &mut Loader,
         supplies: &mut Supplies,
     ) -> Result<Started, Failure> {
-        if self.failed {
+        if matches!(self.start, Start::Failed) {
+            // 已经封口：只把没收干净的那点收干净（`doom`/`slay` 幂等到成功）。
+            self.rollback(supplies);
             return Ok(Started::Absent);
         }
         if self.running() {
             return Ok(Started::Running);
         }
-        match self.stage(loader, supplies) {
-            Ok(started) => Ok(started),
-            Err(failure) => {
-                self.failed = true;
-                self.rollback(supplies);
-                Err(failure)
+        loop {
+            match self.advance(loader, supplies) {
+                Ok(Stage::Continue) => continue,
+                Ok(Stage::Waiting) => return Ok(Started::Starting),
+                Ok(Stage::Done(started)) => return Ok(started),
+                Err(failure) => {
+                    self.start = Start::Failed;
+                    // 发布门的成败记在它自己那一格（发布之后失败先记上，再回退）。
+                    if let Some(id) = self.retained.filter(|_| self.published) {
+                        let _ = supplies.retention.publish_end(id, Err(failure));
+                    }
+                    self.rollback(supplies);
+                    return Err(failure);
+                }
             }
         }
     }
 
-    /// 起手失败的回退：**主动**把子任务收进既有死亡路径、把范围关成 `Fault`
-    /// （没发布过的登记直接结清，发布过的那些由平台确认后释放），本地所有者
-    /// （`pages` / 映射 / 目录表）留在 `self` 上让 `settle` 接着报、接着收。
+    /// 起手失败的回退：**主动**把子任务收进既有死亡路径、把范围关成 `Fault`。
+    ///
+    /// 收不干净就把手柄**留着**（不 `take` 掉），下一帧接着收：`doom`/`slay` 的真实结果
+    /// 要报出来，不能用 `let _` 吐成“已清”而无凭据。
+    ///
+    /// 范围：登记过（`attached`）才关得了，没 attach 过时不假装关过（`close` 只会答
+    /// `Unknown`）；`close` 的结果也按真实报。关成 `Fault` 之后 `Holds` 会把它推到
+    /// `Stopped` 并把登记释放，故不会有一个空转在 `Open` 的范围。
+    ///
+    /// 本地所有者：**发布之前**失败 = 设备从来没可达过，本域那几段图与页当场还回去
+    /// （没有外部读者要隔断）；**发布之后**失败 = 停机凭据归平台，`pages` 留到 `settle`
+    /// 确认之后才还（见 `Dma::settle` 的 `!served` 那一支）。
     fn rollback(&mut self, supplies: &mut Supplies) {
-        if let Some(service) = self.service.take() {
-            let _ = env::room::doom(service);
+        if let Some(service) = self.service {
+            match env::room::doom(service).map_err(|error| error.source) {
+                Ok(()) => self.service = None,
+                Err(failure) => self.say(&alloc::format!(
+                    "system-dma: startup failed, child doom={failure:?} still held"
+                )),
+            }
         }
-        if let Some(team) = self.team.take() {
-            let _ = env::unit::slay_team(team);
+        if self.service.is_none() {
+            if let Some(team) = self.team {
+                match env::unit::slay_team(team).map_err(|error| error.source) {
+                    Ok(()) => {
+                        self.team = None;
+                        self.say("system-dma: startup failed, child reclaimed");
+                    }
+                    Err(failure) => self.say(&alloc::format!(
+                        "system-dma: startup failed, child slay={failure:?} still held"
+                    )),
+                }
+            }
         }
         if let Some(range) = self.range {
-            if !self.closing {
+            if !self.attached {
+                self.say("system-dma: startup failed, no registered scope");
+            } else if !self.closing {
                 self.closing = true;
-                let _ = supplies.retention.close(range, Close::Fault);
-                self.say("system-dma: startup failed, range closed as fault");
+                let closed = supplies.retention.close(range, Close::Fault);
+                self.say(&alloc::format!(
+                    "system-dma: startup failed, range close={closed:?}"
+                ));
+            }
+        }
+        // 发布之前失败：设备从来没可达过，本域那几段图与页（以及 BAR/ECAM 那两段映射）
+        // 当场还回去。IOMMU 那一段图留着：`settle` 还要从它读一次停机现场。
+        if !self.published {
+            if let Some(bar) = self.bar.take() {
+                let _ = bar.shut();
+            }
+            if let Some(ecam) = self.ecam.take() {
+                let _ = ecam.shut();
+            }
+            if let Some(pages) = self.pages.take() {
+                let _ = pages.close();
             }
         }
     }
 
-    fn stage(&mut self, loader: &mut Loader, supplies: &mut Supplies) -> Result<Started, Failure> {
-        if self.running() {
-            return Ok(Started::Running);
+    /// 一帧推一步：装配 → 武装 → 交付。
+    fn advance(&mut self, loader: &mut Loader, supplies: &mut Supplies) -> Result<Stage, Failure> {
+        match self.start {
+            Start::Fresh => {
+                self.setup(loader, supplies)?;
+                Ok(Stage::Continue)
+            }
+            Start::Faults | Start::Commands | Start::Fence | Start::Ddtp => self.arm(),
+            Start::Armed => {
+                self.deliver(supplies)?;
+                self.start = Start::Running;
+                Ok(Stage::Done(Started::Running))
+            }
+            Start::Running => Ok(Stage::Done(Started::Running)),
+            Start::Absent | Start::Failed => Ok(Stage::Done(Started::Absent)),
         }
-        let Some(iommu) = supplies.accounts.token(Name::Page(Page::Region(IOMMU_BASE))) else {
-            return Ok(Started::Absent);
+    }
+
+    /// 装配：开图、发现端点、定范围、立服务、取窗口与页、装平台、挂登记，
+    /// 并**点上发布标记**、铺好表与描述符。要等硬件的那一串留给 [`Dma::arm`]。
+    fn setup(&mut self, loader: &mut Loader, supplies: &mut Supplies) -> Result<(), Failure> {
+        let Some(iommu) = supplies
+            .accounts
+            .token(Name::Page(Page::Region(IOMMU_BASE)))
+        else {
+            self.start = Start::Absent;
+            return Ok(());
         };
         // 两轮共用同一片寄存器窗与 ECAM：只开一次图（第一轮那一开）。
         if self.iommu.is_none() {
             let Some(ecam) = supplies.accounts.token(Name::Page(Page::Region(ECAM_BASE))) else {
-                return Ok(Started::Absent);
+                self.start = Start::Absent;
+                return Ok(());
             };
-            let Some(aperture) =
-                supplies.accounts.token(Name::Page(Page::Region(APERTURE_BASE)))
+            let Some(aperture) = supplies
+                .accounts
+                .token(Name::Page(Page::Region(APERTURE_BASE)))
             else {
-                return Ok(Started::Absent);
+                self.start = Start::Absent;
+                return Ok(());
             };
             self.retention = supplies
                 .accounts
@@ -293,10 +437,7 @@ impl Dma {
             return Err(Failure::Unavailable);
         };
         let unit = loader
-            .build(Image {
-                bytes: image,
-                kind,
-            })
+            .build(Image { bytes: image, kind })
             .map_err(|_| Failure::Pending)?;
         let team = unit.team();
         let service = unit.spawn(&[], 0).map_err(|_| Failure::Pending)?;
@@ -337,7 +478,7 @@ impl Dma {
         let pages = Pages::take(self.retention, COUNT).map_err(fail)?;
         self.pages = Some(pages);
         let pages = self.pages.as_ref().ok_or(Failure::Unknown)?;
-        let queue = CommandQueue::new(self.base, &pages, COMMANDS, FAULTS, FENCE);
+        let queue = CommandQueue::new(self.base, pages, COMMANDS, FAULTS, FENCE);
         let inner = IommuPlatform::new(
             range,
             queue,
@@ -354,7 +495,10 @@ impl Dma {
         } else {
             Box::new(inner)
         };
-        supplies.retention.attach(Scope::new(range, service, Some(platform)))?;
+        supplies
+            .retention
+            .attach(Scope::new(range, service, Some(platform)))?;
+        self.attached = true;
         let id = supplies.retain_memory(
             range,
             AcquireSource::Source {
@@ -363,42 +507,131 @@ impl Dma {
                 count: COUNT,
             },
         )?;
-        // 发布：表与队列都布好、`IOFENCE` 拿到完成记录之后才接上设备目录表。
-        let ddt = pages.physical(DDT);
-        let root = pages.physical(ROOT);
-        let context = DeviceContext::first_stage(root);
+        self.retained = Some(id);
+        // 发布门：**先把可达标记点上**（执行发布之前），再铺表、描述符。
+        supplies.retention.publish_begin(id)?;
+        self.published = true;
+        let context = DeviceContext::first_stage(pages.physical(ROOT));
         let requester = self.requester as usize;
-        supplies.retention.publish(id, |_| {
-            for (index, word) in context.words().iter().enumerate() {
-                pages.put64(DDT, requester * 64 + index * 8, *word);
-            }
-            table::map_pages(&pages, ROOT, MIDDLE, LEAF, base, DESC, DEVICE_PAGES)
-                .map_err(|_| Failure::Denied)?;
-            arm(&pages, base);
-            let mut queues = CommandQueue::new(self.base, &pages, COMMANDS, FAULTS, FENCE);
-            queues.enable().map_err(|_| Failure::Unavailable)?;
-            queues.invalidate_all();
-            if !queues.fence() {
-                return Err(Failure::Pending);
-            }
-            order::sync();
-            regs::ddtp_set(self.base, regs::DDTP_MODE_1LVL, Some(ddt))
-                .map_err(|_| Failure::Unavailable)?;
-            Ok(())
-        })?;
+        for (index, word) in context.words().iter().enumerate() {
+            pages.put64(DDT, requester * 64 + index * 8, *word);
+        }
+        table::map_pages(pages, ROOT, MIDDLE, LEAF, base, DESC, DEVICE_PAGES)
+            .map_err(|_| Failure::Denied)?;
+        arm(pages, base, ROUND_FIRST);
 
-        // 把那一枚交出去（`ONLY`：发送方那一枚就此不可再 `Open`，图已在上面拿下）。
+        // 武装那一串（立队列 → 失效 → `IOFENCE` 完成 → `DDTP`）归 `arm`，一帧一格。
+        self.queues = Some(CommandQueue::new(self.base, pages, COMMANDS, FAULTS, FENCE));
+        self.window = mine;
+        self.first = first;
+        self.pages_in_bar = pages_in_bar;
+        self.start = Start::Faults;
+        Ok(())
+    }
+
+    /// 武装：每帧推一格。
+    fn arm(&mut self) -> Result<Stage, Failure> {
+        match self.start {
+            Start::Faults => {
+                if !self.raised(regs::FQCSR)? {
+                    return Ok(Stage::Waiting);
+                }
+                self.start = Start::Commands;
+                Ok(Stage::Continue)
+            }
+            Start::Commands => {
+                if !self.raised(regs::CQCSR)? {
+                    return Ok(Stage::Waiting);
+                }
+                self.queues
+                    .as_mut()
+                    .ok_or(Failure::Unknown)?
+                    .invalidate_all();
+                self.start = Start::Fence;
+                Ok(Stage::Continue)
+            }
+            Start::Fence => match self.queues.as_mut().ok_or(Failure::Unknown)?.fence_step() {
+                Fence::Settled => {
+                    self.start = Start::Ddtp;
+                    Ok(Stage::Continue)
+                }
+                Fence::Waiting => Ok(Stage::Waiting),
+                Fence::Expired => Err(Failure::Unavailable),
+            },
+            Start::Ddtp => {
+                let ddt = self.pages.as_ref().ok_or(Failure::Unknown)?.physical(DDT);
+                if !self.programmed(regs::DDTP_MODE_1LVL, ddt)? {
+                    return Ok(Stage::Waiting);
+                }
+                self.start = Start::Armed;
+                Ok(Stage::Continue)
+            }
+            _ => Ok(Stage::Continue),
+        }
+    }
+
+    /// 抬一台队列这一格：写没写过就写一次（起一次握手），然后**单次读**。
+    ///
+    /// `busy` 未落且在期限内 → `Ok(false)`（下一帧接着读）；落了但 `ON` 没立起来
+    /// 或带故障位 → 硬失败；写只做一次，期限随那一格保留。
+    fn raised(&mut self, csr: usize) -> Result<bool, Failure> {
+        if self.handshake.is_none() {
+            let handshake = self.queues.as_ref().ok_or(Failure::Unknown)?.raise(csr);
+            self.handshake = Some(handshake);
+        }
+        let seen = regs::read32(self.base, csr);
+        if seen & regs::QUEUE_BUSY != 0 {
+            return match self.handshake.is_some_and(|handshake| handshake.expired()) {
+                true => Err(Failure::Unavailable),
+                false => Ok(false),
+            };
+        }
+        if !queue::active(seen, regs::QUEUE_ON) || seen & regs::QUEUE_MEM_FAULT != 0 {
+            return Err(Failure::Unavailable);
+        }
+        self.handshake = None;
+        Ok(true)
+    }
+
+    /// `DDTP` 那一格：写没写过就写一次，然后**单次读**。
+    fn programmed(&mut self, mode: u64, root: usize) -> Result<bool, Failure> {
+        if self.handshake.is_none() {
+            // 表与队列都布好、`IOFENCE` 拿到完成记录之后才接上设备目录表。
+            order::sync();
+            let handshake =
+                regs::ddtp_start(self.base, mode, Some(root)).map_err(|_| Failure::Unavailable)?;
+            self.handshake = Some(handshake);
+        }
+        match regs::ddtp_poll(self.base, mode) {
+            Ok(_) => {
+                self.handshake = None;
+                Ok(true)
+            }
+            Err((_, seen)) if seen & regs::DDTP_BUSY != 0 => {
+                match self.handshake.is_some_and(|handshake| handshake.expired()) {
+                    true => Err(Failure::Unavailable),
+                    false => Ok(false),
+                }
+            }
+            Err(_) => Err(Failure::Unavailable),
+        }
+    }
+
+    /// 交付：把那一枚交出去、把坐标铺过去、放开服务。
+    fn deliver(&mut self, _supplies: &mut Supplies) -> Result<(), Failure> {
+        let service = self.service.ok_or(Failure::Pending)?;
+        // 把那一枚交出去（`ONLY`：发送方那一枚就此不可再 `Open`，图已在前面拿下）。
         let root_window = PrivateRoot::derive(
             RootAssignment {
-                shared: mine,
+                shared: self.window,
                 index: 0,
-                window: Some((first, pages_in_bar)),
+                window: Some((self.first, self.pages_in_bar)),
             },
             RootRequest {
                 id: LeaseId(1),
                 origin: Origin {
                     requester: env::unit::self_id(),
-                    authority: mine.get(),
+                    authority: self.window.get(),
                 },
                 owner: service,
                 permission: DRIVER_SUBSET,
@@ -406,23 +639,29 @@ impl Dma {
         )
         .map_err(|_| Failure::Denied)?;
         let seed = root_window.token();
+        let bar_base = self
+            .bar
+            .as_ref()
+            .map(|dock| dock.view().base())
+            .unwrap_or(0);
         crate::debug::put(&alloc::format!(
-            "system-dma: endpoint requester={} bar={:#x} size={:#x} window={first}+{pages_in_bar} seed={}",
+            "system-dma: endpoint requester={} bar={bar_base:#x} window={}+{} seed={}",
             self.requester,
-            endpoint.address(),
-            endpoint.size(),
+            self.first,
+            self.pages_in_bar,
             seed.get(),
         ));
 
         // 坐标只经那一枚孔过去：种子、页数、能力表四格、三段 IOVA。
         // 服务还按着（没 embark），故是一个**非阻塞的一次尝试**：装不下就当场失败
         // 回退，不在 System 的一帧里 park。
-        let (common, notify, multiplier, device) = caps.parts();
-        let writer = ipc::session::establish::give(service, COORD_MARK)
-            .map_err(|_| Failure::Conflict)?;
+        let (common, notify, multiplier, device) = self.caps.ok_or(Failure::Unavailable)?.parts();
+        let base = IOVA_BASE;
+        let writer =
+            ipc::session::establish::give(service, COORD_MARK).map_err(|_| Failure::Conflict)?;
         let frame = [
             seed.get(),
-            pages_in_bar,
+            self.pages_in_bar,
             common as usize,
             notify as usize,
             multiplier as usize,
@@ -440,7 +679,7 @@ impl Dma {
             .map_err(|_| Failure::Pending)?;
 
         env::unit::embark_task(service).map_err(|_| Failure::Pending)?;
-        Ok(Started::Running)
+        Ok(())
     }
 
     /// 收口：看到设备写回 → 请求关闸（正常景 `Close::Normal`，故障景收服务走
@@ -537,7 +776,7 @@ impl Dma {
                 self.prove_before = pages.get16(USED, 2);
                 sentinel(pages, DATA);
                 pages.put8(STATUS, 0, 0xFF);
-                arm(pages, IOVA_BASE);
+                arm(pages, IOVA_BASE, ROUND_FIRST + 1);
             }
             if let (Some(bar), Some(caps)) = (self.bar.as_ref(), self.caps) {
                 ring_own(bar, &caps);
@@ -620,20 +859,32 @@ fn fail(_: &'static str) -> Failure {
 }
 
 /// 摆一轮请求：三段描述符（头 → 数据 → 状态）＋可用环那一格。
-fn arm(pages: &Pages, base: usize) {
-    descriptor(pages, 0, (iova(base, HEADER) as u64, HEADER_BYTES as u32, DESC_NEXT, 1));
+///
+/// `round` 是第几轮：每一轮占可用环的下一格，`avail.idx` 随之推进。只靠一个恒定的
+/// `idx` 会在第二轮又把同一条描述符“重新投”一次——那是假的第二轮。
+fn arm(pages: &Pages, base: usize, round: u16) {
+    descriptor(
+        pages,
+        0,
+        (iova(base, HEADER) as u64, HEADER_BYTES as u32, DESC_NEXT, 1),
+    );
     descriptor(
         pages,
         1,
-        (iova(base, DATA) as u64, SECTOR as u32, DESC_NEXT | DESC_WRITE, 2),
+        (
+            iova(base, DATA) as u64,
+            SECTOR as u32,
+            DESC_NEXT | DESC_WRITE,
+            2,
+        ),
     );
     descriptor(pages, 2, (iova(base, STATUS) as u64, 1, DESC_WRITE, 0));
     pages.put32(HEADER, 0, BLK_IN);
     pages.put32(HEADER, 4, 0);
     pages.put64(HEADER, 8, 0);
     pages.put8(STATUS, 0, 0xFF);
-    pages.put16(AVAIL, 4, 0);
-    pages.put16(AVAIL, 2, 1);
+    pages.put16(AVAIL, 4 + round as usize * 2, 0);
+    pages.put16(AVAIL, 2, round + 1);
     order::sync();
 }
 
