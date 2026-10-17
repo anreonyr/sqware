@@ -57,6 +57,8 @@ pub(crate) fn resources(
     resources.insert(crate::system::device::dma::Dma::new(
         service_image.map(|(elf, _)| elf),
         service_image.map(|(_, space)| space),
+        // 注入只由**这一景自己的装配**给出（景名不是故障景就是假）。
+        deployment.name == "iommu-product-fault",
     ))?;
     control::install(
         &mut resources,

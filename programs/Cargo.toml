@@ -138,6 +138,13 @@ test = false
 bench = false
 doctest = false
 
+[[bin]]
+name = "prog-system-fault-dma"
+path = "src/system/fault_main.rs"
+test = false
+bench = false
+doctest = false
+
 
 [[bin]]
 name = "prog-router"

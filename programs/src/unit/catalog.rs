@@ -100,6 +100,8 @@ pub mod sleeper;
 pub mod subject;
 #[path = "../system/program.rs"]
 pub mod system;
+#[path = "../system/fault_program.rs"]
+pub mod system_fault_dma;
 #[path = "../service/dma/program.rs"]
 pub mod system_dma;
 #[path = "../harness/probe/system_fault/program.rs"]
@@ -143,6 +145,9 @@ pub const PROGRAMS: &[&UnitFile] = &[
     // 产品那一侧的端点服务：由 System 的设备管理者按需建 Team、按需起它，
     // 故它**不在任何景的静态启动单上**，只由镜像把它带进去。
     &system_dma::PROGRAM,
+    // 故障注入景那一台 System：与 `system` 同一身子、不同镜像，
+    // 只有它的景才会在第二轮装一次 `Pending` 注入。
+    &system_fault_dma::PROGRAM,
     // 真实 Task 等待那一景：**装载者 ＋ 控制单元**两台——控制单元要真的被装载（有 sire），
     // 故它那一 Team 的成员带着收据；真实等待链本身在控制单元里（见 `probe/memory_transfer`）。
     &memory_transfer::ENTRY,

@@ -9,4 +9,5 @@
 //! 平台已经有了，缺的是把它挂进 `Holds::attach` 并真发布页的那一份管理者。
 
 pub mod dma;
+pub mod fault;
 pub mod platform;

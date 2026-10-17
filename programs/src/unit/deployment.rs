@@ -146,6 +146,28 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         sources: &[],
     },
     Deployment {
+        name: "iommu-product-fault",
+        entry: "system-fault-dma",
+        start: &[
+            "hub", "pipe", "account", "terminal", "login", "router", "uart", "rtc",
+        ],
+        resources: &[
+            "shell",
+            "cat",
+            "emit",
+            "upper",
+            "fail",
+            "spin",
+            "workers",
+            "system-dma",
+        ],
+        targets: &[scene_target(&[
+            "hub", "pipe", "account", "terminal", "router", "uart", "rtc",
+        ])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
         name: "system-fault",
         entry: "system-fault",
         start: &[

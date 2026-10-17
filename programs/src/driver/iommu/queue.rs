@@ -18,13 +18,17 @@ const COMMAND_LOG2SZ: u64 = 7;
 const FAULT_LOG2SZ: u64 = 6;
 const COMMAND_ENTRIES: u32 = 2 << COMMAND_LOG2SZ;
 const FAULT_ENTRIES: u32 = 2 << FAULT_LOG2SZ;
-/// IOFENCE.C 完成记录的基准值：完成记录里出现 `基准 ＋ 命令尾` 才算硬件执行过
+/// IOFENCE.C 完成记录的基准值：完成记录里出现 `基准 ＋ 本域自增计数` 才算硬件执行过
 /// **那一条**命令。
 ///
 /// 固定值不行：上一次 `IOFENCE` 写下的那 4 字节会留在完成记录页里，下一次若只等
-/// “看到某个固定值”，一枚迟到的旧存储就会冒充本次完成。故每次用**与本次命令尾绑定的**
-/// 新值，并在提交前把那一格清零（旧值不留、旧存储也对不上新值）。
+/// “看到某个固定值”，一枚迟到的旧存储就会冒充本次完成。
+/// **不绑命令尾**：`CQT` 是被队列尺寸掩过码的环下标，每 256 次就回同一格，故它不单调。
+/// 改用**本域自增的 u32 计数**（单调、不重复到 2³²）＋在完成记录页里**轮换的槽**：
+/// 迟到的旧存储落在旧槽上，而本次只读自己那一格。
 pub const FENCE_DATA: u32 = 0x10F0_0FEE;
+/// 完成记录页里轮换的槽数（每槽 4 字节，页内绰绰有余）。
+const FENCE_SLOTS: u32 = 256;
 /// 完成记录地址在命令里按 4 字节格给（地址 >> 2）。
 const FENCE_ADDRESS_SHIFT: u32 = 2;
 /// 命令操作码：IOTINVAL（功能 VMA）/ IOFENCE（功能 C）。
@@ -58,8 +62,11 @@ pub struct CommandQueue {
     command_page: usize,
     fault_page: usize,
     fence_page: usize,
-    /// 在途的那一条 `IOFENCE.C` 的完成值：重试只**继续等它**，不重提新命令。
-    pending: Option<u32>,
+    /// 在途的那一条 `IOFENCE.C`：它在完成记录页的那一槽与本域给它的完成值。
+    /// 重试只**继续等它**，不重提新命令。
+    pending: Option<(usize, u32)>,
+    /// 本域自增的完成值计数（单调，不与被掩过码的环下标挂钩）。
+    cookie: u32,
 }
 
 impl CommandQueue {
@@ -79,6 +86,7 @@ impl CommandQueue {
             fault_page: pages.physical(faults),
             fence_page: pages.physical(fence),
             pending: None,
+            cookie: 0,
         }
     }
 
@@ -142,32 +150,34 @@ impl CommandQueue {
 
     /// 提交一条 `IOFENCE.C`（或**继续等**已在途的那一条）直到硬件写下本次的完成值。
     ///
-    /// 完成值 = `FENCE_DATA + 提交时读到的命令尾`：每次提交一个新值（尾全局单调，
-    /// 且提交由本域**唯一**串行提交者发出），故一枚迟到的旧完成存储对不上新值。
+    /// 完成值 = `FENCE_DATA + 本域自增计数`，落在完成记录页里**轮换的一槽**上：每次
+    /// 提交一个新值、一个新槽，并在提交前把那一槽清零。于是迟到的旧存储（旧槽或
+    /// 旧值）都对不上本次；`CQT` 被掩过码也不再影响唯一性。
     /// 期限内没等到则返 `false` 并**保留那条在途命令**：下一次调用继续等它，
     /// 不重提新命令、不把已有的完成丢掉。
     pub fn fence(&mut self) -> bool {
-        let cookie = match self.pending {
-            Some(cookie) => cookie,
+        let (slot, cookie) = match self.pending {
+            Some(pending) => pending,
             None => {
+                let slot = (self.cookie % FENCE_SLOTS) as usize * 4;
+                let cookie = FENCE_DATA.wrapping_add(self.cookie);
+                self.cookie = self.cookie.wrapping_add(1);
                 // 旧完成（含可能迟到的旧存储）不得冒充本次。
                 // SAFETY: 完成记录页是本域刚取的可写页。
-                unsafe { core::ptr::write_volatile(self.fence as *mut u32, 0) };
+                unsafe { core::ptr::write_volatile((self.fence + slot) as *mut u32, 0) };
                 super::order::sync();
-                let tail = regs::read32(self.base, regs::CQT);
-                let cookie = FENCE_DATA.wrapping_add(tail);
                 let dword0 = IOFENCE_C
                     | IOFENCE_NOTIFY
                     | IOFENCE_PR
                     | IOFENCE_PW
                     | ((cookie as u64) << 32);
-                let dword1 = (self.fence_page as u64) >> FENCE_ADDRESS_SHIFT;
-                self.submit_at(tail, dword0, dword1);
-                self.pending = Some(cookie);
-                cookie
+                let dword1 = ((self.fence_page + slot) as u64) >> FENCE_ADDRESS_SHIFT;
+                self.submit(dword0, dword1);
+                self.pending = Some((slot, cookie));
+                (slot, cookie)
             }
         };
-        let record = self.fence as *const u32;
+        let record = (self.fence + slot) as *const u32;
         let until = env::chrono::clock().saturating_add(FENCE_NS);
         loop {
             // SAFETY: 完成记录页是本域刚取的可写页。

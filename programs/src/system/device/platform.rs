@@ -2,13 +2,16 @@
 //!
 //! 停一个范围是一条**有序链**（照 IOMMU 规范那条 NOTE 落下来）：
 //! ① **撤访问权**（`DDTP` 落 Off）→ ② 改动全局可见后**失效**（`IOTINVAL.VMA`）
-//! → ③ `IOFENCE.C` 并等完成记录 → ④ **端点侧排空**（清 PCI bus-master 并回读）
-//! → ⑤ 回读确认两台队列的 `on`/`busy` 与 `DDTP` 那一格。
+//! → ③ `IOFENCE.C` 并等完成记录 → ④ **端点侧不再发起**（清 PCI bus-master 并
+//! 回读确认）→ ⑤ 回读确认两台队列的 `on`/`busy` 与 `DDTP` 那一格。
 //!
-//! 两处**不当作证明**（这台仿真的实现事实，不是硬件保证）：
+//! 三处**不当作证明**（这台仿真的实现事实，或本题拿不到的保证）：
 //! - `IOTINVAL` 只清 IOVA 缓存，**不撤访问权**——只失效而表还开着，新访问照旧成功；
 //! - `IOFENCE.C` 的 `PR`/`PW` 本机被当成保留位忽略，且硬件即使支持也只保证
-//!   “已处理过的请求”落全局序；**端点在途那一段**只能靠 ④ 那一次端点侧收口。
+//!   “已处理过的请求”落全局序；**端点在途那一段**（已到线、未落内存的 posted write）
+//!   要的是 interconnect-specific fence，本平台拿不出那个证据；
+//! - ④ 只证“端点不再有发起新请求的授权”，**不证**已发出的写已经落下去。若某一日
+//!   要更硬的那一档，得再加所选端点真的 stop/reset **完成**凭据（本 slice 未接）。
 //!
 //! 三次“等”都是有界进展步骤：期限内没等到就返 `Pending`，引用原样保留、下次接着来。
 //! `synchronize` 与 `isolate` 走**同一条**停止链：一次性设备生命周期里没有比它更弱的
@@ -27,7 +30,7 @@ use crate::driver::iommu::{
 use crate::driver::pci::ecam::{self, Ecam};
 use crate::system::supply::retention::{DeviceRange, Failure, Platform};
 
-/// 端点侧排空要的那两个数：ECAM 段起址与这一个功能的号。
+/// 端点侧那一条收口要的两个数：ECAM 段起址与这一个功能的号。
 #[derive(Clone, Copy)]
 pub struct EndpointDrain {
     pub ecam: usize,
@@ -41,7 +44,7 @@ pub struct IommuPlatform {
     base: usize,
     /// 命令/故障/完成记录那三页（本域地址与真实物理页起址都在里面）。
     queue: CommandQueue,
-    /// 端点侧排空那两个数；没有端点访问权时是 `None`（只停 IOMMU 那一侧）。
+    /// 端点侧不再发起那两个数；没有端点访问权时是 `None`（只停 IOMMU 那一侧）。
     endpoint: Option<EndpointDrain>,
     /// 失败现场的诊断只报一次。
     reported: bool,
@@ -126,7 +129,8 @@ impl IommuPlatform {
                 return Err(("fence incomplete", Failure::Pending));
             }
         }
-        // ④ 端点侧排空：清 bus-master 并回读确认——端点不再有发起内存请求的授权。
+        // ④ 端点侧不再发起：清 bus-master 并回读确认——端点不再有发起内存请求的授权。
+        //    （这只证“不再发起新请求”；已发出的写未落内存那一档本平台拿不出凭据，见文件头。）
         if let Some(endpoint) = self.endpoint {
             let scan = Ecam::new(endpoint.ecam, endpoint.requester);
             scan.command_and(ecam::COMMAND_MASTER);

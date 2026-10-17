@@ -313,7 +313,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   }
   # 端点那一景的那张盘：**可再生**（每次按同一花纹重建，落在 `<TRACE_OUT>/` 里，
   # 不进库），且由参数表那边只读挂上。景那一侧按同一花纹核读回的数据，故盘是承重的。
-  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product"] {
+  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault"] {
     let disk = ($trapdir | path join "iommu-dma.img")
     ^python3 -c 'import sys, pathlib; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 4096)' $disk
     ["--endpoint" $disk]
@@ -443,19 +443,30 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     }
   }
 
-  if $code == 0 and $scene == "iommu-product" {
-    # 产品那一侧：System 自己完成保留/发布、放一台跨 Team 服务去做真 DMA、
-    # 服务死后由既有生命周期独立隔离；两行读数都在那一侧逐条核过
-    # （身子见 `system/device/dma.rs`）。
+  if $code == 0 and $scene in ["iommu-product" "iommu-product-fault"] {
+    # 产品那一侧：System 自己完成保留/发布、放一台跨 Team 服务去做真 DMA；
+    # 确认（同一条停止链）之后才释放，释放之后才验“再也推不动”。
+    # 正常景显式 `Close::Normal`；故障景收服务走 `offline(Fault)`，
+    # 并在平台第一次回 `Pending` 时留着保留、不重启，恢复真确认后才释放。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
-    let served = "^system-dma: served used=[1-9]"
-    let isolated = "^system-dma: after the death isolation used_moved=false sentinel_held=true"
-    if ($console | where {|line| $line =~ $served } | is-empty) {
-      print $"本景未成功完成：缺少 ($served)"
-      $code = 1
-    } else if ($console | where {|line| $line =~ $isolated } | is-empty) {
-      print $"本景未成功完成：缺少 ($isolated)"
-      $code = 1
+    mut want = [
+      "^system-dma: served used=[1-9].*written_ok=true sector_ok=true"
+      "^system-dma: confirmed and released"
+      "^system-dma: after the isolation used_moved=false sentinel_held=true"
+    ]
+    if $scene == "iommu-product" {
+      $want = ($want | append "^system-dma: requested Close::Normal")
+    } else {
+      $want = ($want | append [
+        "^system-dma: service doomed"
+        "^system-dma: NOT released .*failure=Some\\(Pending\\)"
+      ])
+    }
+    for $pattern in $want {
+      if ($console | where {|line| $line =~ $pattern } | is-empty) {
+        print $"本景未成功完成：缺少 ($pattern)"
+        $code = 1
+      }
     }
   }
 
