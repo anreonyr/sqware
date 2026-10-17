@@ -1468,3 +1468,44 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
   QEMU 做不出配置写失败）与 `!self.attached`（`dma.rs:282-283`）。它们保留责任，不是被见证的保证。
 - 本轮未重跑 `--scene product` 与 `system-shape` 18 例（不在阶段 0 清单内；读数见上文
   「验收命令与读数」）。`NativePieEffects` 的宿主见证就是 `lease-window` 那 2 例，本轮已跑。
+
+## 架构回正 · 阶段 1：PCI 配置与发起权拆成两次操作
+
+封存对象：本节与提交 `60a0829b`（在阶段 0 的 `4a5cdc3e` 之上）。独立复核 acceptable：无合同偏差，
+重跑七景与五个宿主档，四个定向变异（授权挪到发布前 / 平台不清 bus-master / 把 `configure` 合回
+一格 / 探针不授权）都能被现有场景抓住。
+
+- **旧职责**：`Endpoint::claim` 一次做完「量 BAR ＋ 落位 ＋ 开内存译码 ＋ 开 bus-master」，设备从
+  BAR 落位那一刻起就能发起 DMA；发布之前失败只能靠 `Dma::revoke_authority` 补撤那一笔，
+  `authority_clear` / `master_seen` / `claimed` 都是为那条补丁回滚服务的。
+- **搬到哪里**：写配置只剩 `Endpoint::configure`（量、落位、开内存译码；**函数体里不出现
+  `COMMAND_MASTER`**）；发起权是 `Endpoint::grant_master`（置位＋回读），对偶
+  `Endpoint::revoke_master`（清位＋回读）归平台停机链 ④，`master` 只读。起手链多一格
+  `Start::Master`：`Faults → Commands → Fence → Ddtp → Master → Armed`，授权排在 `DDTP` 回读
+  确认之后、`deliver()` 放开服务之前。`Endpoint` 改持 `Ecam` 坐标（`Ecam::new` 调用点 3 → 1），
+  `EndpointDrain` 收成 `{ endpoint, bar, caps }`；`revoke_authority` / `authority_clear` /
+  `master_seen` / `claimed` 全删，`settle()` 的 `!served` 分支少了那道闸、其余不动；`finish()`
+  连 `endpoint` 一起放掉（复核者指出：图关了它还留着指向那里的地址，只靠一个调用点的守卫挡）。
+- **为何通用**：`COMMAND.Memory Space` 是“该功能应答落在自己 BAR 上的访问”（服务立设备、停机链
+  读 `status`/`queue_enable` 都靠它），`COMMAND.Bus Master` 才是“发起内存事务”。授权排在发布门
+  之后 ⇒ `Holds::publish_begin` 自己要求 `scope.platform.is_some()`，那道门已把“保留已登记 ＋
+  停机权威已装”锁死；排在 `DDTP` 之后 ⇒ 端点走的是已接上的翻译入口；排在 `deliver()` 之前 ⇒
+  服务打铃时通路已经开了。
+- **保留了哪些安全证据**：落位后回读 `system-dma: endpoint configured requester=… bar=… master=0x0`；
+  授权那一步 `system-dma: endpoint bus-master=0x4 granted=true`。`iommu-product` / `-fault` /
+  `-start-after` 钉这两行，`-start-before` **反向**钉“授权那一行不许出现”——把授权挪到发布门
+  之前能真弄红它，现场回到 `master=0x4 … stopped=false`，正是本阶段消掉的那一档。停机侧不变：
+  平台 ④ 清 bus-master 仍回读确认；`stopped()` 的 master 那一位改从端点读，形状仍是 fail-closed。
+  探针在 `DDTP` 确认后授权、收口仍只做 `DDTP` Off，并把“授权还挂着”记成第 19 条判据。
+- **不受证明覆盖**：`Start::Master` 的两个失败臂（端点不在、回读不是 `0x4`；QEMU 不会让配置写
+  失败）、`stopped()` 的 fail-closed 臂、平台 `drain()` 的两条 `Step::Failed`、`configure` 的
+  两条拒答。另有一条**记成边界而不补代码**：多余的一次清理不可辨——全仓撤权点只剩平台那一处，
+  而发布后那一档的 `stopped=true` 是五格合取（`ddtp` / 两台队列 / `master` / `status` /
+  `queue_enable`），顺手清 master 既不能让没跑的平台链看起来跑过、也不会把 `stopped` 变真。
+- **取代上文哪几处**（那几节是 `6d9ecf68` / `a6d626fb` 的封存，不改写）：`1242`、`1301`、`1403`、
+  `1423` 与 `1467` 说的是旧形态——两档起手失败的区分信号现在是 `granted=true` 的有/无（不再是
+  `endpoint bus-master=` 那一行），`authority_clear` 已不存在；那几节引的 `dma.rs` 行号是
+  `a6d626fb` 的锚，本阶段之后已移位。
+- **留给后续**：同一景里 `bar=` 一个名字指四种事实（PCI 地址 / 本域映射基址 / 另一域窗口基址 /
+  BAR 序号），相邻两行数值还不一样——按“一个事实一个名字”该单开一笔改名（`mapped=` / `index=`），
+  它牵动本节与阶段 0 那段的引文，故不夹在本笔里。
