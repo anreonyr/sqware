@@ -46,6 +46,11 @@ pub(crate) struct Reserved {
 }
 
 impl Reserved {
+    /// 当前持有集的大小与字节数（诊断读数用）。
+    pub(crate) fn held(&self) -> (usize, usize) {
+        (self.blocks.len(), self.bytes)
+    }
+
     /// 预热块池的两档元数据尺寸类：每页保留一块，其余当场归还。
     ///
     /// 保留的是那一页的**第一块**：块池一次取自帧池的一页会被连续发放，故同页的块

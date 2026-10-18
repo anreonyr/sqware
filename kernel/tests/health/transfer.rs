@@ -2074,25 +2074,81 @@ fn a_plain_acquire_window_hands_over_one_page() {
 ///
 /// 这一层是**内核内的原生 Flat / Nest / Transfer**（真实来源、真实页表、真实事务），
 /// 不是 guest ecall 那一层；单 Hart、单来源、单关系。
+///
+/// **两遍同一 case**：第一遍是暖机，只跑全部功能断言（大叶、拆叶、邻居、目标、收尾），
+/// 不带资源净额；第二遍才取基线、再完整跑一遍并核严格净额。于是非 HEATED 参与路径的
+/// 首次 spare 结构在第一遍里就真实稳定，而不是把「冷缓存恰为 2」写进断言。
 #[cfg(feature = "mega-leaf")]
 pub fn mega_leaf() {
     use core::sync::atomic::Ordering;
 
     use crate::core::memory::nest::table::TABLE_LIVE;
 
-    // 热身：首次建拆一个空间会触发一次性的惰性分配（核身份表与池的首次取自帧池），
-    // 那不是本用例的账；先走一遍，再取基线。
+    // 一次性 init 留在窗口外：首次建拆一个空间会触发一次性的惰性分配（核身份表与池的
+    // 首次取自帧池），那不是本用例的账。
     drop(
         SpaceBuilder::user()
             .build()
             .expect("mega-leaf: warm-up space"),
     );
 
+    // 暖机：完整跑一遍（含全部功能断言）。它自己的 fixture 所有权在返回前全部释放。
+    run_case("warm");
+
     let frames_before = statistics::frame_occupied() - statistics::block_occupied();
     let kinds_before = statistics::kinds();
     let blocks_before = statistics::block_occupied();
     let tables_before = TABLE_LIVE.load(Ordering::Relaxed);
 
+    // 第二遍：同一 case；fixture 的塑形料、来源、关系与目标全部在测量窗口内。
+    run_case("measured");
+
+    let frames_after = statistics::frame_occupied() - statistics::block_occupied();
+    crate::expect!(
+        frames_after == frames_before,
+        "mega-leaf: frame occupancy {frames_before} → {frames_after} (net must be 0)"
+    );
+    let tables_after = TABLE_LIVE.load(Ordering::Relaxed);
+    crate::expect!(
+        tables_after == tables_before,
+        "mega-leaf: live tables {tables_before} → {tables_after} (net must be 0)"
+    );
+    // 整页池只允许留下「每档一张 spare 空页」：它的增量同时就是 `Prime` 类目的增量，上界从
+    // 预热的尺寸类数派生（同一批页只能归到那一档），不是新阈值；缓存合法减少（负增量）也
+    // 不因此假红——两边都用**真实有符号差**表达。其余类目（含 `Plain`）必须严格归零。
+    let kinds_after = statistics::kinds();
+    let prime = kinds_after.get(Kind::Prime) as isize - kinds_before.get(Kind::Prime) as isize;
+    let pool = statistics::block_occupied() as isize - blocks_before as isize;
+    crate::expect!(
+        prime == pool,
+        "mega-leaf: Prime {prime} must equal the whole-page pool delta {pool}"
+    );
+    crate::expect!(
+        prime <= super::frame_layout::HEATED_CLASSES as isize,
+        "mega-leaf: at most one spare page per heated class ({prime} > {})",
+        super::frame_layout::HEATED_CLASSES
+    );
+    crate::putln!(
+        "[health] mega-leaf (measured net): Prime {prime} == pool {pool}, bound <= {}",
+        super::frame_layout::HEATED_CLASSES
+    );
+    for (kind, count) in kinds_after.nonzero() {
+        if kind == Kind::Prime {
+            continue;
+        }
+        crate::expect!(
+            count == kinds_before.get(kind),
+            "mega-leaf: kind {}: {} → {count} (net must be 0)",
+            kind.name(),
+            kinds_before.get(kind)
+        );
+    }
+}
+
+/// 一遍完整用例：塑形 → 普通 `acquire` 整窗物化 → 挂 2 MiB 对齐窗 → 写内容 → 移交中段
+/// 4 KiB → 邻页/目标/拆叶断言 → 收尾。全部 fixture 所有权在本函数返回前释放。
+#[cfg(feature = "mega-leaf")]
+fn run_case(phase: &str) {
     {
         const WINDOW: usize = 1024;
         const HALF: usize = 512;
@@ -2140,10 +2196,12 @@ pub fn mega_leaf() {
                 && (i..i + HALF).all(|k| addresses[k] == addresses[i] + (k - i) * PAGE_SIZE)
         });
         crate::putln!(
-            "[health] mega-leaf: pool base {:#x}, {WINDOW} pages from {:#x} (contiguous {contiguous}), \
-             {run_frames} frames for the run, aligned 2 MiB sub-window at {first:?} = {:#x}",
+            "[health] mega-leaf ({phase}): pool base {:#x}, {WINDOW} pages from {:#x} (contiguous {contiguous}), \
+             {run_frames} frames for the run, shaping held {} blocks / {} B, aligned 2 MiB sub-window at {first:?} = {:#x}",
             crate::core::memory::flat::allocator::bump::frontier().next_multiple_of(PAGE_SIZE),
             addresses[0],
+            reserved.held().0,
+            reserved.held().1,
             first.map(|i| addresses[i]).unwrap_or(0)
         );
         crate::expect!(
@@ -2304,42 +2362,6 @@ pub fn mega_leaf() {
         drop(whole);
         drop(flat);
         drop(reserved);
-    }
-
-    let frames_after = statistics::frame_occupied() - statistics::block_occupied();
-    crate::expect!(
-        frames_after == frames_before,
-        "mega-leaf: frame occupancy {frames_before} → {frames_after} (net must be 0)"
-    );
-    let tables_after = TABLE_LIVE.load(Ordering::Relaxed);
-    crate::expect!(
-        tables_after == tables_before,
-        "mega-leaf: live tables {tables_before} → {tables_after} (net must be 0)"
-    );
-    // 整页池只允许留下「每档一张 spare 空页」：它同时是 `Prime` 类目的增量，上界从预热的
-    // 尺寸类数派生（同一批页只能归到那一档），不是新阈值。其余类目（含 `Plain`）必须归零。
-    let kinds_after = statistics::kinds();
-    let prime = kinds_after.get(Kind::Prime) as isize - kinds_before.get(Kind::Prime) as isize;
-    let pool = statistics::block_occupied() as isize - blocks_before as isize;
-    crate::expect!(
-        prime == pool,
-        "mega-leaf: Prime {prime} must equal the whole-page pool delta {pool}"
-    );
-    crate::expect!(
-        (0..=super::frame_layout::HEATED_CLASSES as isize).contains(&prime),
-        "mega-leaf: at most one spare page per heated class ({prime} > {})",
-        super::frame_layout::HEATED_CLASSES
-    );
-    for (kind, count) in kinds_after.nonzero() {
-        if kind == Kind::Prime {
-            continue;
-        }
-        crate::expect!(
-            count == kinds_before.get(kind),
-            "mega-leaf: kind {}: {} → {count} (net must be 0)",
-            kind.name(),
-            kinds_before.get(kind)
-        );
     }
 }
 

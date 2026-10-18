@@ -1907,24 +1907,29 @@ python3 -B -m unittest discover -s programs/tests/memory-transfer -p 'test_*.py'
 从映射逐页写内容；再 `Transfer` 移走中段那一格 4 KiB。
 
 判据：源那一格成墓碑、PTE 消失；目标拿到同一 `Arc<Frame>`／同一 PA／同一内容；邻页与窗两端
-的承载、内容、权限不动；**拆叶实际发生**（撤页前是 2 MiB 叶，撤页后邻页与两端都是 4 KiB 叶）；
-清理后帧净额、`TABLE_LIVE` 与逐类账（除 `Prime` 一格，口径同既有用例）都回到基线。净额看
-不见的那一格是**块池每档留一张 spare 空页**（本用例触及 class 6/7 各一张，`BlockInner::push`
-的 `spare[power]` 设计，≤9 页有界）；drop 时其余页真回了帧池（class 6 的 31 张）。
+的承载、内容、权限不动；**拆叶实际发生**（撤页前是 2 MiB 叶，撤页后邻页与两端都是 4 KiB 叶）。
+
+资源账走**两遍同一 case**：第一遍是暖机（同一 helper，全部功能断言照跑、不带资源净额），
+第二遍才取基线、再完整跑一遍并核严格净额——于是非 HEATED 路径的首次 spare 结构在第一遍
+就真实稳定，而不是把「冷缓存恰为 2」写进断言；固定两遍，不循环直到绿。第二遍的 fixture
+所有权（塑形料、来源、空间、映射、目标）全在测量窗口内。净额：帧差 0、`TABLE_LIVE` 差 0、
+除 `Prime` 外每个类目（含 `Plain`）严格差 0；`Prime` 增量必须**恰等于**整页池增量
+（`block_occupied`），且 `≤ HEATED.len()`（本用例 = 2，每档最多一张 spare 空页）。两边都用
+**真实有符号差**表达：缓存合法减少的负增量不因此假红。
 
 这一层是**内核内原生 Flat / Nest / Transfer**（真实来源、真实页表、真实事务），**不是**
 guest ecall 那一层；单来源、单关系。用例在**引导 Hart 上串行执行**（其他 hart 已启动），
 run 帧增量／PA 连续是「这一窗没有额外帧分配」的**实测证据**，不声称其他 hart 在调度层面
 已验证静默。
 
-#### 三、本轮实际读数（本封存构建，页 = 4 KiB）
+#### 三、本轮实际读数（本封存构建，页 = 4 KiB；取**第二遍（被测量遍）**）
 
-用例自己打印的一行（`pool base` 由既有 `bump::frontier()` 取页对齐得出，与 `FrameInner::base`
-同一算式）：
+用例自己打印的两行：
 
 ```
-[health] mega-leaf: pool base 0x806f9000, 1024 pages from 0x8e6f9000 (contiguous true),
-1024 frames for the run, aligned 2 MiB sub-window at Some(263) = 0x8e800000
+[health] mega-leaf (measured): pool base 0x806f9000, 1024 pages from 0x8e6f9000 (contiguous true),
+1024 frames for the run, shaping held 48 blocks / 6744896 B, aligned 2 MiB sub-window at Some(263) = 0x8e800000
+[health] mega-leaf (measured net): Prime 0 == pool 0, bound <= 2
 ```
 
 | 量 | 值 |
@@ -1935,7 +1940,8 @@ run 帧增量／PA 连续是「这一窗没有额外帧分配」的**实测证�
 | 子窗页偏移 | 263 页 = `0x107000` = 1 077 248 B（= `2 MiB − base mod 2 MiB`；随 base 微移，恒 ∈ `[0,512)`） |
 | 整窗连续性 | 1024/1024 页连续 |
 | 物化窗的帧增量 | **1024**（恰为数据页；元数据未取帧） |
-| 塑形预算 | 上限 16 MiB／1024 块；实测抽干 9 块、约 6.75 MiB（不含原有的块池缓存页） |
+| 塑形预算 | 上限 16 MiB／1024 块；**第二遍实测**持有 48 块 / 6 744 896 B（≈6.43 MiB，不含原有的块池缓存页） |
+| 净额（第二遍） | 帧差 0、`TABLE_LIVE` 差 0、其余类目（含 `Plain`）差 0；`Prime` Δ 0 == 整页池 Δ 0（≤ 2） |
 | 预热余量 | class 6 取 N = 2048 块（64 B/块）⇒ 空闲 = N − **真实页组数**（本构建实测 2015；组数可 > 32，池里本来可能有半空页）——真正的保证是 `run_frames == 1024` 那条断言（run 期间没有 prime） |
 
 | 命令（逐字） | 结果 |
@@ -1950,6 +1956,7 @@ run 帧增量／PA 连续是「这一窗没有额外帧分配」的**实测证�
 |---|---|
 | fixture 腿：`shaped_source` 不抽干小块 | 红：`mega-leaf: the materialized window is one relative-contiguous run`（整窗不再连续、对齐子窗 `None`） |
 | 生产腿：`unpublish_page` 不撕那一格 PTE | 红：`mega-leaf: only the moved page gives up its translation` |
+| 强 cache mutant：`Reserved::drop` 只还裸帧、漏块池页 | 红：`mega-leaf: kind plain: 354 → 394 (net must be 0)`（漏的元数据块不回账，严格类目账当场抓住） |
 
 #### 五、未覆盖
 
