@@ -2,7 +2,9 @@
 
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, Ordering};
-use env::{ControlCall, DebugCall, EnvCall, MemoryCall, ProgramKind, RoomCall, UnitCall, VirtAddr};
+use env::{
+    ControlCall, DebugCall, EnvCall, MemoryCall, PieCall, ProgramKind, RoomCall, UnitCall, VirtAddr,
+};
 
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::address::{PageCount, PageIndex, PageOffset, PhysAddr, VirtAddr as KVirt};
@@ -4786,19 +4788,43 @@ pub fn cross_task_interleavings() {
     crate::core::work::room::scheduler::init().expect("scheduler init");
     // 热身：首次建拆一个 Team 会触发一次性的惰性分配；先走一遍再取基线。
     retire(&Caller::new(false));
+    // 用例要用的那几台真 Task/Team **在基线之前**建齐：夹具给每台 Caller 的账
+    // 不混进被测窗口，窗口里只量本景自己的动作（来源、Pole、关系、页槽与承载）。
+    let a_lord = Caller::new(false);
+    let a_peer = Caller::new(false);
+    let b_lord = Caller::new(false);
+    let b_peer = Caller::new(false);
+    let c_lord = Caller::new(false);
+    let c_peer = Caller::new(false);
 
     let frames_before = statistics::frame_occupied() - statistics::block_occupied();
     let kinds_before = statistics::kinds();
-    let cases: [(&str, fn()); 4] = [
-        ("foreign space page", a_manager_takes_the_foreign_page_out),
-        ("holder leaves first", a_holder_leaving_gives_up_the_page),
-        ("revoked branch", a_revoked_branch_stops_being_an_end),
-        ("failed sync", a_failed_sync_stays_in_its_own_nest),
+    let cases: [(&str, fn(&Caller, &Caller), (&Caller, &Caller)); 4] = [
+        (
+            "foreign space page",
+            a_manager_takes_the_foreign_page_out,
+            (&a_lord, &a_peer),
+        ),
+        (
+            "holder leaves first",
+            a_holder_leaving_gives_up_the_page,
+            (&b_lord, &b_peer),
+        ),
+        (
+            "revoked branch",
+            a_revoked_branch_stops_being_an_end,
+            (&a_lord, &a_peer),
+        ),
+        (
+            "failed sync",
+            a_failed_sync_stays_in_its_own_nest,
+            (&c_lord, &c_peer),
+        ),
     ];
     let mut off = Vec::new();
-    for (name, run) in cases {
+    for (name, run, (lord, peer)) in cases {
         let base = statistics::frame_occupied() - statistics::block_occupied();
-        run();
+        run(lord, peer);
         let now = statistics::frame_occupied() - statistics::block_occupied();
         if now != base {
             off.push((name, base, now));
@@ -4811,14 +4837,15 @@ pub fn cross_task_interleavings() {
         frames_after == frames_before,
         "cross-task: frame occupancy {frames_before} → {frames_after} (net must be 0)"
     );
-    // 逐类账：除三格之外都必须归零（页表、栈、帧类目都算在内）。
-    // `Prime` 是块池取自帧池的整页（它们的账在 `block_occupied` 上）；
-    // `Task` 与 `Plain` 是夹具自己的残留——每个 `Caller` 建起的那台真 Task/Team
-    // 由夹具保活（既有 `transfer_relations` 等 Caller 用例同款，实测每台＋1 个 Task
-    // 与少量小块），不是本景资源的账：本景自己的账是上面那句帧净额与各用例里的
-    // 页槽、承载与图读数。
-    for (kind, count) in statistics::kinds().nonzero() {
-        if matches!(kind, Kind::Prime | Kind::Task | Kind::Plain) {
+    // 逐类账：**除两格之外**都必须归零——页表（`Table`）、任务/团队/空间、栈、各类帧
+    // 都在内。那两格是本轮实测到的、**未能归属**的残留，不当成结论也不拿宽松条件吞掉：
+    // `Prime` 每用例 ＋1（整页被块池建下；它的账同时进 `block_occupied`，故上面那句
+    // 帧净额看不见它），`Plain` 每用例约 ＋4.5（小块仍处于已取状态）。
+    // 本轮的临时探针证实这些对象在单独一轮里确实会释放（Task/Team/Space 的强引用归零），
+    // 故不把它们说成“夹具保活”或“不可释放的全局缓存”：归属与上界仍是待核项。
+    let kinds_after = statistics::kinds();
+    for (kind, count) in kinds_after.nonzero() {
+        if matches!(kind, Kind::Prime | Kind::Plain) {
             continue;
         }
         crate::expect!(
@@ -4828,10 +4855,46 @@ pub fn cross_task_interleavings() {
             kinds_before.get(kind)
         );
     }
+
+    // 夹具这边在**被测窗口之外**收尾：按真实退出终结每台，再让它们随作用域落下。
+    for caller in [&a_peer, &b_peer, &c_peer, &a_lord, &b_lord, &c_lord] {
+        retire(caller);
+    }
+}
+
+/// 交还一份引用（只摘本表那一格，不 Detach、不等别人）。
+fn release(caller: &Caller, handle: usize) {
+    assert_eq!(
+        caller.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(handle)
+        })),
+        0
+    );
+}
+
+/// 每个用例末尾的同一个结清点：先交还本用例取的引用，再索引/发布记录/PTE 自检，
+/// 最后让两个 Nest 把待结的失效结清。
+///
+/// 结清是账的一部分：撤页与关图把退役的承载交给那一个 Nest，只有它真的确认过
+/// （或者它的空间一起关掉）那几帧才会回来；引用交还则是调用方自己的责任。
+fn settle(lord: &Caller, peer: &Caller) {
+    lord.team.space.nest.audit();
+    peer.team.space.nest.audit();
+    lord.team
+        .space
+        .nest
+        .retry_invalidation()
+        .expect("the manager's nest settles");
+    peer.team
+        .space
+        .nest
+        .retry_invalidation()
+        .expect("the holder's nest settles");
 }
 
 /// 一对：`lord` 是这段来源的管理者，`peer` 是另一个 Team（另一个 Space）里持子分支的任务。
 struct AcrossSpaces {
+    root: env::PieToken,
     child: env::PieToken,
     meta: Arc<pole::PoleMeta>,
     lord_handle: usize,
@@ -4869,6 +4932,23 @@ impl AcrossSpaces {
         let handle = acquire_fresh(lord, 1);
         assert!(handle > 0, "a private seat: {handle}");
         handle as usize
+    }
+
+    /// 两端各自那份引用交还，再把那根根 Grant 交还（子树一起关）：
+    /// 引用表与 Pie 都是调用方自己的责任，撤与关的两条路都在真实入口上走。
+    fn close(&self, lord: &Caller, peer: &Caller) {
+        release(lord, self.lord_handle);
+        release(peer, self.peer_handle);
+        assert_eq!(
+            with_running(lord.task.clone(), || {
+                lord.call(EnvCall::Pie(PieCall::Release {
+                    token: self.root,
+                    mode: env::ReleaseMode::Revoke,
+                }))
+            }),
+            0,
+            "the manager hands its root grant back"
+        );
     }
 }
 
@@ -4928,6 +5008,7 @@ fn across_spaces(lord: &Caller, peer: &Caller, pages: usize) -> AcrossSpaces {
     }));
     assert!(peer_handle > 0, "the holder's reference: {peer_handle}");
     AcrossSpaces {
+        root,
         child,
         meta,
         lord_handle: lord_handle as usize,
@@ -4954,11 +5035,9 @@ fn retire(caller: &Caller) {
 /// manager 把源页交出去：两个空间里那一页的 PTE 一起让出，而持窗者的关闭责任还在。
 ///
 /// 清单里的那两条关系都要到消费者手里：调用者自己那条与**别人空间**里那条。
-fn a_manager_takes_the_foreign_page_out() {
+fn a_manager_takes_the_foreign_page_out(lord: &Caller, peer: &Caller) {
     use env::{MemoryFail, PieCall};
-    let lord = Caller::new(false);
-    let peer = Caller::new(false);
-    let pair = across_spaces(&lord, &peer, 2);
+    let pair = across_spaces(lord, peer, 2);
     let window = pair.lord_window(&lord);
     let pa = slot_at(&window, 0);
     super::transfer::fill_pattern(PhysAddr::from_raw(pa));
@@ -5053,17 +5132,14 @@ fn a_manager_takes_the_foreign_page_out() {
         MemoryFail::Denied.code(),
         "a closed branch is no longer an end"
     );
-    lord.team.space.nest.audit();
-    peer.team.space.nest.audit();
-    retire(&peer);
-    retire(&lord);
+    pair.close(lord, peer);
+    release(lord, seat);
+    settle(lord, peer);
 }
 
 /// 持窗者先**退出**：它名下的图由退出路径收掉，manager 之后照旧搬得动那一页。
-fn a_holder_leaving_gives_up_the_page() {
-    let lord = Caller::new(false);
-    let peer = Caller::new(false);
-    let pair = across_spaces(&lord, &peer, 2);
+fn a_holder_leaving_gives_up_the_page(lord: &Caller, peer: &Caller) {
+    let pair = across_spaces(lord, peer, 2);
     let window = pair.lord_window(&lord);
     let pa = slot_at(&window, 0);
     super::transfer::fill_pattern(PhysAddr::from_raw(pa));
@@ -5105,18 +5181,28 @@ fn a_holder_leaving_gives_up_the_page() {
             .translate(KVirt::wrap(pair.lord_at))
             .is_none()
     );
+    assert_eq!(slots_of(&window_of(&lord, seat)), alloc::vec![(0, pa)]);
     assert!(tombstone(&window, 0));
-    lord.team.space.nest.audit();
-    peer.team.space.nest.audit();
-    retire(&lord);
+    // 退出也把它的引用表一起清了：那边没有可交还的句柄，只剩这根根 Grant。
+    assert!(peer.task.pend.references.get(pair.peer_handle).is_none());
+    release(lord, pair.lord_handle);
+    assert_eq!(
+        with_running(lord.task.clone(), || {
+            lord.call(EnvCall::Pie(PieCall::Release {
+                token: pair.root,
+                mode: env::ReleaseMode::Revoke,
+            }))
+        }),
+        0
+    );
+    release(lord, seat);
+    settle(lord, peer);
 }
 
 /// lord 撤掉那一枚：持窗者空间里那段关系一起消失，别的分支与承载都不动。
-fn a_revoked_branch_stops_being_an_end() {
+fn a_revoked_branch_stops_being_an_end(lord: &Caller, peer: &Caller) {
     use env::{MemoryFail, PieCall};
-    let lord = Caller::new(false);
-    let peer = Caller::new(false);
-    let pair = across_spaces(&lord, &peer, 2);
+    let pair = across_spaces(lord, peer, 2);
     let window = pair.lord_window(&lord);
     let pa = slot_at(&window, 0);
     let second = slot_at(&window, 1);
@@ -5162,10 +5248,9 @@ fn a_revoked_branch_stops_being_an_end() {
     assert_eq!(lord.call(transfer_call(pair.lord_handle, 0, seat, 0)), 0);
     assert_eq!(slots_of(&window_of(&lord, seat)), alloc::vec![(0, pa)]);
     assert_eq!(slots_of(&window), alloc::vec![(1, second)]);
-    lord.team.space.nest.audit();
-    peer.team.space.nest.audit();
-    retire(&peer);
-    retire(&lord);
+    pair.close(lord, peer);
+    release(lord, seat);
+    settle(lord, peer);
 }
 
 /// 撤页确认在 manager 自己那个 Nest 上失败：两处都已经让出那一页（确认正是在撕下
@@ -5174,12 +5259,10 @@ fn a_revoked_branch_stops_being_an_end() {
 /// “确认失败发生在撕下任何 PTE 之前”那一读法（Nest 本来就脏）在核心层由
 /// `a_failed_unpublish_prepare_keeps_the_mapping` 覆盖；这里只声称这一读法。
 /// 处理次序就是关联链的次序。
-fn a_failed_sync_stays_in_its_own_nest() {
+fn a_failed_sync_stays_in_its_own_nest(lord: &Caller, peer: &Caller) {
     use crate::core::memory::nest::identity::fail_next_shootdown;
     use env::MemoryFail;
-    let lord = Caller::new(false);
-    let peer = Caller::new(false);
-    let pair = across_spaces(&lord, &peer, 2);
+    let pair = across_spaces(lord, peer, 2);
     let window = pair.lord_window(&lord);
     let pa = slot_at(&window, 0);
     let second = slot_at(&window, 1);
@@ -5247,8 +5330,7 @@ fn a_failed_sync_stays_in_its_own_nest() {
     );
     assert!(tombstone(&window, 0));
     assert_eq!(slots_of(&window), alloc::vec![(1, second)]);
-    lord.team.space.nest.audit();
-    peer.team.space.nest.audit();
-    retire(&peer);
-    retire(&lord);
+    pair.close(lord, peer);
+    release(lord, seat);
+    settle(lord, peer);
 }

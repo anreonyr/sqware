@@ -1919,13 +1919,14 @@ fn can_materialize_ends(_source: &FlatRange, _page: PageIndex) {
 
 /// 普通 `Acquire` 一整段 2 MiB 对齐窗口：移交只动中段那一格 4 KiB。
 ///
-/// **这不是“大叶形成之后的完整移交”那一条判据。** 物理分配只保证“页数 ＋ 页对齐”
-/// （`Flat` 逐帧取自 buddy，且与块池的整页取自交织）：本轮在同一台健康面上实测 512 页
-/// 按序物化的布局，PA 首址不是 2 MiB 对齐、相邻处有断点，`leaf_span` 也只报 4 KiB
-/// —— 大叶前提在当前分配能力下没有合法构造，那一条仍**未验证**（见
-/// docs/memory-transfer-traverse.md 该节记的实测读数与命令）。
+/// **这不是“大叶形成之后的完整移交”那一条判据**：物理分配只保证“页数 ＋ 页对齐”
+/// （`Flat` 逐帧取自 buddy，且与块池的整页取自交织），本轮实测这一窗的 PA 首址不是
+/// 2 MiB 对齐、相邻处有断点，`leaf_span` 两端都只报 4 KiB ⇒ 大叶前提在当前分配能力下
+/// 没有合法构造，那一条仍**未验证**（实测读数见 docs/memory-transfer-traverse.md 该节）。
+/// 本例**不把 4 KiB 钉成合同**：叶形是分配布局的事，连续对齐的分配会让这一窗变成
+/// 2 MiB 叶——两种都由本例照过。
 ///
-/// 本例因此只声称它自己的事：起点是普通 `acquire` 的整段来源（不手工写 PTE、
+/// 本例声称的只是自己的事：起点是普通 `acquire` 的整段来源（不手工写 PTE、
 /// 不借 `BorrowedRegion`、不直调表原语、不为它扩分配 API），在 2 MiB 对齐的 VA
 /// 窗口上按页物化、从映射写内容，然后把中段那一格 4 KiB 交出去：只那一格让出翻译，
 /// 邻页的承载、内容与翻译都不动。
@@ -1970,21 +1971,24 @@ fn a_plain_acquire_window_hands_over_one_page() {
         .build()
         .expect("transfer: window space");
     let view = map_slice(&space, VirtAddr::wrap(BASE), whole.clone(), rw);
-    // 本轮实测的叶形：这一窗只落得下 4 KiB 叶（$MEGA 大叶那一条判据仍未验证）；
-    // 物理分配一旦给出连续且对齐的区段，这一句就该换成真大叶的移交用例。
-    crate::expect!(
-        space.nest.leaf_span(VirtAddr::wrap(BASE)) == Some(PAGE_SIZE)
-            && space
-                .nest
-                .leaf_span(VirtAddr::wrap(BASE + MEGA - PAGE_SIZE))
-                == Some(PAGE_SIZE),
-        "transfer: this layout only supports 4 KiB leaves (no large-leaf case yet)"
-    );
-    // 整窗内容从**映射**写下去：每一页头一个字节就是它的页号。
+    // 整窗内容从**映射**写下去、再逐页读回来：每一页头一个字节就是它的页号，
+    // 且每一页都翻到自己的承载上。叶形怎么落不在这里声称：当前布局只支持 4 KiB 叶，
+    // 物理分配给出连续且对齐区段时会是 2 MiB 叶，两者都合法。
     for index in 0..window {
+        let at = VirtAddr::wrap(BASE + index * PAGE_SIZE);
         crate::expect!(
-            space.copy_out(&[index as u8], VirtAddr::wrap(BASE + index * PAGE_SIZE)),
+            space.copy_out(&[index as u8], at),
             "transfer: write page {index} through the mapping"
+        );
+        let mut byte = [0u8; 1];
+        crate::expect!(
+            space.copy_in(&mut byte, at) && byte[0] == index as u8,
+            "transfer: page {index} reads back through the mapping"
+        );
+        crate::expect!(
+            space.nest.translate(at).expect("transfer: page").0
+                == PhysAddr::from_raw(addresses[index]),
+            "transfer: page {index} translates to its own carrier"
         );
     }
 
@@ -2028,8 +2032,7 @@ fn a_plain_acquire_window_hands_over_one_page() {
         ),
         "transfer: the moved seat becomes a tombstone"
     );
-    // 只有那一格让出翻译；邻页的承载、内容与翻译都不动（大叶要先拆开才取得出这一格，
-    // 故邻页在这一手之后同样是 4 KiB 叶）。
+    // 只有那一格让出翻译；邻页的承载、内容与翻译都不动。
     crate::expect!(
         space
             .nest
@@ -2037,6 +2040,8 @@ fn a_plain_acquire_window_hands_over_one_page() {
             .is_none(),
         "transfer: only the moved page gives up its translation"
     );
+    // 跃下来的这一格没有 PTE 了，所以**没有哪一片叶能跨过它**：大叶必须先把这一格拆出来，
+    // 拆开后邻页与窗两端就只能是 4 KiB 叶。这条与分配是否连续无关。
     for neighbour in [middle - 1, middle + 1] {
         let at = VirtAddr::wrap(BASE + neighbour * PAGE_SIZE);
         let mut byte = [0u8; 1];
@@ -2048,7 +2053,7 @@ fn a_plain_acquire_window_hands_over_one_page() {
             space.nest.translate(at).expect("transfer: neighbour").0
                 == PhysAddr::from_raw(addresses[neighbour])
                 && space.nest.leaf_span(at) == Some(PAGE_SIZE),
-            "transfer: neighbour {neighbour} keeps its carrier as a 4 KiB leaf"
+            "transfer: neighbour {neighbour} keeps its carrier, no leaf spans the hole"
         );
     }
     crate::expect!(
@@ -2057,7 +2062,7 @@ fn a_plain_acquire_window_hands_over_one_page() {
                 .nest
                 .leaf_span(VirtAddr::wrap(BASE + MEGA - PAGE_SIZE))
                 == Some(PAGE_SIZE),
-        "transfer: the window keeps its leaf shape once one page is taken out"
+        "transfer: no leaf spans the hole, so both window ends are 4 KiB leaves"
     );
     space.nest.audit();
     drop(view);
