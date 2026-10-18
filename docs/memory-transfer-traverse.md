@@ -1424,10 +1424,13 @@ Fresh DA 与宿主套件重跑、设备/DMA 与真实 Platform 接线仍不在�
 #### 一、b2 归因修正（只动夹具与记录，不动断言口径）
 
 - **夹具漏收尸**：`cross_task_interleavings` 的 `retire` 原先只 `doom` 不 `reap`，
-  而名册里那一格的死 `Task` 弱引用会钉住一份 `Arc` 的内脏（实测每台 512 B），
-  于是逐类账里的 `Task` 从 0 涨到 7（1 台热身 ＋ 6 台 Caller）。现按生产 `reap`
-  同一条收尾：`retire` 末尾 `team.prune_tasks()` ＋ `roster::prune_dead()`。
-  修后 `Task` 归零，不再拿“夹具保活”解释。
+  而名册里那一格的死 `Task` 弱引用会钉住一份 `Arc` 的内脏（实测每台 512 B）。现按
+  生产 `reap` 同一条收尾：`retire` 末尾 `team.prune_tasks()` ＋ `roster::prune_dead()`。
+  它管的是**断言之后**的那笔账：本夹具把 6 台 Caller 建在基线之前、终结在断言之后，
+  故窗口里它们还活着（那一格本来就是 0）——独立复审去掉这两句后本用例**仍 1 passed**，
+  涨的只是**收尾之后**的逐类账（6 台 ＋ 1 台热身共 7 条死 weak ⇒ 7×512 B 的 `Arc`
+  内脏被钉住，`prune_dead` 后归 0）。真有哪一形状在**窗口内**结束一台任务时
+  （前一轮 59 那一形），它才是窗口里那一格的前提。
 - **`Prime`/`Plain` 不是线性增长**：复审用同一对 Caller、同一形状连跑 6 轮，
   第 0 轮 ＋2/＋7、第 1..5 轮全为 0——那是一次性的池子惰性，不是每用例的泄漏。
   故基线改到**每对 Caller 先用一个不终结任何任务的形状热身一轮**之后
@@ -1611,4 +1614,36 @@ rustfmt --edition 2024 --check --config skip_children=true <本阶段改到的�
 git diff --check a6d626fb HEAD        # 已提交差异，不只工作树/index
 ```
 
-本阶段**未**获得独立复审、也未获推送或共享分支落地许可。
+#### 五、独立复审与那一条精度修正
+
+同组独立 reviewer 在 `7be9eebd` 上**只读验收通过**（在 /tmp 的该 pin 副本上实跑，
+未动本树、未 merge、未 push）。它重跑并核过的：
+
+- **拆分无漂移**：`Shared` 的结构＋impl 从 `source.rs` 移到 `shared.rs` 逐行相同（只多
+  新文件自己的 `use` 头与 `use super::source::{PEER_SUBSET, READ_WRITE}`），
+  `manager.rs` 只改一处导入，`mod` 只加一行。
+- **native**：`-- transfer_across_tasks_and_spaces` 1 passed / 77 filtered、
+  `-- transfer` 8 passed、`-- memory_transfer_slots` 1 passed、健康面 77 ＋ 哨兵 1；
+  `a6d626fb..7be9eebd` 两个测试文件断言计数单调增（601→660、178→191），删行只有 4 处
+  且都不是断言；`git diff --check` rc=0。
+- **真跨 Hart 那一景**：护栏档 1 passed、退出 0，summary 同上；另核实现事实：hook 确在
+  `Transaction::claim` 之后、`withdraw_pressings` 之前，claim 的两端 Flat 锁返回前已放，
+  `caller.pend` 由入口持到 `execute` 结束、`wake` 在 `drop(serial)` 之后；夹具不取
+  pend/flat 锁；`queued(WakeKey::View{foreign asid, foreign view})` 观察的正是**别人
+  空间**那条关系，而 host 那 18 例用导出独立复核 `wait < wake < 物化重试`——夹具不是
+  唯一证人。`QEMU_SMP=2` 1 passed；`QEMU_SMP=1` 红在 `hart.rs` 的引导自检。
+- **两个高价值负例都实跑过**：去掉生产 `wake(outcome.affected)` ⇒ 景红（`kernel=armed`
+  但 `the peer never read the moved page`）；去掉夹具 `START=RELEASE` ⇒ `kernel=timeout`。
+- **host**：`line()` 那一条只是把“每轮 1s 就失败”改成“接着等到总时限”，并**新增**
+  `console.closed` 当场失败（EOF 更严不是更松）；`test_race.py` 18 OK（3 接受 ＋ 15 拒绝）、
+  同目录 discover 68 OK。
+- 未重跑 D1/TLB/Fresh/accept/product/system-fault（本轮未动其输入）。
+
+它指出一条**精度问题**（非阻塞）并已按它修正：本记录原先把 reap 尾巴写成“少了它
+逐类账里的 `Task` 就回不到基线”。实测（去掉那两句）本用例**仍 1 passed**——现形把
+6 台 Caller 建在基线之前、终结在断言之后，窗口里它们还活着，那一格本来就是 0；尾巴
+的真实作用是消掉**断言之后**的名册残留（6 台 ＋ 1 台热身共 7 条死 weak ⇒ 7×512 B 的
+`Arc` 内脏；`prune_dead` 后归 0）。文档与 `retire` 的注释都已限定到“窗口内结束任务
+的那种形状才需要它”。
+
+仍未获得推送或共享分支落地许可。
