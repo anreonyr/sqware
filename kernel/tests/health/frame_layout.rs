@@ -35,6 +35,8 @@ const MAX_BLOCKS: usize = 1024;
 /// 预热的两档元数据尺寸类与每档块数：`Arc<Frame>` 控制块要够一次 1024 页物化，
 /// 来源驻留表项只要够几次登记。
 const HEATED: [(usize, usize); 2] = [(6, 2048), (7, 64)];
+/// 预热的**尺寸类数**：净额断言用它给出「每档一张 spare 空页」的上界，从 [`HEATED`] 派生。
+pub(crate) const HEATED_CLASSES: usize = HEATED.len();
 
 /// 布局塑形的持有集；析构时把每一块按原 layout 归还。
 #[derive(Default)]
@@ -59,8 +61,10 @@ impl Reserved {
                 .try_reserve_exact(count)
                 .map_err(|_| "reserve the metadata record")?;
             for _ in 0..count {
+                // `alloc` 失败由分配器 shim 直接 abort（`GlobalAllocator::allocate` 返回
+                // `Result`，没有 null 表示），这里拿到的必然非空。
                 let block = unsafe { alloc(layout) };
-                addresses.push(NonNull::new(block).ok_or("allocate a metadata block")?);
+                addresses.push(NonNull::new(block).expect("frame alloc aborts on failure"));
             }
             let mut page = usize::MAX;
             for block in addresses {

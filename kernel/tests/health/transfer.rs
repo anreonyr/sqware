@@ -1919,17 +1919,11 @@ fn can_materialize_ends(_source: &FlatRange, _page: PageIndex) {
 
 /// 普通 `Acquire` 一整段 2 MiB 对齐窗口：移交只动中段那一格 4 KiB。
 ///
-/// **这不是“大叶形成之后的完整移交”那一条判据**：物理分配只保证“页数 ＋ 页对齐”
-/// （`Flat` 逐帧取自 buddy，且与块池的整页取自交织），本轮实测这一窗的 PA 首址不是
-/// 2 MiB 对齐、相邻处有断点，`leaf_span` 两端都只报 4 KiB ⇒ 大叶前提在当前分配能力下
-/// 没有合法构造，那一条仍**未验证**（实测读数见 docs/memory-transfer-traverse.md 该节）。
-/// 本例**不把 4 KiB 钉成合同**：叶形是分配布局的事，连续对齐的分配会让这一窗变成
-/// 2 MiB 叶——两种都由本例照过。
-///
-/// 本例声称的只是自己的事：起点是普通 `acquire` 的整段来源（不手工写 PTE、
-/// 不借 `BorrowedRegion`、不直调表原语、不为它扩分配 API），在 2 MiB 对齐的 VA
-/// 窗口上按页物化、从映射写内容，然后把中段那一格 4 KiB 交出去：只那一格让出翻译，
-/// 邻页的承载、内容与翻译都不动。
+/// 本例不要求这一窗物理连续、也不要求它成为 2 MiB 叶：叶形是分配布局的事，4 KiB 与
+/// 2 MiB 两种叶都由本例照过。它声称的只是自己的事：起点是普通 `acquire` 的整段来源
+/// （不手工写 PTE、不借 `BorrowedRegion`、不直调表原语、不为它扩分配 API），在 2 MiB
+/// 对齐的 VA 窗口上按页物化、从映射写内容，然后把中段那一格 4 KiB 交出去：只那一格
+/// 让出翻译，邻页的承载、内容与翻译都不动。
 fn a_plain_acquire_window_hands_over_one_page() {
     let window = MEGA / PAGE_SIZE;
     let rw = Access::READ | Access::WRITE;
@@ -2096,6 +2090,7 @@ pub fn mega_leaf() {
 
     let frames_before = statistics::frame_occupied() - statistics::block_occupied();
     let kinds_before = statistics::kinds();
+    let blocks_before = statistics::block_occupied();
     let tables_before = TABLE_LIVE.load(Ordering::Relaxed);
 
     {
@@ -2321,9 +2316,22 @@ pub fn mega_leaf() {
         tables_after == tables_before,
         "mega-leaf: live tables {tables_before} → {tables_after} (net must be 0)"
     );
-    for (kind, count) in statistics::kinds().nonzero() {
+    // 整页池只允许留下「每档一张 spare 空页」：它同时是 `Prime` 类目的增量，上界从预热的
+    // 尺寸类数派生（同一批页只能归到那一档），不是新阈值。其余类目（含 `Plain`）必须归零。
+    let kinds_after = statistics::kinds();
+    let prime = kinds_after.get(Kind::Prime) as isize - kinds_before.get(Kind::Prime) as isize;
+    let pool = statistics::block_occupied() as isize - blocks_before as isize;
+    crate::expect!(
+        prime == pool,
+        "mega-leaf: Prime {prime} must equal the whole-page pool delta {pool}"
+    );
+    crate::expect!(
+        (0..=super::frame_layout::HEATED_CLASSES as isize).contains(&prime),
+        "mega-leaf: at most one spare page per heated class ({prime} > {})",
+        super::frame_layout::HEATED_CLASSES
+    );
+    for (kind, count) in kinds_after.nonzero() {
         if kind == Kind::Prime {
-            // 块池取自帧池的整页；它们的账在 `block_occupied` 上，不在帧类目里。
             continue;
         }
         crate::expect!(
