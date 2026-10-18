@@ -40,6 +40,8 @@ fn main() {
     println!("cargo::rerun-if-changed=src/harness/probe/memory_transfer/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/memory_transfer/unit.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/memory_transfer_fresh/main.rs");
+    println!("cargo::rerun-if-changed=src/harness/probe/memory_transfer_race/main.rs");
+    println!("cargo::rerun-if-changed=src/harness/probe/memory_transfer_race/unit.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/iommu/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/iommu/dma/main.rs");
     println!("cargo::rerun-if-changed=src/harness/guest/guest/main.rs");

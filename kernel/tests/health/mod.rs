@@ -39,6 +39,8 @@ pub mod nest_failure;
 pub mod pagetable;
 pub mod permit;
 pub mod pole;
+#[cfg(feature = "race-scene")]
+pub mod race_scene;
 pub mod residency;
 #[allow(dead_code)]
 #[path = "../../../programs/src/system/supply/retention/mod.rs"]

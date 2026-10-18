@@ -503,10 +503,14 @@ mod tests {
 
     #[test]
     fn scene() {
-        // fresh 失败回退那一景靠一个在途夹具注入一次失败：它只在这一格打开时才装上，
-        // 且只在 debug 档（夹具与那四个探针同属 `cfg(debug_assertions)`）。
+        // fresh 失败回退那一景靠一个在途夹具注入一次失败：它只在这一格打开时才
+        // 装上，且只在 debug 档（夹具与那四个探针同属 `cfg(debug_assertions)`）。
         #[cfg(all(feature = "fresh-scene", debug_assertions))]
         kernel::entry::check::fresh_scene::arm();
+        // 真实多 Hart 交错那一景靠一个在途夹具放开另一个 Space 里的对端、等它真登记：
+        // 同上，只在它自己那一格打开时才装上，且只在 debug 档。
+        #[cfg(all(feature = "race-scene", debug_assertions))]
+        kernel::entry::check::race_scene::arm();
         kernel::entry::boot::start().unwrap_or_else(|error| kernel::entry::boot::fail(error));
         kernel::entry::boot::run();
     }

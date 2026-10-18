@@ -275,6 +275,15 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         sources: &[],
     },
     Deployment {
+        name: "memory-transfer-race",
+        entry: "memory-transfer-race",
+        start: &[],
+        resources: &["memory-transfer-race-unit"],
+        targets: &[scene_target(&[])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
         name: "iommu-probe",
         entry: "iommu-probe",
         start: &[],

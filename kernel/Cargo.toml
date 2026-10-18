@@ -19,6 +19,11 @@ semihosting = ["dep:serde_json"]
 # D1/TLB/accept/product 连它被装上的机会都没有。它只在 `cfg(debug_assertions)`
 # 里编得出来（那四个探针同处）；选景靠这一格 ＋ 握手页上那枚标记，不靠 debug_assertions。
 fresh-scene = []
+# 真实多 Hart 确定性交错那一景的**在途夹具**：占槽之后、撤 PTE 之前，按共享控制
+# 页里的请求放开另一个 Team／另一个 Space 里的对端，等它真登记在那条关系上。
+# 与 `fresh-scene` 同款**非默认**，同样只在 `cfg(debug_assertions)` 里编得出来，
+# 选景靠这一格 ＋ 共享页上那枚标记；没有常开 ABI、没有常开 trace schema。
+race-scene = []
 # 拆法：**登记与打点**搬去 `embedded-test`（`tests/embedded.rs` + `nu scripts/qtest.nu`）；
 # 那些 `cfg(any(debug_assertions, feature = "framework"))` 全部收成 `cfg(debug_assertions)`
 # ——**自检并进断言那一档**，它本来就只在 debug 里有实体。故这一格没有读者，删。

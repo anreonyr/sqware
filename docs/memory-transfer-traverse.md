@@ -1346,8 +1346,12 @@ Revoke 联合条件、staged 预置与服务派发的覆盖边界仍按上文限
 `Nest::leaf_span` 两端都只报 4 KiB——那是**这一次布局的读数**，不是“普通 `Acquire`
 永远不能成大叶”的结论。
 
-- 实测命令：`nu scripts/qtest.nu --package kernel -- -- memory_transfer_pages`
-  （1 passed；跑的是同一段 2 MiB 对齐窗口的完整移交）。
+- 实测命令：`nu scripts/qtest.nu --package kernel -- -- memory_transfer_slots`
+  （1 passed）。这一例嵌在 `embedded::tests::memory_transfer_slots` 里——那是
+  `tests/health/transfer.rs` 的 `accept()` 用例集（本轮从 22 例变 23 例），**不是**
+  `memory_transfer_pages`（后者跑的是未改的 `syscall::transfer_pages`）。
+  这一层是**原生 Flat/Transfer**（内核内的真实来源、事务与页槽），
+  不是 guest ecall 那一层；它跑的是同一段 2 MiB 对齐窗口的完整移交。
 - 实测 PA 布局的读数来自本轮临时探针（已拆除，不留在树里）：512 页的 PA 首址
   不是 2 MiB 对齐、相邻处有 16/26/32/38 处断点、`leaf_span` 报 4096。
   这些断点数**不是**分配器的合同，只是这一次布局的事实。
@@ -1364,7 +1368,7 @@ Revoke 联合条件、staged 预置与服务派发的覆盖边界仍按上文限
 
 | 用例 | 交错的点 | 判据 |
 |---|---|---|
-| 外来空间那一页 | 管理者的移交撤的是**别人空间**里的 PTE | 两个空间那一页都让出翻译；目标槽拿到同一承载与 PA；持窗者那一枚仍欠关图（`meta.opened`），它自己 `Shut` 关得掉且只关一次；清单里两条关系（含外空间那条）都在 pend 释放之后到消费者手里 |
+| 外来空间那一页 | 管理者的移交撤的是**别人空间**里的 PTE | 两个空间那一页都让出翻译；目标槽拿到同一承载与 PA；持窗者那一枚仍欠关图（`meta.opened`），它自己一手 `Shut` 关得掉（关图责任归它，本用例不宣称第二次 `Shut` 的返回）；清单里两条关系（含外空间那条）都在 pend 释放之后到消费者手里 |
 | 持窗者先退出 | `doom` 的 cull 与清理先收掉它名下的图 | 退出后它的 pies/heirs 清空、关系与 PTE 都不在；承载与内容不动；管理者之后照旧搬得动那一页 |
 | 撤掉那条分支 | lord 侧 `Revoke` 收回那一枚 | 持窗者空间里那段关系随撤销消失、lord 自己那条不动；承载与内容不动；被撤的分支不再是可用的一端（`Denied`） |
 | 撤页确认失败 | 一个 Nest 上确认失败 | 结果 `Busy`；未结失效留在那个 Nest（`has_pending_invalidation`）；已让出的页**不回填**；两端页槽按原态还回（源 Resident、目标 Fresh）；`retry_invalidation` 后重试真搬走 |
@@ -1402,7 +1406,8 @@ Revoke 联合条件、staged 预置与服务派发的覆盖边界仍按上文限
 | 三个改动文件 edition 2024 格式检查、`git diff --check` | 通过（未全树重排） |
 
 健康面的用例数是 78（HEAD 的 77 个加本轮那一例整机用例）；本轮改的两条里
-`plain acquire window` 是 `memory_transfer_pages` 里的新一例（不新增测试名），
+`plain acquire window` 是 `memory_transfer_slots`（`transfer.rs` 的 `accept()`
+用例集，22 → 23 例）里的新一例（不新增测试名），
 `transfer_across_tasks_and_spaces` 是新的一例。未跑 Fresh DA 与宿主套件：
 本轮没有动它们的输入（只有两个内核测试文件与 `embedded.rs`，生产路径、注入钩子与
 trace schema 一字未改）。
@@ -1411,3 +1416,121 @@ trace schema 一字未改）。
 真多 Hart 的确定性交错（需要新场景与可能的 test-only 注入钩子）、
 Fresh DA 与宿主套件重跑、设备/DMA 与真实 Platform 接线仍不在本轮范围内。
 
+### b2 归因修正与真多 Hart 交错场景（本轮，待独立复审）
+
+基线为 `b2b75a05`。本节两件事：按复审的真归因修 b2 的两处记录/夹具，
+并补上“真多 Hart 确定性交错”那一景（b2 记的最后一个未覆盖项）。
+
+#### 一、b2 归因修正（只动夹具与记录，不动断言口径）
+
+- **夹具漏收尸**：`cross_task_interleavings` 的 `retire` 原先只 `doom` 不 `reap`，
+  而名册里那一格的死 `Task` 弱引用会钉住一份 `Arc` 的内脏（实测每台 512 B），
+  于是逐类账里的 `Task` 从 0 涨到 7（1 台热身 ＋ 6 台 Caller）。现按生产 `reap`
+  同一条收尾：`retire` 末尾 `team.prune_tasks()` ＋ `roster::prune_dead()`。
+  修后 `Task` 归零，不再拿“夹具保活”解释。
+- **`Prime`/`Plain` 不是线性增长**：复审用同一对 Caller、同一形状连跑 6 轮，
+  第 0 轮 ＋2/＋7、第 1..5 轮全为 0——那是一次性的池子惰性，不是每用例的泄漏。
+  故基线改到**每对 Caller 先用一个不终结任何任务的形状热身一轮**之后
+  （`holder leaves first` 的目的就是真叫走持窗者，同一对 Caller 跑不了第二轮，
+  故它也只能靠这一轮热身）。两格仍只钉“不增长”（`<=` 基线）；本夹具自己跑出来
+  两格都是 0。帧净额与 `Task`/`Team`/`Space`/`Table`/栈等一律仍然相等。
+- **记录修正**：`plain acquire window` 嵌在 `embedded::tests::memory_transfer_slots`
+  （`transfer.rs` 的 `accept()`，22 → 23 例），准确命令是
+  `nu scripts/qtest.nu --package kernel -- -- memory_transfer_slots`；它证的是
+  **原生 Flat/Transfer** 那一层，不是 guest ecall。
+- **措辞修正**：跨空间那一例里“持窗者自己 `Shut` 关得掉”不写成“且只关一次”——
+  本用例不宣称第二次 `Shut` 的返回，不为这一句话扩矩阵。
+
+实测：`-- transfer_across_tasks_and_spaces` 1 passed / 77 filtered（0.67s）；
+健康面 77 passed ＋ 缺 initrd 哨兵 1 failed（6.00s）。
+
+#### 二、真多 Hart 交错：`memory-transfer-race`
+
+新增一景（`programs/src/harness/probe/memory_transfer_race*` ＋
+`kernel/tests/health/race_scene.rs` ＋ 内核 `race-scene` feature ＋ qtest 那一格）。
+它要证的是一件前面几景都没有的事：一次真移交在**在途窗口**里驻留不让 hart 的时候，
+**另一个 Team／另一个 Space** 里的对端能在**另一颗 hart** 上进内核、真登记一次冷缺页。
+
+形状（每一步都只有一种走法）：
+
+- **管理端**（引导镜像那一台，Team 0／Space L）备一份两页私有来源（第 0 页要搬、
+  第 1 页是目标空槽）与一页**共享控制页**，两份各自铸成共享根（`shared: true`），
+  再各授一枚子分支给对端。控制页与迁移范围**分开**，各有各的寿命。
+- **对端**由 `Loader` 装进**另一个 Team**（Space P），在自己空间里把两条子分支各
+  `open` 成关系（来源那条盖两页），先读一次第 0 页（真物化、真发布一条 PTE），
+  把 tid／两个 VA／那一页的读数报回控制页，然后等在控制页的 `START` 上。
+- 管理端等到那份报告，摆好请求，发起真移交（第 0 页 → 第 1 页）。
+- **内核夹具**（复用现有 `arm_in_flight`：占槽之后、撤 PTE 之前，`caller.pend` 仍持着、
+  `SIE` 关着、不持任何 core 锁）按调用者空间读出控制页，核出压着源页的**两条**关系
+  （自己那条 ＋ 别人空间那条，按 ASID 分），当场读出**那条外空间关系真握着一条翻译**
+  （`FOREIGN`），放开对端，再用 `messenger::queued` 有界自旋（`rdtime`）
+  等**那条外空间关系上真的排上了一个等待者**；等到了才写 `ARMED` 返回，到点写
+  `TIMEOUT` 返回——不冒充登记过，也不丢资源。
+- 对端看见 `START` 去读第 1 页：那一页此刻是移交留的空位（`Reserved`、**没有 PTE**），
+  于是那一次读是一次真冷缺页（`Load` 未结算）→ 真登记 → 被那一次移交自己的
+  `wake(affected)` 放行 → 重试同一条指令，读到的是**搬过来的那份承载**（花纹和与
+  第 0 页一致；新清零页只会读到 0），写回读数后正常收工。
+
+为什么它是真的：
+
+- 管理端驻留的那一段就在**真入口、真事务、真在途窗口**里（不是 `with_running` 换
+  调用者、不是 sleep、不是边界上的 spawn-exit）；对端那一手是真页错误、真等待位、真
+  `Reap`。
+- 登记是**内核侧**看出来的（`messenger::queued` 按那条外空间关系查），不是程序自己
+  举的牌子；放行来自移交自己的 `wake(affected)`；内容判据是**同一份承载**在**另一个
+  空间**里被读出来的。
+- 没有常开 ABI、没有常开 trace schema：夹具与 `queued` 那一口都只在
+  `cfg(debug_assertions)` ＋ 各自的选景 feature 里编得出来。
+
+实测读数（release ＋ `CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true`，
+`--features semihosting,race-scene`）：
+
+```
+memory-transfer-race: phase=fault peer=11 va0=0x1d000 va1=0x1e000 read0=0x7f800
+memory-transfer-race: phase=fault transfer=Ok(()) kernel=armed foreign=1
+memory-transfer-race: phase=fault read1=0x7f800 read0=0x7f800
+memory-transfer-race: phase=fault joined cause=Reap reason=0x0
+memory-transfer-race: close done
+```
+
+结构化导出里对端那一串（同一轮）：`memory.page_fault va=0x1e000 Load resolved=false`
+→ `room.wait tid=11` → `room.wake tid=11` → `memory.page_fault va=0x1e000 Load resolved=true`
+→ `room.exit tid=11 reason=0x0` → `room.reap tid=11`；控制台侧另核两台都正常退场、
+`task: all tasks exited, system halted`、`doom: held=0 starved=0 blocked=0 nudged=0`。
+
+#### 三、SMP 负对照：只有一颗 hart 时那一手不可能进展
+
+- `QEMU_SMP=1` 这一档**跑不到本景**：带护栏那一档会把内核自己的自检跑起来，
+  而 `tests/health/hart.rs` 钉的就是“机器报的 hart 数 > 1”（它是给参数表 `-smp 4`
+  立的那条哨）。实测 `QEMU_SMP=1 … -- scene` 在**引导自检**上就红（
+  `机器只报了 1 颗 hart`），与握手无关。
+- 故本景的“握手不能前进”负对照由**夹具变体**给出，不由 SMP=1 冒充：
+  把夹具里那一手放开（`START=RELEASE`）拆掉，对端永远不登记 → 夹具到点写 `TIMEOUT`
+  → 管理端当场红（`kernel=timeout`），导出里也没有 `room.wait`/`room.wake`。
+  那正是“该握手无法前进”的样子，不拿任意超时当证明。
+
+#### 四、本轮实际读数与未覆盖
+
+| 检查 | 结果 |
+|---|---|
+| `nu scripts/qtest.nu --package kernel` | **77 passed** ＋ 缺 initrd 哨兵 1 failed（6.00s） |
+| 同命令 `-- transfer` | 8 passed（0.82s） |
+| 同命令 `-- transfer_across_tasks_and_spaces` | 1 passed / 77 filtered（0.67s） |
+| 本景（SMP=4，护栏档） | 1 passed，五条读数如上 |
+| D1 / TLB | 各 1 passed（0.42s / 0.17s） |
+| Fresh 护栏景 | 1 passed / 77 filtered（10.40s） |
+| accept / product / system-fault | 各 1 passed（10.40s / 5.34s / 13.60s） |
+
+未覆盖与边界（不冒 Done）：
+
+- 本景只走“**对端在一次真移交在途时冷缺页**”这一种合法竞争。
+  **退出/撤销**那两种没有做成同刻竞争：任何“给出一枚本景来源的子分支”的 cull
+  （`Shut`/`Revoke`/`doom`）都会经 `with_tasks_checked` 取到**管理端自己的 pend**，
+  而那一把 pend 正被在途窗口持着 ⇒ 那种动作只能**排在管理端放行之后**完成，
+  在窗口里“等它完成”就是自锁（复审那一封交接里点名的那一条）。故本景不造这种组合，
+  也不把“请求已发”写成“已完成”。
+- 普通 512 页窗口那一例的**大叶前提**仍未构成（同 b2 那节：当前 PA 布局首址不对齐、
+  相邻处有断点），本景不碰它。
+- 设备/DMA 与真实 Platform 接线仍不在本轮范围内。
+
+本阶段**未**获得独立复审、也未获推送或共享分支落地许可。

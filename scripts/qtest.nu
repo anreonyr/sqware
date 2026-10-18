@@ -19,6 +19,9 @@
 #   CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
 #     --scene memory-transfer-fresh --feed-script programs/tests/memory-transfer/fresh.py \
 #     -- --features semihosting,fresh-scene -- scene
+#   CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
+#     --scene memory-transfer-race --feed-script programs/tests/memory-transfer/race.py \
+#     -- --features semihosting,race-scene -- scene
 #   nu scripts/qtest.nu -- --list                    # `--` 之后原样转给 cargo-qtest
 #
 # **（`memory-transfer-fresh` 另需带护栏那一档 ＋ 两格 feature）**：那一景靠一个在途夹具
@@ -28,6 +31,12 @@
 # （默认关着，D1/TLB/accept/product 连夹具体都没有），`semihosting` 仍是为结构化导出。
 # `-- scene` 那一格不能省：带护栏的 release 测试目标里有全部 `debug_assertions` 用例，
 # 一例一张镜像、整机用例只有 `scene` 这一例。
+#
+# **（`memory-transfer-race` 与 fresh 同一档 ＋ 它自己那一格 feature）**：那一景靠一个
+# 在途夹具放开另一个 Team／另一个 Space 里的对端、再等它真登记在那条关系上；夹具同样只在
+# `cfg(debug_assertions)` 里编得出来，`race-scene` 是它的**显式选景**。多 Hart 只有一颗时
+# （`QEMU_SMP=1`）那一手不可能进展：夹具的有界自旋超时，程序侧当场红——那是负对照，
+# 不是把它调成绿的。
 #
 # **（`memory-transfer` 与 `memory-transfer-tlb` 两景必须带 `--features semihosting`）**：
 # 两景的判定都要读**结构化导出**（`sqware-diagnose.jsonl` 里的 `room.wait`/`room.wake`/
@@ -207,6 +216,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     "memory-transfer" => "scene-memory-transfer-phases.json"
     "memory-transfer-tlb" => "scene-memory-transfer-tlb-summary.json"
     "memory-transfer-fresh" => "scene-memory-transfer-fresh-summary.json"
+    "memory-transfer-race" => "scene-memory-transfer-race-summary.json"
     _ => ""
   }
   let pending = if ($summary | is-empty) {
@@ -423,13 +433,33 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   }
 
   if $code == 0 and $scene == "memory-transfer-fresh" {
-    # 引导那一台报收尾：两阶段的读者都已被它 join 到手才走到这一行，故这一句就是
-    # 本景的成功证明（逐格判据在宿主驱动那一侧）。
+    // 引导那一台报收尾：两阶段的读者都已被它 join 到手才走到这一行，故这一句就是
+    // 本景的成功证明（逐格判据在宿主驱动那一侧）。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
     let proof = "^exit tid=[0-9]+ reason=0x0 note: memory-transfer-fresh: acceptance passed"
     if ($console | where {|line| $line =~ $proof } | is-empty) {
       print $"本景未成功完成：缺少 ($proof)"
       $code = 1
+    }
+  }
+
+  if $code == 0 and $scene == "memory-transfer-race" {
+    # 引导那一台报收尾：对端已被它 join 到手才走到这一行；逐格判据（那一次真冷缺页、
+    # 那一次真放行、两页读数一致、那条外空间关系真握着一条翻译）在宿主驱动那一侧。
+    # 这里另外核**机器级净回收**：两台都正常退场、整机真的收场、没有留下的等待者——
+    # 那几行是内核打到 semihosting 控制台上的，只有本脚本看得到。
+    let console = (open --raw $env.QEMU_TEE_LOG | lines)
+    let want = [
+      "^exit tid=[0-9]+ reason=0x0 note: memory-transfer-race: peer passed$"
+      "^exit tid=[0-9]+ reason=0x0 note: memory-transfer-race: acceptance passed$"
+      "^task: all tasks exited, system halted$"
+      "^doom: held=0 starved=0 blocked=0 nudged=0$"
+    ]
+    for $pattern in $want {
+      if ($console | where {|line| $line =~ $pattern } | is-empty) {
+        print $"本景未成功完成：缺少 ($pattern)"
+        $code = 1
+      }
     }
   }
 

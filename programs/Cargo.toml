@@ -115,6 +115,23 @@ test = false
 bench = false
 doctest = false
 
+# 真实多 Hart 交错那一景的**引导镜像**（管理端）与它装载进另一个 Team 的**对端**：
+# 管理端自己的 Team／Space 里备来源、铸根、起对端；对端在它自己那个 Team／Space 里
+# 真登记一次冷缺页。两台各自独立 bin（与 `memory-transfer` 那一景同形）。
+[[bin]]
+name = "prog-memory-transfer-race"
+path = "src/harness/probe/memory_transfer_race/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-memory-transfer-race-unit"
+path = "src/harness/probe/memory_transfer_race/unit.rs"
+test = false
+bench = false
+doctest = false
+
 # 真实 RISC-V IOMMU 寄存器那一景的引导镜像：它自己就是控制者，取设备区、建表、编程、拆除。
 [[bin]]
 name = "prog-iommu-probe"

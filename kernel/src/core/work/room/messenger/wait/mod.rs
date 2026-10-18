@@ -304,7 +304,11 @@ pub(crate) fn site_count() -> usize {
 ///
 /// 只读一边的队列长：不推进失效、不物化、不分配、不改排队次序，
 /// 故可以在提交边界之外当“它真登记了没有”的读口用。
-#[cfg(all(debug_assertions, feature = "fresh-scene"))]
+///
+/// 两个景的夹具各用一次：fresh 回退那一景按目标关系认“等待者真入队了没有”，
+/// 真实多 Hart 交错那一景按**别人空间**那条关系认对端的冷缺页真登记了没有。
+/// 两景都不常开（各自的选景 feature），故这一格也没有常开读者。
+#[cfg(all(debug_assertions, any(feature = "fresh-scene", feature = "race-scene")))]
 pub(crate) fn queued(key: WakeKey) -> usize {
     let sites = sites(key).lock();
     sites.get(&key).map_or(0, |site| site.chain.len())

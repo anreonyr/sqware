@@ -44,6 +44,8 @@ pub mod member;
 pub mod memory_transfer;
 #[path = "../harness/probe/memory_transfer_fresh/program.rs"]
 pub mod memory_transfer_fresh;
+#[path = "../harness/probe/memory_transfer_race/program.rs"]
+pub mod memory_transfer_race;
 #[path = "../harness/probe/memory_transfer_tlb/program.rs"]
 pub mod memory_transfer_tlb;
 #[path = "../harness/bench/load/park/program.rs"]
@@ -166,6 +168,11 @@ pub const PROGRAMS: &[&UnitFile] = &[
     // fresh 失败回退那一景：同样**一台**（supervisor 引导镜像＝控制者），
     // 两阶段的读者都是它同 Team 里真起的任务。
     &memory_transfer_fresh::PROGRAM,
+    // 真实多 Hart 交错那一景：**装载者 ＋ 对端**两台（与 `memory-transfer` 同形）。
+    // 对端必须真的被装载进**另一个 Team**（另一个 Space）——它在自己空间里真登记
+    // 一次冷缺页，而管理端驻留在内核的在途窗口里。
+    &memory_transfer_race::ENTRY,
+    &memory_transfer_race::UNIT,
     // 真实 RISC-V IOMMU 那两景：各**一台**（supervisor 引导镜像＝控制者）。
     // `iommu-probe` 从引导账取设备区、建 DDT/DC/Sv39 表与队列，编程后由硬件翻一次并回读物理页号；
     // `iommu-dma` 则多一台**真实 PCI 端点**（`virtio-blk-pci`）：ECAM 发现、精确 BAR 交付、
