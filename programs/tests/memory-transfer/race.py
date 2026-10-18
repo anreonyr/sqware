@@ -191,16 +191,22 @@ def settle(console, trace, until):
 
 
 def line(console, pattern, until):
-    """下一条本景口径里匹配 `pattern` 的行；到点或对端先走就是失败。"""
+    """下一条本景口径里匹配 `pattern` 的行；到点或对端先走就是失败。
+
+    “这一轮没等到”不等于“对端走了”：每轮最多等一秒，没等到就接着等，直到总时限
+    `until`。慢一点的模拟（比如把参数表那颗 `-smp 4` 改小）里第一行可能晚到几秒，
+    而那不等于本景失败；真的关掉了那一端仍然当场失败。
+    """
     while True:
-        got = console.line(max(0.0, min(1.0, until - time.monotonic())))
-        if got is None:
+        if console.closed:
             raise AssertionError(
-                f"{pattern.pattern!r}: no such console line; lines={console.tail()!r}"
+                f"{pattern.pattern!r}: the guest left without that line; lines={console.tail()!r}"
             )
-        text = got.decode("utf-8", "replace")
-        if text.startswith(PREFIX) and (found := pattern.search(text[len(PREFIX) :])):
-            return found
+        got = console.line(max(0.0, min(1.0, until - time.monotonic())))
+        if got is not None:
+            text = got.decode("utf-8", "replace")
+            if text.startswith(PREFIX) and (found := pattern.search(text[len(PREFIX) :])):
+                return found
         if time.monotonic() >= until:
             raise AssertionError(
                 f"{pattern.pattern!r}: no such console line; lines={console.tail()!r}"

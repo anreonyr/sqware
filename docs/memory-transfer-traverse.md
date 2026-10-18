@@ -1512,11 +1512,15 @@ memory-transfer-race: close done
 - `QEMU_SMP=1` 这一档**跑不到本景**：带护栏那一档会把内核自己的自检跑起来，
   而 `tests/health/hart.rs` 钉的就是“机器报的 hart 数 > 1”（它是给参数表 `-smp 4`
   立的那条哨）。实测 `QEMU_SMP=1 … -- scene` 在**引导自检**上就红（
-  `机器只报了 1 颗 hart`），与握手无关。
-- 故本景的“握手不能前进”负对照由**夹具变体**给出，不由 SMP=1 冒充：
-  把夹具里那一手放开（`START=RELEASE`）拆掉，对端永远不登记 → 夹具到点写 `TIMEOUT`
-  → 管理端当场红（`kernel=timeout`），导出里也没有 `room.wait`/`room.wake`。
-  那正是“该握手无法前进”的样子，不拿任意超时当证明。
+  `机器只报了 1 颗 hart`），与握手无关——不把它当成本景的负对照。
+- 故本景的“握手不能前进”负对照由**夹具变体**给出：把夹具里那一手放开
+  （`START=RELEASE`）拆掉，对端永远不登记 → 夹具到点写 `TIMEOUT` → 管理端当场红
+  （`kernel=timeout`），导出里也没有 `room.wait`/`room.wake`。另一变体把夹具改成
+  等**自己那条**关系（而不是别人空间那条）也给出同一形状的红。
+- 参数表钉的是 `-smp 4`；另测 `QEMU_SMP=2`：本景**同样成立**（同一串读数、
+  退出码 0）——不是四颗 hart 的巧合。那里还量到一条宿主侧边界：驱动原先
+  “一轮没等到就失败”，而两 hart 的模拟把第一行送到时已超过那一秒；现改为
+  “对端真关掉了才当场失败，否则接着等到总时限”——仍是有界等待，不降断言。
 
 #### 四、本轮实际读数与未覆盖
 
@@ -1526,7 +1530,10 @@ memory-transfer-race: close done
 | 同命令 `-- transfer` | 8 passed（0.82s） |
 | 同命令 `-- transfer_across_tasks_and_spaces` | 1 passed / 77 filtered（0.67s） |
 | 本景（SMP=4，护栏档） | 1 passed，五条读数如上（退出码 0，`scene-memory-transfer-race-summary.json` 落盘） |
+| 本景（`QEMU_SMP=2`） | 1 passed，退出码 0，同一串读数（不是四颗 hart 的巧合） |
+| 本景（`QEMU_SMP=1`） | 在**引导自检**上红（`hart.rs` 钉 hart 数 > 1），与握手无关 |
 | 本景宿主驱动与回归 | `race.py` 逐格判定通过；`test_race.py` 18 例 OK；同目录 `discover` 68 例 OK |
+| 两个变体（树上 patch、实跑、blob 级还原比对） | 夹具改等自己那条关系 ⇒ `kernel=timeout` 本景红；去掉移交自己的 `wake(affected)` ⇒ 对端不醒、本景红 |
 | D1 / TLB | 各 1 passed（0.42s / 0.17s） |
 | Fresh 护栏景 | 1 passed / 77 filtered（10.40s） |
 | accept / product / system-fault | 各 1 passed（10.40s / 5.34s / 13.60s） |
