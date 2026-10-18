@@ -2614,7 +2614,7 @@ pub fn window_inheritance() {
 
 /// 一次 `Open` 的两个返回值（地址与长度）——`pair` 只认 Memory 域。
 fn open_pair(caller: &Caller, token: env::PieToken) -> (isize, usize) {
-    let EnvCall::Pie(call) = (EnvCall::Pie(env::PieCall::Open { token })) else {
+    let EnvCall::Pie(call) = EnvCall::Pie(env::PieCall::Open { token }) else {
         unreachable!()
     };
     let (slot, regs) = (call.slot(), call.pack());
@@ -4797,8 +4797,6 @@ pub fn cross_task_interleavings() {
     let c_lord = Caller::new(false);
     let c_peer = Caller::new(false);
 
-    let frames_before = statistics::frame_occupied() - statistics::block_occupied();
-    let kinds_before = statistics::kinds();
     let cases: [(&str, fn(&Caller, &Caller), (&Caller, &Caller)); 4] = [
         (
             "foreign space page",
@@ -4821,6 +4819,19 @@ pub fn cross_task_interleavings() {
             (&c_lord, &c_peer),
         ),
     ];
+    // 热身：每一对 Caller 先用**一个不终结任何任务**的形状走一遍（`revoked branch`：
+    // 它建拆同一批结构——来源、根、子分支、两个空间里的关系——但不叫走持窗者）。
+    // 那几笔一次性的惰性分配（整页被块池建下、小块首次取用）只发生在这一对 Caller
+    // 的**第一轮**里；把基线取在它之后，逐类账里剩下的才是本景自己的动作。
+    //
+    // **不能拿被热身那一形状本身当热身**：`holder leaves first` 的目的就是真叫走
+    // 持窗者，同一对 Caller 跑不了第二轮（第二次 `accord` 会答 `Dead`）。
+    for (lord, peer) in [(&a_lord, &a_peer), (&b_lord, &b_peer), (&c_lord, &c_peer)] {
+        a_revoked_branch_stops_being_an_end(lord, peer);
+    }
+
+    let frames_before = statistics::frame_occupied() - statistics::block_occupied();
+    let kinds_before = statistics::kinds();
     let mut off = Vec::new();
     for (name, run, (lord, peer)) in cases {
         let base = statistics::frame_occupied() - statistics::block_occupied();
@@ -4837,22 +4848,30 @@ pub fn cross_task_interleavings() {
         frames_after == frames_before,
         "cross-task: frame occupancy {frames_before} → {frames_after} (net must be 0)"
     );
-    // 逐类账：**除两格之外**都必须归零——页表（`Table`）、任务/团队/空间、栈、各类帧
-    // 都在内。那两格是本轮实测到的、**未能归属**的残留，不当成结论也不拿宽松条件吞掉：
-    // `Prime` 每用例 ＋1（整页被块池建下；它的账同时进 `block_occupied`，故上面那句
-    // 帧净额看不见它），`Plain` 每用例约 ＋4.5（小块仍处于已取状态）。
-    // 本轮的临时探针证实这些对象在单独一轮里确实会释放（Task/Team/Space 的强引用归零），
-    // 故不把它们说成“夹具保活”或“不可释放的全局缓存”：归属与上界仍是待核项。
+    // 逐类账：帧、页表（`Table`）、任务/团队/空间、栈、各类帧一律 == 基线。
+    //
+    // `Prime`（整页被块池建下，它的账同时进 `block_occupied`，故上面那句帧净额看不见它）
+    // 与 `Plain`（小块仍处于已取状态）这两格**不是线性增长**：实测同一对 Caller 同一形状
+    // 连跑 6 轮，第 0 轮 ＋2/＋7，第 1..5 轮全为 0。故基线取在每对 Caller 热身一轮之后，
+    // 这两格只钉**不增长**（`<=` 基线，没有正增长、也没有任意阈值），其余一律相等；
+    // 本夹具自己跑出来的是两格都为 0（差值为负同样不算违规，它只说明池子收回得更多）。
     let kinds_after = statistics::kinds();
     for (kind, count) in kinds_after.nonzero() {
+        let before = kinds_before.get(kind);
         if matches!(kind, Kind::Prime | Kind::Plain) {
+            crate::expect!(
+                count <= before,
+                "cross-task: kind {}: {} → {count} (must not grow)",
+                kind.name(),
+                before
+            );
             continue;
         }
         crate::expect!(
-            count == kinds_before.get(kind),
+            count == before,
             "cross-task: kind {}: {} → {count} (net must be 0)",
             kind.name(),
-            kinds_before.get(kind)
+            before
         );
     }
 
@@ -5018,7 +5037,12 @@ fn across_spaces(lord: &Caller, peer: &Caller, pages: usize) -> AcrossSpaces {
     }
 }
 
-/// 夹具里的任务不是产品路径结束的：先按真实退出走一遍，Team 与 Task 的持有链才不绕在那里。
+/// 夹具里的任务不是产品路径结束的：先按真实退出走一遍，再把最后那点收尸做全，
+/// Team 与 Task 的持有链才不绕在那里。
+///
+/// 收尸那一手与生产 `reap` 同一条：`prune_tasks` 摘掉 Team 里那枚弱引用，名册里
+/// 那一格的死 Task 也随 `prune_dead` 退场——少了它，每台 Caller 都会在名册里钉住
+/// 一份 `Arc` 的内脏（实测每台 512 B），逐类账里的 `Task` 就回不到基线。
 ///
 /// 这一步也是净额的一部分：退出之后引用、名下图与页槽都要归零。
 fn retire(caller: &Caller) {
@@ -5030,6 +5054,8 @@ fn retire(caller: &Caller) {
         caller.task.state.lock().doom(None, env::ExitCause::Slay, 0);
     }
     pend::doom(&caller.task);
+    caller.task.ident.team.prune_tasks();
+    let _pruned = crate::core::work::room::scheduler::roster::prune_dead();
 }
 
 /// manager 把源页交出去：两个空间里那一页的 PTE 一起让出，而持窗者的关闭责任还在。
@@ -5116,7 +5142,7 @@ fn a_manager_takes_the_foreign_page_out(lord: &Caller, peer: &Caller) {
             peer.call(EnvCall::Pie(PieCall::Shut { token: pair.child }))
         }),
         0,
-        "the holder closes its own window once"
+        "the holder closes its own window"
     );
     assert!(
         peer.team
