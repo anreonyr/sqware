@@ -1628,8 +1628,7 @@ memory-transfer-race: close done
 4. 高价值负例（应能红）：夹具不等那两件事实就返回（host 判据红）；或在
    `affected_over` 里去掉窗口过滤（已退役关系被当候选 → 当场断言/红）。
 
-当前状态：**尚未实现**（本轮只交协议与证据层次：内核侧在窗口里读到的那两件事实
-＋程序侧读数＋host 用现有导出与受控状态复核；不为它新开泛 ABI/schema）。
+当前状态：本轮**已实现**（见下一节）。
 
 本阶段的命令（都从仓根跑；本景一律带护栏那一档）：
 
@@ -1706,3 +1705,135 @@ git diff --check a6d626fb HEAD        # 已提交差异，不只工作树/index
 的那种形状才需要它”。
 
 仍未获得推送或共享分支落地许可。
+
+### 在途窗口 × 对端拆图（`Cleanup::finish`）重叠（本轮，待独立复审）
+
+本节把上一节那个**尚未实现**的窗口接上：一次真移交的在途窗口与**另一个空间**那条
+来源关系的真拆图（`Cleanup::finish`）重叠。不动分配器、不造 PTE、不借
+`BorrowedRegion`，不新增常开 ABI / trace schema，不改第一段任何判据。
+
+#### 一、可达性前提（已由独立 review 核过，不再重新论证）
+
+- `cull.release/revoke` 就是 `cull(...).map(|c| c.finish())`；`with_tasks_checked` 返回前
+  已把 COMMIT 与全部 pend guard 放掉，closing 那一支的 `PoleOperation` 与 publication
+  guard 也在这个闭包里落。故 `finish` 入口处**不持任何 core 锁**。
+- 一种次序确实串行：对端**已经持着 pend** 时再发起 cull，`collect` 会去取管理端那把
+  pend，于是只能堵在那里等放行。
+- 另一种次序可达：对端先把子分支**交回**（`cull` 拿到 `Cleanup`、锁全放），停在
+  `finish` 入口；管理端**这时才**取自己的 pend 进入 `claim`；随后放对端跑真的
+  `finish`（只取它自己 Space/Nest 的路，不碰管理端 pend）。
+
+#### 二、实现
+
+- **core 的暂停点**：新文件 `core/work/pend/pause.rs`（`cfg(all(debug_assertions,
+  feature="race-scene"))`）——一个 `arm(Option<fn(&[Pie])>)` ＋ 一个 `visit(&self.removed)`，
+  在 `Cleanup::finish` 入口调一次。`visit` **先把探针取出来、放掉自己的锁再调用**：
+  它不会把两个 hart 的等待拴在同一把锁上。core 不认识任何场景；函数由夹具装。
+- **夹具的匹配依据是可核的**：`Cleanup` 里恰好一条、是 `Pole` 上的子分支（`sire` 在）、
+  **它的号就是控制页里对端报回来的那一枚**（`SOURCE_TOKEN`）；调用者的空间在定点上
+  能读出一页带本景 `TAG` 的控制页；`MODE=TEARDOWN`；控制页里那个 `PEER` 就是调用者；
+  而那个一次性 `PAUSE` 请求还在（`swap` 读走，故之后的拆图——比如退出那一条——
+  不再停）。命中条件是**形状＋那枚子分支的号＋peer＋模式＋一次性请求**；号对不上时
+  探针**不动**那个一次性请求（非目标 cleanup 既不吞也不误消费待用 hook），那一次
+  拆图也就不会停、管理端等不到 `state=paused`，当场红，不会假绿。
+- **控制页落在定点**：对端用 `Reference::acquire(AcquireSource::Source)` ＋
+  `attach(Placement::exact(handshake::VA))` 把自己那枚控制页子分支挂到与内核夹具
+  同一个数上（仍是合法 Reference/Placement，不是手写 PTE）；于是拆图探针与既有的
+  在途探针按同一个地址读同一张物理页。
+- **第二段**：管理端先在第 1 页（此刻持着第 0 页搬过来的那份承载）上挂一条可见的
+  翻译（写第 1 页花纹），再摆请求、等 `state=paused`——那是夹具写下的“清理已经取得、
+  还没落地”；**这时才**发起真移交。窗口里：先读到压着源页的**两条**关系且外空间那个
+  VA 上真有翻译；放开 `GO`；等对端那一次 `Release` **真的返回**（它会把结果码写回
+  控制页）；再读到只剩**一条**关系且那个 VA 上已经没有翻译。判定全是内核侧读真对象。
+- **`source` 的两页都挂进窗口**（`mapped=2`），但**初始不物化**：目标槽仍是空槽、
+  没有 PTE，故第一段那一次读仍是真冷缺页（不是缓存读）。
+- 夹具自己**不跨窗口强持那条外空间关系**：`pressings_over` 的快照只用来定“哪一条是
+  别人空间的”，随后立刻放掉——否则我们自己替它把登记链钉住，同一个窗口里永远数
+  出两条。等待那一段只读控制页上一个原子字，不取锁也不分配，不会把对端的拆图饿住。
+
+#### 三、本轮实际读数
+
+```
+memory-transfer-race: phase=fault peer=11 va0=0x1c000 va1=0x1d000 read0=0x7f800
+memory-transfer-race: phase=fault transfer=Ok(()) kernel=armed foreign=1
+memory-transfer-race: phase=fault read1=0x7f800 read0=0x7f800
+memory-transfer-race: phase=teardown transfer=Ok(()) kernel=armed press=2->1 peer1=1->0 released=0x0 resumed=1
+memory-transfer-race: phase=teardown read0=0x7f800
+memory-transfer-race: phase=fault joined cause=Reap reason=0x0
+memory-transfer-race: close done
+```
+
+第二段那六个读数各有各的来源：`press=2->1`／`peer1=1->0` 是夹具在**同一个在途窗口**
+里读到的（放行前／后）；`resumed=1` 是那一次拆图真的从暂停里回来了；`released=0x0`
+是对端 `Release` 的真返回值（控制页那条子分支还在，故它报得回来）；`read0=0x7f800`
+是移交把承载挪到第 0 页后按第 1 页花纹整页核出来的。
+
+| 检查 | 结果 |
+|---|---|
+| 本景（SMP=4，护栏档） | 1 passed，退出 0，读数如上 |
+| 本景（`QEMU_SMP=2`） | 1 passed，同一串读数 |
+| 本景（`QEMU_SMP=1`） | 在**引导自检**上红（`hart.rs` 钉 hart 数 > 1），与本节无关 |
+| `nu scripts/qtest.nu --package kernel` | **77 passed** ＋ 缺 initrd 哨兵 1 failed |
+| 同命令 `-- transfer` / `-- transfer_across_tasks_and_spaces` / `-- memory_transfer_slots` | 8 / 1 / 1 passed |
+| D1 / TLB / Fresh / accept / product / system-fault | 各 1 passed |
+| host `test_race.py` / 同目录 `discover` | **27 OK**（18 → 27，新增 9 条拒绝）/ **77 OK**（68 ＋ 9；其余三个测试文件仍是 25/13/12，一个没动） |
+| 本阶段改到的文件 `rustfmt --edition 2024 --check` | 通过；`kernel/src/core/work/pend/mod.rs` 里的 `notify` 是 HEAD 就**既有**的不齐，不为它重排无关代码 |
+| `git diff --check 7be9eebd HEAD` | 干净（0 行） |
+| `cargo check`（kernel 两档 feature ＋ programs `--bins`） | 全过 |
+
+本轮的改动面按 `git diff --name-only 2d919282..HEAD` 实际是 **11 个文件**：core 3
+（`pend/pause.rs` 新 ＋ `pend/cull.rs` ＋ `pend/mod.rs`）、本景 5（`race_scene.rs`
+＋ 4 个 harness 文件）、host 2（`race.py` ＋ `test_race.py`）、doc 1。（增删行数就不
+写死了——本记录自己每改一句都会动它。）
+
+观察点是**完整 `finish` 之后**：对端那一次 `Release` 真的返回（它内部已经把
+`PoleMeta::withdraw` → `space.dispose` → `Nest::dispose` → `sourceViews::forget` 走完）
+之后，窗口里才读到“只剩一条 ＋ 外空间那个 VA 无翻译”。本轮**没有**复现上一节列的
+那几个中途疑点——`finish` 半途中 View 仍强持 / registry 仍有 / `pressings_over` 读到
+`nestNone` / `withdraw_pressings` 报 `NotTransferable`——因为观察点不在半途，
+故本记如实说“没见过”，不声称复现过；那几个仍是待核项。这里的移交里
+`withdraw_pressings` 只看到自己那一条关系，没碰到 `NotTransferable`。
+
+#### 四、承重负例（都实跑过；fixture 变体与生产变体分开）
+
+- **fixture F1：不等对端那一次 `Release` 真的返回就往下判定** ⇒ `press=2->2
+  peer1=1->1`、`kernel=timeout`，管理端在“拆图没在窗口里落地”上当场红。这条证明
+  本景的判定确实压在“清理真落地”那一件事实上，而不是把“请求发出”当完成。
+- **fixture F2：暂停点不再写“已到达”** ⇒ 管理端在“没到 `finish` 暂停点”上红。这条
+  证明那个暂停点必须是**内核侧真的到达**，用户态摆的牌子顶不了。
+- **production P1：`Cleanup::finish` 不再拆图**（把 `p.withdraw(pie.token())` 摘掉）
+  ⇒ `press=2->2 peer1=1->1`，本景红。这条与本景两条 fixture 变体不同：它证的是本景
+  钉住了 `finish` 那条**生产腿**，而不是夹具自己的判据。
+- **fixture T1：对端报一枚对不上的号**（把控制页那枚当来源子分支报回来）⇒ 探针的号
+  比对不过，那一次拆图不停；管理端等不到 `state=paused`，景红。这条证明“按号认目标”
+  那一格是承重的——只靠形状不够。
+- 三个变体都用 `apply_patch` 级编辑打在树上实跑，之后按 blob 级还原比对（`git
+  hash-object` 与本轮开工时的值逐字相同）。
+
+#### 五、仍未覆盖 / 边界
+
+- 普通 512 页窗口那一例的**大叶前提**仍未构成（同前）：本阶段仍不扩分配能力、不手写
+  PTE、不借 `BorrowedRegion`。
+- 设备/DMA 与真实 Platform 接线：**上一轮已经做过 QEMU 产品闭环**（已落地），本轮
+  **未触及、未重跑**它——那是“本轮没跑”，**不是**“项目尚未实现”。
+- `Shut` 是另一条已经可达的拆图路（持有者交回自己那条窗口），本景没有把它做成同一
+  个窗口里的竞争；它仍是另一个 phase 的事。
+- 本景仍不把整条 Transfer 记 Done：这一格只覆盖“在途窗口 × `finish` 那条拆图路”。
+
+本阶段的命令（都从仓根跑；本景一律带护栏那一档）：
+
+```sh
+# 本景：release ＋ debug_assertions，两格 feature，一例一张镜像
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
+  --scene memory-transfer-race --feed-script programs/tests/memory-transfer/race.py \
+  -- --features semihosting,race-scene -- scene
+QEMU_SMP=2 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
+  --scene memory-transfer-race --feed-script programs/tests/memory-transfer/race.py \
+  -- --features semihosting,race-scene -- scene
+
+# 宿主侧
+python3 -B programs/tests/memory-transfer/test_race.py -v
+python3 -B -m unittest discover -s programs/tests/memory-transfer -p 'test_*.py'
+```
+
+本阶段**未**获得独立复审、也未获得推送或共享分支落地许可。

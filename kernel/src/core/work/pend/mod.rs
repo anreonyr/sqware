@@ -25,6 +25,11 @@ pub(crate) use accord::{accord, accord_window, clear_heir};
 pub(crate) use cull::{doom, release, revoke};
 pub(crate) use narrow::reduce;
 
+#[cfg(all(debug_assertions, feature = "race-scene"))]
+mod pause;
+#[cfg(all(debug_assertions, feature = "race-scene"))]
+pub(crate) use pause::arm as arm_finish_pause;
+
 pub(super) const RETRIES: usize = 8;
 
 pub(crate) fn changed(task: &Task) {

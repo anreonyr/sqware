@@ -1,11 +1,12 @@
 #! /usr/bin/env python3
 """真实多 Hart 交错那一景的宿主驱动：串行那一枚 ＋ 结构化导出那一枚。
 
-程序侧自带内部次序（内核夹具在真在途窗口里放开对端、对端自己去碰那一次冷缺页），
+程序侧自带内部次序（内核夹具在真在途窗口里放开对端、对端自己去碰那一次冷缺页；
+第二段里对端在另一颗 hart 上真拆图、夹具在同一个窗口里放行并核它落地），
 宿主**不开门、不喂字节**；它只做两件事：
-  · 按前缀读引导那一台报出来的那五行读数，逐格断言（判据在**它**这一个跑点）；
-  · 按严格规则读本轮结构化导出，按**已知 tid ＋ 已知 VA** 核对那一笔真登记、那一次真
-    放行与目标页的物化形状——“夹具在窗口里真看到那条跨空间关系的登记”只认导出里
+  · 按前缀读引导那一台报出来的那几行读数，逐格断言（判据在**它**这一个跑点）；
+  · 按严格规则读本轮结构化导出，按**已知 tid ＋ 已知 VA** 核对那一笔真登记、那一
+    次真放行与目标页的物化形状——“夹具在窗口里真看到那条跨空间关系的登记”只认导出里
     的这一串真事件，不认程序自己举的牌子。
 末了把这两面的事实写成一份小 summary（证据留在忽略的 `trace/` 下）。
 """
@@ -36,8 +37,18 @@ READY = re.compile(
 )
 MOVED = re.compile(r"phase=fault transfer=(\S+) kernel=(\w+) foreign=(\d+)")
 READ = re.compile(r"phase=fault read1=(0x[0-9a-f]+) read0=(0x[0-9a-f]+)")
+TORN = re.compile(
+    r"phase=teardown transfer=(\S+) kernel=(\w+) press=(\d+)->(\d+) "
+    r"peer1=(\d+)->(\d+) released=(0x[0-9a-f]+) resumed=(\d+)"
+)
+TORN_READ = re.compile(r"phase=teardown read0=(0x[0-9a-f]+)")
 JOINED = re.compile(r"phase=fault joined cause=(\w+) reason=(0x[0-9a-f]+)")
 CLOSED = "close done"
+
+
+def pattern_sum(page):
+    """内核 `fault::at(page, offset)` 那一份花纹的整页和（宿主独立算一份）。"""
+    return sum((offset * 31 + page + 7) & 0xFF for offset in range(PAGE_SIZE))
 
 
 def run(conn, capture):
@@ -97,6 +108,42 @@ def judge(console, trace):
         f"the peer read {read1:#x}, not the {read0:#x} it announced before the transfer"
     )
 
+    # 第二段：对端交出它那枚**来源**子分支，那一次 `Cleanup::finish` 与在途窗口重叠。
+    # 两面都在内核侧读真对象：窗口里先看到两条关系、外空间那枚翻译在；放行之后
+    # 在同一个窗口里看到只剩一条、外空间那枚翻译已经没了。
+    torn = line(console, TORN, until)
+    assert torn.group(1) == COMMITTED, (
+        f"the teardown transfer answered {torn.group(1)!r}, not {COMMITTED!r}"
+    )
+    teardown_kernel = torn.group(2)
+    assert teardown_kernel == ARMED_STATE, (
+        f"the fixture answered kernel={teardown_kernel}: the window never saw the teardown land"
+    )
+    before, after = int(torn.group(3)), int(torn.group(4))
+    assert before == 2, (
+        f"the window saw {before} relations press the source page before the teardown, wanted two"
+    )
+    assert after == 1, (
+        f"the teardown left {after} relations pressing the source page, wanted one"
+    )
+    peer_before, peer_after = int(torn.group(5)), int(torn.group(6))
+    assert peer_before == 1, (
+        "the window never saw the other space's PTE before the teardown"
+    )
+    assert peer_after == 0, "the other space's PTE survived the teardown"
+    released = int(torn.group(7), 16)
+    assert released == 0, f"the peer's release answered {released:#x}"
+    resumed = int(torn.group(8))
+    assert resumed == 1, (
+        "the paused teardown never resumed: the fixture released it but the finish did not return"
+    )
+    torn_read = line(console, TORN_READ, until)
+    torn_sum = int(torn_read.group(1), 16)
+    assert torn_sum != 0, "the moved carrier reads zeros after the teardown"
+    assert torn_sum == pattern_sum(1), (
+        f"page 0 reads {torn_sum:#x} after the teardown, not the {pattern_sum(1):#x} it should"
+    )
+
     joined = line(console, JOINED, until)
     assert joined.group(1) == REAP, f"the peer ended as cause={joined.group(1)}, not {REAP}"
     reason = int(joined.group(2), 16)
@@ -154,6 +201,16 @@ def judge(console, trace):
             "reaps": len(reaps),
             "faults_at_va0": trace.faults_at(va0, 1),
             "faults_at_va1": faults,
+        },
+        "teardown": {
+            "kernel": teardown_kernel,
+            "press_before": before,
+            "press_after": after,
+            "peer_before": peer_before,
+            "peer_after": peer_after,
+            "released": hex(released),
+            "resumed": resumed,
+            "read0": hex(torn_sum),
         },
         "events": len(trace.events),
     }

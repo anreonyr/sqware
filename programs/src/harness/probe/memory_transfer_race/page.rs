@@ -10,6 +10,8 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
+use env::PieToken;
+
 use super::handshake;
 
 /// 本景那一页：一个起点，加那几个字。
@@ -36,6 +38,9 @@ impl Page {
         self.put(handshake::off::VA1, 0);
         self.put(handshake::off::READ0, handshake::NONE);
         self.put(handshake::off::READ1, handshake::NONE);
+        self.put(handshake::off::PAUSE, 0);
+        self.put(handshake::off::GO, 0);
+        self.put(handshake::off::RELEASED, handshake::NONE);
     }
 
     /// 管理端：把这一次的请求摆好（标记、模式、状态，放行位拉回未开）。
@@ -48,6 +53,19 @@ impl Page {
         self.put(handshake::off::MODE, mode);
     }
 
+    /// 管理端：请内核夹具在**下一次拆图**上停一下（一次性请求）。
+    ///
+    /// 对端的 `Release` 在它那个 hart 上跑；本端只摆请求，不碰对端的表。
+    pub fn request_teardown(&self) {
+        self.put(handshake::off::START, 0);
+        self.put(handshake::off::STATE, handshake::state::PREPARED);
+        self.put(handshake::off::GO, 0);
+        self.put(handshake::off::RELEASED, handshake::NONE);
+        self.put(handshake::off::PAUSE, 1);
+        self.put(handshake::off::TAG, handshake::TAG);
+        self.put(handshake::off::MODE, handshake::mode::TEARDOWN);
+    }
+
     /// 管理端：这一景收工，内核夹具不再插手之后的任何一次移交。
     pub fn retire(&self) {
         self.put(handshake::off::MODE, handshake::mode::OFF);
@@ -56,6 +74,48 @@ impl Page {
     /// 内核夹具做到哪一步了。
     pub fn state(&self) -> u64 {
         self.word(handshake::off::STATE)
+    }
+
+    /// 本端请内核夹具做的事（对端按它挑自己要进哪一段）。
+    pub fn mode(&self) -> u64 {
+        self.word(handshake::off::MODE)
+    }
+
+    /// 内核夹具在窗口里读到的那几个数（本景只入判定）。
+    pub fn press_before(&self) -> u64 {
+        self.word(handshake::off::PRESS_BEFORE)
+    }
+
+    pub fn press_after(&self) -> u64 {
+        self.word(handshake::off::PRESS_AFTER)
+    }
+
+    pub fn peer_before(&self) -> u64 {
+        self.word(handshake::off::PEER_BEFORE)
+    }
+
+    pub fn peer_after(&self) -> u64 {
+        self.word(handshake::off::PEER_AFTER)
+    }
+
+    /// 那一次拆图真的从暂停里放行回来了吗（1 = 回来了）。
+    pub fn resumed(&self) -> u64 {
+        self.word(handshake::off::RESUMED)
+    }
+
+    /// 对端报回来的那一次 `Release` 的结果码（还没报就是 [`handshake::NONE`]）。
+    pub fn released(&self) -> u64 {
+        self.word(handshake::off::RELEASED)
+    }
+
+    /// 对端：报那一次 `Release` 的结果码（0 = 成功）。
+    pub fn publish_released(&self, code: u64) {
+        self.put(handshake::off::RELEASED, code);
+    }
+
+    /// 对端：报它手里那枚**来源**子分支的号（拆图探针按它认目标）。
+    pub fn publish_source_token(&self, token: PieToken) {
+        self.put(handshake::off::SOURCE_TOKEN, token.get() as u64);
     }
 
     /// 内核夹具在窗口里看到的：那条**别人空间**的关系在源页上真握着一条翻译。
@@ -70,6 +130,7 @@ impl Page {
             handshake::state::PREPARED => "prepared",
             handshake::state::ARMED => "armed",
             handshake::state::TIMEOUT => "timeout",
+            handshake::state::PAUSED => "paused",
             _ => "?",
         }
     }

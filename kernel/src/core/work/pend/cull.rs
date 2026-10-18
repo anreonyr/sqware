@@ -15,6 +15,8 @@ pub(crate) struct Cleanup {
 
 impl Cleanup {
     pub(crate) fn finish(self) -> usize {
+        #[cfg(all(debug_assertions, feature = "race-scene"))]
+        super::pause::visit(&self.removed);
         let count = self.removed.len();
         for pie in self.removed {
             for task in &self.tasks {

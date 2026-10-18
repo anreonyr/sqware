@@ -29,6 +29,11 @@ Traces = sys.modules[f"{SPEC.name}.traces"].Traces
 READY = "memory-transfer-race: phase=fault peer=11 va0=0x1d000 va1=0x1e000 read0=0x7f800"
 MOVED = "memory-transfer-race: phase=fault transfer=Ok(()) kernel=armed foreign=1"
 READ = "memory-transfer-race: phase=fault read1=0x7f800 read0=0x7f800"
+TORN = (
+    "memory-transfer-race: phase=teardown transfer=Ok(()) kernel=armed "
+    "press=2->1 peer1=1->0 released=0x0 resumed=1"
+)
+TORN_READ = "memory-transfer-race: phase=teardown read0=0x7f800"
 JOINED = "memory-transfer-race: phase=fault joined cause=Reap reason=0x0"
 CLOSED = "memory-transfer-race: close done"
 PEER, VA0, VA1 = 11, 0x1D000, 0x1E000
@@ -89,8 +94,15 @@ class RaceObserverTests(unittest.TestCase):
         return ours
 
     def lines(self, **overrides):
-        """五行真读数，其中若干行被负对照换过（参数名就是本文件里那几行的名字）。"""
-        base = {"READY": READY, "MOVED": MOVED, "READ": READ, "JOINED": JOINED}
+        """本景真读数那几行，其中若干行被负对照换过（参数名就是本文件里那几行的名字）。"""
+        base = {
+            "READY": READY,
+            "MOVED": MOVED,
+            "READ": READ,
+            "TORN": TORN,
+            "TORN_READ": TORN_READ,
+            "JOINED": JOINED,
+        }
         chosen = dict(base)
         chosen.update(overrides)
         return [chosen[name] for name in base] + [CLOSED]
@@ -131,6 +143,15 @@ class RaceObserverTests(unittest.TestCase):
             [("Load", False), ("Load", True)],
         )
         self.assertEqual(peer["faults_at_va0"], [])
+        teardown = summary["teardown"]
+        self.assertEqual(teardown["kernel"], "armed")
+        self.assertEqual(teardown["press_before"], 2)
+        self.assertEqual(teardown["press_after"], 1)
+        self.assertEqual(teardown["peer_before"], 1)
+        self.assertEqual(teardown["peer_after"], 0)
+        self.assertEqual(teardown["released"], "0x0")
+        self.assertEqual(teardown["resumed"], 1)
+        self.assertEqual(teardown["read0"], "0x7f800")
         self.assertEqual(summary["events"], len(proven()))
 
     def test_accepts_readings_that_moved_harts(self):
@@ -182,6 +203,59 @@ class RaceObserverTests(unittest.TestCase):
         """新清零页的读数：承载没搬过去（那一读落在一张空页上）。"""
         with self.assertRaisesRegex(AssertionError, "read a zero page after the transfer"):
             self.judge(lines=self.lines(READ=over(READ, read1="0x0")))
+
+    def test_rejects_a_teardown_that_timed_out(self):
+        """夹具没在窗口里看到那一次拆图落地（多 Hart 不足时必然到点）：那一档就叫 timeout。"""
+        with self.assertRaisesRegex(AssertionError, "kernel=timeout"):
+            self.judge(lines=self.lines(TORN=over(TORN, kernel="timeout")))
+
+    def test_rejects_a_window_that_never_saw_both_relations(self):
+        """窗口里压着源页的关系不足两条：那次清理没有“已经取得、还没落地”的现场。"""
+        with self.assertRaisesRegex(AssertionError, "wanted two"):
+            self.judge(lines=self.lines(TORN=over(TORN, press="1->1")))
+
+    def test_rejects_a_teardown_that_did_not_drop_the_relation(self):
+        """放行之后那条关系还在：拆图没在同一个窗口里真落地。"""
+        with self.assertRaisesRegex(AssertionError, "wanted one"):
+            self.judge(lines=self.lines(TORN=over(TORN, press="2->2")))
+
+    def test_rejects_a_foreign_pte_that_survived_the_teardown(self):
+        """别人空间那个 VA 上的翻译还在：那不是干净的拆图。"""
+        with self.assertRaisesRegex(AssertionError, "survived the teardown"):
+            self.judge(lines=self.lines(TORN=over(TORN, peer1="1->1")))
+
+    def test_rejects_a_foreign_pte_that_was_never_there(self):
+        """窗口里从没看到那枚翻译：这次移交没有从别人空间里撕下一格的现场。"""
+        with self.assertRaisesRegex(AssertionError, "before the teardown"):
+            self.judge(lines=self.lines(TORN=over(TORN, peer1="0->0")))
+
+    def test_rejects_a_pause_that_never_resumed(self):
+        """夹具放行了但那一次拆图没从暂停里回来：它没真的走过 finish 那一段。"""
+        with self.assertRaisesRegex(AssertionError, "never resumed"):
+            self.judge(lines=self.lines(TORN=over(TORN, resumed="0")))
+
+    def test_rejects_a_failed_release(self):
+        """对端那一次 `Release` 没成功：结果码按真读数核。"""
+        with self.assertRaisesRegex(AssertionError, "release answered"):
+            self.judge(lines=self.lines(TORN=over(TORN, released="0xffffffffffffffff")))
+
+    def test_rejects_a_zero_read_after_the_teardown(self):
+        """拆图之后第 0 页读成零：承载没在两次移交之间留住。"""
+        with self.assertRaisesRegex(AssertionError, "reads zeros after the teardown"):
+            self.judge(
+                lines=self.lines(
+                    TORN_READ="memory-transfer-race: phase=teardown read0=0x0"
+                )
+            )
+
+    def test_rejects_a_teardown_read_of_the_wrong_pattern(self):
+        """第 0 页上的花纹不对：搬过去的不是同一份承载。"""
+        with self.assertRaisesRegex(AssertionError, "not the 0x7f800 it should"):
+            self.judge(
+                lines=self.lines(
+                    TORN_READ="memory-transfer-race: phase=teardown read0=0x7f000"
+                )
+            )
 
     def test_rejects_a_target_page_that_never_waited(self):
         """目标页上只有一次已结算的物化缺页（对端没等过）：冷缺页那一手没发生。"""

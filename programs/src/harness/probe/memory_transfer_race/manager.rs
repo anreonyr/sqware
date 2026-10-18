@@ -24,6 +24,7 @@ use env::unit;
 use resource::raw::Hole as RawHole;
 
 use super::super::memory_transfer::console::Console;
+use super::super::memory_transfer::fault;
 use super::handshake;
 use super::page::Page;
 use super::shared::Shared;
@@ -65,7 +66,9 @@ pub fn acceptance() {
     // 先起一台**被握住**的真任务：授子要一个真的 TaskId，而它加载完成前不会跑。
     let peer = built.spawn(&[], 0).expect("race: spawn the peer");
     // 两份私有来源，各有各的寿命：控制页与迁移范围**分开**。
-    let mut source = Source::mint(2, SOURCE_AT, 1);
+    // 迁移来源两页都挂进本空间：第 0 页要搬、第 1 页是目标空槽（两页都只是
+    // 窗口，初始不动它，故第 1 页仍是没物化的空槽——第一段那一次冷缺页就是真的）。
+    let mut source = Source::mint(2, SOURCE_AT, 2);
     let mut control = Shared::mint(handshake::VA);
     let page = Page::at(handshake::VA);
     page.reset();
@@ -139,6 +142,87 @@ pub fn acceptance() {
         read1,
         page.read0(),
         "race: the peer read a different page than the one it announced"
+    );
+    // 第二段：对端交出它那枚**来源**子分支（真 `Release`），那一次 `Cleanup::finish`
+    // 与在途窗口重叠。本端先在源页（第 1 页，此刻持着第 0 页搬过来的那份承载）上
+    // 挂一条可见的翻译，故窗口里压着源页的正好**两条**关系；再摆请求、等对端真的
+    // 停在 `finish` 入口（`state=paused` 是夹具写下的“清理已取得、还没落地”）。
+    source.fill(1);
+    page.request_teardown();
+    await_word(
+        &console,
+        "the peer never paused its teardown",
+        || page.state(),
+        handshake::state::PREPARED,
+    );
+    assert_eq!(
+        page.state_name(),
+        "paused",
+        "race: the teardown did not reach the finish pause"
+    );
+    // 到这里对端的清理已经取得、所有 pend 与锁都已放开：本端这时才发起真移交，
+    // 在途窗口里那一段就是这次要证的输出。
+    let torn = source.shift(1, 0);
+    let kernel = page.state_name();
+    note(
+        &console,
+        &alloc::format!(
+            "phase=teardown transfer={torn:?} kernel={kernel} press={}->{} peer1={}->{} released={:#x} resumed={}",
+            page.press_before(),
+            page.press_after(),
+            page.peer_before(),
+            page.peer_after(),
+            page.released(),
+            page.resumed()
+        ),
+    );
+    assert!(
+        torn.is_ok(),
+        "race: the teardown transfer did not commit: {torn:?}"
+    );
+    // 夹具在窗口里先看到两条关系、外空间那条真握着源页的翻译（清理已取得）；
+    // 放行之后又在同一个窗口里看到只剩一条、外空间那枚翻译已经没了。
+    assert_eq!(
+        page.press_before(),
+        2,
+        "race: the window never saw both relations press the source page"
+    );
+    assert_eq!(
+        page.peer_before(),
+        1,
+        "race: the window never saw the other space's PTE before the teardown"
+    );
+    assert_eq!(
+        page.press_after(),
+        1,
+        "race: the teardown did not drop the other space's relation in the window"
+    );
+    assert_eq!(
+        page.peer_after(),
+        0,
+        "race: the other space's PTE survived the teardown"
+    );
+    // 对端真 `Release` 的返回值：控制页那条关系还在，故它报得回来。
+    let released = await_word(
+        &console,
+        "the peer never reported its release",
+        || page.released(),
+        handshake::NONE,
+    );
+    assert_eq!(
+        released, 0,
+        "race: the peer's release answered {released:#x}"
+    );
+    // 那一次移交把承载挪到了第 0 页：按第 1 页的花纹整页核，证明搬的是同一份承载。
+    let moved_sum = fault::check(1, source.page(0));
+    assert_eq!(
+        moved_sum,
+        fault::sum(1),
+        "race: the moved carrier did not keep page 1's pattern"
+    );
+    note(
+        &console,
+        &alloc::format!("phase=teardown read0={moved_sum:#x}"),
     );
     // 对端走的是真退出（入口那一台报收尾），管理端按真退出核它。
     let exit = join(peer);
