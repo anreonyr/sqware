@@ -1575,44 +1575,60 @@ memory-transfer-race: close done
 
 #### 五、下一项：把“拆图与在途窗口重叠”接上去（先核了真实调用/锁，尚未实现）
 
-已按“先核真实调用/锁”的要求读了码，结论与那个建议形状**有一处不同**，先把证据列在这里：
+**修正（本轮复审指出）**：本节原先把 `Cleanup::finish` 那一支写成“到不了重叠”。
+那说得太满：我证到的是**一种次序**会串行，**没有**排除另一种次序。
 
-- **`Release`/`Revoke`/`doom` 那一支到不了重叠**：`cull`（`pend/cull.rs`）先 `collect`
-  把子树里每个任务（**含 lord 也就是管理端**）的 pend 取上，才拿得到 `Cleanup`；
-  而 `Cleanup::finish` 是在 `with_tasks_checked` 放掉那些 pend **之后**才跑。故那一支在
-  管理端持 pend 的窗口里只能**堵在 `collect`**，它的拆图只能排在放行之后——不是重叠。
-  （`finish` 本身确实不取 pend、也不取 pole 租约，但它到不了。）
-- **`Shut` 那一支能重叠**：`pie::shut` 只取**本任务 pend**（`pend::locate`）＋
-  `PoleOperation`，然后 `PoleMeta::close_maps`（`mail/pole/mod.rs`）先
-  `space.nest.retry_invalidation()`、再 `space.withdraw(view.whole())`、最后
-  `space.retire_view`——全是**对端自己**那个空间／Nest／pole 的锁，**不碰管理端 pend**。
-  它是持有者“交回自己那条窗口”的**合法入口**（b2 那一例用的就是它）。
-- **拆图本身不看 Flat 页槽状态**：`Nest::detach`→`withdraw`（`nest/mod.rs`）只动
-  Nest 的占用／发布记录与关系自己的 state，把帧 `Arc` 收进 `retired_frames`——
-  源页此刻在事务里是 `Moving` 也不碍事（承载归源槽，拆图只放掉自己那份引用）；
-  两条拆图路都以 `messenger::signal(关系键)` 收尾（会放行那条关系上的等待者）。
+- **已证（一种次序）**：管理端**已经持着 pend**、这时才发起 cull 的那种次序——`cull`
+  （`pend/cull.rs`）先经 `collect` 把子树里每个任务（**含 lord 也就是管理端**）的 pend
+  取上，才拿得到 `Cleanup` ⇒ 它只能**堵在 `collect`**，拆图排在放行之后。那是顺序
+  完成，不是重叠。
+- **未排除（另一种次序，就是原来那个建议形状）**：`cull` **先**拿到 `Cleanup`（那些
+  pend 已经在 `with_tasks_checked` 里取上又放掉）→ 对端在 `finish` **之前**停住 →
+  管理端这时才取自己的 pend、进入 `claim` → 再放对端跑真的 `finish`。读到的码里
+  **没有**隐藏锁或失效状态使这一序也不可能：`Pie::invalidate` 只把 Grant 失活，
+  `snapshot()` 里的 `Mail`（Pole）与它的 `maps` 一概没动，故 `Cleanup::finish` 的
+  `PoleMeta::withdraw` 确实会 `space.dispose`（真拆 PTE、真 `signal` 等待位）。
+  这一序需要 `cull` 与 `finish` 之间的一个**暂停点**（今天不存在），而“能不能那样
+  到达”属于待窄核的真可达性——本节**不断言不可达**。
+- 真走到那一序，与移交自己的 `unpublish_page` 会是**两条拆图路碰同一条关系**
+  （“无二次 detach”那一格）；这正是那一 phase 要证的东西。
+- **`Shut` 是另一条已经可达的路，不是同一路的替代**：它走的是持有者交回自己那条窗口
+  （只取本任务 pend ＋ pole 租约，拆的是对端自己那个空间／Nest），可以作为**另一个
+  phase**，但不能拿来顶替 `finish` 那条。
+
+已核过的其余事实（供窄核与实现直接用）：
+
+- **`Shut` 那一支不碰管理端 pend**：`pie::shut` → `pend::locate`（本任务）＋
+  `PoleOperation` → `PoleMeta::close_maps`（[pole/mod.rs:296](worktree://4b5296e6-cc35-464a-82ef-4952bea98f22/kernel/src/core/work/mail/pole/mod.rs#L296)）→
+  `retry_invalidation` → `space.withdraw(view.whole())` → `retire_view`。
+- **拆图本身不看 Flat 页槽状态**：`Nest::detach`→`withdraw`（[nest/mod.rs:897](worktree://4b5296e6-cc35-464a-82ef-4952bea98f22/kernel/src/core/memory/nest/mod.rs#L897)）
+  只动 Nest 的占用／发布记录与关系自己的 state，把帧 `Arc` 收进 `retired_frames`——
+  源页此刻在事务里是 `Moving` 也不碍事；两条拆图路都以 `messenger::signal(关系键)`
+  收尾。
 - **候选在执行中失效本来就有处理**：`claim` 的候选是 `Weak`（`candidates_over`），
   占槽后 `affected_over` 按 `upgrade()` ＋ 关系自己的窗口 `pressing_page` 过滤，
   `withdraw_pressings` 又**重新枚举**一次 `pressings_over`——已退役的关系不在登记链上，
   不会被碰；真落到 `unpublish_page` 也因“没有发布记录”当场 `Ok`。故这一景要证的是
   “**这条容忍在真并发下成立**”，而不是去发现一条已知的漏洞。
 
-协议（扩现 `memory-transfer-race` 一个 phase，保留已验 `fault/wait/wake` 全部判据）：
+协议（若窄核认定某一序可达；扩现 `memory-transfer-race` 一个 phase，保留已验
+`fault/wait/wake` 全部判据）：
 
-1. 对端保留它的**控制页**子分支，只在 phase B 里 `Shut` 它那枚**来源**子分支；
-   来源子分支的号由管理端写进共享控制页（对端已经握着控制页那条关系，不必再开孔）。
-2. 管理端先写好请求（`MODE=SHUT`）再发起真移交；夹具在**占槽之后、撤 PTE 之前**
-   放开对端（`START`），然后有界自旋（`rdtime`）等**两件内核事实同时成立**：
-   对端那个 Nest 在它自己那个 VA0 上**不再有翻译**，且压着源页的关系**从两条降到一条**；
-   两件都在窗口里当场读到，才算“拆图真完成在窗口里”（写 `SHUT_SEEN=1` ＋ `ARMED`），
-   到点写 `TIMEOUT`——**不把“请求发出”或“稍后完成”当重叠**。
-3. 移交接着走：`affected_over`／`withdraw_pressings` 必须容忍那条候选已退役；
-   目标槽拿到承载、内容与源页花纹一致（管理端自己那条关系读第 1 页真物化），
-   对端 `Shut` 返回 0 且它那条关系真的不在了（无二次 detach），最后整机净回收。
-4. 高价值负例（应能红）：夹具不等那两件事实就返回（→ `SHUT_SEEN=0`，host 判据红）；
-   或在 `affected_over` 里去掉窗口过滤（→ 已退役的关系被当成候选 → 当场断言/红）。
+1. 对端保留它的**控制页**子分支，只在那一 phase 里交回它那枚**来源**子分支；来源
+   子分支的号由管理端写进共享控制页（对端已握控制页那条关系，不必再开孔）。
+2. 管理端先写好请求再发起真移交；夹具在**占槽之后、撤 PTE 之前**有界自旋
+   （`rdtime`）等**两件内核事实同时成立**：对端那个 Nest 在它自己那个 VA0 上
+   **不再有翻译**，且压着源页的关系**从两条降到一条**；两件都在窗口里当场读到，
+   才算“拆图真完成在窗口里”，到点写 `TIMEOUT`——**不把“请求发出”或“稍后完成”
+   当重叠**。若走 `finish` 那一序，还需一个 `cull` 与 `finish` 之间的暂停点
+   （debug-only、race-scene feature、不常开 ABI/schema）。
+3. 移交接着走：`affected_over`／`withdraw_pressings` 必须容忍那条候选已退役或被另一
+   条拆图路同时拆（无二次 detach）；目标槽拿到承载、内容与源页花纹一致；最后整机
+   净回收。
+4. 高价值负例（应能红）：夹具不等那两件事实就返回（host 判据红）；或在
+   `affected_over` 里去掉窗口过滤（已退役关系被当候选 → 当场断言/红）。
 
-当前状态：**尚未实现**（本轮先交协议与证据层次：内核侧在窗口里读到的那两件事实
+当前状态：**尚未实现**（本轮只交协议与证据层次：内核侧在窗口里读到的那两件事实
 ＋程序侧读数＋host 用现有导出与受控状态复核；不为它新开泛 ABI/schema）。
 
 本阶段的命令（都从仓根跑；本景一律带护栏那一档）：
