@@ -1967,5 +1967,26 @@ run 帧增量／PA 连续是「这一窗没有额外帧分配」的**实测证�
 - 预算 16 MiB **只算塑形新持有的裸块**（`Reserved` 的持有集），**不含**块池／帧池原有的缓存页；
   每个 `Err` 都由 `Reserved` 析构把已持有的块按同 layout 归还。
 - 本阶段**未**获得推送或共享分支落地许可；独立复审与主树合入由 parent 单独做。
-- **独立接受的 pin 是 `e7528d6c`**（代码）＋ `a810715a`（doc 算术）；本节之后的收尾小变更
-  （旧注释改成局部事实、doc 公式与单 Hart 口径、`Prime` 窄上界、alloc 非空断言）**待窄核**。
+- **独立接受**：先接受了 `e7528d6c`（代码）＋ `a810715a`（doc 算术）；随后 reviewer 又独立
+  接受**最终净 pin `37f46d6c`**（收尾：旧注释、doc 公式与口径、两遍暖机＋测量、`Prime`
+  窄上界），**无阻塞**。
+- **本项自验（净 pin 上）**：目标用例 `ok. 1 passed; 0 failed; 0 ignored; 0 measured;
+  78 filtered out`；默认档 `77 passed; 1 failed`（缺 initrd 哨兵；列表里**无**本用例）；
+  `--features mega-leaf` 全量 `78 passed; 1 failed`；**release（± feature）里没有本用例**。
+- **承重 mutant 都实跑**：fixture 腿、生产腿、强 cache mutant（`Reserved::drop` 只还裸帧、
+  漏块池页）都红；后者**首次**红在 `mega-leaf: kind plain: 354 → 394 (net must be 0)`，
+  **没有删掉任何原有断言**。
+- **两遍结构的边界**：第二遍的「整页池 Δ 0、`Prime` Δ 0」是**同一半暖 scope**（本用例
+  暖机一遍之后）的读数，**不是**生产层面的「连续／资源不增长」保证；fixture 的持有集与
+  用例资源都在测量窗口内释放。
+- 旧格式债（`kernel/src/core/work/pend/mod.rs` 等处的 rustfmt 不齐）**不是本项引入**，
+  未顺手重排。
+
+#### 六、本轮验收收口
+
+本项**只**补上一件约定补验：**普通 `Flat::acquire` 的自然 2 MiB 大叶，在原生 Flat / Nest /
+Transfer 上走完那次完整移交**。跨 Task 的原生净额、真多 Hart 的 fault-wait-wake、真实
+`Cleanup::finish` 与在途窗口的重叠，**已由前几轮独立验收**（见前文各节），本项**未触及、
+未重跑**。本轮**不**声称：所有硬件／所有 DMA 路径已测；清理的所有中间态已覆盖；大页的
+guest ecall E2E 已测。边界保留：默认档 `77 passed` ＋ 缺 initrd 哨兵 `1 failed`，`--features
+mega-leaf` 档 `78 passed` ＋ 同一哨兵；无新矩阵、未重跑未变场景。
