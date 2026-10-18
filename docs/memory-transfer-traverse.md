@@ -1570,7 +1570,50 @@ memory-transfer-race: close done
 - 普通 512 页窗口那一例的**大叶前提**仍未构成：同一台健康面上实测那 512 页按序物化后
   PA 首址不是 2 MiB 对齐、相邻处有断点——那是**这一次布局的读数**，**不是**“普通
   `Acquire` 永久不能成大叶”的结论（连续对齐的分配会把那一窗变成 2 MiB 叶）。
-- 设备/DMA 与真实 Platform 接线仍不在本轮范围内。
+- 设备/DMA 与真实 Platform 接线**上一轮已经做过 QEMU 产品闭环**（那一批已落地）；
+  本轮**未触及、未重跑**它——那是“本轮没跑”，**不是**“项目尚未实现”。
+
+#### 五、下一项：把“拆图与在途窗口重叠”接上去（先核了真实调用/锁，尚未实现）
+
+已按“先核真实调用/锁”的要求读了码，结论与那个建议形状**有一处不同**，先把证据列在这里：
+
+- **`Release`/`Revoke`/`doom` 那一支到不了重叠**：`cull`（`pend/cull.rs`）先 `collect`
+  把子树里每个任务（**含 lord 也就是管理端**）的 pend 取上，才拿得到 `Cleanup`；
+  而 `Cleanup::finish` 是在 `with_tasks_checked` 放掉那些 pend **之后**才跑。故那一支在
+  管理端持 pend 的窗口里只能**堵在 `collect`**，它的拆图只能排在放行之后——不是重叠。
+  （`finish` 本身确实不取 pend、也不取 pole 租约，但它到不了。）
+- **`Shut` 那一支能重叠**：`pie::shut` 只取**本任务 pend**（`pend::locate`）＋
+  `PoleOperation`，然后 `PoleMeta::close_maps`（`mail/pole/mod.rs`）先
+  `space.nest.retry_invalidation()`、再 `space.withdraw(view.whole())`、最后
+  `space.retire_view`——全是**对端自己**那个空间／Nest／pole 的锁，**不碰管理端 pend**。
+  它是持有者“交回自己那条窗口”的**合法入口**（b2 那一例用的就是它）。
+- **拆图本身不看 Flat 页槽状态**：`Nest::detach`→`withdraw`（`nest/mod.rs`）只动
+  Nest 的占用／发布记录与关系自己的 state，把帧 `Arc` 收进 `retired_frames`——
+  源页此刻在事务里是 `Moving` 也不碍事（承载归源槽，拆图只放掉自己那份引用）；
+  两条拆图路都以 `messenger::signal(关系键)` 收尾（会放行那条关系上的等待者）。
+- **候选在执行中失效本来就有处理**：`claim` 的候选是 `Weak`（`candidates_over`），
+  占槽后 `affected_over` 按 `upgrade()` ＋ 关系自己的窗口 `pressing_page` 过滤，
+  `withdraw_pressings` 又**重新枚举**一次 `pressings_over`——已退役的关系不在登记链上，
+  不会被碰；真落到 `unpublish_page` 也因“没有发布记录”当场 `Ok`。故这一景要证的是
+  “**这条容忍在真并发下成立**”，而不是去发现一条已知的漏洞。
+
+协议（扩现 `memory-transfer-race` 一个 phase，保留已验 `fault/wait/wake` 全部判据）：
+
+1. 对端保留它的**控制页**子分支，只在 phase B 里 `Shut` 它那枚**来源**子分支；
+   来源子分支的号由管理端写进共享控制页（对端已经握着控制页那条关系，不必再开孔）。
+2. 管理端先写好请求（`MODE=SHUT`）再发起真移交；夹具在**占槽之后、撤 PTE 之前**
+   放开对端（`START`），然后有界自旋（`rdtime`）等**两件内核事实同时成立**：
+   对端那个 Nest 在它自己那个 VA0 上**不再有翻译**，且压着源页的关系**从两条降到一条**；
+   两件都在窗口里当场读到，才算“拆图真完成在窗口里”（写 `SHUT_SEEN=1` ＋ `ARMED`），
+   到点写 `TIMEOUT`——**不把“请求发出”或“稍后完成”当重叠**。
+3. 移交接着走：`affected_over`／`withdraw_pressings` 必须容忍那条候选已退役；
+   目标槽拿到承载、内容与源页花纹一致（管理端自己那条关系读第 1 页真物化），
+   对端 `Shut` 返回 0 且它那条关系真的不在了（无二次 detach），最后整机净回收。
+4. 高价值负例（应能红）：夹具不等那两件事实就返回（→ `SHUT_SEEN=0`，host 判据红）；
+   或在 `affected_over` 里去掉窗口过滤（→ 已退役的关系被当成候选 → 当场断言/红）。
+
+当前状态：**尚未实现**（本轮先交协议与证据层次：内核侧在窗口里读到的那两件事实
+＋程序侧读数＋host 用现有导出与受控状态复核；不为它新开泛 ABI/schema）。
 
 本阶段的命令（都从仓根跑；本景一律带护栏那一档）：
 
@@ -1614,7 +1657,7 @@ rustfmt --edition 2024 --check --config skip_children=true <本阶段改到的�
 git diff --check a6d626fb HEAD        # 已提交差异，不只工作树/index
 ```
 
-#### 五、独立复审与那一条精度修正
+#### 六、本批的独立复审与那一条精度修正
 
 同组独立 reviewer 在 `7be9eebd` 上**只读验收通过**（在 /tmp 的该 pin 副本上实跑，
 未动本树、未 merge、未 push）。它重跑并核过的：
