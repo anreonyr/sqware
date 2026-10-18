@@ -2069,3 +2069,287 @@ fn a_plain_acquire_window_hands_over_one_page() {
     drop(space);
     drop(seat);
 }
+
+/// 普通 `Flat::acquire` 的 Managed 来源，在**仅测试可控布局**下自然形成真实的 2 MiB 大叶，
+/// 再把中段那一格 4 KiB 交出去。
+///
+/// 布局由 [`frame_layout::Reserved`] 塑形：先预热块池的两档元数据尺寸类（每页保留一块），
+/// 再把帧池里小于 8 MiB 的伙伴块抽干并持有。此后一次 1024 页的普通物化整段落在相对连续
+/// 的区段上，其中必含一个绝对 2 MiB 对齐的 512 页子窗——不手工写 PTE、不借
+/// `BorrowedRegion`、不为它扩分配 API、不导入探针帧、也不盲试到偶然绿。
+///
+/// 这一层是**内核内的原生 Flat / Nest / Transfer**（真实来源、真实页表、真实事务），
+/// 不是 guest ecall 那一层；单 Hart、单来源、单关系。
+#[cfg(feature = "mega-leaf")]
+pub fn mega_leaf() {
+    use core::sync::atomic::Ordering;
+
+    use crate::core::memory::nest::table::TABLE_LIVE;
+
+    // 热身：首次建拆一个空间会触发一次性的惰性分配（核身份表与池的首次取自帧池），
+    // 那不是本用例的账；先走一遍，再取基线。
+    drop(
+        SpaceBuilder::user()
+            .build()
+            .expect("mega-leaf: warm-up space"),
+    );
+
+    let frames_before = statistics::frame_occupied() - statistics::block_occupied();
+    let kinds_before = statistics::kinds();
+    let tables_before = TABLE_LIVE.load(Ordering::Relaxed);
+
+    {
+        const WINDOW: usize = 1024;
+        const HALF: usize = 512;
+        let rw = Access::READ | Access::WRITE;
+
+        // 塑形：预热块池 → 建来源并预留页槽表 → 抽干帧池里的小块。
+        let (flat, reserved) = match shaped_source(WINDOW) {
+            Ok(pair) => pair,
+            Err(why) => {
+                crate::expect!(
+                    false,
+                    "mega-leaf: the controlled layout could not be shaped: {why}"
+                );
+                return;
+            }
+        };
+
+        // 一次普通物化：整窗的 PA 与承载。
+        let whole = flat.whole();
+        let frames_at_shape = statistics::frame_occupied();
+        let pages = whole
+            .materialize()
+            .expect("mega-leaf: materialize the window");
+        let run_frames = statistics::frame_occupied() - frames_at_shape;
+        let mut addresses = Vec::new();
+        addresses
+            .try_reserve_exact(WINDOW)
+            .expect("mega-leaf: an address list");
+        for index in 0..WINDOW {
+            addresses.push(
+                pages
+                    .physical(PageOffset::new(index))
+                    .expect("mega-leaf: page address")
+                    .as_usize(),
+            );
+        }
+
+        // 真实读数：整窗是一段相对连续段，且物化只取数据帧（元数据已预热）；其中有一个
+        // 绝对 2 MiB 对齐、512 页连续的子窗，它的页偏移 = 2 MiB −（帧池基址 mod 2 MiB）。
+        let contiguous = addresses
+            .windows(2)
+            .all(|pair| pair[1] == pair[0] + PAGE_SIZE);
+        let first = (0..=WINDOW - HALF).find(|&i| {
+            addresses[i] % MEGA == 0
+                && (i..i + HALF).all(|k| addresses[k] == addresses[i] + (k - i) * PAGE_SIZE)
+        });
+        crate::putln!(
+            "[health] mega-leaf: pool base {:#x}, {WINDOW} pages from {:#x} (contiguous {contiguous}), \
+             {run_frames} frames for the run, aligned 2 MiB sub-window at {first:?} = {:#x}",
+            crate::core::memory::flat::allocator::bump::frontier().next_multiple_of(PAGE_SIZE),
+            addresses[0],
+            first.map(|i| addresses[i]).unwrap_or(0)
+        );
+        crate::expect!(
+            contiguous,
+            "mega-leaf: the materialized window is one relative-contiguous run"
+        );
+        crate::expect!(
+            run_frames == WINDOW,
+            "mega-leaf: the run takes exactly {WINDOW} data frames ({run_frames}), no metadata frame"
+        );
+        let Some(first) = first else {
+            crate::expect!(
+                false,
+                "mega-leaf: the controlled layout produced no aligned contiguous 2 MiB run"
+            );
+            return;
+        };
+        let carriers: Vec<_> = whole
+            .materialized_frames()
+            .expect("mega-leaf: slots")
+            .into_iter()
+            .map(|(offset, frame)| (offset.get(), frame))
+            .collect();
+        drop(pages);
+
+        // 把这 512 页子窗挂到 2 MiB 对齐的 VA 窗口上。
+        let source = whole
+            .range(
+                page(first),
+                PageCount::new(HALF).expect("mega-leaf: sub-window"),
+            )
+            .expect("mega-leaf: sub-window");
+        let space = SpaceBuilder::user().build().expect("mega-leaf: space");
+        let view = map_slice(&space, VirtAddr::wrap(BASE), source.clone(), rw);
+
+        // 真实大叶：整段是一级（2 MiB）叶；两端都在同一片叶里。
+        for at in [BASE, BASE + MEGA - PAGE_SIZE] {
+            crate::expect!(
+                space.nest.leaf_span(VirtAddr::wrap(at)) == Some(MEGA),
+                "mega-leaf: {at:#x} is in a real 2 MiB leaf"
+            );
+        }
+
+        // 从映射写内容：每一页头一个字节就是它的页号。
+        for index in 0..HALF {
+            let at = VirtAddr::wrap(BASE + index * PAGE_SIZE);
+            crate::expect!(
+                space.copy_out(&[index as u8], at),
+                "mega-leaf: write page {index} through the mapping"
+            );
+            let mut byte = [0u8; 1];
+            crate::expect!(
+                space.copy_in(&mut byte, at) && byte[0] == index as u8,
+                "mega-leaf: page {index} reads back through the mapping"
+            );
+        }
+
+        // 撤页前后都不许动的东西：窗两端与中段邻页的承载、权限。
+        let watched = [0usize, HALF - 1, HALF / 2 - 1, HALF / 2 + 1];
+        let kept: Vec<_> = watched
+            .iter()
+            .map(|&index| {
+                let (physical, flags) = space
+                    .nest
+                    .translate(VirtAddr::wrap(BASE + index * PAGE_SIZE))
+                    .expect("mega-leaf: watched page");
+                (index, physical.as_usize(), flags.bits())
+            })
+            .collect();
+
+        // 中段那一格 4 KiB 交出去。
+        let middle = HALF / 2;
+        let moved = addresses[first + middle];
+        let held = Arc::downgrade(
+            &carriers
+                .iter()
+                .find(|(offset, _)| *offset == first + middle)
+                .expect("mega-leaf: the middle carrier")
+                .1,
+        );
+        let seat = acquire(1);
+        let seat_page = seat.whole();
+        transfer(&source, middle, &seat_page, 0).expect("mega-leaf: the middle 4 KiB moves");
+
+        // 目标拿到同一个承载、同一个 PA 与同一格内容。
+        crate::expect!(
+            placed(&seat_page) == alloc::vec![(0, moved)],
+            "mega-leaf: the moved page keeps its carrier"
+        );
+        crate::expect!(
+            Arc::ptr_eq(
+                &seat_page
+                    .materialized_frames()
+                    .expect("mega-leaf: seat slots")[0]
+                    .1,
+                &held.upgrade().expect("mega-leaf: carrier alive")
+            ),
+            "mega-leaf: the very same frame lands in the seat"
+        );
+        crate::expect!(
+            read_byte(PhysAddr::from_raw(moved)) == middle as u8,
+            "mega-leaf: the moved page keeps its content"
+        );
+        crate::expect!(
+            matches!(
+                source
+                    .range(page(middle), one())
+                    .expect("mega-leaf: the moved cell")
+                    .materialize(),
+                Err(FlatError::Missing)
+            ),
+            "mega-leaf: the source cell becomes a tombstone"
+        );
+        crate::expect!(
+            space
+                .nest
+                .translate(VirtAddr::wrap(BASE + middle * PAGE_SIZE))
+                .is_none(),
+            "mega-leaf: only the moved page gives up its translation"
+        );
+        // 拆叶真的发生了：邻页与窗两端从 2 MiB 叶变成 4 KiB 叶，承载、内容与权限都不动。
+        for (index, physical, flags) in &kept {
+            let at = VirtAddr::wrap(BASE + index * PAGE_SIZE);
+            let mut byte = [0u8; 1];
+            crate::expect!(
+                space.copy_in(&mut byte, at) && byte[0] == *index as u8,
+                "mega-leaf: page {index} keeps its content"
+            );
+            crate::expect!(
+                space.nest.leaf_span(at) == Some(PAGE_SIZE),
+                "mega-leaf: the 2 MiB leaf was split, page {index} is a 4 KiB leaf"
+            );
+            crate::expect!(
+                space
+                    .nest
+                    .translate(at)
+                    .expect("mega-leaf: kept page")
+                    .0
+                    .as_usize()
+                    == *physical
+                    && space
+                        .nest
+                        .translate(at)
+                        .expect("mega-leaf: kept page")
+                        .1
+                        .bits()
+                        == *flags,
+                "mega-leaf: page {index} keeps its carrier and permissions"
+            );
+        }
+        space.nest.audit();
+        drop(view);
+        drop(space);
+        drop(seat);
+        drop(source);
+        drop(carriers);
+        drop(addresses);
+        drop(whole);
+        drop(flat);
+        drop(reserved);
+    }
+
+    let frames_after = statistics::frame_occupied() - statistics::block_occupied();
+    crate::expect!(
+        frames_after == frames_before,
+        "mega-leaf: frame occupancy {frames_before} → {frames_after} (net must be 0)"
+    );
+    let tables_after = TABLE_LIVE.load(Ordering::Relaxed);
+    crate::expect!(
+        tables_after == tables_before,
+        "mega-leaf: live tables {tables_before} → {tables_after} (net must be 0)"
+    );
+    for (kind, count) in statistics::kinds().nonzero() {
+        if kind == Kind::Prime {
+            // 块池取自帧池的整页；它们的账在 `block_occupied` 上，不在帧类目里。
+            continue;
+        }
+        crate::expect!(
+            count == kinds_before.get(kind),
+            "mega-leaf: kind {}: {} → {count} (net must be 0)",
+            kind.name(),
+            kinds_before.get(kind)
+        );
+    }
+}
+
+/// 塑形并建出受控来源：预热块池、建来源、预留页槽表、抽干帧池里的小块。
+///
+/// 任一步失败都返回错误；这时 [`frame_layout::Reserved`] 已在作用域内，
+/// 由它的析构把已持有的块整批归还，不留半个塑形。
+#[cfg(feature = "mega-leaf")]
+fn shaped_source(
+    window: usize,
+) -> Result<(Arc<Flat>, super::frame_layout::Reserved), &'static str> {
+    use super::frame_layout;
+
+    let mut reserved = frame_layout::Reserved::default();
+    reserved.preheat()?;
+    let allocation = Allocation::new(window, PAGE_SIZE).map_err(|_| "the window allocation")?;
+    let flat = Flat::acquire(allocation).map_err(|_| "the source")?;
+    flat.reserve_slots(window).map_err(|_| "the slot table")?;
+    reserved.drain()?;
+    Ok((flat, reserved))
+}

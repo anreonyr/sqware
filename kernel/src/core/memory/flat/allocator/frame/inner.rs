@@ -87,6 +87,12 @@ impl FrameInner {
         (addr - self.base) / PAGE_SIZE
     }
 
+    /// 最低非空伙伴桶的幂。只读：不改自由链、不分配、不归还。
+    #[cfg(all(debug_assertions, feature = "mega-leaf"))]
+    pub(super) fn lowest_free_power(&self) -> Option<usize> {
+        self.freelist.iter().position(Option::is_some)
+    }
+
     pub(super) fn frame_addr(&self, index: usize) -> usize {
         self.base + index * PAGE_SIZE
     }

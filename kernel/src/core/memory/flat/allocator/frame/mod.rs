@@ -93,6 +93,14 @@ unsafe impl Allocator for FrameAllocator {
 
 static FRAME_ALLOCATOR: OnceLock<&'static FrameAllocator> = OnceLock::new();
 
+/// 最低非空伙伴桶的幂（只读观测；测试夹具用它判断是否已把小于 8 MiB 的块抽干）。
+#[cfg(all(debug_assertions, feature = "mega-leaf"))]
+pub(crate) fn lowest_free_power() -> Option<usize> {
+    FRAME_ALLOCATOR
+        .get()
+        .and_then(|allocator| allocator.inner.lock().lowest_free_power())
+}
+
 pub fn allocator() -> &'static dyn Allocator {
     FRAME_ALLOCATOR
         .get()

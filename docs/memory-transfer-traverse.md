@@ -1858,3 +1858,97 @@ python3 -B -m unittest discover -s programs/tests/memory-transfer -p 'test_*.py'
 - 设备/DMA 与真实 Platform 接线：**上一轮已做 QEMU 产品闭环**（已落地），本轮
   **未触及、未重跑**它。
 - 本批不重跑整矩阵、不开新 phase；主树合入由 parent 单独做。
+
+### 普通 `Acquire` 大叶：受控布局下的真 2 MiB 叶与那一格移交（本轮，待独立复审）
+
+上一节记的**唯一未验证项**（普通 `Flat::acquire` 的 Managed 来源形成大叶之后的那次完整
+移交）本轮补上了。**默认／release 生产路径未改**；只新增两个 `cfg` 测试 seam 与一例原生用例。
+
+#### 一、构造：为什么这次能成大叶
+
+帧池是**相对对齐**的伙伴分配器：`base` 只按页对齐，**本构建**不按 2 MiB 对齐（实测
+`base = 0x806F9000`，`base mod 2 MiB = 0x0F9000 = 249 页`），所以**当前**相对对齐的 power-9 块
+绝对 PA 不齐。能拿到绝对 2 MiB 对齐只能靠「一段相对连续的足够长块里那个绝对对齐的 512 页
+子窗」。两个障碍：
+
+1. **元数据会打断数据页**：物化每页的 `Arc<Frame>` 控制块取自块池，块池一页用完就向帧池取
+   一整页——实测每 64 页数据插进 1 页元数据。`Flat` 的页槽表 `Vec` 增长（1024 页一条来源
+   约 32 KiB，走帧池）同样会打断。
+2. **帧池里的小块会被优先发放**，拿不到长连续段。
+
+夹具（`kernel/tests/health/frame_layout.rs`，一格非默认 feature `mega-leaf`）：
+
+- `Reserved::preheat`：按**真实页**分组，从块池取走两档元数据尺寸类（class 6 = `Arc<Frame>`
+  控制块、class 7 = 来源驻留表项）各若干块，**每页保留一块**、其余当场归还；那些页因此停在
+  「至少一块在用」上，不会被块池抽回帧池 ⇒ 物化期间不再向帧池取页。
+- `Reserved::drain`：读帧池**最低非空伙伴桶的幂**（只读 seam），小于 8 MiB 就把整块取出并
+  持有，直到最低桶 ≥ 8 MiB。
+- `Flat::reserve_slots`：只预留来源页槽表容量，不动物化时序、页状态与迁移资格。
+
+两个 seam 都严格 `cfg(all(debug_assertions, feature = "mega-leaf"))`：普通 release／default
+里不存在（默认档用例数不变，见下）。`reserve_slots` 在 `drain` **之前**一次备齐，run 期间
+每页的 `slots.try_reserve(1)` 是空操作，记录表不再扩容。
+
+**8 MiB 而不是 4 MiB 的不变量**：一段 4 MiB 块正好 1024 页，而预热会从块首取走几页，剩下
+的段就短于「512 页窗 ＋ 最多 511 页偏移」所需的 1023 页（实测只剩 1020 页，用例当场红）。
+取 8 MiB 后：`drain` 返回时所有小于 8 MiB 的桶都空，最小的一次帧分配来自单个 ≥8 MiB 块
+（≥2048 页）；此后到首个数据页之间的帧池消费者只有两类——`drain` 自己（已完成）与
+**预热过的元数据**（class 6/7 从块池取，不再向帧池取页）；页槽表容量已在 `drain` 前预留。
+本构建实测前缀为 0 页（run 首址 = `base + 112 × 2 MiB`，即一个 16 MiB 相对对齐的块首）；
+一般情形下前缀至多是从该块取走的几页，而 2048 页的余量远大于它。
+
+#### 二、用例（`tests/health/transfer.rs::mega_leaf`；整机例名 `memory_transfer_mega_leaf`）
+
+塑形后一次普通 `Flat::acquire(1024)` 整窗物化，**先打印并断言**：整窗 1024 页相对连续、
+物化只取数据帧（元数据已预热）、其中有一个绝对 2 MiB 对齐、512 页连续的子窗。然后把这一
+子窗挂到 2 MiB 对齐的 VA 窗口（`BASE = 0x6800_0000`），断言 `leaf_span == 2 MiB`（两端同叶）；
+从映射逐页写内容；再 `Transfer` 移走中段那一格 4 KiB。
+
+判据：源那一格成墓碑、PTE 消失；目标拿到同一 `Arc<Frame>`／同一 PA／同一内容；邻页与窗两端
+的承载、内容、权限不动；**拆叶实际发生**（撤页前是 2 MiB 叶，撤页后邻页与两端都是 4 KiB 叶）；
+清理后帧净额、`TABLE_LIVE` 与逐类账（除 `Prime` 一格，口径同既有用例）都回到基线。
+
+这一层是**内核内原生 Flat / Nest / Transfer**（真实来源、真实页表、真实事务），**不是**
+guest ecall 那一层；单 Hart、单来源、单关系（原生单 Hart 静默前提）。
+
+#### 三、本轮实际读数（本封存构建，页 = 4 KiB）
+
+用例自己打印的一行（`pool base` 由既有 `bump::frontier()` 取页对齐得出，与 `FrameInner::base`
+同一算式）：
+
+```
+[health] mega-leaf: pool base 0x806f9000, 1024 pages from 0x8e6f9000 (contiguous true),
+1024 frames for the run, aligned 2 MiB sub-window at Some(263) = 0x8e800000
+```
+
+| 量 | 值 |
+|---|---|
+| 帧池基址 `base` | `0x806F9000`（只按页对齐；`base mod 2 MiB = 0x0F9000` = 249 页 = 1 020 000 B） |
+| 首个数据页 PA（物化窗首） | `0x8E6F9000`（= `base + 112 × 2 MiB`，即 16 MiB 相对对齐的块首，无塑形前缀） |
+| 子窗首 PA（2 MiB 对齐） | `0x8E800000` |
+| 子窗页偏移 | 263 页 = `0x107000` = 1 073 152 B（= `2 MiB − base mod 2 MiB`；随 base 微移，恒 ∈ `[0,512)`） |
+| 整窗连续性 | 1024/1024 页连续 |
+| 物化窗的帧增量 | **1024**（恰为数据页；元数据未取帧） |
+| 塑形预算 | 上限 16 MiB／1024 块；实测抽干 9 块、约 6.75 MiB（不含原有的块池缓存页） |
+| 预热余量 | class 6 取 2048 块（64 B/块，每页 64 块）⇒ 空块 ≥ 2048 − 32 = 2016 ≥ run 需的 1024 |
+
+| 命令（逐字） | 结果 |
+|---|---|
+| `nu scripts/qtest.nu --package kernel -- --features mega-leaf -- -- memory_transfer_mega_leaf` | `1 passed; 0 failed; 0 ignored; 0 measured; 78 filtered out` |
+| `nu scripts/qtest.nu --package kernel -- --features mega-leaf` | `78 passed; 1 failed`（缺 initrd 哨兵 `embedded::tests::scene`），退出 101 |
+| `nu scripts/qtest.nu --package kernel`（默认档，无 feature） | `77 passed; 1 failed`（同上哨兵），与本轮前逐字相同 |
+
+#### 四、承重 mutant（都实跑；生产文件按 blob 级核回）
+
+| mutant | 签名 |
+|---|---|
+| fixture 腿：`shaped_source` 不抽干小块 | 红：`mega-leaf: the materialized window is one relative-contiguous run`（整窗不再连续、对齐子窗 `None`） |
+| 生产腿：`unpublish_page` 不撕那一格 PTE | 红：`mega-leaf: only the moved page gives up its translation` |
+
+#### 五、未覆盖
+
+- 真多 Hart 的同刻交错、guest ecall E2E、设备/DMA 与真实 Platform：**不在本轮**。
+- 宿主套件与其它景**未重跑**（本轮只动内核测试与两个 test-only seam，生产路径未改）。
+- 预算 16 MiB **只算塑形新持有的裸块**（`Reserved` 的持有集），**不含**块池／帧池原有的缓存页；
+  原生单 Hart 是本用例的静默前提；每个 `Err` 都由 `Reserved` 析构把已持有的块按同 layout 归还。
+- 本阶段**未**获得推送或共享分支落地许可；独立复审与主树合入由 parent 单独做。

@@ -29,6 +29,7 @@ pub mod depend;
 pub mod fault;
 pub mod flat;
 pub mod frame;
+pub mod frame_layout;
 #[cfg(feature = "fresh-scene")]
 pub mod fresh_scene;
 pub mod hart;

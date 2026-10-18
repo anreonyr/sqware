@@ -92,6 +92,23 @@ impl Flat {
         Self::new(page_count, FlatSource::Borrowed(region), false)
     }
 
+    /// 预留页槽表容量，使后续物化不再因 `Vec` 增长而取元数据块。
+    ///
+    /// 只改容量，不改任何页状态、物理保证、托管或迁移资格；对非 Managed 来源是空操作。
+    /// 给受控布局用例用来把「页槽表增长」这一步从数据页物化的中间移出去：
+    /// 增长会从块池取整页，而块池又向帧池取页，正好打断连续段。
+    #[cfg(all(debug_assertions, feature = "mega-leaf"))]
+    pub(crate) fn reserve_slots(&self, pages: usize) -> Result<(), FlatError> {
+        if pages > self.page_count.get() {
+            return Err(FlatError::OutOfRange);
+        }
+        let mut state = self.state.lock();
+        let FlatSource::Managed(slots) = &mut state.source else {
+            return Ok(());
+        };
+        slots.try_reserve(pages).map_err(|_| FlatError::OutOfMemory)
+    }
+
     fn new(
         page_count: PageCount,
         source: FlatSource,

@@ -153,6 +153,13 @@ mod tests {
         kernel::entry::check::transfer::accept();
     }
 
+    // 受控布局下的真 2 MiB 大叶验收：它要塑形帧池，所以单独一例、单独一格 feature。
+    #[cfg(all(debug_assertions, feature = "mega-leaf"))]
+    #[test]
+    fn memory_transfer_mega_leaf() {
+        kernel::entry::check::transfer::mega_leaf();
+    }
+
     #[cfg(debug_assertions)]
     #[test]
     fn memory_transfer_pages() {
