@@ -1438,6 +1438,9 @@ Fresh DA 与宿主套件重跑、设备/DMA 与真实 Platform 接线仍不在�
   （`transfer.rs` 的 `accept()`，22 → 23 例），准确命令是
   `nu scripts/qtest.nu --package kernel -- -- memory_transfer_slots`；它证的是
   **原生 Flat/Transfer** 那一层，不是 guest ecall。
+- **两种交错不是一回事**：`transfer_across_tasks_and_spaces` 是**受控交错**——每一手
+  都走真入口、真任务表与真 pend，但它们是先后发生的，**不是并发**（那一节自己就这么写）。
+  真并发是下一节那一景要证的事。
 - **措辞修正**：跨空间那一例里“持窗者自己 `Shut` 关得掉”不写成“且只关一次”——
   本用例不宣称第二次 `Shut` 的返回，不为这一句话扩矩阵。
 
@@ -1471,14 +1474,17 @@ Fresh DA 与宿主套件重跑、设备/DMA 与真实 Platform 接线仍不在�
   `wake(affected)` 放行 → 重试同一条指令，读到的是**搬过来的那份承载**（花纹和与
   第 0 页一致；新清零页只会读到 0），写回读数后正常收工。
 
-为什么它是真的：
+为什么它是真的（以及它**不**证什么）：
 
 - 管理端驻留的那一段就在**真入口、真事务、真在途窗口**里（不是 `with_running` 换
   调用者、不是 sleep、不是边界上的 spawn-exit）；对端那一手是真页错误、真等待位、真
-  `Reap`。
-- 登记是**内核侧**看出来的（`messenger::queued` 按那条外空间关系查），不是程序自己
-  举的牌子；放行来自移交自己的 `wake(affected)`；内容判据是**同一份承载**在**另一个
-  空间**里被读出来的。
+  `Reap`。上一节那种**受控交错**（每一手先后发生）不是并发，本景才是同刻重叠。
+- 本景真正的重叠点在**缺页等待那一层**：对端在**没有 PTE** 的目标槽上真登记了
+  `room.wait`，而管理端那一颗 hart 正驻在窗口里；放行来自移交自己的
+  `wake(affected)`。登记与放行都按**内核侧**事实认（`messenger::queued`、导出里的
+  `room.wait`/`room.wake`/`memory.page_fault`），不是程序自己举的牌子。
+- 内容判据是**同一份承载**在**另一个空间**里被读出来的（花纹和与第 0 页一致；新清
+  零页只会读到 0），且夹具在窗口里当场读到那条外空间关系真握着翻译。
 - 没有常开 ABI、没有常开 trace schema：夹具与 `queued` 那一口都只在
   `cfg(debug_assertions)` ＋ 各自的选景 feature 里编得出来。
 
@@ -1495,8 +1501,10 @@ memory-transfer-race: close done
 
 结构化导出里对端那一串（同一轮）：`memory.page_fault va=0x1e000 Load resolved=false`
 → `room.wait tid=11` → `room.wake tid=11` → `memory.page_fault va=0x1e000 Load resolved=true`
-→ `room.exit tid=11 reason=0x0` → `room.reap tid=11`；控制台侧另核两台都正常退场、
-`task: all tasks exited, system halted`、`doom: held=0 starved=0 blocked=0 nudged=0`。
+→ `room.exit tid=11 reason=0x0` → `room.reap tid=11`（那一轮 147 笔事件；
+总数随引导期那几笔惰性分配略有出入，142–147 之间，本景不钉它）；控制台侧另核两台都
+正常退场、`task: all tasks exited, system halted`、
+`doom: held=0 starved=0 blocked=0 nudged=0`。
 
 判定分两面：**程序侧**当场核夹具那一步是 `armed`、那条外空间关系真握着翻译
 （`foreign=1`）、两页读数一致且非零；**宿主驱动**
@@ -1507,20 +1515,23 @@ memory-transfer-race: close done
 `kernel=timeout`、`foreign=0`、读数不等/为零、目标页没等过、第二次登记、第二次
 `reap`、非零出口码、末行截断、整行不是 JSON 各当场失败——超时不被当成证明。
 
-#### 三、SMP 负对照：只有一颗 hart 时那一手不可能进展
+#### 三、SMP 那一格：哪些是正证、哪个才是负例
 
-- `QEMU_SMP=1` 这一档**跑不到本景**：带护栏那一档会把内核自己的自检跑起来，
-  而 `tests/health/hart.rs` 钉的就是“机器报的 hart 数 > 1”（它是给参数表 `-smp 4`
-  立的那条哨）。实测 `QEMU_SMP=1 … -- scene` 在**引导自检**上就红（
-  `机器只报了 1 颗 hart`），与握手无关——不把它当成本景的负对照。
-- 故本景的“握手不能前进”负对照由**夹具变体**给出：把夹具里那一手放开
-  （`START=RELEASE`）拆掉，对端永远不登记 → 夹具到点写 `TIMEOUT` → 管理端当场红
-  （`kernel=timeout`），导出里也没有 `room.wait`/`room.wake`。另一变体把夹具改成
-  等**自己那条**关系（而不是别人空间那条）也给出同一形状的红。
-- 参数表钉的是 `-smp 4`；另测 `QEMU_SMP=2`：本景**同样成立**（同一串读数、
-  退出码 0）——不是四颗 hart 的巧合。那里还量到一条宿主侧边界：驱动原先
-  “一轮没等到就失败”，而两 hart 的模拟把第一行送到时已超过那一秒；现改为
-  “对端真关掉了才当场失败，否则接着等到总时限”——仍是有界等待，不降断言。
+- **`QEMU_SMP=1` 不是本景的负例**：它连本景都跑不到——带护栏那一档会把内核自己的
+  自检跑起来，而 `tests/health/hart.rs` 钉的就是“机器报的 hart 数 > 1”（它是给参数
+  表 `-smp 4` 立的那条哨）。实测 `QEMU_SMP=1 … -- scene` 在**引导自检**上就红
+  （`机器只报了 1 颗 hart`），与握手无关：这是**自检红**，不当成“本景在单 hart 下
+  也红”的证据。
+- **正证**：`-smp 4`（参数表钉的那一格）与 `QEMU_SMP=2` 两档都是 1 passed、退出码
+  0、同一串读数——不是四颗 hart 的巧合。
+- **负例（本景自己那一条）**：夹具变体——把放开那一手（`START=RELEASE`）拆掉，对端
+  永远不登记 ⇒ 夹具到点写 `TIMEOUT` ⇒ 管理端当场红（`kernel=timeout`），导出里也没有
+  `room.wait`/`room.wake`。另一变体把夹具改成等**自己那条**关系（而不是别人空间那条）
+  给出同一形状的红。这两个变体改的是**夹具**，只证“握手不前进时本景会红”，
+  **不**证明任何生产行为。
+- 两 hart 那一档还量到一条**宿主侧**边界：驱动原先“一轮（1s）没等到就失败”，而两
+  hart 的模拟把第一行送到时已超过那一秒；现改为“对端真关掉了才当场失败，否则接着等
+  到总时限”——仍是有界等待，没有降任何断言。
 
 #### 四、本轮实际读数与未覆盖
 
@@ -1533,21 +1544,71 @@ memory-transfer-race: close done
 | 本景（`QEMU_SMP=2`） | 1 passed，退出码 0，同一串读数（不是四颗 hart 的巧合） |
 | 本景（`QEMU_SMP=1`） | 在**引导自检**上红（`hart.rs` 钉 hart 数 > 1），与握手无关 |
 | 本景宿主驱动与回归 | `race.py` 逐格判定通过；`test_race.py` 18 例 OK；同目录 `discover` 68 例 OK |
-| 两个变体（树上 patch、实跑、blob 级还原比对） | 夹具改等自己那条关系 ⇒ `kernel=timeout` 本景红；去掉移交自己的 `wake(affected)` ⇒ 对端不醒、本景红 |
+| 两个夹具变体（树上 patch、实跑、blob 级还原比对） | 拆掉放开那一手、或改等自己那条关系 ⇒ `kernel=timeout` 本景红；两者只证“握手不前进时本景会红” |
+| 一个生产变体（同上手法） | 去掉移交自己的 `wake(affected)` ⇒ 对端不醒、本景红（证本景钉住了那条生产腿） |
+| 文件层次（一文件一数据结构） | 核过：`Page`／`Source`／`Shared` 各一个文件（`Shared` 本轮从 `source.rs` 拆出，行为未改） |
+| `git diff --check a6d626fb HEAD` | 干净（0 行；覆盖**已提交**差异，不只工作树/index） |
 | D1 / TLB | 各 1 passed（0.42s / 0.17s） |
 | Fresh 护栏景 | 1 passed / 77 filtered（10.40s） |
 | accept / product / system-fault | 各 1 passed（10.40s / 5.34s / 13.60s） |
 
 未覆盖与边界（不冒 Done）：
 
-- 本景只走“**对端在一次真移交在途时冷缺页**”这一种合法竞争。
-  **退出/撤销**那两种没有做成同刻竞争：任何“给出一枚本景来源的子分支”的 cull
-  （`Shut`/`Revoke`/`doom`）都会经 `with_tasks_checked` 取到**管理端自己的 pend**，
-  而那一把 pend 正被在途窗口持着 ⇒ 那种动作只能**排在管理端放行之后**完成，
-  在窗口里“等它完成”就是自锁（复审那一封交接里点名的那一条）。故本景不造这种组合，
-  也不把“请求已发”写成“已完成”。
-- 普通 512 页窗口那一例的**大叶前提**仍未构成（同 b2 那节：当前 PA 布局首址不对齐、
-  相邻处有断点），本景不碰它。
+- 本景只走“**对端在一次真移交在途时冷缺页**”这一种合法竞争（真重叠在
+  `fault`/`wait`/`wake` 那一层）。**退出/撤销**那两种没有做成同刻竞争，且原因分两层：
+  - **管理那一段确实被串行**：任何“给出一枚本景来源的子分支”的 cull
+    （`Shut`/`Revoke`/`doom`）都会经 `with_tasks_checked` 取到**管理端自己的 pend**，
+    而那一把 pend 正被在途窗口持着 ⇒ 那种动作只能**排在管理端放行之后**完成；
+    在窗口里“等它完成”就是自锁。故本景不造这种组合，也不把“请求已发”写成“已完成”。
+  - **而 `Cleanup::finish` 那一段没有这把 pend 护着**：`cull` 的取销与验证在
+    `with_tasks_checked` 里，真正的拆图（`finish` → 交还 pie → 关名下图 → 撤 PTE）
+    在**放掉 pend 之后**才跑。那一段**能不能与在途窗口重叠**本景**没测**（本景的
+    对端在窗口里只做缺页等待，不拆图）——它仍是未覆盖项。
+- 普通 512 页窗口那一例的**大叶前提**仍未构成：同一台健康面上实测那 512 页按序物化后
+  PA 首址不是 2 MiB 对齐、相邻处有断点——那是**这一次布局的读数**，**不是**“普通
+  `Acquire` 永久不能成大叶”的结论（连续对齐的分配会把那一窗变成 2 MiB 叶）。
 - 设备/DMA 与真实 Platform 接线仍不在本轮范围内。
+
+本阶段的命令（都从仓根跑；本景一律带护栏那一档）：
+
+```sh
+# 健康面（不带 scene 那一轮：那一例必红，是设计）
+nu scripts/qtest.nu --package kernel
+nu scripts/qtest.nu --package kernel -- -- transfer
+nu scripts/qtest.nu --package kernel -- -- transfer_across_tasks_and_spaces
+nu scripts/qtest.nu --package kernel -- -- memory_transfer_slots
+
+# 本景：release ＋ debug_assertions，两格 feature，一例一张镜像
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
+  --scene memory-transfer-race --feed-script programs/tests/memory-transfer/race.py \
+  -- --features semihosting,race-scene -- scene
+QEMU_SMP=2 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
+  --scene memory-transfer-race --feed-script programs/tests/memory-transfer/race.py \
+  -- --features semihosting,race-scene -- scene
+QEMU_SMP=1 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
+  --scene memory-transfer-race --feed-script programs/tests/memory-transfer/race.py \
+  -- --features semihosting,race-scene -- scene        # 在引导自检上红，不是本景的负例
+
+# 旧景回归
+nu scripts/qtest.nu --package kernel --scene memory-transfer --feed-script programs/tests/memory-transfer/driver.py -- --features semihosting
+nu scripts/qtest.nu --package kernel --scene memory-transfer-tlb --feed-script programs/tests/memory-transfer/tlb.py -- --features semihosting
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
+  --scene memory-transfer-fresh --feed-script programs/tests/memory-transfer/fresh.py \
+  -- --features semihosting,fresh-scene -- scene
+nu scripts/qtest.nu --package kernel --scene accept
+nu scripts/qtest.nu --package kernel --scene product
+nu scripts/qtest.nu --package kernel --scene system-fault
+
+# 宿主侧（scene 那一套的宿主目标就在同一个目录）
+python3 -B programs/tests/memory-transfer/test_race.py -v
+python3 -B -m unittest discover -s programs/tests/memory-transfer -p 'test_*.py'
+
+# 编译与格式
+cargo check -p kernel --target riscv64gc-unknown-none-elf --all-targets --features semihosting,race-scene
+cargo check -p kernel --target riscv64gc-unknown-none-elf --all-targets
+cargo check -p programs --target riscv64gc-unknown-none-elf --bins
+rustfmt --edition 2024 --check --config skip_children=true <本阶段改到的每个文件>
+git diff --check a6d626fb HEAD        # 已提交差异，不只工作树/index
+```
 
 本阶段**未**获得独立复审、也未获推送或共享分支落地许可。
