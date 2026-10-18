@@ -4765,3 +4765,490 @@ pub fn pole_revoke_removes_child() {
     peer.team.space.nest.audit();
     stranger.team.space.nest.audit();
 }
+
+/// 跨 Task／跨 Space 的受控交错：一段来源的**另一个地址空间**里压着的关系。
+///
+/// 真实可达形状只有这一种：这段来源的管理者是这把根 Grant 的持有者，别的任务拿到的
+/// 是 `accord` 交出的子分支——它**当不了 manager**（`manages` 要的是本表里 `sire` 为空的
+/// 那一枚），但它能在**自己那个 Team 的 Space** 里 `open` 出压着同一批帧的关系。
+/// 于是竞争者真出现在这几处：`Shut`（自持子分支的关闭）、`Revoke`（lord 侧收回那一枚）、
+/// `doom`（退出时的 cull 与清理）、以及撤页确认失败（两个 Nest 一成一败）。
+///
+/// 本用例是**受控交错**：每一手都走真入口、真任务表与真 pend，但它们是先后发生的，
+/// **不是并发**。真多 Hart 的同刻交错不在本夹具的证明范围（见 docs 该节）。
+/// 双 manager 同来源、别的 Task 替调用者持 pend 这两类组合不可达：前者的管理器身份是
+/// 私有属主或根 token 单点，后者以调用者自己的 pend 为准；不为凑矩阵造这样的状态。
+pub fn cross_task_interleavings() {
+    use crate::core::memory::flat::allocator::statistics;
+    use crate::core::memory::flat::allocator::statistics::Kind;
+    use alloc::vec::Vec;
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    // 热身：首次建拆一个 Team 会触发一次性的惰性分配；先走一遍再取基线。
+    retire(&Caller::new(false));
+
+    let frames_before = statistics::frame_occupied() - statistics::block_occupied();
+    let kinds_before = statistics::kinds();
+    let cases: [(&str, fn()); 4] = [
+        ("foreign space page", a_manager_takes_the_foreign_page_out),
+        ("holder leaves first", a_holder_leaving_gives_up_the_page),
+        ("revoked branch", a_revoked_branch_stops_being_an_end),
+        ("failed sync", a_failed_sync_stays_in_its_own_nest),
+    ];
+    let mut off = Vec::new();
+    for (name, run) in cases {
+        let base = statistics::frame_occupied() - statistics::block_occupied();
+        run();
+        let now = statistics::frame_occupied() - statistics::block_occupied();
+        if now != base {
+            off.push((name, base, now));
+        }
+    }
+    crate::expect!(off.is_empty(), "cross-task: per-case net: {:?}", off);
+
+    let frames_after = statistics::frame_occupied() - statistics::block_occupied();
+    crate::expect!(
+        frames_after == frames_before,
+        "cross-task: frame occupancy {frames_before} → {frames_after} (net must be 0)"
+    );
+    // 逐类账：除三格之外都必须归零（页表、栈、帧类目都算在内）。
+    // `Prime` 是块池取自帧池的整页（它们的账在 `block_occupied` 上）；
+    // `Task` 与 `Plain` 是夹具自己的残留——每个 `Caller` 建起的那台真 Task/Team
+    // 由夹具保活（既有 `transfer_relations` 等 Caller 用例同款，实测每台＋1 个 Task
+    // 与少量小块），不是本景资源的账：本景自己的账是上面那句帧净额与各用例里的
+    // 页槽、承载与图读数。
+    for (kind, count) in statistics::kinds().nonzero() {
+        if matches!(kind, Kind::Prime | Kind::Task | Kind::Plain) {
+            continue;
+        }
+        crate::expect!(
+            count == kinds_before.get(kind),
+            "cross-task: kind {}: {} → {count} (net must be 0)",
+            kind.name(),
+            kinds_before.get(kind)
+        );
+    }
+}
+
+/// 一对：`lord` 是这段来源的管理者，`peer` 是另一个 Team（另一个 Space）里持子分支的任务。
+struct AcrossSpaces {
+    child: env::PieToken,
+    meta: Arc<pole::PoleMeta>,
+    lord_handle: usize,
+    peer_handle: usize,
+    lord_at: usize,
+    peer_at: usize,
+}
+
+impl AcrossSpaces {
+    /// 两端的窗口（manager 从**根**分支取，持窗者从子分支取）。
+    fn lord_window(&self, lord: &Caller) -> FlatRange {
+        window_of(lord, self.lord_handle)
+    }
+
+    /// manager 自己空间里的那一条关系。
+    fn lord_view(&self, lord: &Caller) -> Arc<View> {
+        lord.team
+            .space
+            .nest
+            .probe(KVirt::wrap(self.lord_at))
+            .expect("the manager's relation")
+    }
+
+    /// 持窗者自己空间里的那一条关系。
+    fn peer_view(&self, peer: &Caller) -> Arc<View> {
+        peer.team
+            .space
+            .nest
+            .probe(KVirt::wrap(self.peer_at))
+            .expect("the holder's relation")
+    }
+
+    /// manager 的一份私有空窗口：移交的目标端。
+    fn seat(&self, lord: &Caller) -> usize {
+        let handle = acquire_fresh(lord, 1);
+        assert!(handle > 0, "a private seat: {handle}");
+        handle as usize
+    }
+}
+
+/// 搭起那一对：manager 用私有来源铸根（每一页都物化出承载），持窗者的子分支
+/// 在自己空间里 `open` 出压着同一批帧的关系。
+fn across_spaces(lord: &Caller, peer: &Caller, pages: usize) -> AcrossSpaces {
+    use env::{AcquireSource, Mark, Permission, PieToken};
+    let source = acquire_fresh(lord, pages);
+    assert!(source > 0, "the manager's source: {source}");
+    for page in 0..pages {
+        materialize_page(lord, source as usize, page);
+    }
+    let root = crate::entry::call::pie::create_pole(&lord.task, reference(source as usize), true)
+        .expect("the manager's root grant");
+    assert_eq!(
+        lord.call(EnvCall::Memory(MemoryCall::Release {
+            reference: reference(source as usize)
+        })),
+        0
+    );
+    let child = PieToken::mint(
+        pend::accord(
+            &lord.task,
+            root,
+            &Arc::downgrade(&peer.task),
+            Permission::FETCH | Permission::STORE | Permission::VEST,
+            Mark::NONE,
+        )
+        .expect("a child grant to the holder"),
+    );
+    let meta = pend::locate(&lord.task, root)
+        .expect("the root pie")
+        .mail()
+        .pole()
+        .expect("a pole");
+    let rw = Access::READ | Access::WRITE;
+    let (lord_at, _) =
+        pole::open(&meta, root, &lord.team.space, rw).expect("the manager's relation");
+    let (peer_at, _) =
+        pole::open(&meta, child, &peer.team.space, rw).expect("the holder's relation");
+    let lord_handle = lord.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token: root,
+            offset: 0,
+            count: pages,
+        },
+        retention: PieToken::NONE,
+    }));
+    assert!(lord_handle > 0, "the manager's reference: {lord_handle}");
+    let peer_handle = peer.call(EnvCall::Memory(MemoryCall::Acquire {
+        source: AcquireSource::Source {
+            token: child,
+            offset: 0,
+            count: pages,
+        },
+        retention: PieToken::NONE,
+    }));
+    assert!(peer_handle > 0, "the holder's reference: {peer_handle}");
+    AcrossSpaces {
+        child,
+        meta,
+        lord_handle: lord_handle as usize,
+        peer_handle: peer_handle as usize,
+        lord_at,
+        peer_at,
+    }
+}
+
+/// 夹具里的任务不是产品路径结束的：先按真实退出走一遍，Team 与 Task 的持有链才不绕在那里。
+///
+/// 这一步也是净额的一部分：退出之后引用、名下图与页槽都要归零。
+fn retire(caller: &Caller) {
+    if caller.task.dead() {
+        return;
+    }
+    {
+        let _commit = crate::core::work::commit();
+        caller.task.state.lock().doom(None, env::ExitCause::Slay, 0);
+    }
+    pend::doom(&caller.task);
+}
+
+/// manager 把源页交出去：两个空间里那一页的 PTE 一起让出，而持窗者的关闭责任还在。
+///
+/// 清单里的那两条关系都要到消费者手里：调用者自己那条与**别人空间**里那条。
+fn a_manager_takes_the_foreign_page_out() {
+    use env::{MemoryFail, PieCall};
+    let lord = Caller::new(false);
+    let peer = Caller::new(false);
+    let pair = across_spaces(&lord, &peer, 2);
+    let window = pair.lord_window(&lord);
+    let pa = slot_at(&window, 0);
+    super::transfer::fill_pattern(PhysAddr::from_raw(pa));
+
+    *WAKE_TASK.lock() = Some(lord.task.clone());
+    crate::entry::call::memory::arm_wake_probe(Some(pend_free_at_wake));
+    WOKEN_KEYS.lock().clear();
+    let seat = pair.seat(&lord);
+    assert_eq!(
+        lord.call(transfer_call(pair.lord_handle, 0, seat, 0)),
+        0,
+        "the page moves"
+    );
+    crate::entry::call::memory::arm_wake_probe(None);
+    *WAKE_TASK.lock() = None;
+    assert!(
+        PEND_FREE_AT_WAKE.load(Ordering::Relaxed),
+        "the wake happens after the caller's pend is released"
+    );
+    let mut woken = WOKEN_KEYS.lock().clone();
+    woken.sort_unstable();
+    let mut want = alloc::vec![
+        (
+            lord.team.space.nest.asid().get(),
+            pair.lord_view(&lord).identity()
+        ),
+        (
+            peer.team.space.nest.asid().get(),
+            pair.peer_view(&peer).identity()
+        ),
+    ];
+    want.sort_unstable();
+    assert_eq!(
+        woken, want,
+        "both relations reach the consumer, the foreign one included"
+    );
+
+    // 两个空间里那一页的 PTE 都不在了；承载与整页内容到了目标槽。
+    assert!(
+        lord.team
+            .space
+            .nest
+            .probe(KVirt::wrap(pair.lord_at))
+            .is_some()
+    );
+    assert!(
+        lord.team
+            .space
+            .nest
+            .translate(KVirt::wrap(pair.lord_at))
+            .is_none()
+            && peer
+                .team
+                .space
+                .nest
+                .translate(KVirt::wrap(pair.peer_at))
+                .is_none(),
+        "every relation gives up that page, in both spaces"
+    );
+    assert_eq!(
+        slots_of(&window_of(&lord, seat)),
+        alloc::vec![(0, pa)],
+        "the seat gets that carrier"
+    );
+    assert!(super::transfer::pattern_holds(PhysAddr::from_raw(pa)));
+    assert!(tombstone(&window, 0), "the source page is a tombstone");
+
+    // 持窗者那一枚**还欠着关图**：撤的是 PTE，不是它的关闭责任；它自己那一手关得掉。
+    let peer_view = pair.peer_view(&peer);
+    assert!(
+        pair.meta.opened(&peer_view),
+        "the holder still owes the close of its own window"
+    );
+    assert_eq!(
+        with_running(peer.task.clone(), || {
+            peer.call(EnvCall::Pie(PieCall::Shut { token: pair.child }))
+        }),
+        0,
+        "the holder closes its own window once"
+    );
+    assert!(
+        peer.team
+            .space
+            .nest
+            .probe(KVirt::wrap(pair.peer_at))
+            .is_none()
+    );
+    assert!(!pair.meta.opened(&peer_view));
+    // 持窗者的引用与它的迁移都随那一枚一起走到尽头：不再是可用的一端。
+    assert_eq!(
+        peer.call(transfer_call(pair.peer_handle, 0, seat, 0)),
+        MemoryFail::Denied.code(),
+        "a closed branch is no longer an end"
+    );
+    lord.team.space.nest.audit();
+    peer.team.space.nest.audit();
+    retire(&peer);
+    retire(&lord);
+}
+
+/// 持窗者先**退出**：它名下的图由退出路径收掉，manager 之后照旧搬得动那一页。
+fn a_holder_leaving_gives_up_the_page() {
+    let lord = Caller::new(false);
+    let peer = Caller::new(false);
+    let pair = across_spaces(&lord, &peer, 2);
+    let window = pair.lord_window(&lord);
+    let pa = slot_at(&window, 0);
+    super::transfer::fill_pattern(PhysAddr::from_raw(pa));
+
+    // 退出走真实的两步：状态先判死，再由 `pend::doom` 清表、cull 子树、收名下图。
+    {
+        let _operation = pole::PoleOperation::acquire(&pair.meta).expect("pole lease");
+        {
+            let _commit = crate::core::work::commit();
+            peer.task.state.lock().doom(None, env::ExitCause::Slay, 0);
+        }
+        pend::doom(&peer.task);
+    }
+    assert!(peer.task.pend.pies.lock().is_empty());
+    assert!(peer.task.pend.heirs.lock().is_empty());
+    assert!(
+        peer.team
+            .space
+            .nest
+            .probe(KVirt::wrap(pair.peer_at))
+            .is_none(),
+        "the leaving holder's relation is gone"
+    );
+    assert_eq!(
+        slots_of(&window),
+        alloc::vec![(0, pa), (1, slot_at(&window, 1))],
+        "leaving moves no carrier"
+    );
+    assert!(super::transfer::pattern_holds(PhysAddr::from_raw(pa)));
+
+    // manager 自己那条关系照旧；现在搬那一页：压着它的只剩它自己那一条。
+    let seat = pair.seat(&lord);
+    assert_eq!(lord.call(transfer_call(pair.lord_handle, 0, seat, 0)), 0);
+    assert_eq!(slots_of(&window_of(&lord, seat)), alloc::vec![(0, pa)]);
+    assert!(
+        lord.team
+            .space
+            .nest
+            .translate(KVirt::wrap(pair.lord_at))
+            .is_none()
+    );
+    assert!(tombstone(&window, 0));
+    lord.team.space.nest.audit();
+    peer.team.space.nest.audit();
+    retire(&lord);
+}
+
+/// lord 撤掉那一枚：持窗者空间里那段关系一起消失，别的分支与承载都不动。
+fn a_revoked_branch_stops_being_an_end() {
+    use env::{MemoryFail, PieCall};
+    let lord = Caller::new(false);
+    let peer = Caller::new(false);
+    let pair = across_spaces(&lord, &peer, 2);
+    let window = pair.lord_window(&lord);
+    let pa = slot_at(&window, 0);
+    let second = slot_at(&window, 1);
+    super::transfer::fill_pattern(PhysAddr::from_raw(pa));
+
+    assert_eq!(
+        with_running(lord.task.clone(), || {
+            lord.call(EnvCall::Pie(PieCall::Revoke {
+                dst: peer.task.ident.id,
+                token: pair.child,
+            }))
+        }),
+        0,
+        "the lord revokes the branch it handed over"
+    );
+    assert!(pend::locate(&peer.task, pair.child).is_none());
+    assert!(
+        peer.team
+            .space
+            .nest
+            .probe(KVirt::wrap(pair.peer_at))
+            .is_none(),
+        "the revoked branch's relation goes with it"
+    );
+    assert!(
+        lord.team
+            .space
+            .nest
+            .translate(KVirt::wrap(pair.lord_at))
+            .is_some(),
+        "the lord's own relation is untouched"
+    );
+    // 撤销不动承载：两页都还在原处，内容也没变。
+    assert_eq!(slots_of(&window), alloc::vec![(0, pa), (1, second)]);
+    assert!(super::transfer::pattern_holds(PhysAddr::from_raw(pa)));
+    // 撤走的那条分支不再是可用的一端（解析不到窗口）。
+    assert_eq!(
+        peer.call(transfer_call(pair.peer_handle, 0, pair.peer_handle, 1)),
+        MemoryFail::Denied.code()
+    );
+    // manager 自己那一手照走。
+    let seat = pair.seat(&lord);
+    assert_eq!(lord.call(transfer_call(pair.lord_handle, 0, seat, 0)), 0);
+    assert_eq!(slots_of(&window_of(&lord, seat)), alloc::vec![(0, pa)]);
+    assert_eq!(slots_of(&window), alloc::vec![(1, second)]);
+    lord.team.space.nest.audit();
+    peer.team.space.nest.audit();
+    retire(&peer);
+    retire(&lord);
+}
+
+/// 撤页确认在 manager 自己那个 Nest 上失败：两处都已经让出那一页（确认正是在撕下
+/// 它之后才失败），两端页槽按原态回退，未结的同步责任留在失败的那个 Nest 里。
+///
+/// “确认失败发生在撕下任何 PTE 之前”那一读法（Nest 本来就脏）在核心层由
+/// `a_failed_unpublish_prepare_keeps_the_mapping` 覆盖；这里只声称这一读法。
+/// 处理次序就是关联链的次序。
+fn a_failed_sync_stays_in_its_own_nest() {
+    use crate::core::memory::nest::identity::fail_next_shootdown;
+    use env::MemoryFail;
+    let lord = Caller::new(false);
+    let peer = Caller::new(false);
+    let pair = across_spaces(&lord, &peer, 2);
+    let window = pair.lord_window(&lord);
+    let pa = slot_at(&window, 0);
+    let second = slot_at(&window, 1);
+    super::transfer::fill_pattern(PhysAddr::from_raw(pa));
+    let seat = pair.seat(&lord);
+
+    fail_next_shootdown(lord.team.space.nest.asid());
+    assert_eq!(
+        lord.call(transfer_call(pair.lord_handle, 0, seat, 0)),
+        MemoryFail::Busy.code(),
+        "an unconfirmed sync is retryable"
+    );
+    assert!(
+        lord.team.space.nest.has_pending_invalidation(),
+        "the unsettled sync stays with that Nest"
+    );
+    // 两处都把那一页让出去了——那一页的 PTE 不因后来的确认失败回填（这次确认就在
+    // manager 自己那一页被撕下之后失败）。未结的失效责任留在那个 Nest 里。
+    assert!(
+        lord.team
+            .space
+            .nest
+            .translate(KVirt::wrap(pair.lord_at))
+            .is_none()
+            && peer
+                .team
+                .space
+                .nest
+                .translate(KVirt::wrap(pair.peer_at))
+                .is_none(),
+        "a withdrawn page is not restored by a later failure"
+    );
+    // 两端页槽按原态还回：源两页都还是承载，目标那一格仍是 Fresh。
+    assert_eq!(slots_of(&window), alloc::vec![(0, pa), (1, second)]);
+    assert!(
+        window_of(&lord, seat)
+            .can_materialize(PageOffset::ZERO)
+            .expect("the target's state"),
+        "the target goes back to fresh"
+    );
+    assert!(slots_of(&window_of(&lord, seat)).is_empty());
+    assert!(super::transfer::pattern_holds(PhysAddr::from_raw(pa)));
+
+    // 结清那一笔之后重试：这一次真搬走，两个空间那一页都不再在。
+    lord.team
+        .space
+        .nest
+        .retry_invalidation()
+        .expect("settle the injected failure");
+    assert_eq!(lord.call(transfer_call(pair.lord_handle, 0, seat, 0)), 0);
+    assert_eq!(slots_of(&window_of(&lord, seat)), alloc::vec![(0, pa)]);
+    assert!(
+        lord.team
+            .space
+            .nest
+            .translate(KVirt::wrap(pair.lord_at))
+            .is_none()
+    );
+    assert!(
+        peer.team
+            .space
+            .nest
+            .translate(KVirt::wrap(pair.peer_at))
+            .is_none()
+    );
+    assert!(tombstone(&window, 0));
+    assert_eq!(slots_of(&window), alloc::vec![(1, second)]);
+    lord.team.space.nest.audit();
+    peer.team.space.nest.audit();
+    retire(&peer);
+    retire(&lord);
+}

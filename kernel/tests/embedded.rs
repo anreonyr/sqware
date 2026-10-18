@@ -491,6 +491,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn transfer_across_tasks_and_spaces() {
+        kernel::entry::check::syscall::cross_task_interleavings();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn pie_revoke_removes_child() {
         kernel::entry::check::syscall::pole_revoke_removes_child();
     }

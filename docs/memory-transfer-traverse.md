@@ -1321,3 +1321,86 @@ Revoke 联合条件、staged 预置与服务派发的覆盖边界仍按上文限
 本阶段已获独立审查接受，批准本地封存，未获得推送或共享分支落地许可。
 真正跨 Task 的迁移/撤销/退出竞争、多 Hart 确定性交错、
 设备/DMA 与真实 Platform 接线仍未完成，不以入口级覆盖宣称 T4/T5 总验收通过。
+
+### 普通 Acquire 窗口与跨 Task/Space 受控交错（本轮收尾，待独立复审）
+
+本轮只补 Transfer 剩下的两项验收缺口，不动既有实现：
+**普通 `Acquire` 形成大叶之后的那一次完整移交**、以及**跨 Task（独立 Space）的
+竞争与退出交错**。两项都是**内核健康用例**层的取证，没有新建场景、
+没有改 trace schema、没有改任何生产路径或注入钩子。
+
+#### 一、大叶前提：当前没有合法构造（新增用例记录它的事实）
+
+新增 `memory_transfer_pages` 里的一例（`plain acquire window`）：起点是普通
+`Flat::acquire` 的整段来源（512 页、页对齐）＋一个 2 MiB 对齐的 VA 窗口
+（`0x6800_0000`、`BASE`）＋统一 `RW`，按页物化、从映射写内容，然后把中段那一格
+4 KiB 交出去。判据：只那一格让出翻译；邻页的承载 PA、内容与翻译不动；目标槽拿到
+同一个 `Arc<Frame>` 与同一个 PA；`audit()` 干净。
+
+它**不声称**大叶存在，也没有变成“大叶形成后的移交”那一条判据：物理分配只保证
+“页数 ＋ 页对齐”（`Flat` 逐帧取自 buddy，且与块池的整页取自交织）。本轮在同一台
+健康面上实测：这 512 页按序物化后 PA 首址不是 2 MiB 对齐、相邻处有断点，
+`Nest::leaf_span` 两端都只报 4 KiB。故新增用例明确断言
+“这一段只支持 4 KiB 叶”（它自己的 doc 注释写明：一旦物理分配给出连续且对齐的
+区段，这一句就该换成真大叶的移交用例）。
+
+- 实测命令：`nu scripts/qtest.nu --package kernel -- -- memory_transfer_pages`
+  （1 passed；跑的是同一段 2 MiB 对齐窗口的完整移交）。
+- 实测 PA 布局的读数来自本轮临时探针（已拆除，不留在树里）：512 页的 PA 首址
+  不是 2 MiB 对齐、相邻处有 16/26/32/38 处断点、`leaf_span` 报 4096。
+  这些断点数**不是**分配器的合同，只是这一次布局的事实；不把普通 `Acquire`
+  一概说成永远不能成大叶。
+- 要跑通“大叶形成后的 Transfer E2E”，必须先有连续性/对齐保证（或经用户裁定扩
+  分配 API）。本阶段不扩分配能力、不手工写 PTE、不借 `BorrowedRegion` 充数，
+  也不盲试到偶然绿：**这一条仍未验证/当前可复现构造受阻**，如实落这里。
+
+#### 二、跨 Task／跨 Space：受控交错矩阵（不是并发）
+
+新增 `transfer_across_tasks_and_spaces`（`tests/health/syscall.rs`）。真实可达形状
+只有一种：这段来源的管理者（`lord`）是那把根 Grant 的持有者，另一位任务（`peer`）
+在**另一个 Team／另一个 Space** 里持 `accord` 交出的子分支，并在自己空间里 `open`
+出压着同一批帧的关系。四个用例：
+
+| 用例 | 交错的点 | 判据 |
+|---|---|---|
+| 外来空间那一页 | 管理者的移交撤的是**别人空间**里的 PTE | 两个空间那一页都让出翻译；目标槽拿到同一承载与 PA；持窗者那一枚仍欠关图（`meta.opened`），它自己 `Shut` 关得掉且只关一次；清单里两条关系（含外空间那条）都在 pend 释放之后到消费者手里 |
+| 持窗者先退出 | `doom` 的 cull 与清理先收掉它名下的图 | 退出后它的 pies/heirs 清空、关系与 PTE 都不在；承载与内容不动；管理者之后照旧搬得动那一页 |
+| 撤掉那条分支 | lord 侧 `Revoke` 收回那一枚 | 持窗者空间里那段关系随撤销消失、lord 自己那条不动；承载与内容不动；被撤的分支不再是可用的一端（`Denied`） |
+| 撤页确认失败 | 一个 Nest 上确认失败 | 结果 `Busy`；未结失效留在那个 Nest（`has_pending_invalidation`）；已让出的页**不回填**；两端页槽按原态还回（源 Resident、目标 Fresh）；`retry_invalidation` 后重试真搬走 |
+
+边界与线性化依据（不造状态、不冒充并发）：
+
+- 双 manager 同来源**不可达**：`manages` 只认私有属主或本表里 `sire`／`heir` 都空、
+  与相位同 Arc 的那一枚根 token；交给别 Task 的是子 Pie，它管不了这段来源。
+- 别的 Task 替调用者持 pend 也不可达：入口以调用者自己的 pend 为准；
+  `Revoke`/`doom` 侧的 `with_tasks_checked` 会把子树里每个 Task（含 lord）的 pend
+  一起取上，故“真并发”必须由**别的 hart**提供，本夹具只做受控交错。
+- 本用例里每一手都是真入口、真任务表、真 pend，但先后发生：**不是并发**。
+  真多 Hart 的同刻交错不在本夹具的证明范围。
+- 净额：帧净额（数据帧 ＋ 整页池）逐例与整体都为零；逐类账里只有
+  `Prime`／`Task`／`Plain` 允许增长，其余（页表、栈、各帧类目）一律归零。
+  这三格是**夹具自己的残留**：每个 `Caller` 建起的那台真 Task/Team 由夹具保活
+  （既有 `transfer_relations` 等 Caller 用例同款，实测每台 ＋1 个 `Task` 与少量小块），
+  不是本景资源的账；本景自己的账是上面的帧净额与各用例里的页槽/承载/图读数。
+
+#### 三、本轮实际读数
+
+| 检查 | 结果 |
+|---|---|
+| `nu scripts/qtest.nu --package kernel` | **77 passed** ＋ 缺 initrd 哨兵 1 failed，退出 101（5.65s） |
+| 同命令 `-- transfer` | 8 passed（含两条新用例）0.82s |
+| D1 常规景（`--scene memory-transfer --feed-script … -- --features semihosting`） | 1 passed（0.37s） |
+| D1 带护栏（`CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true` … `-- scene`） | 1 passed / 77 filtered（0.82s） |
+| TLB 常规景 | 1 passed（0.17s） |
+| accept / product / system-fault | 各 1 passed（10.37s / 5.28s / 13.36s） |
+| 三个改动文件 edition 2024 格式检查、`git diff --check` | 通过（未全树重排） |
+
+健康面的基线在这棵树上本来是 76 passed ＋ 哨兵 1 failed（HEAD 的 77 个用例里
+有一条是哨兵）；本轮加一例整机用例后为 77/1。未跑 Fresh DA 与宿主套件：
+本轮没有动它们的输入（只有两个内核测试文件与 `embedded.rs` 多了两例，
+生产路径、注入钩子与 trace schema 一字未改）。
+
+本阶段**未**获得独立复审、也未获推送或共享分支落地许可；
+真多 Hart 的确定性交错（需要新场景与可能的 test-only 注入钩子）、
+Fresh DA 与宿主套件重跑、设备/DMA 与真实 Platform 接线仍不在本轮范围内。
+

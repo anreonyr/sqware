@@ -30,6 +30,8 @@ const LEFT_A: usize = 0x6900_0000;
 const LEFT_B: usize = 0x6940_0000;
 /// 右空间里错位切片的起点：页 1..3。
 const RIGHT_A: usize = 0x6980_0000;
+/// 2 MiB 大叶的跨度（同时也是 `BASE` 那一段窗口的大小与对齐）。
+const MEGA: usize = 1 << 21;
 
 /// 在途探针要用的上下文：正在发布的那段关系与它的地址空间。
 static PUBLISHED: SpinLock<Option<(Arc<Nest>, Arc<View>, ViewRange)>> = SpinLock::new(None);
@@ -172,7 +174,7 @@ pub fn accept() {
 
     let frames_before = statistics::frame_occupied() - statistics::block_occupied();
     let kinds_before = statistics::kinds();
-    let cases: [(&str, fn()); 22] = [
+    let cases: [(&str, fn()); 23] = [
         ("within one source", moves_within_one_source),
         ("round trip", round_trip_keeps_the_carrier),
         ("two sources", moves_between_two_sources),
@@ -221,6 +223,10 @@ pub fn accept() {
         (
             "materializability",
             can_materialize_reports_page_availability,
+        ),
+        (
+            "plain acquire window",
+            a_plain_acquire_window_hands_over_one_page,
         ),
     ];
     let mut off = Vec::new();
@@ -1909,4 +1915,152 @@ fn can_materialize_ends(_source: &FlatRange, _page: PageIndex) {
         matches!(target.can_materialize(*target_page), Ok(false)),
         "transfer: an in-flight target page cannot materialize"
     );
+}
+
+/// 普通 `Acquire` 一整段 2 MiB 对齐窗口：移交只动中段那一格 4 KiB。
+///
+/// **这不是“大叶形成之后的完整移交”那一条判据。** 物理分配只保证“页数 ＋ 页对齐”
+/// （`Flat` 逐帧取自 buddy，且与块池的整页取自交织）：本轮在同一台健康面上实测 512 页
+/// 按序物化的布局，PA 首址不是 2 MiB 对齐、相邻处有断点，`leaf_span` 也只报 4 KiB
+/// —— 大叶前提在当前分配能力下没有合法构造，那一条仍**未验证**（见
+/// docs/memory-transfer-traverse.md 该节记的实测读数与命令）。
+///
+/// 本例因此只声称它自己的事：起点是普通 `acquire` 的整段来源（不手工写 PTE、
+/// 不借 `BorrowedRegion`、不直调表原语、不为它扩分配 API），在 2 MiB 对齐的 VA
+/// 窗口上按页物化、从映射写内容，然后把中段那一格 4 KiB 交出去：只那一格让出翻译，
+/// 邻页的承载、内容与翻译都不动。
+fn a_plain_acquire_window_hands_over_one_page() {
+    let window = MEGA / PAGE_SIZE;
+    let rw = Access::READ | Access::WRITE;
+    let flat = acquire(window);
+    let whole = flat.whole();
+    let pages = whole
+        .materialize()
+        .expect("transfer: materialize the window");
+    let mut addresses = Vec::new();
+    addresses
+        .try_reserve_exact(window)
+        .expect("transfer: an address list");
+    for index in 0..window {
+        addresses.push(
+            pages
+                .physical(PageOffset::new(index))
+                .expect("transfer: page address")
+                .as_usize(),
+        );
+    }
+    let carriers: Vec<_> = whole
+        .materialized_frames()
+        .expect("transfer: slots")
+        .into_iter()
+        .map(|(offset, frame)| (offset.get(), frame))
+        .collect();
+    drop(pages);
+    crate::expect!(
+        carriers.len() == window,
+        "transfer: the whole window is materialized ({} of {window})",
+        carriers.len()
+    );
+    crate::expect!(
+        addresses.windows(2).all(|pair| pair[0] != pair[1]),
+        "transfer: one carrier per page"
+    );
+
+    let space = SpaceBuilder::user()
+        .build()
+        .expect("transfer: window space");
+    let view = map_slice(&space, VirtAddr::wrap(BASE), whole.clone(), rw);
+    // 本轮实测的叶形：这一窗只落得下 4 KiB 叶（$MEGA 大叶那一条判据仍未验证）；
+    // 物理分配一旦给出连续且对齐的区段，这一句就该换成真大叶的移交用例。
+    crate::expect!(
+        space.nest.leaf_span(VirtAddr::wrap(BASE)) == Some(PAGE_SIZE)
+            && space
+                .nest
+                .leaf_span(VirtAddr::wrap(BASE + MEGA - PAGE_SIZE))
+                == Some(PAGE_SIZE),
+        "transfer: this layout only supports 4 KiB leaves (no large-leaf case yet)"
+    );
+    // 整窗内容从**映射**写下去：每一页头一个字节就是它的页号。
+    for index in 0..window {
+        crate::expect!(
+            space.copy_out(&[index as u8], VirtAddr::wrap(BASE + index * PAGE_SIZE)),
+            "transfer: write page {index} through the mapping"
+        );
+    }
+
+    let middle = window / 2;
+    let moved = addresses[middle];
+    let held = Arc::downgrade(
+        &carriers
+            .iter()
+            .find(|(offset, _)| *offset == middle)
+            .expect("transfer: the middle carrier")
+            .1,
+    );
+    let seat = acquire(1);
+    let seat_page = seat.whole();
+    transfer(&slice(&whole, middle, 1), 0, &seat_page, 0)
+        .expect("transfer: the middle 4 KiB page moves");
+
+    // 目标拿到同一个承载、同一个 PA 与同一格内容。
+    crate::expect!(
+        placed(&seat_page) == alloc::vec![(0, moved)],
+        "transfer: the moved page keeps its carrier"
+    );
+    crate::expect!(
+        Arc::ptr_eq(
+            &seat_page
+                .materialized_frames()
+                .expect("transfer: seat slots")[0]
+                .1,
+            &held.upgrade().expect("transfer: carrier alive")
+        ),
+        "transfer: the very same frame lands in the seat"
+    );
+    crate::expect!(
+        read_byte(PhysAddr::from_raw(moved)) == middle as u8,
+        "transfer: the moved page keeps its content"
+    );
+    crate::expect!(
+        matches!(
+            slice(&whole, middle, 1).materialize(),
+            Err(FlatError::Missing)
+        ),
+        "transfer: the moved seat becomes a tombstone"
+    );
+    // 只有那一格让出翻译；邻页的承载、内容与翻译都不动（大叶要先拆开才取得出这一格，
+    // 故邻页在这一手之后同样是 4 KiB 叶）。
+    crate::expect!(
+        space
+            .nest
+            .translate(VirtAddr::wrap(BASE + middle * PAGE_SIZE))
+            .is_none(),
+        "transfer: only the moved page gives up its translation"
+    );
+    for neighbour in [middle - 1, middle + 1] {
+        let at = VirtAddr::wrap(BASE + neighbour * PAGE_SIZE);
+        let mut byte = [0u8; 1];
+        crate::expect!(
+            space.copy_in(&mut byte, at) && byte[0] == neighbour as u8,
+            "transfer: neighbour {neighbour} keeps its content"
+        );
+        crate::expect!(
+            space.nest.translate(at).expect("transfer: neighbour").0
+                == PhysAddr::from_raw(addresses[neighbour])
+                && space.nest.leaf_span(at) == Some(PAGE_SIZE),
+            "transfer: neighbour {neighbour} keeps its carrier as a 4 KiB leaf"
+        );
+    }
+    crate::expect!(
+        space.nest.leaf_span(VirtAddr::wrap(BASE)) == Some(PAGE_SIZE)
+            && space
+                .nest
+                .leaf_span(VirtAddr::wrap(BASE + MEGA - PAGE_SIZE))
+                == Some(PAGE_SIZE),
+        "transfer: the window keeps its leaf shape once one page is taken out"
+    );
+    space.nest.audit();
+    drop(view);
+    drop(space);
+    drop(seat);
 }
