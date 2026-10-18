@@ -113,6 +113,13 @@ pub fn acceptance() {
         kernel, "armed",
         "race: the fixture never saw the peer register while the window was held"
     );
+    // 夹具在窗口里当场读到的那一条：那条**别人空间**的关系真握着源页的翻译——
+    // 这次移交的成功因此是“真从别人空间里撕下一格”，不是范围上的空话。
+    assert_eq!(
+        page.foreign(),
+        1,
+        "race: the fixture never saw a translation in the other space's relation"
+    );
     // 对端被那一次移交自己放行，醒后读第 1 页并把读数写回。
     let read1 = await_word(
         &console,

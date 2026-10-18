@@ -1498,6 +1498,15 @@ memory-transfer-race: close done
 → `room.exit tid=11 reason=0x0` → `room.reap tid=11`；控制台侧另核两台都正常退场、
 `task: all tasks exited, system halted`、`doom: held=0 starved=0 blocked=0 nudged=0`。
 
+判定分两面：**程序侧**当场核夹具那一步是 `armed`、那条外空间关系真握着翻译
+（`foreign=1`）、两页读数一致且非零；**宿主驱动**
+（`programs/tests/memory-transfer/race.py`）另按已知 tid 与已知 VA 重核同一串真事件
+（恰一次登记、恰一次放行、目标页先未结算后已结算的两次取数缺页、登记早于放行早于
+那次重试、第 0 页上不许有未结算的缺页、恰一次 `Reap`），并另核两台都正常退场。
+宿主侧回归（`programs/tests/memory-transfer/test_race.py`）18 例：真读数照过，
+`kernel=timeout`、`foreign=0`、读数不等/为零、目标页没等过、第二次登记、第二次
+`reap`、非零出口码、末行截断、整行不是 JSON 各当场失败——超时不被当成证明。
+
 #### 三、SMP 负对照：只有一颗 hart 时那一手不可能进展
 
 - `QEMU_SMP=1` 这一档**跑不到本景**：带护栏那一档会把内核自己的自检跑起来，
@@ -1516,7 +1525,8 @@ memory-transfer-race: close done
 | `nu scripts/qtest.nu --package kernel` | **77 passed** ＋ 缺 initrd 哨兵 1 failed（6.00s） |
 | 同命令 `-- transfer` | 8 passed（0.82s） |
 | 同命令 `-- transfer_across_tasks_and_spaces` | 1 passed / 77 filtered（0.67s） |
-| 本景（SMP=4，护栏档） | 1 passed，五条读数如上 |
+| 本景（SMP=4，护栏档） | 1 passed，五条读数如上（退出码 0，`scene-memory-transfer-race-summary.json` 落盘） |
+| 本景宿主驱动与回归 | `race.py` 逐格判定通过；`test_race.py` 18 例 OK；同目录 `discover` 68 例 OK |
 | D1 / TLB | 各 1 passed（0.42s / 0.17s） |
 | Fresh 护栏景 | 1 passed / 77 filtered（10.40s） |
 | accept / product / system-fault | 各 1 passed（10.40s / 5.34s / 13.60s） |
