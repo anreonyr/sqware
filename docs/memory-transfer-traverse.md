@@ -1836,4 +1836,25 @@ python3 -B programs/tests/memory-transfer/test_race.py -v
 python3 -B -m unittest discover -s programs/tests/memory-transfer -p 'test_*.py'
 ```
 
-本阶段**未**获得独立复审、也未获得推送或共享分支落地许可。
+本阶段**未**获得推送或共享分支落地许可；本批的独立验收结论与收口事实见下一节。
+
+### 本批收口记录（doc-only；实现仍是 `813f34d5`）
+
+- **独立验收**：同组 reviewer 只读（在 pin 的 /tmp 副本上实跑）验收两遍——先代码版
+  `a380f9a8`，再加号精确匹配后的 **`813f34d5`**：都通过。它自己复现了 T1（对端报错号）
+  ⇒ 红，签名正是 `race: the peer never paused its teardown`。
+- **最终接受的 pin 与出数**：`813f34d5`（父 `2d919282`）；护栏档 1 passed、退出 0，
+  `teardown{kernel:armed, press_before:2, press_after:1, peer_before:1, peer_after:0,
+  released:0x0, resumed:1, read0:0x7f800}` ；host `test_race.py` **27 OK** / 同目录
+  `discover` **77 OK**；`git diff --check 7be9eebd 813f34d5` rc=0；本批 `kernel/src` 只
+  动了 `pend/pause.rs`（新）、`pend/cull.rs`、`pend/mod.rs`，core 仍 generic。
+- **观察边界**：after 那一面是**完整 `Cleanup::finish` 之后**（对端 `Release` 真返回）
+  才做的；中间半途的 `nestNone` / `NotTransferable` **未触达**，本记不声称复现过。
+- **格式债不是本批引入**：`kernel/src/core/work/pend/mod.rs` 里 `notify` 那处 rustfmt
+  不齐在 `7be9eebd` 就同样一处；没为它重排无关代码。
+- **仍缺：普通 `Acquire` 大叶**仍未验证。它的可构造性现在只是**读码层面的方案**，
+  前提**未核**；本批**不存在已批准的 seam（测试注入点）或生产分配变更**——要接上
+  得另有裁定，不在本批。
+- 设备/DMA 与真实 Platform 接线：**上一轮已做 QEMU 产品闭环**（已落地），本轮
+  **未触及、未重跑**它。
+- 本批不重跑整矩阵、不开新 phase；主树合入由 parent 单独做。
