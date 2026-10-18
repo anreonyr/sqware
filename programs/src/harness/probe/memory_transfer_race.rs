@@ -49,6 +49,7 @@ mod handshake;
 mod manager;
 mod page;
 mod peer;
+mod shared;
 mod source;
 
 pub use manager::acceptance;

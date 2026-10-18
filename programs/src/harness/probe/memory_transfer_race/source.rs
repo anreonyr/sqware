@@ -33,12 +33,12 @@ use super::super::memory_transfer::fault;
 ///
 /// 这里的 `6` 是 `Access` 在**线上的那几位**（读 | 写），不是 `Permission`
 /// （门闩权限位）——与 D1 那一景同一格事实。
-const READ_WRITE: u64 = 6;
+pub(super) const READ_WRITE: u64 = 6;
 
 /// 授给对端的那一份权限：能取能存。
 ///
 /// 与共享根的线上形状同形：两边都没有 `ONLY`（共享根不带独占位）。
-const PEER_SUBSET: Permission = Permission::FETCH.union(Permission::STORE);
+pub(super) const PEER_SUBSET: Permission = Permission::FETCH.union(Permission::STORE);
 
 /// 迁移来源：两页私有分配，第 0 页挂成管理端自己空间里的一条关系。
 pub struct Source {
@@ -135,58 +135,5 @@ impl Source {
             .unwrap_or_else(|error| panic!("race: source end release: {:?}", error.source));
         env::pie::release(self.root, ReleaseMode::Revoke)
             .unwrap_or_else(|error| panic!("race: source root: {:?}", error.source));
-    }
-}
-
-/// 共享控制页：一页私有分配，铸成一个共享根，挂在管理端空间的定点上。
-pub struct Shared {
-    view: View,
-    root: PieToken,
-}
-
-impl Shared {
-    /// 挂上这一页（起点就是 `handshake::VA`）并铸根。
-    pub fn mint(at: usize) -> Shared {
-        let allocation = Allocation::new(PAGE_SIZE, PAGE_SIZE)
-            .expect("memory-transfer-race: control allocation");
-        let source = AcquireSource::Allocation(allocation);
-        let reference = Reference::acquire(source, PieToken::NONE)
-            .unwrap_or_else(|error| panic!("race: control reference: {:?}", error.source));
-        let placement = Placement::exact(VirtAddr::new(at), PAGE_SIZE)
-            .expect("memory-transfer-race: control placement");
-        let view = reference
-            .attach(
-                TeamId::new(0),
-                0,
-                1,
-                placement,
-                READ_WRITE,
-                ViewControl::Caller,
-            )
-            .unwrap_or_else(|error| panic!("race: control view: {:?}", error.source));
-        let handle = reference
-            .handle()
-            .expect("memory-transfer-race: control handle");
-        let root = env::pie::unseal(UnsealArgs::Pole {
-            reference: handle,
-            shared: true,
-        })
-        .unwrap_or_else(|error| panic!("race: control root: {:?}", error.source));
-        Shared { view, root }
-    }
-
-    /// 授一枚子分支给对端：对端凭它在自己空间里把这一页 `open` 出来。
-    pub fn accord(&self, task: TaskId) -> PieToken {
-        env::pie::accord(self.root, task, PEER_SUBSET, env::Mark::NONE)
-            .unwrap_or_else(|error| panic!("race: control accord: {:?}", error.source))
-    }
-
-    /// 收尾：先关自己那条关系，再把根交回去。
-    pub fn close(&mut self) {
-        self.view
-            .close()
-            .unwrap_or_else(|error| panic!("race: control close: {:?}", error.source));
-        env::pie::release(self.root, ReleaseMode::Revoke)
-            .unwrap_or_else(|error| panic!("race: control root: {:?}", error.source));
     }
 }

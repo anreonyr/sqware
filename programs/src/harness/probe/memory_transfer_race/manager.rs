@@ -26,7 +26,7 @@ use resource::raw::Hole as RawHole;
 use super::super::memory_transfer::console::Console;
 use super::handshake;
 use super::page::Page;
-use super::source::Shared;
+use super::shared::Shared;
 use super::source::Source;
 use crate::boot::Accounts;
 use crate::boot::Catalog;
