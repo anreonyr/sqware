@@ -5,7 +5,7 @@ extern crate self as env;
 extern crate self as resource;
 
 pub use abi::wire;
-pub use abi::{Access, Frame, Mark, Permission, PieFail, PieInfo, PieKind, PieResult, PieToken, Policy, ReleaseMode, TaskId, UnsealArgs, Wait};
+pub use abi::{Access, Frame, HoleLimits, HoleResult, Mark, Permission, PieFail, PieInfo, PieKind, PieResult, PieToken, Policy, ReleaseMode, TaskId, Wait};
 
 #[path = "../../src/unit/construction.rs"]
 mod unit_construction;
@@ -23,9 +23,8 @@ struct Effects {
 
 thread_local! { static EFFECTS: RefCell<Effects> = RefCell::new(Effects::default()); }
 
-pub mod pie {
-    pub fn unseal(args: crate::UnsealArgs) -> crate::PieResult<crate::PieToken> {
-        let crate::UnsealArgs::Hole { .. } = args else { unreachable!() };
+pub mod hole {
+    pub fn unseal(_: crate::Mark, _: crate::HoleLimits) -> crate::HoleResult<crate::PieToken> {
         crate::EFFECTS.with(|effects| {
             let mut effects = effects.borrow_mut();
             let token = crate::PieToken::mint(effects.unseals.len() + 1);
@@ -33,7 +32,9 @@ pub mod pie {
             Ok(token)
         })
     }
+}
 
+pub mod pie {
     pub fn release(token: crate::PieToken, _: crate::ReleaseMode) -> crate::PieResult<()> {
         crate::EFFECTS.with(|effects| {
             let mut effects = effects.borrow_mut();

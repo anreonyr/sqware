@@ -139,12 +139,12 @@ fn main() -> Report<'static> {
         system_client::operator::Capability::injected(1, unit::sire(), Wait::AtMost(MS)).unwrap();
     let anchor = publisher.anchor().unwrap();
     let view = operator_api::ResourceView::new(env::Access::STORE).unwrap();
-    let first_entry = pie::unseal(env::UnsealArgs::hole(Mark::of("probe-watch-resource"))).unwrap();
+    let first_entry = env::hole::unseal(Mark::of("probe-watch-resource"), env::HoleLimits::default()).unwrap();
     let second_entry =
-        pie::unseal(env::UnsealArgs::hole(Mark::of("probe-watch-resource"))).unwrap();
+        env::hole::unseal(Mark::of("probe-watch-resource"), env::HoleLimits::default()).unwrap();
     assert_ne!(first_entry, second_entry);
     let wrong_group = env::PieToken::NONE;
-    let wrong_mark = pie::unseal(env::UnsealArgs::hole(system_api::operator::WATCH_MARK)).unwrap();
+    let wrong_mark = env::hole::unseal(system_api::operator::WATCH_MARK, env::HoleLimits::default()).unwrap();
     assert_eq!(
         publisher
             .bind(
@@ -188,7 +188,7 @@ fn main() -> Report<'static> {
         Err(system_api::operator::Fail::Denied)
     );
     for token in [wrong_mark] {
-        pie::seal(token).unwrap();
+        env::hole::seal(token).unwrap();
         pie::release(token, env::ReleaseMode::Revoke).unwrap();
     }
     let first = publisher
@@ -277,7 +277,7 @@ fn spot(
     let capability = &capabilities[namespace];
     let anchor = capability.anchor().unwrap();
     let view = operator_api::ResourceView::new(env::Access::STORE).unwrap();
-    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of(mark))).unwrap();
+    let entry = env::hole::unseal(env::Mark::of(mark), env::HoleLimits::default()).unwrap();
     let id = capability
         .bind(
             anchor,

@@ -1,6 +1,6 @@
 use alloc::collections::VecDeque;
 
-use env::{HoleLimits, MailCondition};
+use env::{HoleCondition, HoleLimits};
 
 use super::hand::Hand;
 use super::slot::Slot;
@@ -13,14 +13,14 @@ pub(super) struct Queue {
 }
 
 impl Queue {
-    pub(super) fn ready(&self, dir: MailCondition, limits: &HoleLimits) -> bool {
+    pub(super) fn ready(&self, dir: HoleCondition, limits: &HoleLimits) -> bool {
         match dir {
-            MailCondition::Pull => self.head().is_some() && !self.taking,
-            MailCondition::Signal(_) => false,
-            MailCondition::Push => {
+            HoleCondition::Pull => self.head().is_some() && !self.taking,
+            HoleCondition::Signal => false,
+            HoleCondition::Push => {
                 self.hands.len() < limits.max_messages && self.bytes < limits.max_bytes
             }
-            MailCondition::Empty => self.hands.is_empty() && !self.taking,
+            HoleCondition::Empty => self.hands.is_empty() && !self.taking,
         }
     }
 

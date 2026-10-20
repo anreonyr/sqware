@@ -9,9 +9,9 @@ pub struct Capability {
 }
 
 impl Capability {
-    pub fn unseal_hole(mark: Mark) -> PieResult<Self> {
+    pub fn unseal_hole(mark: Mark) -> env::HoleResult<Self> {
         Ok(Self {
-            token: pie::unseal(env::UnsealArgs::hole(mark))?,
+            token: env::hole::unseal(mark, env::HoleLimits::default())?,
             active: true,
         })
     }
@@ -37,8 +37,8 @@ impl Capability {
         Loan::accord_window(&self.token, peer, permission, mark, offset, count)
     }
 
-    pub fn seal(&self) -> PieResult<()> {
-        pie::seal(self.token)
+    pub fn seal(&self) -> env::HoleResult<()> {
+        env::hole::seal(self.token)
     }
 
     pub fn release(mut self) -> PieResult<()> {

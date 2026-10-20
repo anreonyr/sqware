@@ -5,7 +5,7 @@ extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
 
-pub use abi_env::{Mark, PieToken, Reason, TaskId, Wait};
+pub use abi_env::{HoleFail, Mark, PieToken, Reason, TaskId, Wait};
 use core::marker::PhantomData;
 use std::{cell::RefCell, vec::Vec};
 use wire::message::Message;
@@ -96,6 +96,7 @@ pub mod rpc {
     #[derive(Debug)]
     pub enum Fail {
         Open(()),
+        Create(HoleFail),
         Grant(()),
         Encode,
         Decode,

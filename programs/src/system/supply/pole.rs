@@ -49,7 +49,7 @@ impl PoleEffects for NativePoleEffects {
         Ok(())
     }
     fn shut(&mut self, token: PieToken) -> Result<(), Fail> {
-        env::pie::shut(token).map_err(|_| Fail::SourceLost)
+        env::pole::shut(token).map_err(|_| Fail::SourceLost)
     }
     fn inspect(&mut self, token: PieToken) -> Result<env::PieInfo, Fail> {
         resource::raw::inspect(token).map_err(|_| Fail::SourceLost)

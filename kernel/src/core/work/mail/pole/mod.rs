@@ -1,4 +1,5 @@
 mod authority;
+mod close;
 mod held_map;
 mod pole_operation;
 mod relation;
@@ -18,12 +19,13 @@ use crate::core::work::room::messenger::{self, Handoff, WakeKey};
 use crate::core::work::unit::life::Life;
 use crate::core::work::unit::space::Space;
 use crate::machine::sync::{Level, SpinLock};
-use env::{Bit, MailFail, Permission, PieFail, PieToken, TaskId, TeamId};
+use env::{Bit, Permission, PieFail, PieToken, PoleFail, TaskId, TeamId};
 
 use authority::Authority;
 use held_map::HeldMap;
 use relation::Relation;
 
+pub(crate) use close::{close, pending_close};
 pub(crate) use pole_operation::PoleOperation;
 
 /// 资源授权：一段经过授权的来源范围，它的授权记录与活跃关系。
@@ -173,9 +175,24 @@ impl PoleMeta {
     }
 
     pub(crate) fn release_grant(&self, token: PieToken) {
-        self.authorities
-            .lock()
-            .retain(|record| !record.authorizes(token));
+        let empty = {
+            let mut authorities = self.authorities.lock();
+            authorities.retain(|record| !record.authorizes(token));
+            authorities.is_empty()
+        };
+        // 最后一枚授权记录撤下就是显式的“授权结束”；真正不再占着任何东西时
+        // 从父分配槽里向上收尾。
+        if empty && let Some(authorization) = self.authorization() {
+            authorization.settle();
+        }
+    }
+
+    /// 还有可用的授权：这份资源自己活着，且名下至少一枚授权记录没失效。
+    ///
+    /// 子段是否仍被占用只看这一条事实，不看相位里那一枚 root Grant，也不数 `Arc`。
+    pub(crate) fn authorizing(&self) -> bool {
+        self.live.load(Ordering::Acquire)
+            && self.authorities.lock().iter().any(Authority::permitted)
     }
 
     pub(crate) fn grant(&self, token: PieToken) -> Option<Arc<Grant>> {
@@ -306,20 +323,23 @@ impl PoleMeta {
                 }
             };
             if let Some(space) = entry.placement.as_ref().and_then(Weak::upgrade) {
+                let id = entry.view.identity();
                 let result = (|| {
-                    space.nest.retry_invalidation()?;
-                    if space.nest.contains_reservation(entry.view.identity()) {
-                        space.withdraw(entry.view.whole())?;
+                    if !space.nest.settled(id) {
+                        space.nest.retry_invalidation()?;
+                        if !space.nest.settled(id) {
+                            space.withdraw(entry.view.whole())?;
+                        }
                     }
                     Ok::<_, NestError>(())
                 })();
-                if let Err(error) = result {
+                if let Err(error) = result
+                    && !space.nest.settled(id)
+                {
                     self.maps.lock().push(entry);
                     return Err(pie_map_error(error));
                 }
-                if !space.nest.contains_reservation(entry.view.identity()) {
-                    space.retire_view(entry.view.identity());
-                }
+                space.retire_view(id);
             }
         }
     }
@@ -336,10 +356,10 @@ impl PoleMeta {
             if let Some(weak) = entry.placement {
                 if let Some(space) = weak.upgrade() {
                     let id = entry.view.identity();
-                    let _ = space.dispose(entry.view);
-                    if !space.nest.contains_reservation(id) {
-                        space.retire_view(id);
+                    if !space.nest.settled(id) {
+                        let _ = space.dispose(entry.view);
                     }
+                    space.retire_view(id);
                 }
             }
         }
@@ -395,10 +415,10 @@ impl Drop for PoleMeta {
             if let Some(weak) = entry.placement {
                 if let Some(space) = weak.upgrade() {
                     let id = entry.view.identity();
-                    let _ = space.dispose(entry.view);
-                    if !space.nest.contains_reservation(id) {
-                        space.retire_view(id);
+                    if !space.nest.settled(id) {
+                        let _ = space.dispose(entry.view);
                     }
+                    space.retire_view(id);
                 }
             }
         }
@@ -446,6 +466,20 @@ pub(crate) fn open(
         .page_count()
         .checked_bytes()
         .ok_or(PieFail::NotAligned)?;
+    let authorization = meta.authorization();
+    // 这一段是这份来源自己的一部分：准入复核、复用判定与发表都在同一个 `commit` 段里
+    // 做完——与已分出的子段、与别人的独立持有都不相交才继续，不隐式裁剪；
+    // 复用旧关系的那一路也过同一道门。
+    let _commit = crate::core::work::commit();
+    if !meta.alive() || grant.permission().is_none() {
+        return Err(PieFail::Dead);
+    }
+    if let Some(authorization) = &authorization {
+        let (offset, count) = grant
+            .window()
+            .unwrap_or((PageOffset::ZERO, meta.source().page_count()));
+        authorization.check_publish(offset, count, None)?;
+    }
     let reusable = {
         let maps = meta.maps.lock();
         maps.iter()
@@ -468,18 +502,30 @@ pub(crate) fn open(
         .nest
         .reserve(Placement::lowest(RegionId::Normal, size, PAGE_SIZE).map_err(pie_map_error)?)
         .map_err(pie_map_error)?;
-    let view = space
-        .nest
-        .attach(reservation, source, access, access)
-        .map_err(pie_map_error)?;
+    let id = reservation.id();
+    if let Some(authorization) = &authorization
+        && let Err(error) = space.views.claim_mapping(id, space, authorization.clone())
+    {
+        let _ = space.nest.release_reservation(reservation);
+        space.retire_view(id);
+        return Err(error);
+    }
+    let view = match space.nest.attach(reservation, source, access, access) {
+        Ok(view) => view,
+        Err(error) => {
+            space.retire_view(id);
+            return Err(pie_map_error(error));
+        }
+    };
     let address = view.initial_start().as_usize();
-    if !meta.alive() || grant.permission().is_none() {
-        let _ = space.dispose(view);
+    if let Err(rejected) = meta.record(token, space, view.clone(), None, true) {
+        drop(view);
+        let _ = space.dispose(rejected);
+        space.retire_view(id);
         return Err(PieFail::Dead);
     }
-    if let Err(view) = meta.record(token, space, view, None, true) {
-        let _ = space.dispose(view);
-        return Err(PieFail::Dead);
+    if authorization.is_some() {
+        space.views.commit(id, view);
     }
     Ok((address, size))
 }
@@ -541,9 +587,9 @@ fn wipe(meta: &PoleMeta) {
         messenger::wipe(key(meta, Bit::wrap(index)));
     }
 }
-pub(crate) fn ring(meta: &PoleMeta, bit: Bit) -> Result<(), MailFail> {
+pub(crate) fn ring(meta: &PoleMeta, bit: Bit) -> Result<(), PoleFail> {
     if !meta.alive() {
-        return Err(MailFail::Dead);
+        return Err(PoleFail::Dead);
     }
     let changed = {
         let mut pending = meta.ring.lock();
@@ -556,16 +602,16 @@ pub(crate) fn ring(meta: &PoleMeta, bit: Bit) -> Result<(), MailFail> {
     }
     Ok(())
 }
-pub(crate) fn hush(meta: &PoleMeta, bit: Bit) -> Result<(), MailFail> {
+pub(crate) fn hush(meta: &PoleMeta, bit: Bit) -> Result<(), PoleFail> {
     if !meta.alive() {
-        return Err(MailFail::Dead);
+        return Err(PoleFail::Dead);
     }
     *meta.ring.lock() &= !bit.mask();
     Ok(())
 }
-pub(crate) fn wait(meta: &PoleMeta, bit: Bit, dur: Duration) -> Result<Handoff<bool>, MailFail> {
+pub(crate) fn wait(meta: &PoleMeta, bit: Bit, dur: Duration) -> Result<Handoff<bool>, PoleFail> {
     if !meta.alive() {
-        return Err(MailFail::Dead);
+        return Err(PoleFail::Dead);
     }
     if meta.ready(bit) {
         return Ok(Handoff::Resume(true));

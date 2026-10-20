@@ -3,7 +3,7 @@ use crate::system::operator::session::{Desk, Gone, Guest};
 use ::resource::pile::Pile;
 use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
-use env::{MailCondition, PieToken, Wait};
+use env::{HoleCondition, PieToken, Wait};
 use ipc::hand::{Receiver, RecvFail, Sender, SourceFail};
 use system_api::operator as ocall;
 
@@ -22,11 +22,16 @@ pub(super) struct Hit(pub Option<PieToken>);
 pub(super) struct Selected(pub Option<Guest>);
 
 pub(super) fn wait(pile: Res<Pile>, mut hit: ResMut<Hit>) -> Result<Progress, Fail> {
-    hit.0 = pile
+    let event = pile
         .await_(Wait::AtMost(100))
-        .map_err(|_| Fail::Dead)?
-        .mail()
-        .map(|(token, _)| token);
+        .map_err(|_| Fail::Dead)?;
+    hit.0 = match event {
+        env::ToleAwaitReply::Source {
+            source: env::ToleEventSource::Hole { token, .. },
+            ..
+        } => Some(token),
+        _ => None,
+    };
     Ok(Progress::Done)
 }
 
@@ -93,9 +98,9 @@ pub(super) fn sweep(
     mut outs: ResMut<Outboxes>,
 ) -> Result<Progress, Fail> {
     let _ = desk.sweep_each(|gone: Gone| {
-        let _ = pile.detach(env::Source::Mail {
-            pie: gone.ask,
-            condition: MailCondition::Pull,
+        let _ = pile.detach(env::ToleEventSource::Hole {
+            token: gone.ask,
+            condition: HoleCondition::Pull,
         });
         if let Some(at) = outs.0.iter().position(|out| out.reply == gone.reply) {
             outs.0.swap_remove(at);

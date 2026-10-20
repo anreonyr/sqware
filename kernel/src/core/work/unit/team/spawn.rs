@@ -122,7 +122,11 @@ pub(crate) fn spawn(
             {
                 return Err(UnitFail::Denied);
             }
-            if record.scope == env::ViewControl::Caller {
+            if record
+                .control
+                .as_ref()
+                .is_some_and(|control| control.scope() == env::ViewControl::Caller)
+            {
                 prepared
                     .track_control(&target.space, item.view.identity())
                     .map_err(map_err)?;

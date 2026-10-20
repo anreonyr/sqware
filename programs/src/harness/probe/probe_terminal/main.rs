@@ -3,7 +3,7 @@
 extern crate programs;
 
 use ::resource::raw::Hole;
-use env::{MailFail, Mark, Permission, PieFail, PieToken, TaskId, TeamId, Wait, pie, unit};
+use env::{HoleFail, Mark, Permission, PieFail, PieToken, TaskId, TeamId, Wait, pie, unit};
 use execution::{room, unit as task};
 use ipc::session::{Session, establish};
 use system_client::operator;
@@ -21,11 +21,11 @@ fn denied(input: PieToken, output: PieToken, control: PieToken) {
     let mut bytes = [0; frame::Input::LEN];
     for token in [input, control] {
         assert!(
-            matches!(Hole::from_raw(token).pull(&mut bytes, Wait::POLL), Err(e) if e.source == MailFail::Denied)
+            matches!(Hole::from_raw(token).pull(&mut bytes, Wait::POLL), Err(e) if e.source == HoleFail::Denied)
         );
     }
     assert!(
-        matches!(Hole::from_raw(output).push(b"blocked", Wait::POLL), Err(e) if e.source == MailFail::Denied)
+        matches!(Hole::from_raw(output).push(b"blocked", Wait::POLL), Err(e) if e.source == HoleFail::Denied)
     );
 }
 #[programs::entry]
@@ -47,7 +47,7 @@ fn main() -> programs::Report<'static> {
     assert!(io.read().is_err());
     assert!(io.write(b"blocked").is_err());
     assert!(
-        matches!(env::mail::await_(authority, Wait::POLL), Err(e) if e.source == env::MailFail::HandedOver)
+        matches!(env::tole::await_(authority, Wait::POLL), Err(e) if e.source == env::ToleFail::HandedOver)
     );
     assert!(
         matches!(pie::accord(authority, child, Permission::FETCH | Permission::VEST | Permission::ONLY, Mark::NONE), Err(e) if e.source == PieFail::HandedOver)

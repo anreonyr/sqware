@@ -15,17 +15,26 @@ pub(crate) struct TaskMemory {
 impl TaskMemory {
     /// 按段撤下：失败的那一段留在原地，沿用同一身份可重试。
     pub(super) fn retire(&mut self) -> Result<(), NestError> {
+        self.space.nest.retry_invalidation()?;
         if let Some(view) = &self.frame {
-            self.space.withdraw(view.whole())?;
+            if !self.space.nest.settled(view.identity()) {
+                self.space.withdraw(view.whole())?;
+            }
             self.frame = None;
         }
         if let Some(view) = &self.stack {
-            self.space.withdraw(view.whole())?;
+            if !self.space.nest.settled(view.identity()) {
+                self.space.withdraw(view.whole())?;
+            }
             self.stack = None;
         }
-        if let Some(guard) = self.guard.take() {
-            self.space.nest.release_reservation(guard)?;
+        if let Some(guard) = &self.guard {
+            if !self.space.nest.settled(guard.id()) {
+                self.space.nest.release_reserved(guard)?;
+            }
+            self.guard = None;
         }
+        self.space.reap_views();
         Ok(())
     }
 }

@@ -16,7 +16,6 @@ use system_client::operator;
 use system_client::operator::Face;
 
 use ::resource::raw::reserve;
-use env::pie;
 use env::unit;
 
 const MS: usize = 1000;
@@ -35,7 +34,8 @@ fn main() -> Report<'static> {
         return bail("probe-lease: no tree link");
     };
     let tree = Face::of(session);
-    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("lease-entry"))).unwrap();
+    let entry =
+        env::hole::unseal(env::Mark::of("lease-entry"), env::HoleLimits::default()).unwrap();
     let capability =
         system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS)).unwrap();
     let anchor = capability.anchor().unwrap();

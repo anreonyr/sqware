@@ -245,6 +245,11 @@ impl Nest {
         self.occupancy.lock().has_id(id)
     }
 
+    /// 原身份的占用票已撤下，或全空间关闭的失效同步已完成。
+    pub(crate) fn settled(&self, id: usize) -> bool {
+        self.is_closed() || !self.contains_reservation(id)
+    }
+
     #[cfg(debug_assertions)]
     pub(crate) fn pending_views(&self) -> Result<Vec<Arc<View>>, NestError> {
         let state = self.state.lock();
@@ -1077,11 +1082,15 @@ impl Nest {
 
     /// 交还一笔尚未落地的保留。
     pub(crate) fn release_reservation(&self, reservation: Reservation) -> Result<(), NestError> {
-        self.check_reservation(&reservation)?;
+        self.release_reserved(&reservation)
+    }
+
+    pub(crate) fn release_reserved(&self, reservation: &Reservation) -> Result<(), NestError> {
+        self.check_reservation(reservation)?;
         if self.overlaps(reservation.start(), reservation.size())? {
             return Err(NestError::AlreadyMapped);
         }
-        if self.give_back(&reservation) {
+        if self.give_back(reservation) {
             Ok(())
         } else {
             Err(NestError::NoRegion)
@@ -1105,6 +1114,10 @@ impl Nest {
     /// 关系收到手。正常关闭别的 View 不会走到这里，因此也不会错误结清失败的那段。
     pub(crate) fn retry_invalidation(self: &Arc<Self>) -> Result<(), NestError> {
         self.finish_invalidation()?;
+        if self.is_closed() {
+            self.drain_closed();
+            return Ok(());
+        }
         let tickets = {
             let mut state = self.state.lock();
             core::mem::take(&mut state.retirement)
@@ -1122,6 +1135,10 @@ impl Nest {
             // 已消费的关系只剩收尾：PTE、退休票与退休资源都已清掉时这里是幂等的。
             if let Err(error) = self.detach(view.whole()) {
                 self.enqueue_cleanup(node);
+                if self.is_closed() {
+                    self.drain_closed();
+                    return Ok(());
+                }
                 return Err(error);
             }
         }
@@ -1176,6 +1193,8 @@ impl Nest {
         let mut state = loop {
             let state = self.state.lock();
             if state.phase.is_closed() {
+                drop(state);
+                self.drain_closed();
                 return Ok(());
             }
             if state.invalidation.is_clean() {
@@ -1232,13 +1251,49 @@ impl Nest {
         state.mark_dirty();
         state.begin_close();
         drop(state);
-        self.finish_invalidation()
+        self.finish_invalidation()?;
+        self.drain_closed();
+        Ok(())
+    }
+
+    pub(crate) fn retired(&self) -> bool {
+        self.asid_released.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn retire(&self) -> Result<(), NestError> {
+        self.close()?;
+        let _state = self.state.lock();
+        if !self.asid_released.load(Ordering::Acquire) {
+            identity::deallocate(self.asid).map_err(|_| NestError::Shootdown)?;
+            self.asid_released.store(true, Ordering::Release);
+        }
+        Ok(())
     }
 
     fn enqueue_cleanup(&self, mut node: Box<CleanupNode>) {
         let mut pending = self.pending_cleanup.lock();
-        node.next = pending.take();
-        *pending = Some(node);
+        if !self.is_closed() {
+            node.next = pending.take();
+            *pending = Some(node);
+            return;
+        }
+        drop(pending);
+        drop(node);
+    }
+
+    /// 与晚到入链共用串行点；关系析构必须在 Space / Nest 锁外。
+    fn drain_closed(&self) {
+        let mut nodes = {
+            let mut pending = self.pending_cleanup.lock();
+            if !self.is_closed() {
+                return;
+            }
+            pending.take()
+        };
+        while let Some(mut node) = nodes {
+            nodes = node.next.take();
+            drop(node);
+        }
     }
 
     /// 取一环待清理的消费式任务；处理完不再放回。
@@ -1607,10 +1662,9 @@ impl Drop for Nest {
         } else if self.asid.is_kernel() {
             return;
         } else if !self.asid_released.load(Ordering::Acquire) {
-            if self.close().is_err() || identity::deallocate(self.asid).is_err() {
+            if self.retire().is_err() {
                 return;
             }
-            self.asid_released.store(true, Ordering::Release);
         }
         unsafe { ManuallyDrop::drop(&mut self.state) };
     }

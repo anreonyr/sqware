@@ -1,9 +1,9 @@
 use alloc::vec::Vec;
-use env::{Source, Wait};
+use env::{ToleEventSource, Wait};
 use resource::pile::Pile;
 
 pub struct Interests {
-    pub sources: Vec<Source>,
+    pub sources: Vec<ToleEventSource>,
     pub within: Wait,
     pub runnable: bool,
 }
@@ -15,7 +15,7 @@ impl Interests {
             runnable: false,
         }
     }
-    pub fn source(&mut self, source: Source) {
+    pub fn source(&mut self, source: ToleEventSource) {
         if !self.sources.contains(&source) {
             self.sources.push(source);
         }
@@ -30,7 +30,7 @@ impl Interests {
 }
 pub struct Waiting {
     pile: Pile,
-    sources: Vec<Source>,
+    sources: Vec<ToleEventSource>,
 }
 impl Waiting {
     pub fn new() -> Result<Self, &'static str> {

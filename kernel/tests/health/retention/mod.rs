@@ -26,7 +26,7 @@ pub fn accept() {
         active: Cell::new(false),
         timeout: Cell::new(false),
     });
-    let root = crate::entry::call::pie::create_pole(&driver.task, source, true).unwrap();
+    let root = crate::entry::call::pole::create_pole(&driver.task, source, true).unwrap();
     assert_eq!(
         driver.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
         0

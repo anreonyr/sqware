@@ -10,7 +10,7 @@ pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
         let token = match ipc::session::establish::find(me, mark) {
             Ok(token) => token,
             Err(ipc::session::establish::DiscoveryFail::Missing) => {
-                pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| "hierarchy fixture channel")?
+                env::hole::unseal(mark, env::HoleLimits::default()).map_err(|_| "hierarchy fixture channel")?
             }
             Err(ipc::session::establish::DiscoveryFail::Ambiguous) => {
                 return Err("hierarchy fixture channel ambiguous");
@@ -170,7 +170,7 @@ pub(crate) fn exercise(
         pane.entry, replay.entry,
         "PART replay must retain the original Entry"
     );
-    let source = pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-resource"))).unwrap();
+    let source = env::hole::unseal(Mark::of("hierarchy-resource"), env::HoleLimits::default()).unwrap();
     let view = api::ResourceView::new(Access::FETCH_STORE).unwrap();
     let member = capability
         .bind(
@@ -289,7 +289,7 @@ pub(crate) fn exercise(
         "foreign Identity authority must be rejected"
     );
     assert!(identity::IdentityName::new("bad/name").is_none());
-    let fake = pie::unseal(env::UnsealArgs::hole(identity::Grant::Resolve.mark())).unwrap();
+    let fake = env::hole::unseal(identity::Grant::Resolve.mark(), env::HoleLimits::default()).unwrap();
     assert!(
         Face::direct(authority, identity::Grant::Resolve, fake).is_err(),
         "a matching Mark does not establish Identity provenance"
@@ -323,7 +323,7 @@ pub(crate) fn exercise(
         &bytes, b"kept",
         "namespace unbind must preserve delivered copies"
     );
-    pie::seal(source).unwrap();
+    env::hole::seal(source).unwrap();
     assert!(
         reserve(read.resource).is_err(),
         "provider close must invalidate copies"
@@ -336,7 +336,7 @@ pub(crate) fn exercise(
     let _ = pie::release(acquired.resource, env::ReleaseMode::Keep);
     let _ = pie::release(read.resource, env::ReleaseMode::Keep);
 
-    let source = pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-capacity"))).unwrap();
+    let source = env::hole::unseal(Mark::of("hierarchy-capacity"), env::HoleLimits::default()).unwrap();
     let mut bindings = alloc::vec::Vec::new();
     for index in 0..api::frame::PANE_CAP {
         bindings.push(
@@ -525,7 +525,7 @@ pub fn reference_lifetime() {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use env::{Mark, Wait};
     let me = env::unit::self_id();
-    let source = pie::unseal(env::UnsealArgs::hole(Mark::of("forget-source"))).unwrap();
+    let source = env::hole::unseal(Mark::of("forget-source"), env::HoleLimits::default()).unwrap();
     assert!(
         pie::release(source, env::ReleaseMode::Keep).is_err(),
         "original resource ownership cannot be forgotten"
@@ -537,7 +537,7 @@ pub fn reference_lifetime() {
         .unwrap()
         .seed();
     assert_eq!(pie::same(source, child), Ok(true));
-    let other = pie::unseal(env::UnsealArgs::hole(Mark::of("forget-source"))).unwrap();
+    let other = env::hole::unseal(Mark::of("forget-source"), env::HoleLimits::default()).unwrap();
     assert_eq!(pie::same(source, other), Ok(false));
     pie::release(borrowed, env::ReleaseMode::Keep).unwrap();
     Hole::from_raw(child).push(b"ok", Wait::POLL).unwrap();
@@ -552,7 +552,7 @@ pub fn reference_lifetime() {
         "reparented capability remains revocable upstream"
     );
     for round in 0..8 {
-        let root = pie::unseal(env::UnsealArgs::hole(Mark::of("forget-race"))).unwrap();
+        let root = env::hole::unseal(Mark::of("forget-race"), env::HoleLimits::default()).unwrap();
         let middle = port::ship(root, me, Access::FETCH | Access::STORE, Policy::VEST)
             .unwrap()
             .seed();
@@ -606,12 +606,12 @@ pub fn reference_lifetime() {
         }
         stage.store(4, Ordering::Release);
         worker.join();
-        let _ = pie::seal(root);
+        let _ = env::hole::seal(root);
         let _ = pie::release(root, env::ReleaseMode::Revoke);
     }
-    let _ = pie::seal(source);
+    let _ = env::hole::seal(source);
     let _ = pie::release(source, env::ReleaseMode::Revoke);
-    let _ = pie::seal(other);
+    let _ = env::hole::seal(other);
     let _ = pie::release(other, env::ReleaseMode::Revoke);
     programs::debug::put(
         "hierarchy: Forget preserves delivered capabilities, Same distinguishes objects, concurrent Accord keeps upstream revoke/release effective",
@@ -648,9 +648,10 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             let session = Session::open(control, operator::BERTH, Wait::AtMost(3000))
                 .unwrap_or_else(|_| panic!("standalone Operator session"));
             let tree = Face::of(session);
-            let forged = env::pie::unseal(env::UnsealArgs::hole(
+            let forged = env::hole::unseal(
                 system_api::operator::entry::AUTH_ENTRY,
-            ))
+                env::HoleLimits::default(),
+            )
             .unwrap();
             assert!(matches!(
                 operator::Capability::direct(tree.host(), forged),

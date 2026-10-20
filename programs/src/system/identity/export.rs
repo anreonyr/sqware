@@ -148,7 +148,7 @@ impl Exports {
         self.grants
             .try_reserve(1)
             .map_err(|_| "identity export capacity")?;
-        let endpoint = env::pie::unseal(env::UnsealArgs::hole(api::ENTRY))
+        let endpoint = env::hole::unseal(api::ENTRY, env::HoleLimits::default())
             .map_err(|_| "identity export endpoint")?;
         self.grants.push(ExportGrant {
             owner: ExportOwner { task, program },

@@ -121,7 +121,7 @@ fn accord_console(token: PieToken, task: TaskId) -> PieToken {
 /// 开一道孔、只授出「能取」那一格，再把号推进去：那一台按标号找到这道孔、取下八个字节。
 fn hand_over(task: TaskId, seed: PieToken) {
     let link =
-        env::pie::unseal(env::UnsealArgs::hole(LINK_MARK)).expect("memory-transfer: the link hole");
+        env::hole::unseal(LINK_MARK, env::HoleLimits::default()).expect("memory-transfer: the link hole");
     ::resource::port::ship(link, task, env::Access::FETCH, env::Policy::NONE)
         .expect("memory-transfer: hand the link hole over");
     RawHole::from_raw(link)

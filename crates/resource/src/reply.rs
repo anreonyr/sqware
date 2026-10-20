@@ -1,7 +1,7 @@
 //! 一次交互使用的自有回信端。
 
 use crate::{capability::Capability, hole::Hole};
-use env::{MailFail, Mark, Permission, PieFail, PieResult, PieToken, TaskId, Wait, make_fail, pie};
+use env::{HoleFail, HoleResult, Mark, Permission, PieFail, PieResult, PieToken, TaskId, Wait, make_fail, pie};
 
 /// 自有回信端；只接收指定对端的回复，结束时撤销授出并封印释放本地孔。
 pub struct Reply {
@@ -13,12 +13,12 @@ pub struct Reply {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReplyError {
-    Mail(MailFail),
+    Mail(HoleFail),
     WrongSource,
 }
 
 impl Reply {
-    pub fn open(peer: TaskId, mark: Mark) -> PieResult<Self> {
+    pub fn open(peer: TaskId, mark: Mark) -> HoleResult<Self> {
         Ok(Self {
             local: Capability::unseal_hole(mark)?,
             peer,
@@ -37,10 +37,10 @@ impl Reply {
         Ok(remote)
     }
 
-    pub fn source(&self) -> env::Source {
-        env::Source::Mail {
-            pie: self.local.token(),
-            condition: env::MailCondition::Pull,
+    pub fn source(&self) -> env::ToleEventSource {
+        env::ToleEventSource::Hole {
+            token: self.local.token(),
+            condition: env::HoleCondition::Pull,
         }
     }
 
@@ -51,7 +51,7 @@ impl Reply {
         if from != self.peer {
             return Err(ReplyError::WrongSource);
         }
-        buffer.get(..len).ok_or(ReplyError::Mail(MailFail::Denied))
+        buffer.get(..len).ok_or(ReplyError::Mail(HoleFail::Denied))
     }
 }
 

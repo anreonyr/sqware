@@ -10,6 +10,7 @@ pub mod dock;
 mod hole;
 pub mod pile;
 pub mod port;
+mod port_open_fail;
 pub mod raw;
 mod reply;
 

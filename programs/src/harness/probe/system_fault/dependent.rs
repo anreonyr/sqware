@@ -25,7 +25,7 @@ fn main() -> programs::Report<'static> {
         resolve.call(Wire::Resolve(me), WAIT),
         Ok(Reply::Binding(Some(_)))
     ));
-    let forged = env::pie::unseal(env::UnsealArgs::hole(Grant::Resolve.mark())).unwrap();
+    let forged = env::hole::unseal(Grant::Resolve.mark(), env::HoleLimits::default()).unwrap();
     assert!(
         system_client::identity::Face::direct(authority, Grant::Resolve, forged).is_err(),
         "a locally forged role Mark cannot replace the Identity authority"

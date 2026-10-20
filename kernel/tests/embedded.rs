@@ -95,6 +95,66 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn nest_task_exit_without_failure() {
+        kernel::entry::check::nest_exit::task_exit_without_failure();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn nest_task_exit_with_persistent_failure() {
+        kernel::entry::check::nest_exit::task_exit_with_persistent_failure();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn nest_last_drop_with_persistent_failure() {
+        kernel::entry::check::nest_exit::last_drop_with_persistent_failure();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn nest_empty_team_oust_with_persistent_failure() {
+        kernel::entry::check::nest_exit::empty_team_oust_with_persistent_failure();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn nest_oust_retries_asid_deallocation() {
+        kernel::entry::check::nest_exit::oust_retries_asid_deallocation();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn nest_retired_owner_preserves_reused_asid_watchers() {
+        kernel::entry::check::nest_exit::retired_owner_preserves_reused_asid_watchers();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn nest_parent_exit_retains_empty_child() {
+        kernel::entry::check::nest_exit::parent_exit_retains_empty_child();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn nest_all_reaped_preserves_respawn() {
+        kernel::entry::check::nest_exit::all_reaped_preserves_respawn();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn nest_oust_retires_pruned_task_memory() {
+        kernel::entry::check::nest_exit::oust_retires_pruned_task_memory();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn nest_task_exit_resumes_retirement_on_schedule() {
+        kernel::entry::check::nest_exit::task_exit_resumes_retirement_on_schedule();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn memory_placement() {
         kernel::entry::check::memory::placement();
     }
@@ -216,6 +276,174 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn unpublished_roots_release_their_sources() {
+        kernel::entry::check::pole::unpublished_roots();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn retired_space_releases_control_records() {
+        kernel::entry::check::nest_exit::retirement_releases_control_records();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn closed_space_settles_late_task_memory() {
+        kernel::entry::check::nest_exit::late_task_memory_settles_after_space_close();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn closed_view_does_not_block_transfer() {
+        kernel::entry::check::closed_transfer::closed_view_does_not_block_transfer();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn attach_rollback_preserves_control_until_settled() {
+        kernel::entry::check::attach_rollback::preserves_control_until_settled();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn source_binding_prepared_member_survives_until_settled() {
+        kernel::entry::check::source_binding::prepared_member_survives_until_settled();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn source_binding_settled_member_releases_records() {
+        kernel::entry::check::source_binding::settled_member_leaves_no_space_or_source_behind();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn source_binding_hand_over_keeps_one_shared_control() {
+        kernel::entry::check::source_binding::hand_over_keeps_one_shared_control();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn source_binding_raw_last_drop_keeps_unknown_member() {
+        kernel::entry::check::source_binding::raw_last_drop_keeps_unknown_member();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn source_binding_closed_input_allows_pole_cleanup() {
+        kernel::entry::check::source_binding::closed_input_does_not_block_pole_cleanup();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn pole_open_tracks_cpu_without_view_control() {
+        kernel::entry::check::source_binding::pole_open_tracks_cpu_without_view_control();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_derived_child_is_its_own_root() {
+        kernel::entry::check::sub_pole::derived_child_is_its_own_root();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_overlap_is_rejected_whole() {
+        kernel::entry::check::sub_pole::overlap_is_rejected_whole();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_nesting_holds_the_middle_window() {
+        kernel::entry::check::sub_pole::nesting_holds_the_middle_window();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_failed_derivation_publishes_nothing() {
+        kernel::entry::check::sub_pole::failed_derivation_publishes_nothing();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_reuse_waits_for_settlement_and_held_frames() {
+        kernel::entry::check::sub_pole::reuse_waits_for_settlement_and_held_frames();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_sealed_child_does_not_hold_its_segment() {
+        kernel::entry::check::sub_pole::sealed_child_does_not_hold_its_segment();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_old_reference_cannot_bypass_the_gate() {
+        kernel::entry::check::sub_pole::old_reference_cannot_bypass_the_gate();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_retained_child_blocks_parent_reuse() {
+        kernel::entry::check::sub_pole::retained_child_blocks_parent_reuse();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_old_reference_cannot_transfer_a_child_page() {
+        kernel::entry::check::sub_pole::old_reference_cannot_transfer_a_child_page();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_publication_keys_keep_their_domains() {
+        kernel::entry::check::sub_pole::publication_keys_keep_their_domains();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_first_delivery_keeps_the_parent_allocation() {
+        kernel::entry::check::sub_pole::first_delivery_keeps_the_parent_allocation();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_forget_preserves_derived_indices() {
+        kernel::entry::check::sub_pole::forget_preserves_derived_indices();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_forget_requires_a_qualified_parent() {
+        kernel::entry::check::sub_pole::forget_requires_a_qualified_parent();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_parent_seal_retries_a_pending_descendant() {
+        kernel::entry::check::sub_pole::parent_seal_retries_a_pending_descendant();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_parent_seal_closes_a_consumed_child() {
+        kernel::entry::check::sub_pole::parent_seal_closes_a_consumed_child();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_sealed_source_keeps_its_inflight_allocation() {
+        kernel::entry::check::sub_pole::sealed_source_keeps_its_inflight_allocation();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn sub_pole_parent_seal_retries_a_failed_open() {
+        kernel::entry::check::sub_pole::parent_seal_retries_a_failed_open();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn pole_device_region_borrow_and_access() {
         kernel::entry::check::pole::region();
     }
@@ -302,6 +530,12 @@ mod tests {
     #[test]
     fn task_preparation_rollback() {
         kernel::entry::check::task::preparation();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn team_publication_preserves_parent_identity() {
+        kernel::entry::check::task::publication();
     }
 
     #[cfg(debug_assertions)]
@@ -428,6 +662,12 @@ mod tests {
     #[test]
     fn syscall_capability() {
         kernel::entry::check::syscall::capability();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn typed_resource_call_domains() {
+        kernel::entry::check::syscall::resource_domains();
     }
 
     #[cfg(debug_assertions)]

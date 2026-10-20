@@ -12,11 +12,11 @@ use core::time::Duration;
 use crate::machine::clock;
 use crate::machine::sync::{Level, SpinLock};
 
-use env::{HoleLimits, MailCondition, TaskId};
+use env::{HoleCondition, HoleFail, HoleLimits, TaskId};
 
+use crate::core::work::pend::Need;
 use crate::core::work::room::messenger::{self, Handoff, WakeKey};
 use crate::core::work::unit::life::Life;
-use env::MailFail;
 
 use pending::Pending;
 use queue::Queue;
@@ -42,7 +42,9 @@ impl HoleMeta {
         Self::try_new(owner).expect("hole allocation failed")
     }
 
-    pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
+    pub(crate) fn try_new(
+        owner: TaskId,
+    ) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
         Self::try_new_with_limits(owner, HoleLimits::default())
     }
 
@@ -75,11 +77,14 @@ impl HoleMeta {
         !matches!(*self.pending.lock(), Pending::Dead)
     }
 
-    pub(crate) fn ready(&self, dir: MailCondition) -> bool {
+    /// 这一种等待此刻是否已就绪：队列按队头与库存，计数通知按计数。
+    pub(crate) fn ready(&self, dir: HoleCondition) -> bool {
         let pending = self.pending.lock();
         match &*pending {
             Pending::Queue(queue) => queue.ready(dir, &self.limits),
-            Pending::Rung { count, .. } => dir == MailCondition::Pull && *count > 0,
+            Pending::Rung { count, .. } => {
+                matches!(dir, HoleCondition::Pull | HoleCondition::Signal) && *count > 0
+            }
             Pending::Dead => false,
         }
     }
@@ -91,29 +96,37 @@ impl Drop for HoleMeta {
     }
 }
 
-pub(crate) fn key(meta: &HoleMeta, dir: MailCondition) -> WakeKey {
+pub(crate) fn key(meta: &HoleMeta, dir: HoleCondition) -> WakeKey {
     WakeKey::Hole { hole: meta.id, dir }
+}
+
+/// 等这一种状态要哪一种许可：取数与信号是 FETCH，放数与空位是 STORE。
+pub(crate) fn need(dir: HoleCondition) -> Need {
+    match dir {
+        HoleCondition::Pull | HoleCondition::Signal => Need::Fetch,
+        HoleCondition::Push | HoleCondition::Empty => Need::Store,
+    }
 }
 
 pub(crate) fn wait(
     meta: &HoleMeta,
-    dir: MailCondition,
+    dir: HoleCondition,
     dur: Duration,
-) -> Result<Handoff<bool>, MailFail> {
+) -> Result<Handoff<bool>, HoleFail> {
     if !meta.alive() {
-        return Err(MailFail::Dead);
+        return Err(HoleFail::Dead);
     }
     if meta.ready(dir) {
         return Ok(Handoff::Resume(true));
     }
-    if dur != Duration::ZERO && dir == MailCondition::Empty && hand_age(meta).is_none() {
+    if dur != Duration::ZERO && dir == HoleCondition::Empty && hand_age(meta).is_none() {
         note_shape(meta);
     }
     if dur == Duration::ZERO {
         return Ok(Handoff::Resume(false));
     }
     let out = messenger::wait(key(meta, dir), meta.life(), dur)?;
-    if dir == MailCondition::Empty
+    if dir == HoleCondition::Empty
         && let Some((from, len, ms)) = hand_age(meta)
     {
         note_hold(meta, from, ms);
@@ -265,9 +278,10 @@ pub(crate) fn seal(meta: &HoleMeta) {
     }
     drop(pending);
     messenger::wipe(WakeKey::seal(env::PieKind::Hole, meta.id));
-    messenger::wipe(key(meta, MailCondition::Pull));
-    messenger::wipe(key(meta, MailCondition::Empty));
-    messenger::wipe(key(meta, MailCondition::Push));
+    messenger::wipe(key(meta, HoleCondition::Pull));
+    messenger::wipe(key(meta, HoleCondition::Empty));
+    messenger::wipe(key(meta, HoleCondition::Push));
+    messenger::wipe(key(meta, HoleCondition::Signal));
 }
 
 #[cfg(debug_assertions)]

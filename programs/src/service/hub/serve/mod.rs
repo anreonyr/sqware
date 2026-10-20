@@ -9,7 +9,7 @@ use ::resource::dock::Dock;
 use ::resource::pile::Pile;
 use env::PAGE_SIZE;
 use env::unit;
-use env::{Access, MailCondition, Name, Page, PieKind, PieToken, Policy, TaskId, Trap, Wait};
+use env::{Access, HoleCondition, Name, Page, PieKind, PieToken, Policy, TaskId, Trap, Wait};
 use hub_api::{self as hub, Deed, Grant, Inventory, Said, Window, Wire};
 use ipc::hand::Sender;
 use ipc::session::{Session, establish};
@@ -115,11 +115,11 @@ pub fn serve() -> Result<(), Start> {
         hub_client::activate(&league.activation, me, &leagues[..n])
             .map_err(|_| Start::Face(E_HUB))?;
 
-        let bond = pie::unseal(env::UnsealArgs::hole(Grant::Bond.mark()))
+        let bond = env::hole::unseal(Grant::Bond.mark(), env::HoleLimits::default())
             .map_err(|_| Start::Tree(E_HUB))?;
-        let list = pie::unseal(env::UnsealArgs::hole(Grant::List.mark()))
+        let list = env::hole::unseal(Grant::List.mark(), env::HoleLimits::default())
             .map_err(|_| Start::Tree(E_HUB))?;
-        let claim = pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark()))
+        let claim = env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
             .map_err(|_| Start::Tree(E_HUB))?;
         let publisher = system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS))
             .map_err(|_| Start::Tree(E_HUB))?;
@@ -213,9 +213,9 @@ pub fn serve() -> Result<(), Start> {
         Start::Desk(E_HUB)
     })?;
     for token in &doors {
-        pile.attach(env::Source::Mail {
-            pie: *token,
-            condition: MailCondition::Pull,
+        pile.attach(env::ToleEventSource::Hole {
+            token: *token,
+            condition: HoleCondition::Pull,
         })
         .map_err(|why| {
             crate::debug::put(&alloc::format!("hub: attach {} {why:?}", token.get()));
@@ -229,8 +229,8 @@ pub fn serve() -> Result<(), Start> {
     buf.resize(PAGE_SIZE, 0);
     loop {
         match pile.await_(Wait::AtMost(PROBE_MS)) {
-            Ok(env::AwaitReply::Source {
-                source: env::Source::Mail { pie: token, .. },
+            Ok(env::ToleAwaitReply::Source {
+                source: env::ToleEventSource::Hole { token, .. },
                 ..
             }) => {
                 // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
@@ -409,7 +409,7 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
             class: hub::BOOT.into(),
             line: 0,
             page: dtb,
-            door: pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark()))
+            door: env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
                 .map_err(|_| Start::Load(E_HUB))?,
         },
     )?;
@@ -427,7 +427,7 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
             class: hub::BOOT.into(),
             line: 0,
             page: interrupt,
-            door: pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark()))
+            door: env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
                 .map_err(|_| Start::Load(E_HUB))?,
         },
     )?;
@@ -438,7 +438,7 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
             return Err(Start::Load(E_HUB));
         }
         let token = local_machine_token(system, item, item_index)?;
-        let door = pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark()))
+        let door = env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
             .map_err(|_| Start::Load(E_HUB))?;
         enroll(
             &mut ledger,

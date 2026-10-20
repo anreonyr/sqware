@@ -6,7 +6,8 @@ extern crate self as ipc;
 extern crate self as resource;
 extern crate self as system_client;
 pub use abi::{
-    MailCondition, Mark, Permission, PieToken, ReleaseMode, Source, TaskId, UnsealArgs, Wait,
+    HoleCondition, HoleFail, HoleLimits, HoleResult, Mark, Permission, PieToken, ReleaseMode,
+    TaskId, ToleEventSource, ToleResult, Wait,
 };
 pub mod wire {
     pub use abi::wire::*;
@@ -29,6 +30,13 @@ thread_local! { static NATIVE: RefCell<Native> = RefCell::new(Native { next: 100
 fn token(n: usize) -> PieToken {
     PieToken::mint(n)
 }
+fn mint() -> PieToken {
+    NATIVE.with(|n| {
+        let mut n = n.borrow_mut();
+        n.next += 1;
+        token(n.next)
+    })
+}
 fn reset() {
     NATIVE.with(|n| {
         *n.borrow_mut() = Native {
@@ -45,25 +53,20 @@ pub mod unit {
         super::TaskId::new(32)
     }
 }
+pub mod hole {
+    pub fn unseal(_: crate::Mark, _: crate::HoleLimits) -> crate::HoleResult<crate::PieToken> {
+        Ok(crate::mint())
+    }
+}
+pub mod tole {
+    pub fn unseal(_: bool) -> crate::ToleResult<crate::PieToken> {
+        Ok(crate::token(1))
+    }
+}
 pub mod pie {
-    pub fn unseal(args: crate::UnsealArgs) -> Result<crate::PieToken, ()> {
-        match args {
-            crate::UnsealArgs::Hole { mark, .. } => hole_token(mark),
-            crate::UnsealArgs::Tole { .. } => Ok(crate::token(1)),
-            _ => unreachable!(),
-        }
-    }
-
     use super::*;
-    fn hole_token(_: Mark) -> Result<PieToken, ()> {
-        NATIVE.with(|n| {
-            let mut n = n.borrow_mut();
-            n.next += 1;
-            Ok(token(n.next))
-        })
-    }
     pub fn accord(source: PieToken, _: TaskId, _: Permission, _: Mark) -> Result<PieToken, ()> {
-        let remote = hole_token(Mark::NONE)?;
+        let remote = crate::mint();
         NATIVE.with(|n| n.borrow_mut().loans.insert(remote.get(), source.get()));
         Ok(remote)
     }
@@ -108,11 +111,11 @@ pub mod operator {
 }
 #[derive(Debug)]
 pub struct Error {
-    pub source: abi::MailFail,
+    pub source: abi::HoleFail,
 }
 fn denied() -> Error {
     Error {
-        source: abi::MailFail::Denied,
+        source: abi::HoleFail::Denied,
     }
 }
 pub mod raw {
@@ -187,7 +190,7 @@ pub mod raw {
                 Ok((reply.len(), TaskId::new(31)))
             })
         }
-        pub fn wait(&self, _: MailCondition, _: Wait) -> Result<bool, Error> {
+        pub fn wait(&self, _: HoleCondition, _: Wait) -> Result<bool, Error> {
             Ok(true)
         }
     }
@@ -199,11 +202,11 @@ pub mod pile {
         pub fn unseal(_: bool) -> Result<Self, ()> {
             Ok(Self)
         }
-        pub fn attach(&self, source: Source) -> Result<(), ()> {
-            let Source::Mail { pie, .. } = source else {
+        pub fn attach(&self, source: ToleEventSource) -> Result<(), ()> {
+            let ToleEventSource::Hole { token, .. } = source else {
                 return Err(());
             };
-            NATIVE.with(|n| n.borrow().live.contains(&pie.get()).then_some(()).ok_or(()))
+            NATIVE.with(|n| n.borrow().live.contains(&token.get()).then_some(()).ok_or(()))
         }
         pub fn await_(&self, _: Wait) -> Result<(), ()> {
             unreachable!()

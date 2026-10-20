@@ -308,7 +308,7 @@ impl Controller {
             }
             for member in &job.members {
                 if let Some(built) = member.built.filter(|_| !member.dead) {
-                    interests.source(env::Source::Join {
+                    interests.source(env::ToleEventSource::Join {
                         target: built.team.into(),
                     });
                 }
@@ -339,9 +339,9 @@ impl Controller {
                 if pump.source() && pump.pending.is_empty() {
                     if matches!(local.buffer, Buffer::Terminal(Direction::Read)) {
                         if !job.model.foreground {
-                            interests.source(env::Source::Mail {
-                                pie: pump.port.token(),
-                                condition: env::MailCondition::Signal(pipe_api::DEMAND_BIT),
+                            interests.source(env::ToleEventSource::Pole {
+                                token: pump.port.token(),
+                                bit: pipe_api::DEMAND_BIT,
                             });
                             continue;
                         }

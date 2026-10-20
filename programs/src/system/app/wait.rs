@@ -4,7 +4,7 @@ use crate::system::app::Fault as Fail;
 use crate::system::control::{namespace::Endpoints as Watch, unit::Control, unit::table::Slot};
 
 use alloc::vec::Vec;
-use env::Source;
+use env::ToleEventSource as Source;
 use env::{PieToken, Wait};
 use system_api::control as ccall;
 
@@ -91,7 +91,7 @@ pub fn identity_changes(
     changed: Res<crate::system::identity::revision::Changed>,
     mut wanted: ResMut<Interests>,
 ) -> Result<Progress, Fail> {
-    wanted.tokens.push(changed.0.token());
+    wanted.subs.push(Source::Nole { token: changed.0.token() });
     Ok(Progress::Done)
 }
 
@@ -106,9 +106,9 @@ pub(super) fn connections(
     wanted.writes.try_reserve(count)?;
     for (token, direction) in tree.connection_interests() {
         match direction {
-            env::MailCondition::Pull => wanted.tokens.push(token),
-            env::MailCondition::Push | env::MailCondition::Signal(_) => return Err(Fail::Room),
-            env::MailCondition::Empty => wanted.writes.push(token),
+            env::HoleCondition::Pull => wanted.tokens.push(token),
+            env::HoleCondition::Push | env::HoleCondition::Signal => return Err(Fail::Room),
+            env::HoleCondition::Empty => wanted.writes.push(token),
         }
     }
     // LINK admission scans newly delivered capabilities.

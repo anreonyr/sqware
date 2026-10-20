@@ -3,8 +3,8 @@
 extern crate self as env;
 extern crate self as resource;
 
-pub use abi::{UnsealArgs, ReleaseMode, Oversize, PullOutcome,
-    Source, Access, MailCondition, MailFail, MailResult, Mark, Permission, PieFail, PieResult, PieToken,
+pub use abi::{ReleaseMode, Oversize, PullOutcome,
+    ToleEventSource, Access, HoleCondition, HoleFail, HoleResult, Mark, Permission, PieFail, PieResult, PieToken,
     Policy, TaskId, VirtAddr, Wait, make_fail,
 };
 
@@ -68,42 +68,35 @@ pub mod chrono {
 }
 
 pub mod pie {
-    pub fn unseal(args: crate::UnsealArgs) -> PieResult<PieToken> {
-        match args { crate::UnsealArgs::Hole { mark, .. } => hole_token(mark), _ => unreachable!() }
-    }
-
     use crate::{Mark, PieFail, PieResult, PieToken, TaskId, make_fail, test_backend::{Event, event, token, with}};
-    fn hole_token(_: Mark) -> PieResult<PieToken> { Ok(token()) }
     pub fn release(token: PieToken, _mode: crate::ReleaseMode) -> PieResult<()> { event(Event::Release(token)); Ok(()) }
-    pub fn seal(token: PieToken) -> PieResult<()> { event(Event::Seal(token)); Ok(()) }
     pub fn revoke(peer: TaskId, remote: PieToken) -> PieResult<()> { event(Event::Revoke(peer, remote)); Ok(()) }
     pub fn accord(_: PieToken, _: TaskId, _: crate::Permission, _: Mark) -> PieResult<PieToken> { Ok(token()) }
     pub fn inspect(_: PieToken, _: crate::VirtAddr) -> PieResult<()> { Err(make_fail(PieFail::Denied)) }
-    pub fn open(_: PieToken) -> PieResult<(crate::VirtAddr, usize)> { Ok((crate::VirtAddr::new(0), 0)) }
     pub fn set_now(now: u64) { with(|state| state.now = now); }
 }
 
 pub mod raw {
-    use crate::{MailFail, MailResult, Mark, PieResult, PieToken, TaskId, Wait, make_fail, test_backend::with};
+    use crate::{HoleFail, HoleResult, Mark, PieResult, PieToken, TaskId, Wait, make_fail, test_backend::with};
     pub struct Hole(PieToken);
     impl Hole {
         pub fn from_raw(token: PieToken) -> Self { Self(token) }
-        pub fn pull(&self, buffer: &mut [u8], wait: Wait) -> MailResult<(usize, TaskId)> {
+        pub fn pull(&self, buffer: &mut [u8], wait: Wait) -> HoleResult<(usize, TaskId)> {
             let (bytes, from) = with(|state| {
                 state.events.push(crate::test_backend::Event::Pull(self.0, wait));
                 state.replies.remove(&self.0)
-            }).ok_or_else(|| make_fail(MailFail::Busy))?;
+            }).ok_or_else(|| make_fail(HoleFail::Busy))?;
             if bytes.len() > buffer.len() {
                 with(|state| { state.replies.insert(self.0, (bytes, from)); });
-                return Err(make_fail(MailFail::Denied));
+                return Err(make_fail(HoleFail::Denied));
             }
             buffer[..bytes.len()].copy_from_slice(&bytes);
             Ok((bytes.len(), from))
         }
-        pub fn pull_with(&self, buffer: &mut [u8], wait: Wait, oversize: crate::Oversize) -> MailResult<crate::PullOutcome> {
+        pub fn pull_with(&self, buffer: &mut [u8], wait: Wait, oversize: crate::Oversize) -> HoleResult<crate::PullOutcome> {
             match self.pull(buffer, wait) {
                 Ok((len, sender)) => Ok(crate::PullOutcome::Received { len, sender }),
-                Err(error) if error.source == MailFail::Denied && oversize == crate::Oversize::Discard => {
+                Err(error) if error.source == HoleFail::Denied && oversize == crate::Oversize::Discard => {
                     let (bytes, sender) = with(|state| state.replies.remove(&self.0)).unwrap();
                     Ok(crate::PullOutcome::Discarded { len: bytes.len(), sender })
                 }
@@ -120,10 +113,10 @@ pub mod raw {
 }
 
 pub mod port {
-    use crate::{MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, Wait, make_fail, test_backend::{Event, token, with}};
+    use crate::{HoleFail, HoleResult, Mark, PieFail, PieResult, PieToken, TaskId, Wait, make_fail, test_backend::{Event, token, with}};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum ReplyError { Mail(MailFail), WrongSource }
+    pub enum ReplyError { Mail(HoleFail), WrongSource }
 
     pub struct Sender { entry: PieToken, peer: TaskId }
     impl Sender {
@@ -132,8 +125,13 @@ pub mod port {
             if fail { Err(make_fail(PieFail::Denied)) } else { Ok(Self { entry, peer }) }
         }
         pub fn peer(&self) -> TaskId { self.peer }
-        pub fn source(&self) -> crate::Source { crate::Source::Mail { pie: self.entry, condition: crate::MailCondition::Push } }
-        pub fn push(&self, bytes: &[u8], wait: Wait) -> MailResult<()> {
+        pub fn source(&self) -> crate::ToleEventSource {
+            crate::ToleEventSource::Hole {
+                token: self.entry,
+                condition: crate::HoleCondition::Push,
+            }
+        }
+        pub fn push(&self, bytes: &[u8], wait: Wait) -> HoleResult<()> {
             let result = with(|state| {
                 state.events.push(Event::Push(self.entry, bytes.to_vec(), wait));
                 state.now = state.now.saturating_add(state.push_advance_ns);
@@ -147,15 +145,15 @@ pub mod port {
                 }
                 Ok(())
             });
-            result.map_err(|_| make_fail(MailFail::Busy))
+            result.map_err(|_| make_fail(HoleFail::Busy))
         }
     }
 
     pub struct Reply { local: PieToken, peer: TaskId, remote: Option<PieToken> }
     impl Reply {
-        pub fn open(peer: TaskId, mark: Mark) -> PieResult<Self> {
+        pub fn open(peer: TaskId, mark: Mark) -> HoleResult<Self> {
             let fail = with(|state| state.fail_open);
-            if fail { return Err(make_fail(PieFail::Denied)); }
+            if fail { return Err(make_fail(HoleFail::Denied)); }
             let local = token();
             with(|state| { state.opened.push(local); state.events.push(Event::Open(local, mark)); });
             Ok(Self { local, peer, remote: None })
@@ -167,17 +165,22 @@ pub mod port {
             self.remote = Some(remote);
             Ok(remote)
         }
-        pub fn source(&self) -> crate::Source { crate::Source::Mail { pie: self.local, condition: crate::MailCondition::Pull } }
+        pub fn source(&self) -> crate::ToleEventSource {
+            crate::ToleEventSource::Hole {
+                token: self.local,
+                condition: crate::HoleCondition::Pull,
+            }
+        }
         pub fn pull<'a>(&self, buffer: &'a mut [u8], wait: Wait) -> Result<&'a [u8], ReplyError> {
             let result = with(|state| {
                 state.events.push(Event::Pull(self.local, wait));
-                if state.fail_pull { return Err(ReplyError::Mail(MailFail::Busy)); }
+                if state.fail_pull { return Err(ReplyError::Mail(HoleFail::Busy)); }
                 if let Some(error) = state.reply_error { return Err(error); }
-                state.replies.remove(&self.local).ok_or(ReplyError::Mail(MailFail::Busy))
+                state.replies.remove(&self.local).ok_or(ReplyError::Mail(HoleFail::Busy))
             })?;
             let (bytes, from) = result;
             if from != self.peer { return Err(ReplyError::WrongSource); }
-            if bytes.len() > buffer.len() { return Err(ReplyError::Mail(MailFail::Denied)); }
+            if bytes.len() > buffer.len() { return Err(ReplyError::Mail(HoleFail::Denied)); }
             buffer[..bytes.len()].copy_from_slice(&bytes);
             Ok(&buffer[..bytes.len()])
         }
@@ -192,9 +195,9 @@ pub mod port {
 }
 
 mod hand {
-    use crate::{MailFail, PieToken, Wait, test_backend::{Event, event}};
+    use crate::{HoleFail, PieToken, Wait, test_backend::{Event, event}};
     use wire::Message;
-    pub enum SendFail { Mail(MailFail), TooLong, Unbound }
+    pub enum SendFail { Mail(HoleFail), TooLong, Unbound }
     pub struct Sender<M: Message> { token: PieToken, _message: core::marker::PhantomData<M> }
     impl<M: Message> Sender<M> {
         pub fn from_raw(token: PieToken) -> Self { Self { token, _message: core::marker::PhantomData } }
@@ -204,7 +207,7 @@ mod hand {
             let bytes = buffer.as_ref().get(..len).ok_or(SendFail::TooLong)?;
             event(Event::HandSend(self.token, bytes.to_vec(), wait));
             if crate::test_backend::with(|state| state.fail_hand_send) {
-                return Err(SendFail::Mail(MailFail::Busy));
+                return Err(SendFail::Mail(HoleFail::Busy));
             }
             Ok(())
         }
@@ -391,10 +394,10 @@ mod tests {
     #[test]
     fn native_denied_is_not_misreported_as_wrong_source_and_bad_bytes_are_malformed() {
         test_backend::reset();
-        test_backend::with(|state| state.reply_error = Some(port::ReplyError::Mail(MailFail::Denied)));
+        test_backend::with(|state| state.reply_error = Some(port::ReplyError::Mail(HoleFail::Denied)));
         let denied_client = client();
         let deadline = time::Deadline::new(Wait::AtMost(100));
-        assert_eq!(call(&denied_client, deadline), Err(rpc::Fail::Receive(MailFail::Denied)));
+        assert_eq!(call(&denied_client, deadline), Err(rpc::Fail::Receive(HoleFail::Denied)));
 
         test_backend::reset();
         test_backend::with(|state| state.automatic_reply = Some((vec![], TaskId::new(7))));
@@ -431,7 +434,7 @@ mod tests {
         test_backend::reset();
         let client = client();
         let deadline = time::Deadline::new(Wait::AtMost(0));
-        assert_eq!(call(&client, deadline), Err(rpc::Fail::Receive(MailFail::Busy)));
+        assert_eq!(call(&client, deadline), Err(rpc::Fail::Receive(HoleFail::Busy)));
         let old = test_backend::with(|state| state.opened[0]);
         replies_for(old, &[11], TaskId::new(7));
         test_backend::with(|state| state.automatic_reply = Some((vec![42], TaskId::new(7))));
@@ -520,7 +523,7 @@ mod tests {
         test_backend::with(|state| state.fail_hand_send = true);
         let token = PieToken::mint(57);
         let reply = rpc::reply::Sender::<Response>::from_raw(token, TaskId::new(7), Mark::of("back")).unwrap();
-        assert_eq!(reply.send(Response(3)), Err(rpc::Fail::Send(MailFail::Busy)));
+        assert_eq!(reply.send(Response(3)), Err(rpc::Fail::Send(HoleFail::Busy)));
         assert_eq!(events().iter().filter(|event| matches!(event, test_backend::Event::Release(value) if *value == token)).count(), 1);
     }
 
@@ -626,7 +629,7 @@ mod tests {
         assert!(events().contains(&test_backend::Event::Revoke(TaskId::new(7), remote)));
         let mut pending = client.begin(time::Deadline::new(Wait::AtMost(50)), |seed| Request { seed, fail_encode: false }).unwrap();
         assert_eq!(pending.poll(), Ok(None)); test_backend::with(|state| state.now += 50_000_000);
-        assert_eq!(pending.poll(), Err(rpc::Fail::Receive(MailFail::Busy)));
+        assert_eq!(pending.poll(), Err(rpc::Fail::Receive(HoleFail::Busy)));
     }
 
 }

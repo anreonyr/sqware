@@ -10,12 +10,13 @@ use crate::core::memory::flat::{Allocation, Flat, FlatError, FlatRange};
 #[cfg(debug_assertions)]
 use crate::core::memory::nest::Asid;
 use crate::core::memory::nest::{
-    Access, Nest, NestError, Placement, PlacementAt, RegionId, View, ViewRange, identity,
+    Access, Nest, NestError, Placement, PlacementAt, RegionId, Reservation, View, ViewRange,
+    identity,
 };
 use crate::core::memory::transfer::{Transfer, TransferError};
 use crate::core::work::mail::Mail;
 use crate::core::work::mail::pole::PoleOperation;
-use crate::core::work::pend::{self, SourceAuthorization};
+use crate::core::work::pend::{self, Geometry, Hold, IndependentHold, SourceAuthorization};
 use crate::core::work::room::messenger::{self, WakeKey};
 use crate::core::work::unit::space::{Space, ViewEntry};
 use crate::core::work::unit::task::{Task, TaskIdent};
@@ -147,9 +148,28 @@ fn nest_placement(
     Placement::new(RegionId::Normal, size, placement.align(), at).map_err(MemoryFail::from)
 }
 
-fn cancel_view(space: &Space, task: &Task, id: usize) {
-    space.views.cancel(id);
-    task.release_control(id);
+/// 回滚 `Attach`：CPU 关系结清后才撤登记与控制。
+///
+/// `reservation` 是未发布的预留；否则 `view` 交给 Nest 撤图，
+/// 无 `view` 表示发布失败的责任已留在 Nest 清理链。两种凭证不能同时给出。
+/// 不主动重试或覆盖原始失败；未结责任由后续入口推进。
+/// 结清那一步走 `retire_view` 同一条规则：登记、源侧成员与 controller 一起撤。
+pub(in crate::entry) fn rollback(
+    space: &Space,
+    id: usize,
+    reservation: Option<Reservation>,
+    view: Option<Arc<View>>,
+) {
+    if let Some(reservation) = reservation {
+        debug_assert!(view.is_none(), "one attempt has one side to unwind");
+        let _ = space.nest.release_reservation(reservation);
+    } else if let Some(view) = view {
+        let _ = space.dispose(view);
+    }
+    if !space.nest.settled(id) {
+        return;
+    }
+    space.retire_view(id);
 }
 
 /// `Attach`：预留地址并建立翻译关系，返回 `(关系句柄, 视图起点)`。
@@ -215,6 +235,17 @@ fn attach(
             .ok_or(MemoryFail::Denied)?
     };
     let count = PageCount::new(range.count).ok_or(MemoryFail::NotAligned)?;
+    // 这次要挂的是引用窗口里的一段：相对来源起点的页窗口，只加这一层引用偏移。
+    let used = PageOffset::new(
+        hold.window()
+            .0
+            .get()
+            .checked_add(range.offset)
+            .ok_or(MemoryFail::NotAligned)?,
+    );
+    // 持有人自己那条独立持有上的映射不算对父段的新使用（它就靠这条引用拿帧）；
+    // 豁免按**这一份登记的身份**认，不按任务。
+    let own = hold.retention();
     let source = hold
         .resolve()
         .ok_or(MemoryFail::Denied)?
@@ -308,41 +339,33 @@ fn attach(
     let id = reservation.id();
     // 号必须在符号上界内：过界就当场交还这笔占用，不拿它去写 PTE。
     if id > isize::MAX as usize {
-        nest.release_reservation(reservation)?;
+        rollback(&space, id, Some(reservation), None);
         return Err(MemoryFail::OoM);
     }
-    // 发布前先占住登记槽与在途号：两处的容量都已备齐，提交只替换已备位置。
-    if (own_space || pole.is_none())
-        && let Err(error) = authorization.remember_space(&space)
-    {
-        let _ = nest.release_reservation(reservation);
-        return Err(source_fail(error));
-    }
+    // 发布前先占住登记槽、来源成员位与在途号：容量都在这一处备齐，提交只填已备位置。
     if let Err(error) =
         space
             .views
             .claim(id, &space, ident.id, control, authorization.clone(), branch)
     {
-        let _ = nest.release_reservation(reservation);
+        rollback(&space, id, Some(reservation), None);
         return Err(source_fail(error));
     }
     if control == env::ViewControl::Caller
         && let Err(error) = caller_task.track_control(&space, id)
     {
-        space.views.cancel(id);
-        let _ = nest.release_reservation(reservation);
+        rollback(&space, id, Some(reservation), None);
         return Err(error.into());
     }
     if let Err(error) = authorization.enter_publish(id, grant.as_deref(), access) {
-        cancel_view(&space, &caller_task, id);
-        let _ = nest.release_reservation(reservation);
+        rollback(&space, id, Some(reservation), None);
         return Err(source_fail(error));
     }
     let view = match nest.attach(reservation, source, ceiling, access) {
         Ok(view) => view,
         Err(error) => {
             authorization.leave_publish(id);
-            cancel_view(&space, &caller_task, id);
+            rollback(&space, id, None, None);
             return Err(error.into());
         }
     };
@@ -351,8 +374,7 @@ fn attach(
     if access.contains(Access::EXECUTE)
         && let Err(error) = identity::sync_instructions()
     {
-        cancel_view(&space, &caller_task, id);
-        let _ = space.dispose(view);
+        rollback(&space, id, None, Some(view));
         authorization.leave_publish(id);
         return Err(error.into());
     }
@@ -364,6 +386,10 @@ fn attach(
         {
             return Err(MemoryFail::Denied);
         }
+        // 旧引用照旧得过高一道发表准入：已分出的子段不被隐式重映射。
+        authorization
+            .check_publish(used, count, own)
+            .map_err(source_fail)?;
         if (own_space || staged)
             && let (Some(meta), Some(token)) = (&pole, branch)
             && meta
@@ -389,8 +415,7 @@ fn attach(
         Ok(())
     })();
     if let Err(error) = committed {
-        cancel_view(&space, &caller_task, id);
-        let _ = space.dispose(view);
+        rollback(&space, id, None, Some(view));
         authorization.leave_publish(id);
         return Err(error);
     }
@@ -481,14 +506,18 @@ fn with_view<T>(
     let space = target.space.clone();
     let entry = space.views.locate(view.get()).ok_or(MemoryFail::Denied)?;
     let owned = entry
-        .space
+        .binding
+        .space()
         .upgrade()
         .is_some_and(|space| Arc::ptr_eq(&space, &target.space));
     if !owned {
         return Err(MemoryFail::Denied);
     }
-    let allowed = match entry.scope {
-        env::ViewControl::Caller => entry.controller == ident.id,
+    // 控制者与分支读同一份快照：两段不会来自两次不同的读。
+    let control = entry.control.as_ref().ok_or(MemoryFail::Denied)?;
+    let (controller, _) = control.control();
+    let allowed = match control.scope() {
+        env::ViewControl::Caller => controller == ident.id,
         // 显式把这一段交给本 Space 成员；不是“同 Space 自动全控”。
         env::ViewControl::SpaceMembers => Arc::ptr_eq(&ident.team.space, &space),
     };
@@ -525,10 +554,10 @@ fn detach(
         }
         prepare_checkpoint(8)?;
         space.nest.retry_invalidation()?;
-        if space.nest.contains_reservation(view.get()) {
+        if !space.nest.settled(view.get()) {
             space.withdraw(selection(entry, choice)?)?;
         }
-        if !space.nest.contains_reservation(view.get()) {
+        if space.nest.settled(view.get()) {
             space.retire_view(view.get());
             if let Some(at) = staged {
                 let item = target.staged_at(at).ok_or(MemoryFail::Denied)?;
@@ -621,6 +650,9 @@ fn acquire(
 ) -> Result<usize, MemoryFail> {
     let task = caller(ident).ok_or(MemoryFail::Denied)?;
     let _serial = task.pend.lock();
+    // 登记、准入复核与写入同在一个 `commit` 段：独立持有的登记位与物理保留一起备好，
+    // 这一段之后不再有可失败的准备，也不会在判完之后被人插进一条新占用。
+    let _commit = crate::core::work::commit();
     let (authorization, offset, count, ceiling, retained, branch) = match source {
         AcquireSource::Allocation(allocation) => {
             // 新建来源本身就没有旧授权可挂，独立保留授权对它无意义。
@@ -655,13 +687,27 @@ fn acquire(
                     .checked_add(window.offset)
                     .ok_or(MemoryFail::NotAligned)?,
             );
-            // 独立保留：此刻把这段范围从当前授权上解下来自己强持，
+            // 独立持有：此刻把这段范围从当前授权上解下来自己强持，
             // 于是它跨 Grant 撤销继续持同一批帧；不带保留的仍随授权生死。
+            // 从持有人自己那条引用上取的，不再把这一段当别人的占用；这一条只核子段
+            // （见 `check_use` 的说明：取得又一份持有不是发表）。
+            hold.source()
+                .check_use(offset, count)
+                .map_err(source_fail)?;
+            // 它在来源记录上的登记与物理保留一起生：登记位先备、写入不再失败。
             let retained = if retention == PieToken::NONE {
                 None
             } else {
                 require_retention(&task, retention)?;
-                Some(range.reside()?)
+                let source = hold.source();
+                source.reserve_retention().map_err(source_fail)?;
+                let window = Geometry::new(offset, count).map_err(source_fail)?;
+                Some(IndependentHold::new(
+                    source,
+                    window,
+                    range.reside()?,
+                    ident.id,
+                ))
             };
             (
                 hold.source().clone(),
@@ -710,16 +756,27 @@ fn acquire(
                     return Err(MemoryFail::Denied);
                 }
             }
+            // 从分支取引用不是发表：只核子段，不再落一份独立持有也不交出这一段。
+            authorization
+                .check_use(offset, count)
+                .map_err(source_fail)?;
             let retained = if retention == PieToken::NONE {
                 None
             } else {
                 require_retention(&task, retention)?;
-                Some(
-                    meta.source()
-                        .range(offset, count)
-                        .map_err(|_| MemoryFail::NoRegion)?
-                        .reside()?,
-                )
+                authorization.reserve_retention().map_err(source_fail)?;
+                let window = Geometry::new(offset, count).map_err(source_fail)?;
+                let residency = meta
+                    .source()
+                    .range(offset, count)
+                    .map_err(|_| MemoryFail::NoRegion)?
+                    .reside()?;
+                Some(IndependentHold::new(
+                    &authorization,
+                    window,
+                    residency,
+                    ident.id,
+                ))
             };
             (
                 authorization,
@@ -758,7 +815,8 @@ fn acquire(
                 .view()
                 .map_or(Access::all(), |_| authorization.ceiling());
             let branch = if let Some((meta, root_token, _)) = authorization.root() {
-                let token = entry.branch.unwrap_or(root_token);
+                let (_, branch) = entry.control.as_ref().ok_or(MemoryFail::Denied)?.control();
+                let token = branch.unwrap_or(root_token);
                 let pie =
                     crate::core::work::pend::locate(&task, token).ok_or(MemoryFail::Denied)?;
                 let grant = meta.grant(token).ok_or(MemoryFail::Denied)?;
@@ -775,11 +833,22 @@ fn acquire(
                 }
                 None
             };
+            // 从已授权关系取引用也不是发表：只核子段。
+            authorization
+                .check_use(offset, count)
+                .map_err(source_fail)?;
             let retained = if retention == PieToken::NONE {
                 None
             } else {
                 require_retention(&task, retention)?;
-                Some(source.reside()?)
+                authorization.reserve_retention().map_err(source_fail)?;
+                let window = Geometry::new(offset, count).map_err(source_fail)?;
+                Some(IndependentHold::new(
+                    &authorization,
+                    window,
+                    source.reside()?,
+                    ident.id,
+                ))
             };
             Ok((authorization, offset, count, ceiling, retained, branch))
         })?,
@@ -810,14 +879,34 @@ fn window(
 
 /// 解除这一份引用：只摘掉本表里这一格，不 Detach、不等其他引用、不分配。
 /// 授权已经失效也不妨碍清掉自己的句柄。
+///
+/// 独立保留随这一份引用结束：那是一个显式的“不再物理持有这一段”事件，
+/// 所以在这里重试父侧已可证明结束的分配槽；不可证明的照旧占着。
 fn release(reference: env::FlatReference, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail> {
     let task = caller(ident).ok_or(MemoryFail::Denied)?;
     let _serial = task.pend.lock();
-    task.pend
+    let hold = task
+        .pend
         .references
         .remove(reference.get())
-        .map(|_| 0)
-        .ok_or(MemoryFail::Denied)
+        .ok_or(MemoryFail::Denied)?;
+    let source = hold.source().clone();
+    drop(hold);
+    source.reap_derivations();
+    Ok(0)
+}
+
+/// 移交那一域的**在途键**：高一位是域标记，低段是自己那一枚单调号。
+///
+/// 在途表按**键**认条目，而键来自两个分配器（`Attach` 的占用号那一域与移交这一域），
+/// 各自的分配器只保证**域内**唯一、数值上可以撞：所以键自带域，撤登记时才不会把
+/// 同号的另一域条目删掉（反向也一样）。号到符号上界就到：明确失败，不 panic。
+fn next_flight_key() -> Result<usize, MemoryFail> {
+    const FLIGHT_DOMAIN: usize = 1 << (usize::BITS - 1);
+    static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(1);
+    crate::machine::sync::next_id(&NEXT)
+        .map(|id| FLIGHT_DOMAIN | id)
+        .ok_or(MemoryFail::OoM)
 }
 
 /// `Transfer`：把源窗口里的一页承载交进目标窗口的空槽。
@@ -828,8 +917,14 @@ fn release(reference: env::FlatReference, ident: &Arc<TaskIdent>) -> Result<usiz
 /// 两端的**管理授权**都在同一个 `caller.pend` 下核，且这个 pend 一直持到
 /// 执行结算或回退完毕：授权失效的每一处写点（doom 先清引用再关控制、
 /// cull/release/revoke、accord、Grant 收窄、入口 Seal）都要同一把 pend 串行，
-/// 所以迁移期间来源不会在脚下被撤走。这里不取另一个 Task 的 pend，
-/// 也不把 work 提交锁带进迁移或 shootdown。
+/// 所以迁移期间来源不会在脚下被撤走。这里不取另一个 Task 的 pend。
+///
+/// **提交段只盖准入与在途登记**：两端各自那一页在同一 `commit` 段里核完新使用
+/// 条件后，当场把“这一段已核、不得插进别的发表”登在各自来源上（带窗口的在途）。
+/// 段一放就走执行——执行里有等别的 hart 的窗口（撤页、确认旧 TLB、夹具的在途探针），
+/// 不能把全局提交锁带进去；执行期靠那两条在途登记守住已核的移动范围，
+/// 结算后按同一笔键一次撤完（两域同号互不干涉，见 `next_flight_key`）。
+/// 旧引用因此不能把已分出的子段或别人的独立持有移来移去，也不会把对端饿死在锁上。
 ///
 /// `PoleOperation` 不是授权，这里不取它：槽的独占与逐页撤销的串行由事务与各
 /// Nest 自己的临界区负责，另取一把 Pole 租约只会把“同根两端”变成第二个失败面。
@@ -854,9 +949,56 @@ fn transfer(
         PageOffset::new(to_page),
     )
     .map_err(MemoryFail::from)?;
+    // 两端各自的引用与这一页在它窗口里的相对位置：可失败的准备全在提交段之前。
+    let flight = next_flight_key()?;
+    let mut ends: Vec<(Arc<Hold>, Arc<Geometry>)> = Vec::new();
+    ends.try_reserve_exact(2).map_err(|_| MemoryFail::OoM)?;
+    for (reference, page) in [(from, from_page), (to, to_page)] {
+        let hold = caller
+            .pend
+            .references
+            .get(reference.get())
+            .ok_or(MemoryFail::Denied)?;
+        let offset = PageOffset::new(
+            hold.window()
+                .0
+                .get()
+                .checked_add(page)
+                .ok_or(MemoryFail::NotAligned)?,
+        );
+        let count = PageCount::new(1).ok_or(MemoryFail::NotAligned)?;
+        let window = Geometry::new(offset, count).map_err(source_fail)?;
+        ends.push((hold, window));
+    }
+    // 准入复核与在途登记同一个段：先把两端都核完（两边互相不干扰，同一页那种
+    // 自相矛盾交给移交自己的事务去拒），再落两端的在途窗口。执行期不再持 Unit，
+    // 别的发表要么在段前看见占用被拒，要么在段后看见在途窗口被拒。
+    {
+        let _commit = crate::core::work::commit();
+        for (hold, window) in &ends {
+            let (offset, count) = window.window();
+            hold.source()
+                .check_publish(offset, count, hold.retention())
+                .map_err(source_fail)?;
+        }
+        let mut at = 0;
+        while at < ends.len() {
+            let (hold, window) = &ends[at];
+            if let Err(error) = hold.source().enter_publish_range(flight, window.clone()) {
+                for (held, _) in &ends[..at] {
+                    held.source().leave_publish(flight);
+                }
+                return Err(source_fail(error));
+            }
+            at += 1;
+        }
+    }
     let outcome = transfer.execute();
-    // 已经结算或回退完毕：先放掉 pend，再把清单交给它唯一的消费者，
-    // 最后才取执行结果——中途不用 `?` 抖掉失败回退的通知。
+    // 已经结算或回退完毕：同一笔键把两端的在途登记一次撤完，
+    // 再放掉 pend，最后才取执行结果——中途不用 `?` 抖掉失败回退的通知。
+    for (hold, _) in &ends {
+        hold.source().leave_publish(flight);
+    }
     drop(serial);
     wake(outcome.affected);
     outcome.result.map(|()| 0).map_err(MemoryFail::from)

@@ -7,7 +7,7 @@ use crate::core::memory::nest::{Access, NestError, RegionId, identity};
 use crate::core::work::mail::{Mail, pole};
 use crate::core::work::pend::{self, Permission};
 use crate::core::work::unit::{space::SpaceBuilder, team::TeamBuilder};
-use crate::entry::call::pie::{create_pole, fail_pole_at};
+use crate::entry::call::pole::{create_pole, fail_pole_at};
 use ::core::sync::atomic::Ordering;
 use alloc::sync::Arc;
 use alloc::vec;
@@ -15,6 +15,80 @@ use alloc::vec;
 /// 实际持有的整页读数：帧池取给块池的整页由 `block_occupied` 单记。
 fn held_pages() -> usize {
     frame_occupied() - block_occupied()
+}
+
+pub fn unpublished_roots() {
+    use crate::core::memory::address::{PageCount, PageOffset};
+    use crate::core::work::mail::pole::PoleOperation;
+    use crate::core::work::pend::SourceAuthorization;
+    use crate::core::work::room::{messenger, scheduler};
+
+    let seed = identity::Asid::try_allocate().unwrap();
+    identity::Asid::release_unpublished(seed);
+    let tables = TABLE_LIVE.load(Ordering::Relaxed);
+    let pages = held_pages();
+    let sites = messenger::site_count();
+    {
+        let team = TeamBuilder::new(SpaceBuilder::user().build().unwrap())
+            .spawn()
+            .unwrap();
+        let task = team.task().hold().unwrap();
+        let rights = Permission::FETCH | Permission::STORE | Permission::VEST;
+        let hole = crate::core::work::mail::hole::HoleMeta::try_new(task.ident.id).unwrap();
+        let hole_life = Arc::downgrade(&hole);
+        let pie = pend::Pie::try_new(Mail::Hole(hole), env::Mark::NONE, rights, None).unwrap();
+        let token = pie.token();
+        pend::insert(&task, pie).unwrap();
+        assert_eq!(pend::release(&task, token), Ok(1));
+        assert!(pend::locate(&task, token).is_none());
+        assert!(hole_life.upgrade().is_none());
+        drop(hole_life);
+
+        let source_pages = held_pages();
+        let frames: alloc::vec::Vec<_> = (0..4).map(|_| Frame::allocate().unwrap()).collect();
+        let first_frame = Arc::downgrade(&frames[0]);
+        let source = super::support::frames_source(frames).unwrap();
+        let authorization = SourceAuthorization::new(source, Access::all(), task.ident.id).unwrap();
+        let id = task
+            .pend
+            .references
+            .insert(
+                authorization.clone(),
+                PageOffset::ZERO,
+                PageCount::new(4).unwrap(),
+                Access::all(),
+                None,
+                None,
+            )
+            .unwrap();
+        let reference = env::FlatReference::from_bytes(&id.to_le_bytes()).unwrap();
+        let token = create_pole(&task, reference, true).unwrap();
+        drop(task.pend.references.remove(id).unwrap());
+        assert_eq!(held_pages(), source_pages + 4);
+        {
+            let snapshot = pend::locate(&task, token).unwrap();
+            let meta = snapshot.mail().pole().unwrap();
+            assert!(!meta.has_maps());
+            let operation = PoleOperation::acquire(&meta).unwrap();
+            assert_eq!(pend::release(&task, token), Err(env::PieFail::Busy));
+            assert!(pend::locate(&task, token).is_some());
+            assert!(first_frame.upgrade().is_some());
+            drop(operation);
+        }
+        assert_eq!(pend::release(&task, token), Ok(1));
+        assert!(pend::locate(&task, token).is_none());
+        assert!(first_frame.upgrade().is_none());
+        assert!(authorization.full_range().is_none());
+        assert_eq!(held_pages(), source_pages);
+        drop(first_frame);
+        messenger::slay(&task);
+        assert!(task.reaped());
+    }
+    messenger::bury();
+    scheduler::roster::prune_dead();
+    assert_eq!(messenger::site_count(), sites);
+    assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), tables);
+    assert_eq!(held_pages(), pages);
 }
 
 /// Unseal 前同源可以有多个 Attach（含 slice）。Open 只能复用**整窗且活动完整**
@@ -53,7 +127,6 @@ pub fn source_window_and_active_shape() {
     // 这份来源的引用（整窗 4 页），并把 slice 也登在同一份来源名下。
     let authorization =
         SourceAuthorization::new(source.clone(), Access::all(), caller.ident.id).unwrap();
-    authorization.remember_space(&team.space).unwrap();
     let id = caller
         .pend
         .references

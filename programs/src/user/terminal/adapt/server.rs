@@ -8,7 +8,7 @@ use ::resource::{
 use ::schedule::{Progress, Res, ResMut};
 use alloc::collections::VecDeque;
 use env::wire::Span as _;
-use env::{MailCondition, Permission, PieToken, TaskId, Wait, pie};
+use env::{HoleCondition, Permission, PieToken, TaskId, ToleAwaitReply, ToleEventSource, Wait, pie};
 use programs::driver::uart::client::Console;
 use system_api::operator::{self as operator_api, Permit};
 use terminal_api::frame::{self, Command, Input, Reply};
@@ -38,11 +38,11 @@ impl Attachment {
             grants: [PieToken::NONE; 3],
         };
         attachment.endpoints.input =
-            pie::unseal(env::UnsealArgs::hole(frame::INPUT)).map_err(|_| ())?;
+            env::hole::unseal(frame::INPUT, env::HoleLimits::default()).map_err(|_| ())?;
         attachment.endpoints.output =
-            pie::unseal(env::UnsealArgs::hole(frame::OUTPUT)).map_err(|_| ())?;
+            env::hole::unseal(frame::OUTPUT, env::HoleLimits::default()).map_err(|_| ())?;
         attachment.endpoints.control =
-            pie::unseal(env::UnsealArgs::hole(frame::CONTROL)).map_err(|_| ())?;
+            env::hole::unseal(frame::CONTROL, env::HoleLimits::default()).map_err(|_| ())?;
         attachment.grant(owner)?;
         Ok(attachment)
     }
@@ -109,17 +109,14 @@ pub(super) struct Server {
 }
 impl Server {
     pub fn open(console: &Console) -> Result<Self, env::Reason> {
-        let entry = pie::unseal(env::UnsealArgs::hole(frame::ENTRY)).map_err(|_| E_TERMINAL)?;
+        let entry = env::hole::unseal(frame::ENTRY, env::HoleLimits::default()).map_err(|_| E_TERMINAL)?;
         let pile = Pile::unseal(false).map_err(|_| E_TERMINAL)?;
-        pile.attach(env::Source::Mail {
-            pie: entry,
-            condition: MailCondition::Pull,
+        pile.attach(ToleEventSource::Hole {
+            token: entry,
+            condition: HoleCondition::Pull,
         })
         .map_err(|_| E_TERMINAL)?;
-        pile.attach(env::Source::Mail {
-            pie: console.rx.bell(),
-            condition: MailCondition::Signal(env::Bit::FIRST),
-        })
+        pile.attach(console.rx.source())
         .map_err(|_| E_TERMINAL)?;
         pile.attach(console.tx.source()).map_err(|_| E_TERMINAL)?;
         let capability =
@@ -169,18 +166,18 @@ impl Server {
         self.echo = true;
         self.reset();
         if let Some(attachment) = self.attachment.take() {
-            let _ = self.pile.detach(env::Source::Inspect {
+            let _ = self.pile.detach(ToleEventSource::Inspect {
                 task: env::unit::self_id(),
                 token: attachment.authority,
             });
-            let _ = self.pile.detach(env::Source::Mail {
-                pie: attachment.endpoints.output,
-                condition: MailCondition::Pull,
+            let _ = self.pile.detach(ToleEventSource::Hole {
+                token: attachment.endpoints.output,
+                condition: HoleCondition::Pull,
             });
             if self.waiting_input {
-                let _ = self.pile.detach(env::Source::Mail {
-                    pie: attachment.endpoints.input,
-                    condition: MailCondition::Empty,
+                let _ = self.pile.detach(ToleEventSource::Hole {
+                    token: attachment.endpoints.input,
+                    condition: HoleCondition::Empty,
                 });
                 self.waiting_input = false;
             }
@@ -191,9 +188,9 @@ impl Server {
             frame::ATTACH if self.attachment.is_none() && command.task == from => {
                 let attachment = Attachment::open(command.authority, from)?;
                 self.pile
-                    .attach(env::Source::Mail {
-                        pie: attachment.endpoints.output,
-                        condition: MailCondition::Pull,
+                    .attach(ToleEventSource::Hole {
+                        token: attachment.endpoints.output,
+                        condition: HoleCondition::Pull,
                     })
                     .map_err(|_| ())?;
                 let authority = match pie::accord(
@@ -204,24 +201,24 @@ impl Server {
                 ) {
                     Ok(token) => token,
                     Err(_) => {
-                        let _ = self.pile.detach(env::Source::Mail {
-                            pie: attachment.endpoints.output,
-                            condition: MailCondition::Pull,
+                        let _ = self.pile.detach(ToleEventSource::Hole {
+                            token: attachment.endpoints.output,
+                            condition: HoleCondition::Pull,
                         });
                         return Err(());
                     }
                 };
                 if self
                     .pile
-                    .attach(env::Source::Inspect {
+                    .attach(ToleEventSource::Inspect {
                         task: env::unit::self_id(),
                         token: attachment.authority,
                     })
                     .is_err()
                 {
-                    let _ = self.pile.detach(env::Source::Mail {
-                        pie: attachment.endpoints.output,
-                        condition: MailCondition::Pull,
+                    let _ = self.pile.detach(ToleEventSource::Hole {
+                        token: attachment.endpoints.output,
+                        condition: HoleCondition::Pull,
                     });
                     let _ = pie::revoke(from, authority);
                     return Err(());
@@ -310,7 +307,7 @@ pub(super) fn requests(
         // capability is currently usable, rejecting a guessed, handed-over ancestor.
         let loaned = matches!(inspect(command.authority), Ok(info)
             if info.alive && info.vestor == from && info.mark == frame::AUTHORITY)
-            && env::mail::await_(command.authority, Wait::POLL).is_ok();
+            && env::tole::await_(command.authority, Wait::POLL).is_ok();
         let result = if loaned {
             server.command(command, from)
         } else {
@@ -392,17 +389,17 @@ pub(super) fn deliver(mut server: ResMut<Server>) -> Result<Progress, env::Reaso
     if blocked && !server.waiting_input {
         server
             .pile
-            .attach(env::Source::Mail {
-                pie: input,
-                condition: MailCondition::Empty,
+            .attach(ToleEventSource::Hole {
+                token: input,
+                condition: HoleCondition::Empty,
             })
             .map_err(|_| E_TERMINAL)?;
     } else if !blocked && server.waiting_input {
         server
             .pile
-            .detach(env::Source::Mail {
-                pie: input,
-                condition: MailCondition::Empty,
+            .detach(ToleEventSource::Hole {
+                token: input,
+                condition: HoleCondition::Empty,
             })
             .map_err(|_| E_TERMINAL)?;
     }
@@ -413,8 +410,8 @@ pub(super) fn deliver(mut server: ResMut<Server>) -> Result<Progress, env::Reaso
 pub(super) fn wait(mut server: ResMut<Server>) -> Result<Progress, env::Reason> {
     if !server.active {
         match server.pile.await_(Wait::Forever).map_err(|_| E_TERMINAL)? {
-            env::AwaitReply::Source {
-                source: env::Source::Inspect { token, .. },
+            ToleAwaitReply::Source {
+                source: ToleEventSource::Inspect { token, .. },
                 ..
             } if server
                 .attachment
@@ -423,7 +420,7 @@ pub(super) fn wait(mut server: ResMut<Server>) -> Result<Progress, env::Reason> 
             {
                 server.detach()
             }
-            env::AwaitReply::Source { fail: Some(_), .. } => {
+            ToleAwaitReply::Source { fail: Some(_), .. } => {
                 server.running = false;
             }
             _ => {}

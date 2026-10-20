@@ -23,7 +23,6 @@ use alloc::vec::Vec;
 
 use ::resource::raw::inspect;
 use env::Wait;
-use env::pie;
 use env::unit;
 use ipc::rack::{Mode, Rack};
 use ipc::session::{Session, establish};
@@ -146,7 +145,7 @@ fn main() -> Report<'static> {
 
     // **判据 4**：封印 A 那一枚页 ⇒ 树上那一格该被剔掉（`find` 答 `Dead`）。
     assert!(
-        pie::seal(a.ship()).is_ok(),
+        env::pole::seal(a.ship()).is_ok(),
         "probe-rack-mount: 封印自己那一枚页失败"
     );
     match tree.find(plated[0].entry_id(), Wait::AtMost(MS)) {

@@ -1,15 +1,14 @@
 use alloc::sync::Weak;
 
-use env::{MailCondition, Permission, PieToken, Source, TaskId, UnitTarget};
+use env::{Permission, PieToken, TaskId, ToleEventSource, UnitTarget};
 
 use crate::core::work::unit::join::JoinTarget;
 use crate::core::work::unit::task::Task;
 
 #[derive(Clone)]
 pub(crate) enum Watch {
-    Mail {
-        pie: PieToken,
-        condition: MailCondition,
+    Resource {
+        source: ToleEventSource,
     },
     Join {
         target: UnitTarget,
@@ -26,14 +25,11 @@ pub(crate) enum Watch {
 }
 
 impl Watch {
-    pub(crate) fn source(&self) -> Source {
+    pub(crate) fn source(&self) -> ToleEventSource {
         match self {
-            Watch::Mail { pie, condition } => Source::Mail {
-                pie: *pie,
-                condition: *condition,
-            },
-            Watch::Join { target, .. } => Source::Join { target: *target },
-            Watch::Inspect { task, token, .. } => Source::Inspect {
+            Watch::Resource { source } => *source,
+            Watch::Join { target, .. } => ToleEventSource::Join { target: *target },
+            Watch::Inspect { task, token, .. } => ToleEventSource::Inspect {
                 task: *task,
                 token: *token,
             },

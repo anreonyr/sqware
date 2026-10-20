@@ -2,7 +2,7 @@
 extern crate alloc;
 extern crate self as env;
 extern crate self as ipc;
-pub use abi::{MailCondition, Wait, mail};
+pub use abi::{PoleCondition, Wait, pole};
 extern crate self as pipe_client;
 pub use stream::Direction;
 pub struct Port;

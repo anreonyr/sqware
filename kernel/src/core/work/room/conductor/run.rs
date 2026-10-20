@@ -9,6 +9,7 @@ use super::fetch::fetch;
 /// trap 返回时的下一步：返回下一个任务的帧地址。
 pub(crate) fn run() -> usize {
     hush();
+    messenger::bury();
     let commit = crate::core::work::commit();
     if current()
         .running_task()

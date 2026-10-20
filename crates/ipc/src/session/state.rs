@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use ::resource::raw::{self, Hole};
-use env::{PieToken, TaskId, pie};
+use env::{PieToken, TaskId, hole};
 
 const READY: u8 = 0;
 const BUSY: u8 = 1;
@@ -54,14 +54,14 @@ pub(super) fn begin(
 
     if !raw::alive(reply) || !raw::alive(talk) {
         state.0.store(CLOSED, Ordering::Release);
-        let _ = pie::seal(reply);
+        let _ = hole::seal(reply);
         return Err(GateFail::Closed);
     }
     match Hole::from_raw(reply).depth() {
         Ok(0) => {}
         _ => {
             state.0.store(CLOSED, Ordering::Release);
-            let _ = pie::seal(reply);
+            let _ = hole::seal(reply);
             return Err(GateFail::Closed);
         }
     }
@@ -86,7 +86,7 @@ impl CallGuard {
 
     pub(super) fn close(&mut self) {
         self.state.0.store(CLOSED, Ordering::Release);
-        let _ = pie::seal(self.reply);
+        let _ = hole::seal(self.reply);
         self.done = true;
     }
 }

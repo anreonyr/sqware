@@ -31,6 +31,11 @@ impl From<erra::Error<env::PieFail>> for Fail {
         Self::Desk
     }
 }
+impl From<erra::Error<env::ToleFail>> for Fail {
+    fn from(_: erra::Error<env::ToleFail>) -> Self {
+        Self::Desk
+    }
+}
 
 mod answer;
 mod authority;

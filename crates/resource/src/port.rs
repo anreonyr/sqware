@@ -17,17 +17,18 @@
 //! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/ipc`）。
 
 use env::{
-    MailCondition, MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, Wait,
+    HoleCondition, HoleFail, HoleResult, Mark, PieFail, PieResult, PieToken, TaskId, Wait,
     make_fail,
 };
 
 use crate::{hole::Hole, raw};
 
 pub use crate::reply::{Reply, ReplyError};
+pub use crate::port_open_fail::PortOpenFail;
 
 /// D1 负码：无权 / 协议错（与 `crates/ipc` 各协议的负码同表）。
-fn denied_mail() -> erra::Error<MailFail> {
-    make_fail(MailFail::Denied)
+fn denied_mail() -> erra::Error<HoleFail> {
+    make_fail(HoleFail::Denied)
 }
 
 /// 权柄轴那一侧的"不成"（Pie 的 `Denied`）——`ship` / `open` / `shut` 用它。
@@ -61,14 +62,14 @@ impl Sender {
         self.peer
     }
 
-    pub fn source(&self) -> env::Source {
-        env::Source::Mail {
-            pie: self.entry.token(),
-            condition: MailCondition::Push,
+    pub fn source(&self) -> env::ToleEventSource {
+        env::ToleEventSource::Hole {
+            token: self.entry.token(),
+            condition: env::HoleCondition::Push,
         }
     }
 
-    pub fn push(&self, bytes: &[u8], within: Wait) -> MailResult<()> {
+    pub fn push(&self, bytes: &[u8], within: Wait) -> HoleResult<()> {
         self.entry.push(bytes, within)
     }
 }
@@ -147,17 +148,24 @@ impl Port {
     /// 把它的 `STORE` 授给对端。回信孔只要 `STORE`：对端往它推，读的一侧是我。
     ///
     /// # Errors
-    /// - `Denied` — 入口门闩不在表里 / 不是孔（记号为孔所独有）/ 无开辟者
-    ///   （`owner == 0`，引导期那批设备门闩）/ 交不出去
-    /// - `Dead`   — 入口那一枚的资源已封印
-    /// - `OoM`    — 本端或对端那张表备不下这一枚
-    pub fn open(entry: PieToken) -> PieResult<Port> {
-        let peer = raw::reserve(entry)?.1;
+    /// - `PortOpenFail::Hole` — 创建本地回信孔失败。
+    /// - `PortOpenFail::Pie` — 查询入口或授出回信孔失败，保留授权域失败码。
+    ///
+    /// 授出失败后尝试释放回信孔；释放失败时，孔仍留在本任务的能力表中。
+    pub fn open(entry: PieToken) -> Result<Port, PortOpenFail> {
+        let peer = raw::reserve(entry).map_err(|error| PortOpenFail::Pie(error.source))?.1;
         if peer.get() == 0 {
-            return Err(denied_pie());
+            return Err(PortOpenFail::Pie(PieFail::Denied));
         }
-        let reply = Hole::unseal(Mark::NONE)?;
-        let to = ship(reply.token(), peer, Access::STORE, Policy::NONE)?;
+        let reply = Hole::unseal(Mark::NONE).map_err(|error| PortOpenFail::Hole(error.source))?;
+        let to = match ship(reply.token(), peer, Access::STORE, Policy::NONE) {
+            Ok(to) => to,
+            Err(error) => {
+                // 释放失败时，回信孔仍由本任务的能力表持有。
+                let _ = raw::release(reply.token());
+                return Err(PortOpenFail::Pie(error.source));
+            }
+        };
         Ok(Port {
             to,
             entry: Hole::from_raw(entry),
@@ -172,17 +180,17 @@ impl Port {
 
     /// **`Ok` = 那一手被取走了，不是"对端读懂了"**：`entry` 是本端持有的一份副本，对端死了这扇
     /// 门也不死（它的封印只会让这一等当场答 `Dead`）。
-    pub fn push(&self, frame: &[u8]) -> MailResult<()> {
+    pub fn push(&self, frame: &[u8]) -> HoleResult<()> {
         self.entry.push(frame, Wait::Forever)?;
         self.entry
-            .wait(MailCondition::Empty, Wait::Forever)
+            .wait(HoleCondition::Empty, Wait::Forever)
             .map(|_| ())
     }
 
     /// 收一帧：有界等 → **核对推者是不是对端** → 返恰好那一帧。
     ///
     /// 推者不符 ⇒ `Denied`，该会话应弃用（迟到的真回复仍可能落槽、污染下一次）。
-    pub fn pull<'a>(&self, buf: &'a mut [u8], within: Wait) -> MailResult<&'a [u8]> {
+    pub fn pull<'a>(&self, buf: &'a mut [u8], within: Wait) -> HoleResult<&'a [u8]> {
         let (len, from) = self.reply.pull(buf, within)?;
         if from != self.to.peer() {
             return Err(denied_mail());

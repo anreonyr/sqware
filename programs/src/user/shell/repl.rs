@@ -340,18 +340,18 @@ pub fn run() -> Result<(), &'static str> {
         }
         let mut interests = Interests::new();
         let [input, output, control] = io.raw_channels();
-        interests.source(env::Source::Mail {
-            pie: input,
-            condition: env::MailCondition::Pull,
+        interests.source(env::ToleEventSource::Hole {
+            token: input,
+            condition: env::HoleCondition::Pull,
         });
-        interests.source(env::Source::Mail {
-            pie: control,
-            condition: env::MailCondition::Pull,
+        interests.source(env::ToleEventSource::Hole {
+            token: control,
+            condition: env::HoleCondition::Pull,
         });
         if output_blocked {
-            interests.source(env::Source::Mail {
-                pie: output,
-                condition: env::MailCondition::Push,
+            interests.source(env::ToleEventSource::Hole {
+                token: output,
+                condition: env::HoleCondition::Push,
             });
         }
         interests.budget(host.remaining());

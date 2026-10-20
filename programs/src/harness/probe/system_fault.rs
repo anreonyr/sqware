@@ -32,8 +32,8 @@ pub fn acceptance() {
     unsafe {
         core::ptr::copy_nonoverlapping(child.elf.as_ptr(), at as *mut u8, child.elf.len());
     }
-    let report = pie::unseal(env::UnsealArgs::hole(REPORT)).unwrap();
-    let boot = pie::unseal(env::UnsealArgs::hole(BOOT)).unwrap();
+    let report = env::hole::unseal(REPORT, env::HoleLimits::default()).unwrap();
+    let boot = env::hole::unseal(BOOT, env::HoleLimits::default()).unwrap();
     for mode in 0..3 {
         let image = loader
             .build(Image {
@@ -77,14 +77,14 @@ pub fn acceptance() {
                 execution::room::park(core::time::Duration::from_millis(1)).unwrap();
             }
         }
-        unit::oust(team).unwrap();
+        super::lifecycle::oust(team);
         programs::debug::put(&alloc::format!(
             "system-fault: role={mode}; three tasks and descendant reclaimed"
         ));
     }
-    let _ = pie::seal(boot);
+    let _ = env::hole::seal(boot);
     let _ = pie::release(boot, env::ReleaseMode::Revoke);
-    let _ = pie::seal(report);
+    let _ = env::hole::seal(report);
     let _ = pie::release(report, env::ReleaseMode::Revoke);
 }
 

@@ -40,6 +40,36 @@ pub(crate) fn lease(hart: crate::machine::hart::HartId) -> Option<Asid> {
 static FAIL_NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(VACANT);
 
 #[cfg(debug_assertions)]
+static FAIL_PERSISTENT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(VACANT);
+
+#[cfg(debug_assertions)]
+pub(crate) fn fail_shootdown(asid: Asid) {
+    assert!(crate::testing(), "shootdown injection requires a test run");
+    FAIL_PERSISTENT
+        .compare_exchange(
+            VACANT,
+            asid.get(),
+            core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed,
+        )
+        .expect("persistent shootdown injection already armed");
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn restore_shootdown(asid: Asid) {
+    assert!(crate::testing(), "shootdown injection requires a test run");
+    FAIL_PERSISTENT
+        .compare_exchange(
+            asid.get(),
+            VACANT,
+            core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed,
+        )
+        .expect("persistent shootdown injection belongs to this ASID");
+}
+
+#[cfg(debug_assertions)]
 pub(crate) fn fail_next_shootdown(asid: Asid) {
     assert!(crate::testing(), "shootdown injection requires a test run");
     FAIL_NEXT
@@ -58,6 +88,11 @@ pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
     // 远端可能按旧翻译继续用这条 ASID。
     fence_data();
     unsafe { flush(asid) };
+
+    #[cfg(debug_assertions)]
+    if FAIL_PERSISTENT.load(core::sync::atomic::Ordering::Relaxed) == asid.get() {
+        return Err(Deaf { asid });
+    }
 
     #[cfg(debug_assertions)]
     if FAIL_NEXT

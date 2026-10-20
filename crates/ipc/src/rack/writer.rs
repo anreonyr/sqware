@@ -152,7 +152,7 @@ impl<M: Message> Writer<M> {
     }
 
     /// 本端那一枚铃的号（要交给别人听时用）。
-    pub fn source(&self) -> env::Source {
+    pub fn source(&self) -> env::ToleEventSource {
         self.progress.source()
     }
 
@@ -170,6 +170,6 @@ pub enum SendFail {
     TooLong,
     /// **没有写端**（对端那一枚还没认到）——沿用 `hand` 那一档的词。
     Unbound,
-    /// 搬不动，原样的域词汇（`Busy` / `Dead` / `Denied` / `Gone`）。
-    Mail(env::MailFail),
+    /// Pole 映射或通知失败，保留原失败码。
+    Mail(env::PoleFail),
 }

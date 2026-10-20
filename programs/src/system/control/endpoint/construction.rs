@@ -214,7 +214,7 @@ impl Construction {
                 }
                 index
             } else {
-                let entry = env::pie::unseal(env::UnsealArgs::hole(api::ENTRY))
+                let entry = env::hole::unseal(api::ENTRY, env::HoleLimits::default())
                     .map_err(|_| "constructor entry")?;
                 self.grants.push(ConstructionGrant {
                     entry,

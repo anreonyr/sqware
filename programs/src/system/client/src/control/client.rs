@@ -76,7 +76,7 @@ impl Face {
             .call(Deadline::new(wait), |back| frame::Request(act, back))
             .map_err(|fail| {
                 let step = match fail {
-                    RpcFail::Open(_) | RpcFail::Grant(_) => "borrow",
+                    RpcFail::Open(_) | RpcFail::Create(_) | RpcFail::Grant(_) => "borrow",
                     RpcFail::Encode => "encode",
                     RpcFail::Send(_) => "push",
                     RpcFail::Receive(_) | RpcFail::WrongSource => "receive",

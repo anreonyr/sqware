@@ -27,22 +27,27 @@ pub mod ledger;
 pub mod marks;
 pub mod wire;
 
+pub use abi::call::hole::{HoleCall, HoleCallRet, HoleCondition, HoleFail, HoleResult, hole};
 pub use abi::call::memory::PAGE_SIZE;
+pub use abi::call::nole::{NoleCall, NoleCallRet, NoleFail, NoleResult, nole};
+pub use abi::call::pole::{PoleCall, PoleCallRet, PoleCondition, PoleFail, PoleResult, pole};
+pub use abi::call::tole::{
+    ToleAwaitReply, ToleCall, ToleCallRet, ToleEventFail, ToleEventSource, ToleFail, ToleResult,
+    tole,
+};
 pub use abi::call::{
-    AcquireSource, Allocation, AwaitReply, Bit, ChronoCall, ChronoCallRet, ControlCall,
-    ControlCallRet, ControlFail, ControlResult, DBCN_MAX, DebugCall, DebugCallRet, DebugFail,
-    DebugResult, DispatchFail, EnvCall, HoleLimits, MailCall, MailCallRet, MailCondition, MailFail,
-    MailResult, MemoryCall, MemoryCallRet, MemoryFail, MemoryResult, NOTE_MAX, Oversize, PieCall,
-    PieCallRet, PieFail, PieInfo, PieResult, Placement, PlacementAt, PlacementError, PullOutcome,
-    ReferenceRange, ReleaseMode, RoomCall, RoomCallRet, RoomFail, RoomResult, Source, UnitCall,
-    UnitCallRet, UnitFail, UnitResult, UnsealArgs, ViewControl, ViewSelection,
+    AcquireSource, Allocation, Bit, ChronoCall, ChronoCallRet, ControlCall, ControlCallRet,
+    ControlFail, ControlResult, DBCN_MAX, DebugCall, DebugCallRet, DebugFail, DebugResult,
+    DispatchFail, EnvCall, HoleLimits, MemoryCall, MemoryCallRet, MemoryFail, MemoryResult,
+    NOTE_MAX, Oversize, PieCall, PieCallRet, PieFail, PieInfo, PieResult, Placement, PlacementAt,
+    PlacementError, PullOutcome, ReferenceRange, ReleaseMode, RoomCall, RoomCallRet, RoomFail,
+    RoomResult, UnitCall, UnitCallRet, UnitFail, UnitResult, ViewControl, ViewSelection,
 };
 /// **每格一个精确签名的入口**（`#[derive(Envcall)]` 生成，一域一个模块）：
-/// `env::memory::acquire(source, retention)`、`env::pie::seal(token)`、`env::room::park(millis)`…
+/// `env::memory::acquire(source, retention)`、`env::hole::seal(token)`、`env::room::park(millis)`…
 /// 载荷类型就是那一格的契约；标 `#[infallible]` 的格不返 `Result`。
 pub use abi::call::{
-    chrono::chrono, control::control, debug::debug, mail::mail, memory::memory, pie::pie,
-    room::room,
+    chrono::chrono, control::control, debug::debug, memory::memory, pie::pie, room::room,
 };
 pub use abi::exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
 pub use abi::permission::{Access, Permission, Policy};

@@ -61,7 +61,7 @@ impl Client {
     }
     fn lease(&self) -> Result<(PieToken, PieToken), Fail> {
         let local =
-            env::pie::unseal(env::UnsealArgs::hole(pipe_api::LEASE)).map_err(|_| Fail::Full)?;
+            env::hole::unseal(pipe_api::LEASE, env::HoleLimits::default()).map_err(|_| Fail::Full)?;
         match env::pie::accord(
             local,
             self.sender.peer(),
@@ -179,7 +179,7 @@ pub struct Creating {
     lease: Option<PieToken>,
 }
 impl Creating {
-    pub fn source(&self) -> env::Source {
+    pub fn source(&self) -> env::ToleEventSource {
         self.pending.source()
     }
     pub fn remaining(&self) -> Wait {
@@ -268,14 +268,14 @@ impl Port {
         stream::Ring::attach(header, bytes, self.endpoint.capacity).map_err(Fail::from)
     }
     fn notify(&self, bit: env::Bit) -> Result<(), Fail> {
-        match env::mail::ring(self.token(), bit) {
+        match env::pole::ring(self.token(), bit) {
             Ok(()) => Ok(()),
             Err(e) if e.source.is_busy() => Ok(()),
             Err(_) => Err(Fail::Dead),
         }
     }
     fn hush(&self, bit: env::Bit) -> Result<(), Fail> {
-        match env::mail::hush(self.token(), bit) {
+        match env::pole::hush(self.token(), bit) {
             Ok(()) => Ok(()),
             Err(e) if e.source.is_busy() => Ok(()),
             Err(_) => Err(Fail::Dead),
@@ -287,10 +287,10 @@ impl Port {
             Direction::Write => pipe_api::WRITE_BIT,
         }
     }
-    pub fn source(&self) -> env::Source {
-        env::Source::Mail {
-            pie: self.token(),
-            condition: env::MailCondition::Signal(self.bit()),
+    pub fn source(&self) -> env::ToleEventSource {
+        env::ToleEventSource::Pole {
+            token: self.token(),
+            bit: self.bit(),
         }
     }
     pub fn prepare_wait(&self) -> Result<bool, Fail> {
@@ -321,7 +321,7 @@ impl Port {
             if left == Wait::POLL {
                 return Ok(false);
             }
-            env::mail::wait(self.token(), env::MailCondition::Signal(self.bit()), left)
+            env::pole::wait(self.token(), env::PoleCondition::Signal(self.bit()), left)
                 .map_err(|_| Fail::Dead)?;
         }
     }

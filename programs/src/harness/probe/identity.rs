@@ -21,7 +21,7 @@ pub(crate) fn supply_to(
         let token = match establish::find(owner, mark) {
             Ok(token) => token,
             Err(establish::DiscoveryFail::Missing) => {
-                pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| "rule verification channel")?
+                env::hole::unseal(mark, env::HoleLimits::default()).map_err(|_| "rule verification channel")?
             }
             Err(establish::DiscoveryFail::Ambiguous) => {
                 return Err("rule verification channel ambiguous");
@@ -73,7 +73,7 @@ pub fn timeout() {
     use system_client::identity::Face;
 
     let owner = env::unit::self_id();
-    let entry = pie::unseal(env::UnsealArgs::hole(Grant::Resolve.mark())).unwrap();
+    let entry = env::hole::unseal(Grant::Resolve.mark(), env::HoleLimits::default()).unwrap();
     let timed_out = Arc::new(AtomicBool::new(false));
     let release_reader = timed_out.clone();
     let raw_owner = owner.get();
@@ -99,7 +99,7 @@ pub fn timeout() {
     timed_out.store(true, Ordering::Release);
     assert_eq!(result, Err(CallError::Transport));
     reader.join();
-    let _ = pie::seal(entry);
+    let _ = env::hole::seal(entry);
     let _ = pie::release(entry, env::ReleaseMode::Revoke);
     programs::debug::put("identity-timeout: queued request decoded after client timeout");
 }

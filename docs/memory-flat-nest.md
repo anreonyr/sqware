@@ -1057,7 +1057,7 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 与 `execution::memory::map(team, at, size, pole, offset, …)` 都按页偏移在**本任务**的
 授权里取子窗口。交给**别的**任务时只有整段：`PrivateRoot::derive/Accord`
 （`programs/src/system/supply/lease.rs`）只带权限子集、不带 offset/size；
-`create_pole`（`kernel/src/entry/call/pie.rs`）明确要求「整段来源 + 私有阶段 +
+`create_pole`（`kernel/src/entry/call/pole.rs`）明确要求「整段来源 + 私有阶段 +
 一次性资格」（`offset == 0 && count == source.page_count()`、`private_owner`、
 `hold.branch().is_none()`），且设备区在引导期已 `adopt` 到根 Grant，故从它铸不出新根。
 ⇒ 把 PCI aperture 交给某个驱动只能是**整段**，这与「只给必需 BAR」冲突。

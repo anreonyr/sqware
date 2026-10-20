@@ -21,7 +21,7 @@ use programs::Reason;
 
 use ::resource::pile::Pile;
 use ::resource::raw::{Hole, pies};
-use env::{MailCondition, Mark, PieToken};
+use env::{HoleCondition, Mark, PieToken, ToleEventSource};
 use programs::debug;
 
 #[programs::entry]
@@ -36,9 +36,9 @@ fn main() -> Reason {
 
     // 挂一格：**一个方向就够**（`Pull` = "有东西可读"）。
     if pile
-        .attach(env::Source::Mail {
-            pie: member.token(),
-            condition: MailCondition::Pull,
+        .attach(ToleEventSource::Hole {
+            token: member.token(),
+            condition: HoleCondition::Pull,
         })
         .is_err()
     {
@@ -48,7 +48,7 @@ fn main() -> Reason {
     if report.push(b"H", Wait::Forever).is_err() {
         return bail("waiter: report");
     }
-    if !matches!(report.wait(MailCondition::Empty, Wait::Forever), Ok(true)) {
+    if !matches!(report.wait(env::HoleCondition::Empty, Wait::Forever), Ok(true)) {
         return bail("waiter: report");
     }
     debug!("waiter: hung");
@@ -66,7 +66,7 @@ fn main() -> Reason {
                 // **递出 ＋ 等它被取走**：字节是这一帧的局部，不等它下线就返回，台主可能复制到死栈。
                 let word = [b'T'];
                 let _ = report.push(&word, Wait::Forever);
-                let _ = report.wait(MailCondition::Empty, Wait::Forever);
+                let _ = report.wait(env::HoleCondition::Empty, Wait::Forever);
                 break;
             }
             Err(e) if e.source.is_busy() => continue,
@@ -74,7 +74,7 @@ fn main() -> Reason {
                 debug!("waiter: err={}", e.source.code());
                 let word = [b'E'];
                 let _ = report.push(&word, Wait::Forever);
-                let _ = report.wait(MailCondition::Empty, Wait::Forever);
+                let _ = report.wait(env::HoleCondition::Empty, Wait::Forever);
                 break;
             }
         }

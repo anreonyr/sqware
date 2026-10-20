@@ -17,11 +17,6 @@
 //! 通用性：本 trait 只依赖 `usize`，不绑 U-mode 语义——sbi 等 S-mode 调用封装
 //! 未来可直接复用同一 codec（derive 不写死 envcall 路径）。
 //!
-//! **有三个 impl 的"类型在外"**：[`Permission`](crate::Permission) 在
-//! [`permission`](crate::permission)、[`MailCondition`](crate::MailCondition) 与
-//! [`ProgramKind`](crate::ProgramKind) 在 [`call`](crate::abi::call)。这是**刻意**的：本仓的
-//! 口径是"非法位校验**只有一处**"（上面那一句），故三个 impl 并排住这里，而不是各回各家。
-
 pub mod flat_reference;
 pub mod frompair;
 pub mod handle;

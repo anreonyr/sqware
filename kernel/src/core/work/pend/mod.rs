@@ -13,7 +13,9 @@ mod narrow;
 mod need;
 mod pie;
 
-pub(crate) use allocation::{HoldTable, SourceAuthorization};
+pub(crate) use allocation::{
+    Derivation, Geometry, Hold, HoldTable, IndependentHold, Lineage, SourceAuthorization,
+};
 pub(crate) use ledger::Pend;
 pub(crate) use need::Need;
 
@@ -86,18 +88,18 @@ pub(super) fn observe(
     remember(tasks, task, version)
 }
 
-pub(crate) fn available(pie: &PieSnapshot) -> Result<(), env::MailFail> {
+pub(crate) fn available(pie: &PieSnapshot) -> Result<(), PieFail> {
     if let Some(pole) = pie.mail().pole()
         && pole.reserved() != 0
     {
-        return Err(env::MailFail::HandedOver);
+        return Err(PieFail::HandedOver);
     }
     if let Some(heir) = pie.heir()
         && crate::core::work::room::scheduler::roster::muster(heir.task)
             .and_then(|t| t.upgrade())
             .is_some_and(|t| locate(&t, heir.token).is_some())
     {
-        return Err(env::MailFail::HandedOver);
+        return Err(PieFail::HandedOver);
     }
     Ok(())
 }

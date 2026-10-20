@@ -102,7 +102,6 @@ fn cull_life(root: &TeamLife, cause: TaskExitCause, reason: usize) {
 }
 pub(crate) fn cull(roots: &[Arc<Team>], reason: usize) {
     for root in roots {
-        root.cancel_staging().expect("cancel construction");
         cull_life(&root.life, TaskExitCause::Slay, reason);
     }
 }
@@ -114,7 +113,6 @@ pub(crate) fn doom(task: &Arc<Task>) {
             let _commit = crate::core::work::commit();
             child.life.clear(task.ident.id, None);
         }
-        child.cancel_staging().expect("cancel construction");
         cull_life(&child.life, TaskExitCause::Cascade, super::EXIT_CASCADE);
     }
 }

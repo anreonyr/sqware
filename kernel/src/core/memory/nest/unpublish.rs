@@ -74,14 +74,13 @@ impl Nest {
         let Some(at) = inner.published.iter().position(|(held, _)| *held == page) else {
             return Ok(());
         };
+        if state.phase.is_closed() {
+            return Err(NestError::Pinned);
+        }
         // 身份在取出发布记录之后、任何 PTE 被撕下之前核。
         assert!(
             Arc::ptr_eq(&inner.published[at].1, expected),
             "the published page holds the frame this transfer handed over"
-        );
-        debug_assert!(
-            !state.phase.is_closed(),
-            "a closed nest keeps no published mapping"
         );
         debug_assert!(
             inner.covers(address.as_usize(), address.as_usize()),

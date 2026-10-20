@@ -62,7 +62,7 @@ impl Supplies {
         catalog: crate::boot::Catalog<'static>,
     ) -> Result<Self, &'static str> {
         let actor = env::unit::self_id();
-        let authority = env::pie::unseal(env::UnsealArgs::hole(system_api::supply::ASK))
+        let authority = env::hole::unseal(system_api::supply::ASK, env::HoleLimits::default())
             .map_err(|_| "image supply authority")?;
         let images = match crate::system::supply::Source::new(
             system_api::supply::Key::of("system/initrd"),

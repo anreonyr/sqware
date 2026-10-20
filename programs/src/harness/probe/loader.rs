@@ -433,7 +433,7 @@ fn exercise(context: (TaskId, TaskId), target: &AtomicUsize, denied: &AtomicBool
     assert_eq!(said.status, wire::OK);
     // Leave the result unclaimed while keeping its requester alive.
     until(|| state.instance(said.task).state(WAIT) == Ok(system_api::control::State::Dead));
-    env::pie::shut(image).unwrap();
+    env::pole::shut(image).unwrap();
     env::pie::release(image, env::ReleaseMode::Revoke).unwrap();
     // The second, claimed Held task is reclaimed when this requester exits.
 }

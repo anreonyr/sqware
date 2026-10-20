@@ -62,9 +62,10 @@ fn main() -> Report<'static> {
         return bail("probe-owner: no /svc/drv/uart/rx");
     };
 
-    let forged = pie::unseal(env::UnsealArgs::hole(
+    let forged = env::hole::unseal(
         system_api::operator::entry::AUTH_ENTRY,
-    ))
+        env::HoleLimits::default(),
+    )
     .unwrap_or(env::PieToken::NONE);
     let denied = matches!(
         operator::Capability::direct(tree.host(), forged),
@@ -123,9 +124,10 @@ fn main() -> Report<'static> {
 }
 
 fn take_over(tree: &Face) -> Result<EntryId, Fail> {
-    let forged = pie::unseal(env::UnsealArgs::hole(
+    let forged = env::hole::unseal(
         system_api::operator::entry::AUTH_ENTRY,
-    ))
+        env::HoleLimits::default(),
+    )
     .map_err(|_| Fail::Unknown)?;
     assert!(matches!(
         operator::Capability::direct(tree.host(), forged),

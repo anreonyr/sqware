@@ -13,7 +13,7 @@ pub(super) fn close(
     let inbox = &mut endpoints.inbox;
     if let Some(entry) = inbox.entry {
         waiting.detach(entry);
-        env::pie::seal(entry).map_err(|_| Fail::Shutdown)?;
+        env::hole::seal(entry).map_err(|_| Fail::Shutdown)?;
         env::pie::release(entry, env::ReleaseMode::Revoke).map_err(|_| Fail::Shutdown)?;
         inbox.entry = None;
     }

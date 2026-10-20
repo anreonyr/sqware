@@ -18,10 +18,10 @@ pub fn reuse() {
     let meta = HoleMeta::new(TaskId::new(0));
     let live = HANDS_LIVE.load(Ordering::Relaxed);
     assert_eq!(storage(&meta).0, 0);
-    assert!(meta.ready(MailCondition::Empty));
-    assert!(!meta.ready(MailCondition::Pull));
-    assert!(matches!(take(&meta), Err(MailFail::Busy)));
-    assert!(matches!(hush(&meta), Err(MailFail::Busy)));
+    assert!(meta.ready(HoleCondition::Empty));
+    assert!(!meta.ready(HoleCondition::Pull));
+    assert!(matches!(take(&meta), Err(HoleFail::Busy)));
+    assert!(matches!(hush(&meta), Err(HoleFail::Busy)));
     let mut saved = None;
     for _ in 0..32 {
         for sequence in 0..QUEUE_CAP {
@@ -31,28 +31,28 @@ pub fn reuse() {
                 })
                 .unwrap();
         }
-        assert!(!meta.ready(MailCondition::Empty));
-        assert!(matches!(ring(&meta), Err(MailFail::Busy)));
+        assert!(!meta.ready(HoleCondition::Empty));
+        assert!(matches!(ring(&meta), Err(HoleFail::Busy)));
         assert!(matches!(
             reserve(&meta).and_then(|slot| slot.commit(Arc::new(alloc::vec![255]), TaskId::new(0))),
-            Err(MailFail::Busy)
+            Err(HoleFail::Busy)
         ));
         for sequence in 0..QUEUE_CAP {
-            assert!(meta.ready(MailCondition::Pull));
+            assert!(meta.ready(HoleCondition::Pull));
             take(&meta).unwrap();
-            assert!(!meta.ready(MailCondition::Pull));
-            assert!(matches!(take(&meta), Err(MailFail::Busy)));
+            assert!(!meta.ready(HoleCondition::Pull));
+            assert!(matches!(take(&meta), Err(HoleFail::Busy)));
             back(&meta);
-            assert!(meta.ready(MailCondition::Pull));
+            assert!(meta.ready(HoleCondition::Pull));
             take(&meta).unwrap();
             let (sender, bytes) = source(&meta).unwrap();
             assert_eq!(sender, TaskId::new(sequence));
             assert_eq!(bytes.as_slice(), &[sequence as u8]);
             taken(&meta);
         }
-        assert!(meta.ready(MailCondition::Empty));
-        assert!(!meta.ready(MailCondition::Pull));
-        assert!(matches!(peek(&meta), Err(MailFail::Busy)));
+        assert!(meta.ready(HoleCondition::Empty));
+        assert!(!meta.ready(HoleCondition::Pull));
+        assert!(matches!(peek(&meta), Err(HoleFail::Busy)));
         let current = storage(&meta);
         assert!(current.0 >= QUEUE_CAP);
         assert_eq!(*saved.get_or_insert(current), current);
@@ -60,21 +60,21 @@ pub fn reuse() {
             ring(&meta).unwrap();
         }
         assert_eq!(storage(&meta), current);
-        assert!(!meta.ready(MailCondition::Empty));
-        assert!(meta.ready(MailCondition::Pull));
-        assert!(matches!(take(&meta), Err(MailFail::Busy)));
-        assert!(matches!(ring(&meta), Err(MailFail::Busy)));
+        assert!(!meta.ready(HoleCondition::Empty));
+        assert!(meta.ready(HoleCondition::Pull));
+        assert!(matches!(take(&meta), Err(HoleFail::Busy)));
+        assert!(matches!(ring(&meta), Err(HoleFail::Busy)));
         assert!(matches!(
             reserve(&meta).and_then(|slot| slot.commit(Arc::new(alloc::vec![255]), TaskId::new(0))),
-            Err(MailFail::Busy)
+            Err(HoleFail::Busy)
         ));
         for _ in 0..RING_CAP {
             hush(&meta).unwrap();
         }
         assert_eq!(storage(&meta), current);
-        assert!(meta.ready(MailCondition::Empty));
-        assert!(!meta.ready(MailCondition::Pull));
-        assert!(matches!(hush(&meta), Err(MailFail::Busy)));
+        assert!(meta.ready(HoleCondition::Empty));
+        assert!(!meta.ready(HoleCondition::Pull));
+        assert!(matches!(hush(&meta), Err(HoleFail::Busy)));
         assert_eq!(HANDS_LIVE.load(Ordering::Relaxed), live);
     }
     let bytes = Arc::new(alloc::vec![1]);
@@ -89,9 +89,9 @@ pub fn reuse() {
     assert_eq!(HANDS_LIVE.load(Ordering::Relaxed), live);
     assert!(matches!(
         reserve(&meta).and_then(|slot| slot.commit(Arc::new(alloc::vec![1]), TaskId::new(0))),
-        Err(MailFail::Dead)
+        Err(HoleFail::Dead)
     ));
-    assert!(matches!(take(&meta), Err(MailFail::Dead)));
+    assert!(matches!(take(&meta), Err(HoleFail::Dead)));
     seal(&meta);
     drop(meta);
     assert_eq!(HANDS_LIVE.load(Ordering::Relaxed), live);
@@ -132,17 +132,17 @@ pub fn reservations() {
         copied = true;
         slot.commit(Arc::new(alloc::vec![255]), TaskId::new(0))
     });
-    assert!(matches!(full, Err(MailFail::Busy)));
+    assert!(matches!(full, Err(HoleFail::Busy)));
     assert!(!copied);
-    assert!(!meta.ready(MailCondition::Pull));
-    assert!(!meta.ready(MailCondition::Empty));
-    assert!(matches!(ring(&meta), Err(MailFail::Busy)));
+    assert!(!meta.ready(HoleCondition::Pull));
+    assert!(!meta.ready(HoleCondition::Empty));
+    assert!(matches!(ring(&meta), Err(HoleFail::Busy)));
     third
         .commit(Arc::new(alloc::vec![3]), TaskId::new(3))
         .unwrap();
-    assert!(!meta.ready(MailCondition::Pull));
-    assert!(matches!(take(&meta), Err(MailFail::Busy)));
-    assert!(matches!(peek(&meta), Err(MailFail::Busy)));
+    assert!(!meta.ready(HoleCondition::Pull));
+    assert!(matches!(take(&meta), Err(HoleFail::Busy)));
+    assert!(matches!(peek(&meta), Err(HoleFail::Busy)));
     drop(middle);
     let fifth = reserve(&meta).unwrap();
     fourth
@@ -155,10 +155,10 @@ pub fn reservations() {
     for sequence in [1, 3, 4] {
         assert_eq!(receive(&meta), (TaskId::new(sequence), sequence as u8));
     }
-    assert!(!meta.ready(MailCondition::Empty));
-    assert!(!meta.ready(MailCondition::Pull));
+    assert!(!meta.ready(HoleCondition::Empty));
+    assert!(!meta.ready(HoleCondition::Pull));
     drop(fifth);
-    assert!(meta.ready(MailCondition::Empty));
+    assert!(meta.ready(HoleCondition::Empty));
     assert_eq!(HANDS_LIVE.load(Ordering::Relaxed), live);
     let failed = reserve(&meta).unwrap();
     reserve(&meta)
@@ -167,11 +167,11 @@ pub fn reservations() {
         .unwrap();
     assert!(matches!(
         failed.commit(Arc::new(Vec::new()), TaskId::new(0)),
-        Err(MailFail::Denied)
+        Err(HoleFail::Denied)
     ));
-    assert!(meta.ready(MailCondition::Pull));
+    assert!(meta.ready(HoleCondition::Pull));
     assert_eq!(receive(&meta), (TaskId::new(6), 6));
-    assert!(meta.ready(MailCondition::Empty));
+    assert!(meta.ready(HoleCondition::Empty));
     reserve(&meta)
         .unwrap()
         .commit(Arc::new(alloc::vec![9]), TaskId::new(9))
@@ -184,7 +184,7 @@ pub fn reservations() {
     take(&meta).unwrap();
     let (sender, bytes) = source(&meta).unwrap();
     drop(middle);
-    assert!(!meta.ready(MailCondition::Pull));
+    assert!(!meta.ready(HoleCondition::Pull));
     assert_eq!(sender, TaskId::new(9));
     assert_eq!(bytes.as_slice(), &[9]);
     taken(&meta);
@@ -200,18 +200,18 @@ pub fn reservations() {
     seal(&meta);
     assert!(released.upgrade().is_none());
     assert_eq!(HANDS_LIVE.load(Ordering::Relaxed), live);
-    assert!(!meta.ready(MailCondition::Empty));
-    assert!(!meta.ready(MailCondition::Pull));
+    assert!(!meta.ready(HoleCondition::Empty));
+    assert!(!meta.ready(HoleCondition::Pull));
     let bytes = Arc::new(alloc::vec![8]);
     let released = Arc::downgrade(&bytes);
     assert!(matches!(
         inflight.commit(bytes, TaskId::new(8)),
-        Err(MailFail::Dead)
+        Err(HoleFail::Dead)
     ));
     assert!(released.upgrade().is_none());
     drop(abandoned);
     seal(&meta);
-    assert!(matches!(reserve(&meta), Err(MailFail::Dead)));
+    assert!(matches!(reserve(&meta), Err(HoleFail::Dead)));
     drop(meta);
     assert_eq!(HANDS_LIVE.load(Ordering::Relaxed), live);
     crate::putln!(
@@ -222,7 +222,7 @@ pub fn reservations() {
 pub fn discard_oversized() {
     let meta = HoleMeta::new(TaskId::new(0));
     let live = HANDS_LIVE.load(Ordering::Relaxed);
-    assert!(matches!(read(&meta), Err(MailFail::Busy)));
+    assert!(matches!(read(&meta), Err(HoleFail::Busy)));
     reserve_len(&meta, 65)
         .unwrap()
         .commit(Arc::new(alloc::vec![0; 65]), TaskId::new(1))
@@ -232,7 +232,7 @@ pub fn discard_oversized() {
         .commit(Arc::new(alloc::vec![7; 64]), TaskId::new(2))
         .unwrap();
     let reading = read(&meta).unwrap();
-    assert!(matches!(read(&meta), Err(MailFail::Busy)));
+    assert!(matches!(read(&meta), Err(HoleFail::Busy)));
     assert_eq!(reading.bytes.len(), 65);
     drop(reading);
     assert_eq!(peek(&meta).unwrap().0, 65);
@@ -250,11 +250,11 @@ pub fn discard_oversized() {
         .unwrap()
         .commit(Arc::new(alloc::vec![0; 65]), TaskId::new(3))
         .unwrap();
-    assert!(matches!(read(&meta), Err(MailFail::Busy)));
+    assert!(matches!(read(&meta), Err(HoleFail::Busy)));
     drop(reserved);
     read(&meta).unwrap().finish();
     seal(&meta);
-    assert!(matches!(read(&meta), Err(MailFail::Dead)));
+    assert!(matches!(read(&meta), Err(HoleFail::Dead)));
     assert_eq!(HANDS_LIVE.load(Ordering::Relaxed), live);
 }
 
@@ -265,18 +265,18 @@ pub fn limits() {
         max_bytes: 6,
     };
     let meta = HoleMeta::try_new_with_limits(TaskId::new(0), limits).unwrap();
-    assert!(meta.ready(MailCondition::Push));
+    assert!(meta.ready(HoleCondition::Push));
     let first = reserve_len(&meta, 4).unwrap();
-    assert!(!meta.ready(MailCondition::Empty));
-    assert!(meta.ready(MailCondition::Push));
-    assert!(matches!(reserve_len(&meta, 5), Err(MailFail::Denied)));
-    assert!(matches!(reserve_len(&meta, 3), Err(MailFail::Busy)));
+    assert!(!meta.ready(HoleCondition::Empty));
+    assert!(meta.ready(HoleCondition::Push));
+    assert!(matches!(reserve_len(&meta, 5), Err(HoleFail::Denied)));
+    assert!(matches!(reserve_len(&meta, 3), Err(HoleFail::Busy)));
     let second = reserve_len(&meta, 2).unwrap();
-    assert!(!meta.ready(MailCondition::Push));
+    assert!(!meta.ready(HoleCondition::Push));
     drop(first);
-    assert!(meta.ready(MailCondition::Push));
+    assert!(meta.ready(HoleCondition::Push));
     let third = reserve_len(&meta, 4).unwrap();
-    assert!(!meta.ready(MailCondition::Push));
+    assert!(!meta.ready(HoleCondition::Push));
     second
         .commit(Arc::new(alloc::vec![2; 2]), TaskId::new(2))
         .unwrap();
@@ -284,30 +284,30 @@ pub fn limits() {
         .commit(Arc::new(alloc::vec![3; 4]), TaskId::new(3))
         .unwrap();
     let reading = read(&meta).unwrap();
-    assert!(!meta.ready(MailCondition::Push));
+    assert!(!meta.ready(HoleCondition::Push));
     drop(reading);
     read(&meta).unwrap().finish();
-    assert!(meta.ready(MailCondition::Push));
-    assert!(!meta.ready(MailCondition::Empty));
+    assert!(meta.ready(HoleCondition::Push));
+    assert!(!meta.ready(HoleCondition::Empty));
     read(&meta).unwrap().finish();
-    assert!(meta.ready(MailCondition::Empty));
+    assert!(meta.ready(HoleCondition::Empty));
     let failed = reserve_len(&meta, 4).unwrap();
     assert!(matches!(
         failed.commit(Arc::new(alloc::vec![1; 3]), TaskId::new(0)),
-        Err(MailFail::Denied)
+        Err(HoleFail::Denied)
     ));
-    assert!(meta.ready(MailCondition::Empty));
+    assert!(meta.ready(HoleCondition::Empty));
     reserve_len(&meta, 4)
         .unwrap()
         .commit(Arc::new(alloc::vec![4; 4]), TaskId::new(4))
         .unwrap();
     read(&meta).unwrap().finish();
     ring(&meta).unwrap();
-    assert!(!meta.ready(MailCondition::Push));
+    assert!(!meta.ready(HoleCondition::Push));
     hush(&meta).unwrap();
-    assert!(meta.ready(MailCondition::Push));
+    assert!(meta.ready(HoleCondition::Push));
     seal(&meta);
-    assert!(!meta.ready(MailCondition::Push));
+    assert!(!meta.ready(HoleCondition::Push));
 }
 
 pub fn reading_guard() {
@@ -318,32 +318,32 @@ pub fn reading_guard() {
         .commit(Arc::new(alloc::vec![1, 2, 3]), TaskId::new(2))
         .unwrap();
     let reading = read(&meta).unwrap();
-    assert!(!meta.ready(MailCondition::Pull));
+    assert!(!meta.ready(HoleCondition::Pull));
     drop(reading);
-    assert!(meta.ready(MailCondition::Pull));
+    assert!(meta.ready(HoleCondition::Pull));
     let reading = read(&meta).unwrap();
     seal(&meta);
     assert_eq!(reading.bytes.as_slice(), &[1, 2, 3]);
     drop(reading);
     assert_eq!(HANDS_LIVE.load(Ordering::Relaxed), live);
-    assert!(matches!(read(&meta), Err(MailFail::Dead)));
+    assert!(matches!(read(&meta), Err(HoleFail::Dead)));
 }
 
 const QUEUE_CAP: usize = 4;
-fn reserve(meta: &HoleMeta) -> Result<Reservation<'_>, MailFail> {
+fn reserve(meta: &HoleMeta) -> Result<Reservation<'_>, HoleFail> {
     reserve_len(meta, 0)
 }
 
-fn take(meta: &HoleMeta) -> Result<(), MailFail> {
+fn take(meta: &HoleMeta) -> Result<(), HoleFail> {
     if !meta.alive() {
-        return Err(MailFail::Dead);
+        return Err(HoleFail::Dead);
     }
     let mut pending = meta.pending.lock();
     let Pending::Queue(q) = &mut *pending else {
-        return Err(MailFail::Busy);
+        return Err(HoleFail::Busy);
     };
     if q.taking || q.hands.front().and_then(Slot::hand).is_none() {
-        return Err(MailFail::Busy);
+        return Err(HoleFail::Busy);
     }
     q.taking = true;
     Ok(())

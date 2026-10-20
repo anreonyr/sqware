@@ -1,4 +1,4 @@
-use env::{Bit, MailCondition, PieKind, TaskId, TeamId};
+use env::{Bit, HoleCondition, PieKind, TaskId, TeamId};
 
 use crate::core::memory::nest::Asid;
 
@@ -10,7 +10,7 @@ use crate::core::memory::nest::Asid;
 pub enum WakeKey {
     Space { space: Asid, slot: usize },
     View { space: Asid, view: usize },
-    Hole { hole: usize, dir: MailCondition },
+    Hole { hole: usize, dir: HoleCondition },
     Nole { id: usize },
     Pole { id: usize, bit: Bit },
     Task { id: TaskId },
@@ -39,7 +39,7 @@ impl WakeKey {
                 (space.get() as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93) ^ view as u64
             }
             WakeKey::Hole { hole, dir } => {
-                (hole as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ dir.wire() as u64
+                (hole as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ dir as u64
             }
             WakeKey::Nole { id } => (id as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9),
             WakeKey::Pole { id, bit } => {

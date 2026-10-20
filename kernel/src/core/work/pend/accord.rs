@@ -94,6 +94,14 @@ pub(crate) fn accord_window(
         }
         let mark = if mark == Mark::NONE { pie.mark() } else { mark };
         let window = effective_window(&pie, requested)?;
+        // Accord 操作的是这一段授权窗口：这一段的子段或别人的独立持有仍在占用就不建
+        // 新分支，也不隐式裁到剩余范围（建新授权不享受“持有人自己”那一档）。
+        if let Some(meta) = &pole
+            && let Some(authorization) = meta.authorization()
+        {
+            let (offset, count) = window.unwrap_or((PageOffset::ZERO, meta.source().page_count()));
+            authorization.check_publish(offset, count, None)?;
+        }
         let mut granted = pie.vest_window(mark, subset, window)?;
         granted.parent(src, Arc::downgrade(caller));
         caller

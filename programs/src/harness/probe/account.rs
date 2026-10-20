@@ -393,11 +393,11 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     let peer_token = Arc::new(AtomicUsize::new(0));
     let token = peer_token.clone();
     let peer = execution::unit::task::spawn(move || {
-        let terminal = env::pie::unseal(env::UnsealArgs::hole(terminal_api::marks::ENTRY)).unwrap();
-        let input = env::pie::unseal(env::UnsealArgs::hole(terminal_api::frame::INPUT)).unwrap();
-        let output = env::pie::unseal(env::UnsealArgs::hole(terminal_api::frame::OUTPUT)).unwrap();
+        let terminal = env::hole::unseal(terminal_api::marks::ENTRY, env::HoleLimits::default()).unwrap();
+        let input = env::hole::unseal(terminal_api::frame::INPUT, env::HoleLimits::default()).unwrap();
+        let output = env::hole::unseal(terminal_api::frame::OUTPUT, env::HoleLimits::default()).unwrap();
         let control =
-            env::pie::unseal(env::UnsealArgs::hole(terminal_api::frame::CONTROL)).unwrap();
+            env::hole::unseal(terminal_api::frame::CONTROL, env::HoleLimits::default()).unwrap();
         let delivered = resource::port::ship(
             terminal,
             root,

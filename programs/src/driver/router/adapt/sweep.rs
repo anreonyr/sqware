@@ -10,7 +10,7 @@ use crate::core::lines::Lines;
 use crate::dev::plic::Plic;
 use ::resource::pile::Pile;
 use ::resource::raw::reserve;
-use env::MailCondition;
+use env::HoleCondition;
 use ipc::session::Endpoint;
 use programs::debug;
 
@@ -27,9 +27,9 @@ pub fn run(lines: &mut Lines, plic: &Plic, pile: &Pile) {
             continue;
         }
         plic.unwire(line);
-        let _ = pile.detach(env::Source::Mail {
-            pie: lane.rx(),
-            condition: MailCondition::Pull,
+        let _ = pile.detach(env::ToleEventSource::Hole {
+            token: lane.rx(),
+            condition: HoleCondition::Pull,
         });
         let _ = lines.vacate(line);
         debug!("router: vacate line={line}");

@@ -1,85 +1,103 @@
-use super::outcome::{answer, ret_err, Outcome};
-use crate::core::work::pend::available;
-use crate::machine::switcher::context::TrapContext;
+use super::outcome::{Outcome, answer};
 use crate::core::work::mail::{
-    self,
-    tole::{self, AwaitWait, Cell, Watch},
+    Mail,
+    tole::{self, AwaitWait, Cell, Watch, codec},
 };
 use crate::core::work::pend::{self, Need};
-use crate::core::work::room::messenger::{self, Handoff, WakeKey};
 use crate::core::work::room::conductor::current;
+use crate::core::work::room::messenger::{self, Handoff, WakeKey};
 use crate::core::work::room::scheduler::roster::muster;
 use crate::core::work::unit::task::{Task, TaskIdent};
+use crate::machine::switcher::context::TrapContext;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use env::{MailCall, MailFail, Source};
+use env::{PieFail, PieKind, PieToken, ToleCall, ToleEventSource, ToleFail, Wait};
 
-pub(super) fn dispatch(
-    frame: &mut TrapContext,
-    call: MailCall,
-    _: Arc<TaskIdent>,
-) -> Outcome {
-    let task = match current().running_task() {
-        Some(task) => task,
-        None => {
-            ret_err(frame, MailFail::Denied);
-            return Outcome::Resume;
-        }
-    };
+pub(super) fn dispatch(frame: &mut TrapContext, call: ToleCall, _: Arc<TaskIdent>) -> Outcome {
     match call {
-        MailCall::Attach { tole, source } => {
-            let result = (|| {
-                let _commit = crate::core::work::commit();
-                let pie = pend::accede(&task, tole, Need::Store).map_err(mail::mail_fail)?;
-                available(&pie)?;
-                let group = pie.mail().tole().ok_or(MailFail::Denied)?;
-                tole::attach(&group, cell(&task, source)?)
-            })();
+        ToleCall::Unseal { shared } => answer(frame, create(shared)),
+        ToleCall::Seal { token } => answer(
+            frame,
+            super::seal::seal_resource(token, PieKind::Tole).map_err(codec::pie_fail),
+        ),
+        ToleCall::Attach { tole, source } => {
+            answer(
+                frame,
+                attach(tole, |task| typed_cell(task, source)).map(|()| 0),
+            );
+        }
+        ToleCall::Detach { tole, source } => {
+            let _commit = crate::core::work::commit();
+            let result = with_group(tole, Need::Store, |task, group| {
+                tole::detach(group, task.ident.id, source)
+            });
             answer(frame, result.map(|()| 0));
-            Outcome::Resume
         }
-        MailCall::Detach { tole, source } => {
-            let result = (|| {
-                let _commit = crate::core::work::commit();
-                let pie = pend::accede(&task, tole, Need::Store).map_err(mail::mail_fail)?;
-                available(&pie)?;
-                {
-                    let group = pie.mail().tole().ok_or(MailFail::Denied)?;
-                    tole::detach(&group, task.ident.id, source)
-                }
-            })();
-            answer(frame, result.map(|()| 0));
-            Outcome::Resume
-        }
-        MailCall::Await { tole, millis } => {
-            let result = (|| {
-                let pie = pend::accede(&task, tole, Need::Fetch).map_err(mail::mail_fail)?;
-                available(&pie)?;
-                let group = pie.mail().tole().ok_or(MailFail::Denied)?;
-                messenger::mail_await(AwaitWait::new(group, tole, &task, millis))
-            })();
-            match result {
-                Ok(Handoff::Resume(reply)) => AwaitWait::write(frame, Ok(reply)),
-                Ok(Handoff::Switch(pa)) => return Outcome::Switch(pa as *mut TrapContext),
-                Err(e) => AwaitWait::write(frame, Err(e)),
-            }
-            Outcome::Resume
-        }
-        _ => unreachable!("mail::dispatch routes only Attach, Detach and Await"),
+        ToleCall::Await { tole, millis } => return await_group(frame, tole, millis),
     }
+    Outcome::Resume
 }
-pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> {
+
+pub(crate) fn create(shared: bool) -> Result<usize, ToleFail> {
+    let task = current().running_task().ok_or(ToleFail::Denied)?;
+    let meta = tole::ToleMeta::try_new(task.ident.id).map_err(|_| ToleFail::OoM)?;
+    let mut permission = env::Permission::FETCH | env::Permission::STORE | env::Permission::VEST;
+    if !shared {
+        permission |= env::Permission::ONLY;
+    }
+    let pie = pend::Pie::try_new(Mail::Tole(meta), env::Mark::NONE, permission, None)
+        .map_err(codec::pie_fail)?;
+    let token = pie.token();
+    pend::insert(&task, pie).map_err(codec::pie_fail)?;
+    Ok(token.get())
+}
+
+fn with_group<T>(
+    token: PieToken,
+    need: Need,
+    operation: impl FnOnce(&Arc<Task>, &Arc<tole::ToleMeta>) -> Result<T, ToleFail>,
+) -> Result<T, ToleFail> {
+    let task = current().running_task().ok_or(ToleFail::Denied)?;
+    let pie = pend::accede(&task, token, need).map_err(codec::pie_fail)?;
+    pend::available(&pie).map_err(codec::pie_fail)?;
+    let group = pie.mail().tole().ok_or(ToleFail::Denied)?;
+    operation(&task, &group)
+}
+
+fn attach(
+    token: PieToken,
+    registration: impl FnOnce(&Arc<Task>) -> Result<Cell, ToleFail>,
+) -> Result<(), ToleFail> {
+    let _commit = crate::core::work::commit();
+    with_group(token, Need::Store, |task, group| {
+        tole::attach(group, registration(task)?)
+    })
+}
+
+fn await_group(frame: &mut TrapContext, token: PieToken, millis: Wait) -> Outcome {
+    let result = with_group(token, Need::Fetch, |task, group| {
+        let wait = AwaitWait::new(group.clone(), token, task, millis);
+        messenger::mail_await(wait)
+    });
+    match result {
+        Ok(Handoff::Resume(reply)) => AwaitWait::write_result(frame, Ok(reply)),
+        Ok(Handoff::Switch(pa)) => return Outcome::Switch(pa as *mut TrapContext),
+        Err(error) => AwaitWait::write_result(frame, Err(error)),
+    }
+    Outcome::Resume
+}
+
+pub(crate) fn typed_cell(actor: &Arc<Task>, source: ToleEventSource) -> Result<Cell, ToleFail> {
     let mut keys = Vec::new();
-    keys.try_reserve(4).map_err(|_| MailFail::OoM)?;
+    keys.try_reserve(4).map_err(|_| ToleFail::OoM)?;
     let watch = match source {
-        Source::Mail {
-            pie: token,
-            condition,
-        } => {
-            let need = Need::of(condition);
-            let pie = pend::accede(actor, token, need).map_err(mail::mail_fail)?;
-            available(&pie)?;
-            let (key, life) = pie.mail().key(condition).ok_or(MailFail::Denied)?;
+        ToleEventSource::Hole { .. }
+        | ToleEventSource::Pole { .. }
+        | ToleEventSource::Nole { .. } => {
+            let (token, need) = codec::source_watch(source).ok_or(ToleFail::Denied)?;
+            let pie = pend::accede(actor, token, need).map_err(codec::pie_fail)?;
+            pend::available(&pie).map_err(codec::pie_fail)?;
+            let (key, life) = codec::source_key(&pie, source).ok_or(ToleFail::Denied)?;
             keys.push((key, life));
             keys.push((
                 WakeKey::Inspect {
@@ -88,39 +106,36 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
                 },
                 actor.life(),
             ));
-            Watch::Mail {
-                pie: token,
-                condition,
-            }
+            Watch::Resource { source }
         }
-        Source::Join { target } => {
-            let selected =
-                crate::core::work::unit::join::observe(actor, target).map_err(|_| MailFail::Denied)?;
+        ToleEventSource::Join { target } => {
+            let selected = crate::core::work::unit::join::observe(actor, target)
+                .map_err(|_| ToleFail::Denied)?;
             let wait = crate::core::work::unit::join::JoinWait::new(
                 selected.clone(),
                 actor.ident.id,
                 false,
-                env::Wait::POLL,
+                Wait::POLL,
             );
             keys.push((wait.target.key(), wait.target.life()));
             Watch::Join { target, selected }
         }
-        Source::Inspect { task: id, token } => {
+        ToleEventSource::Inspect { task: id, token } => {
             let holder = muster(id)
-                .and_then(|t| t.upgrade())
-                .ok_or(MailFail::Denied)?;
-            let pie = pend::locate(&holder, token).ok_or(MailFail::Denied)?;
+                .and_then(|task| task.upgrade())
+                .ok_or(ToleFail::Denied)?;
+            let pie = pend::locate(&holder, token).ok_or(ToleFail::Denied)?;
             if !pie.alive() {
-                return Err(MailFail::Dead);
+                return Err(ToleFail::Dead);
             }
             let parent = if id == actor.ident.id {
                 None
             } else {
-                let parent = pie.sire().ok_or(MailFail::Denied)?;
+                let parent = pie.sire().ok_or(ToleFail::Denied)?;
                 if !pie.lord().ptr_eq(&Arc::downgrade(actor))
                     || pend::locate(actor, parent).is_none()
                 {
-                    return Err(MailFail::Denied);
+                    return Err(ToleFail::Denied);
                 }
                 keys.push((
                     WakeKey::Inspect {
@@ -131,7 +146,8 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
                 ));
                 Some((Arc::downgrade(actor), parent))
             };
-            let held = parent.is_none() && matches!(available(&pie), Err(MailFail::HandedOver));
+            let held =
+                parent.is_none() && matches!(pend::available(&pie), Err(PieFail::HandedOver));
             let mail = pie.mail();
             keys.push((WakeKey::seal(mail.kind(), mail.id()), mail.life()));
             keys.push((
@@ -153,7 +169,7 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
     };
     Ok(Cell {
         actor: actor.ident.id,
-        keys: Arc::try_new(keys).map_err(|_| MailFail::OoM)?,
+        keys: Arc::try_new(keys).map_err(|_| ToleFail::OoM)?,
         watch,
     })
 }

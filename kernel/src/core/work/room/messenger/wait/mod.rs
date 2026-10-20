@@ -488,7 +488,7 @@ fn requeue<E: Copy>(
 
 pub(crate) fn mail_await(
     wait: crate::core::work::mail::tole::AwaitWait,
-) -> Result<Handoff<env::AwaitReply>, env::MailFail> {
+) -> Result<Handoff<env::ToleAwaitReply>, env::ToleFail> {
     loop {
         let commit = crate::core::work::commit();
         let reply = match wait.poll() {
@@ -498,12 +498,12 @@ pub(crate) fn mail_await(
                 return Err(e);
             }
         };
-        if reply != env::AwaitReply::Pending || wait.remaining() == Duration::ZERO {
+        if reply != env::ToleAwaitReply::Pending || wait.remaining() == Duration::ZERO {
             wait.unwatch();
             return Ok(Handoff::Resume(reply));
         }
         wait.watch()?;
-        let blocked = match block_with_call::<env::MailFail>(
+        let blocked = match block_with_call::<env::ToleFail>(
             wait.key(),
             wait.life(),
             wait.remaining(),
@@ -525,27 +525,28 @@ pub(crate) fn mail_await(
 fn resume_await(task: &Arc<Task>, wait: crate::core::work::mail::tole::AwaitWait) -> bool {
     let _commit = crate::core::work::commit();
     let result = wait.poll();
-    let result =
-        if matches!(result, Ok(env::AwaitReply::Pending)) && wait.remaining() != Duration::ZERO {
-            match requeue(
-                task,
-                wait.key(),
-                wait.life(),
-                wait.remaining(),
-                WaitCall::Mail(wait.clone()),
-                env::MailFail::OoM,
-            ) {
-                Ok(()) => return false,
-                Err(e) => Err(e),
-            }
-        } else {
-            result
-        };
+    let result = if matches!(result, Ok(env::ToleAwaitReply::Pending))
+        && wait.remaining() != Duration::ZERO
+    {
+        match requeue(
+            task,
+            wait.key(),
+            wait.life(),
+            wait.remaining(),
+            WaitCall::Mail(wait.clone()),
+            env::ToleFail::OoM,
+        ) {
+            Ok(()) => return false,
+            Err(e) => Err(e),
+        }
+    } else {
+        result
+    };
     let frame = unsafe {
         &mut *(task.ident.frame_pa.as_usize()
             as *mut crate::machine::switcher::context::TrapContext)
     };
     wait.unwatch();
-    crate::core::work::mail::tole::AwaitWait::write(frame, result);
+    wait.write(frame, result);
     true
 }

@@ -11,11 +11,13 @@
 use alloc::sync::Arc;
 
 use crate::core::memory::address::{PageCount, PageOffset};
-use crate::core::memory::flat::{FlatRange, Residency};
+use crate::core::memory::flat::FlatRange;
 use crate::core::memory::nest::Access;
 use crate::core::work::grant::Grant;
 use env::PieToken;
 
+use super::geometry::Geometry;
+use super::independent::IndependentHold;
 use super::source_authorization::SourceAuthorization;
 
 pub(crate) struct Hold {
@@ -24,8 +26,8 @@ pub(crate) struct Hold {
     offset: PageOffset,
     count: PageCount,
     ceiling: Access,
-    /// 独立保留：自己强持这一段已经解好的范围。
-    retained: Option<Residency>,
+    /// 独立持有：物理保留与它在来源记录上的登记一起生、一起灭。
+    retained: Option<IndependentHold>,
     /// 这份引用是从**哪条 Grant 分支**取得的（Pole 的哪一枚 Pie）。
     /// 撤销边与上限都按这一条算，不因同 Flat、共享根资格就并到根上去。
     branch: Option<(PieToken, Arc<Grant>)>,
@@ -38,7 +40,7 @@ impl Hold {
         offset: PageOffset,
         count: PageCount,
         ceiling: Access,
-        retained: Option<Residency>,
+        retained: Option<IndependentHold>,
         branch: Option<(PieToken, Arc<Grant>)>,
     ) -> Self {
         Self {
@@ -73,6 +75,13 @@ impl Hold {
         self.retained.is_some()
     }
 
+    /// 这条引用自己那一份独立持有的窗口；没有独立持有就是 `None`。
+    ///
+    /// 使用判据按**这一份登记的身份**豁免：只有从它自己这条引用上取的用不算冲突。
+    pub(crate) fn retention(&self) -> Option<&Arc<Geometry>> {
+        self.retained.as_ref().map(IndependentHold::window)
+    }
+
     /// 这条分支（Pole 的 token 与它的 Grant）；私有来源没有。
     pub(crate) fn branch(&self) -> Option<(PieToken, &Arc<Grant>)> {
         self.branch.as_ref().map(|(token, grant)| (*token, grant))
@@ -85,11 +94,11 @@ impl Hold {
 
     /// 这一段引用**当前**能拿到的来源范围。
     ///
-    /// 独立保留自己强持；其余向来源授权解析：根 Grant 失效就返回 `None`，
+    /// 独立持有自己强持；其余向来源授权解析：根 Grant 失效就返回 `None`，
     /// 于是未经保留的引用在撤销后既不能挂载也不再 pin 住来源。
     pub(crate) fn resolve(&self) -> Option<FlatRange> {
-        if let Some(range) = &self.retained {
-            return Some(range.range().clone());
+        if let Some(retained) = &self.retained {
+            return Some(retained.range().clone());
         }
         if let Some((_, grant)) = &self.branch {
             grant.permission()?;

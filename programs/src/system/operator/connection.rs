@@ -4,7 +4,7 @@ use ::resource::port::{self, Access, Policy};
 use ::resource::raw::{Hole, alive, pies, reserve};
 use alloc::vec::Vec;
 use env::wire::Field;
-use env::{MailCondition, MailFail, PieToken, TaskId, Wait, pie};
+use env::{HoleCondition, HoleFail, PieToken, TaskId, Wait, pie};
 use ipc::hand::{SendFail, Sender};
 use ipc::session::establish::{self, Held};
 use system_api::operator::{LINK_MARK, Tip};
@@ -110,14 +110,14 @@ impl Connections {
     pub(super) fn interests(
         &self,
         address: (TaskId, PieToken),
-    ) -> impl Iterator<Item = (PieToken, MailCondition)> + '_ {
+    ) -> impl Iterator<Item = (PieToken, HoleCondition)> + '_ {
         self.tickets
             .iter()
             .filter_map(move |ticket| match &ticket.state {
                 State::Pending(pending) => Some(match pending.step {
-                    Step::Offer => (ticket.reply, MailCondition::Empty),
-                    Step::Request => (pending.link.rx(), MailCondition::Pull),
-                    Step::Handoff { .. } => (address.1, MailCondition::Empty),
+                    Step::Offer => (ticket.reply, HoleCondition::Empty),
+                    Step::Request => (pending.link.rx(), HoleCondition::Pull),
+                    Step::Handoff { .. } => (address.1, HoleCondition::Empty),
                 }),
                 _ => None,
             })
@@ -158,7 +158,7 @@ impl Pending {
             self.link.seed().store(&mut bytes[TaskId::WIDTH..]);
             match Hole::from_raw(reply).push(&bytes, Wait::POLL) {
                 Ok(()) => self.step = Step::Request,
-                Err(error) if error.source == MailFail::Busy => return State::Pending(self),
+                Err(error) if error.source == HoleFail::Busy => return State::Pending(self),
                 Err(_) => return self.reject(host),
             }
         }
@@ -176,7 +176,7 @@ impl Pending {
                         delivered: None,
                     };
                 }
-                Err(error) if error.source == MailFail::Busy => return State::Pending(self),
+                Err(error) if error.source == HoleFail::Busy => return State::Pending(self),
                 _ => return self.reject(host),
             }
         }
@@ -198,7 +198,7 @@ impl Pending {
                         _transport: self.link,
                     };
                 }
-                Err(SendFail::Mail(MailFail::Busy)) => return State::Pending(self),
+                Err(SendFail::Mail(HoleFail::Busy)) => return State::Pending(self),
                 Err(_) => return self.reject(host),
             }
         }

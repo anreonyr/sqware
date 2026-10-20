@@ -13,7 +13,7 @@ use ::resource::{
 use ::schedule::{Dispatch, Invocation, Progress, Res, ResMut};
 use alloc::{collections::VecDeque, sync::Arc};
 use env::pie;
-use env::{MailCondition, PieToken, TaskId, Wait};
+use env::{HoleCondition, PieToken, TaskId, ToleEventSource, Wait};
 use programs::debug;
 use system_api::operator as ocall;
 use system_client::identity::TaskQuery;
@@ -41,7 +41,8 @@ pub(super) fn tip(
     mut tip: ResMut<Tip>,
     pile: Res<Pile>,
 ) -> Result<Progress, Fail> {
-    tip.0 = pie::unseal(env::UnsealArgs::hole(ocall::TIP_MARK)).map_err(|_| Fail::Tree)?;
+    tip.0 = env::hole::unseal(ocall::TIP_MARK, env::HoleLimits::default())
+        .map_err(|_| Fail::Tree)?;
     let hole = Hole::from_raw(tip.0);
     port::ship(
         hole.token(),
@@ -50,9 +51,9 @@ pub(super) fn tip(
         Policy::VEST,
     )
     .map_err(|_| Fail::Tree)?;
-    pile.attach(env::Source::Mail {
-        pie: hole.token(),
-        condition: MailCondition::Pull,
+    pile.attach(ToleEventSource::Hole {
+        token: hole.token(),
+        condition: HoleCondition::Pull,
     })
     .map_err(|_| Fail::Desk)?;
     Ok(Progress::Done)
@@ -159,9 +160,9 @@ pub(super) fn guest(
         }
     }
     if pile
-        .attach(env::Source::Mail {
-            pie: *ask,
-            condition: MailCondition::Pull,
+        .attach(ToleEventSource::Hole {
+            token: *ask,
+            condition: HoleCondition::Pull,
         })
         .is_err()
     {
@@ -175,9 +176,9 @@ pub(super) fn guest(
     {
         debug::put("operator: guest acknowledgement failed");
         desk.evict(*who, (*reply, *ask));
-        let _ = pile.detach(env::Source::Mail {
-            pie: *ask,
-            condition: MailCondition::Pull,
+        let _ = pile.detach(ToleEventSource::Hole {
+            token: *ask,
+            condition: HoleCondition::Pull,
         });
     }
     Ok(Progress::Done)
@@ -198,7 +199,7 @@ pub(super) fn root(
             let existing = tree.root_entrance();
             let entrance = match existing {
                 Some(token) => token,
-                None => pie::unseal(env::UnsealArgs::hole(ocall::entry::AUTH_ENTRY))
+                None => env::hole::unseal(ocall::entry::AUTH_ENTRY, env::HoleLimits::default())
                     .map_err(|_| Fail::Tree)?,
             };
             let hole = Hole::from_raw(entrance);
@@ -206,7 +207,7 @@ pub(super) fn root(
                 Ok(remote) => remote.seed(),
                 Err(_) => {
                     if existing.is_none() {
-                        let _ = pie::seal(entrance);
+                        let _ = env::hole::seal(entrance);
                         let _ = pie::release(entrance, env::ReleaseMode::Revoke);
                     }
                     return Ok(Progress::Done);
@@ -214,18 +215,18 @@ pub(super) fn root(
             };
             if existing.is_none()
                 && (pile
-                    .attach(env::Source::Mail {
-                        pie: entrance,
-                        condition: MailCondition::Pull,
+                    .attach(ToleEventSource::Hole {
+                        token: entrance,
+                        condition: HoleCondition::Pull,
                     })
                     .is_err()
                     || tree.bootstrap_root(from, entrance).is_err())
             {
-                let _ = pile.detach(env::Source::Mail {
-                    pie: entrance,
-                    condition: MailCondition::Pull,
+                let _ = pile.detach(ToleEventSource::Hole {
+                    token: entrance,
+                    condition: HoleCondition::Pull,
                 });
-                let _ = pie::seal(entrance);
+                let _ = env::hole::seal(entrance);
                 let _ = pie::release(entrance, env::ReleaseMode::Revoke);
                 return Ok(Progress::Done);
             }
@@ -256,11 +257,11 @@ pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progres
     Ok(Progress::Done)
 }
 pub(super) fn close(tip: Res<Tip>, pile: Res<Pile>) -> Result<Progress, Fail> {
-    let _ = pile.detach(env::Source::Mail {
-        pie: tip.0,
-        condition: MailCondition::Pull,
+    let _ = pile.detach(ToleEventSource::Hole {
+        token: tip.0,
+        condition: HoleCondition::Pull,
     });
-    let _ = pie::seal(tip.0);
+    let _ = env::hole::seal(tip.0);
     let _ = pie::release(tip.0, env::ReleaseMode::Revoke);
     Ok(Progress::Done)
 }

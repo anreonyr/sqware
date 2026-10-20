@@ -14,7 +14,6 @@ use env::Placement;
 use env::ReleaseMode;
 use env::TaskId;
 use env::TeamId;
-use env::UnsealArgs;
 use env::ViewControl;
 use env::VirtAddr;
 use execution::memory::Reference;
@@ -52,10 +51,7 @@ impl Shared {
         let handle = reference
             .handle()
             .expect("memory-transfer-race: control handle");
-        let root = env::pie::unseal(UnsealArgs::Pole {
-            reference: handle,
-            shared: true,
-        })
+        let root = env::pole::unseal(handle, true)
         .unwrap_or_else(|error| panic!("race: control root: {:?}", error.source));
         Shared { view, root }
     }

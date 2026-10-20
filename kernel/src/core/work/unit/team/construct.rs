@@ -6,9 +6,10 @@ use env::{TaskId, TeamId};
 
 use crate::core::memory::nest::NestError;
 use crate::core::work::commit;
+use crate::core::work::unit::copies::Origin;
 use crate::core::work::unit::life::{Life, TeamLife};
 use crate::core::work::unit::space::Space;
-use crate::core::work::unit::task::TaskWeak;
+use crate::core::work::unit::task::{Task, TaskWeak};
 use crate::machine::sync::{Level, SpinLock};
 
 use super::stage::TeamStage;
@@ -32,11 +33,11 @@ pub(crate) fn next_id() -> Result<TeamId, NestError> {
 /// 家长位的深度与容量都在这里把关（失败时团队本身还没任何人看得到）。
 pub(crate) fn make_team(
     space: Arc<Space>,
-    sire: TaskWeak,
-    parent: Option<Arc<TeamLife>>,
-    owner: TaskId,
+    sire: Option<Arc<Task>>,
     constructing: bool,
 ) -> Result<Arc<Team>, NestError> {
+    let parent = sire.as_ref().map(|task| task.ident.team.life.clone());
+    let owner = sire.as_ref().map_or(TaskId::new(0), |task| task.ident.id);
     let id = next_id()?;
     let state = Arc::try_new(SpinLock::new_level(
         Level::UnitState,
@@ -62,7 +63,9 @@ pub(crate) fn make_team(
     let team = Arc::try_new(Team {
         space,
         id,
-        sire,
+        sire: sire.as_ref().map_or_else(TaskWeak::empty, |task| {
+            TaskWeak::stored(Arc::downgrade(task), Origin::Sire)
+        }),
         state,
         tasks: Tasks {
             members: tasks,
@@ -72,17 +75,23 @@ pub(crate) fn make_team(
         operation: SpinLock::new(()),
     })
     .map_err(|_| NestError::OutOfMemory)?;
-    if let Some(parent) = parent {
+    if let Some(sire) = sire {
+        let parent = &sire.ident.team.life;
         {
             let mut children = parent.children.lock();
             if children.len() >= MAX_CHILDREN {
                 return Err(NestError::OutOfMemory);
             }
-            children.try_reserve(1).map_err(|_| NestError::OutOfMemory)?;
+            children
+                .try_reserve(1)
+                .map_err(|_| NestError::OutOfMemory)?;
         }
+        sire.heir
+            .lock()
+            .try_reserve(1)
+            .map_err(|_| NestError::OutOfMemory)?;
         let _commit = commit();
-        let mut children = parent.children.lock();
-        if parent.closed() {
+        if sire.dead() || parent.closed() {
             return Err(NestError::NoRegion);
         }
         let mut depth = 1;
@@ -94,10 +103,16 @@ pub(crate) fn make_team(
         if depth >= MAX_DEPTH {
             return Err(NestError::NoRegion);
         }
+        let mut children = parent.children.lock();
+        let mut heirs = sire.heir.lock();
         if children.len() >= MAX_CHILDREN || children.len() == children.capacity() {
             return Err(NestError::OutOfMemory);
         }
+        if heirs.len() == heirs.capacity() {
+            return Err(NestError::OutOfMemory);
+        }
         children.push(life);
+        heirs.push(team.clone());
     }
     Ok(team)
 }

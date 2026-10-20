@@ -252,7 +252,7 @@ pub fn acceptance() {
 /// 子分支的号已经在**它**表里才作数（`accord` 已把它放进对端表里），这里递的
 /// 只是那两个号本身。
 fn hand_over(peer: TaskId, branches: [PieToken; 2]) {
-    let link = env::pie::unseal(env::UnsealArgs::hole(LINK_MARK)).expect("race: the link hole");
+    let link = env::hole::unseal(LINK_MARK, env::HoleLimits::default()).expect("race: the link hole");
     ::resource::port::ship(link, peer, Access::FETCH, Policy::NONE)
         .expect("race: hand the link hole over");
     let mut bytes = [0u8; 2 * PieToken::WIDTH];

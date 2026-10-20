@@ -72,7 +72,7 @@ fn availability_rechecks_delivery_without_clearing_cached_relations() {
     let snapshot = pend::locate(&owner, token).unwrap();
     let version = owner.pend.version.load(Ordering::Relaxed);
     assert!(snapshot.heir().is_some());
-    assert_eq!(pend::available(&snapshot), Err(env::MailFail::HandedOver));
+    assert_eq!(pend::available(&snapshot), Err(env::PieFail::HandedOver));
     assert_eq!(owner.pend.version.load(Ordering::Relaxed), version);
 
     assert_eq!(release(&recipient, child), Ok(1));
@@ -90,7 +90,7 @@ fn availability_observes_staging_without_a_second_authority_record() {
     let snapshot = pend::locate(&owner, token).unwrap();
     assert_eq!(pend::available(&snapshot), Ok(()));
     meta.stage_for(9);
-    assert_eq!(pend::available(&snapshot), Err(env::MailFail::HandedOver));
+    assert_eq!(pend::available(&snapshot), Err(env::PieFail::HandedOver));
     meta.stage_for(0);
     assert_eq!(pend::available(&snapshot), Ok(()));
 }
@@ -209,6 +209,34 @@ fn forget_handles_a_child_in_the_same_task() {
     assert_eq!(pend::locate(&task, grandchild).unwrap().sire(), Some(token));
     check(&task);
     assert_eq!(release(&task, token), Ok(2));
+}
+#[test]
+fn forget_releases_sealed_references_without_reviving_descendants() {
+    let owner = Task::new();
+    let holder = Task::new();
+    let recipient = Task::new();
+    let token = root(&owner, rights());
+    let middle = grant(&owner, token, &holder).unwrap();
+    let leaf = grant(&holder, middle, &recipient).unwrap();
+    let before = pend::locate(&recipient, leaf).unwrap();
+    pend::reduce(&owner, token, Permission::FETCH).unwrap();
+    assert_eq!(pend::forget(&holder, middle), Err(PieFail::Denied));
+
+    pend::locate(&owner, token).unwrap().mail().seal();
+    assert_eq!(pend::forget(&holder, middle), Ok(()));
+    assert!(pend::locate(&holder, middle).is_none());
+    let after = pend::locate(&recipient, leaf).unwrap();
+    assert_eq!(after.sire(), Some(token));
+    assert_eq!(after.permission(), before.permission());
+    assert!(Arc::ptr_eq(after.grant(), before.grant()));
+    assert!(
+        !after.alive(),
+        "releasing a dead reference must not restore authority"
+    );
+    for task in [&owner, &holder, &recipient] {
+        check(task);
+    }
+    assert_eq!(release(&owner, token), Ok(2));
 }
 #[test]
 fn revocation_restores_exclusive_parent_and_stale_clear_cannot_erase_new_heir() {
@@ -549,47 +577,46 @@ fn reparenting_to_an_unlocked_task_requires_recollection() {
 }
 
 #[test]
-fn capability_and_mail_calls_roundtrip_with_explicit_numbers() {
+fn capability_and_resource_calls_roundtrip_with_explicit_numbers() {
     use env::{
-        MailCall, MailCondition, Oversize, PieCall, ReleaseMode, TaskId, UnsealArgs,
+        HoleCall, HoleCondition, Oversize, PieCall, ReleaseMode, TaskId, ToleCall, ToleEventSource,
         VirtAddr, Wait,
     };
     let token = PieToken::mint(42);
     let buf = VirtAddr::new(4096);
-    let mail = [
-        MailCall::Push {
+    let hole = [
+        HoleCall::Unseal {
+            mark: Mark::new(u64::MAX),
+            limits: env::HoleLimits::default(),
+        },
+        HoleCall::Seal { token },
+        HoleCall::Push {
             token,
             msg: buf,
             len: 1,
         },
-        MailCall::Pull {
+        HoleCall::Pull {
             token,
             buf,
             max: 64,
             oversize: Oversize::Discard,
         },
-        MailCall::Wait {
+        HoleCall::Peek { token },
+        HoleCall::Wait {
             token,
-            condition: MailCondition::Empty,
+            condition: HoleCondition::Empty,
             millis: Wait::POLL,
         },
-        MailCall::Hush { token, bit: env::Bit::FIRST },
-        MailCall::Ring { token, bit: env::Bit::FIRST },
-        MailCall::Peek { token },
+        HoleCall::Ring { token },
+        HoleCall::Hush { token },
     ];
-    for (index, call) in mail.into_iter().enumerate() {
-        assert_eq!(call.slot(), (5usize << 32) | (32 + index));
+    for (index, call) in hole.into_iter().enumerate() {
+        assert_eq!(call.slot(), (5usize << 32) | index);
         assert!(
-            matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Mail(decoded)) if decoded == call)
+            matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Hole(decoded)) if decoded == call)
         );
     }
     let pie = [
-        PieCall::Unseal {
-            args: UnsealArgs::hole(Mark::new(u64::MAX)),
-        },
-        PieCall::Open { token },
-        PieCall::Shut { token },
-        PieCall::Seal { token },
         PieCall::Accord {
             src: token,
             dst: TaskId::new(2),
@@ -617,49 +644,90 @@ fn capability_and_mail_calls_roundtrip_with_explicit_numbers() {
         PieCall::Same { a: token, b: token },
     ];
     for (index, call) in pie.into_iter().enumerate() {
-        assert_eq!(call.slot(), (7usize << 32) | index);
+        assert_eq!(call.slot(), (7usize << 32) | (index + 4));
         assert!(
             matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Pie(decoded)) if decoded == call)
         );
     }
-    let source = env::Source::Mail { pie: token, condition: MailCondition::Pull };
-    for call in [MailCall::Attach { tole: token, source }, MailCall::Detach { tole: token, source }, MailCall::Await { tole: token, millis: Wait::POLL }] {
-        assert!(matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Mail(decoded)) if decoded == call));
+    let source = ToleEventSource::Hole {
+        token,
+        condition: HoleCondition::Pull,
+    };
+    for call in [
+        ToleCall::Attach {
+            tole: token,
+            source,
+        },
+        ToleCall::Detach {
+            tole: token,
+            source,
+        },
+        ToleCall::Await {
+            tole: token,
+            millis: Wait::POLL,
+        },
+    ] {
+        assert!(
+            matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Tole(decoded)) if decoded == call)
+        );
     }
-    for class in [5, 9] { for index in 0..6 { assert!(env::EnvCall::from_wire((class << 32) | index, &[0; 6]).is_err()); } }
-
+    for index in 32..=40 {
+        assert!(env::EnvCall::from_wire((5usize << 32) | index, &[0; 6]).is_err());
+    }
+    for index in 0..4 {
+        for registers in [[0; 6], [usize::MAX; 6]] {
+            assert_eq!(
+                env::EnvCall::from_wire((7usize << 32) | index, &registers),
+                Err(env::Decode::BadSlot)
+            );
+        }
+    }
+    for class in [3, 9, 13] {
+        for index in 0..6 {
+            assert!(env::EnvCall::from_wire((class << 32) | index, &[0; 6]).is_err());
+        }
+    }
+    for (class, index) in [(5, 8), (10, 7), (11, 5), (12, 5)] {
+        assert!(env::EnvCall::from_wire((class << 32) | index, &[0; 6]).is_err());
+    }
 }
 
 #[test]
 fn creation_and_conditions_reject_invalid_wire_values() {
     use env::{
-        Decode, HoleLimits, MailCall, MailCondition, Oversize, PieCall, ReleaseMode, UnsealArgs,
-        VirtAddr, Wait,
+        Decode, EnvCall, HoleCall, HoleCondition, HoleLimits, NoleCall, Oversize, PieCall,
+        PoleCall, PoleCondition, ReleaseMode, ToleCall, VirtAddr, Wait,
     };
-    for args in [
-        UnsealArgs::hole(Mark::new(u64::MAX)),
-        UnsealArgs::Pole {
+    for call in [
+        EnvCall::Hole(HoleCall::Unseal {
+            mark: Mark::new(u64::MAX),
+            limits: HoleLimits::default(),
+        }),
+        EnvCall::Pole(PoleCall::Unseal {
             reference: env::FlatReference::from_bytes(&7usize.to_le_bytes()).unwrap(),
             shared: false,
-        },
-        UnsealArgs::Nole,
-        UnsealArgs::Tole { shared: true },
+        }),
+        EnvCall::Nole(NoleCall::Unseal),
+        EnvCall::Tole(ToleCall::Unseal { shared: true }),
     ] {
-        let call = PieCall::Unseal { args };
-        assert_eq!(PieCall::from_wire(call.slot(), &call.pack()), Ok(call));
+        let (slot, registers) = match call {
+            EnvCall::Hole(call) => (call.slot(), call.pack()),
+            EnvCall::Pole(call) => (call.slot(), call.pack()),
+            EnvCall::Nole(call) => (call.slot(), call.pack()),
+            EnvCall::Tole(call) => (call.slot(), call.pack()),
+            _ => unreachable!(),
+        };
+        assert_eq!(EnvCall::from_wire(slot, &registers), Ok(call));
     }
-    for regs in [
-        [4, 0, 0, 0, 0, 0],
-        [1, 0x4000, 4096, 2, 0, 0],
-        [3, 1, 1, 0, 0, 0],
-        [0, 0, 0, 4, 64, 0],
-        [0, 0, 64, 0, 64, 0],
-        [0, 0, 65, 4, 64, 0],
+    for (slot, registers) in [
+        (5usize << 32, [0, 0, 4, 64, 0, 0]),
+        (5usize << 32, [0, 64, 0, 64, 0, 0]),
+        (5usize << 32, [0, 65, 4, 64, 0, 0]),
+        (10usize << 32, [7, 2, 0, 0, 0, 0]),
+        (10usize << 32, [usize::MAX, 0, 0, 0, 0, 0]),
+        (12usize << 32, [2, 0, 0, 0, 0, 0]),
     ] {
-        assert_eq!(
-            PieCall::from_wire(7usize << 32, &regs),
-            Err(Decode::Invalid)
-        );
+        assert_eq!(EnvCall::from_wire(slot, &registers), Err(Decode::Invalid));
     }
     assert!(
         !HoleLimits {
@@ -670,18 +738,31 @@ fn creation_and_conditions_reject_invalid_wire_values() {
         .valid()
     );
     let token = PieToken::mint(42);
-    let call = MailCall::Wait {
+    let call = HoleCall::Wait {
         token,
-        condition: MailCondition::Push,
+        condition: HoleCondition::Push,
         millis: Wait::POLL,
     };
     let mut regs = call.pack();
-    regs[1] = usize::BITS as usize + 3;
+    regs[1] = 4;
     assert_eq!(
-        MailCall::from_wire(call.slot(), &regs),
+        HoleCall::from_wire(call.slot(), &regs),
         Err(Decode::Invalid)
     );
-    let call = MailCall::Pull {
+    let call = PoleCall::Wait {
+        token,
+        condition: PoleCondition::Signal(env::Bit::FIRST),
+        millis: Wait::POLL,
+    };
+    let mut regs = call.pack();
+    for invalid in [0, 1, 2, 3 + usize::BITS as usize, usize::MAX] {
+        regs[1] = invalid;
+        assert_eq!(
+            PoleCall::from_wire(call.slot(), &regs),
+            Err(Decode::Invalid)
+        );
+    }
+    let call = HoleCall::Pull {
         token,
         buf: VirtAddr::new(4096),
         max: 8,
@@ -690,7 +771,7 @@ fn creation_and_conditions_reject_invalid_wire_values() {
     let mut regs = call.pack();
     regs[3] = 2;
     assert_eq!(
-        MailCall::from_wire(call.slot(), &regs),
+        HoleCall::from_wire(call.slot(), &regs),
         Err(Decode::Invalid)
     );
     let call = PieCall::Release {
@@ -842,4 +923,159 @@ fn box_allocation_failure_does_not_publish_an_exclusive_grant() {
     assert_eq!(b.pend.version.load(Ordering::Relaxed), before_b);
     check(&a);
     check(&b);
+}
+
+/// 在任务表里落一枚无父的本地根，返它的号。
+fn lone(task: &Arc<Task>, meta: Mail) -> PieToken {
+    let entry = pie(meta, rights());
+    let token = entry.token();
+    pend::insert(task, entry).unwrap();
+    token
+}
+
+/// 让下一次分配当场返回 null（且只失败这一次），跑一次 `pend::release`，
+/// 再把失败钩回来：它仍是 `Some(0)` 就等于这一次释放一次也没分配。
+fn release_without_allocating(task: &Arc<Task>, token: PieToken) -> Result<usize, PieFail> {
+    FAIL.with(|count| count.set(Some(0)));
+    let result = pend::release(task, token);
+    let unspent = FAIL.with(|count| count.replace(None));
+    assert_eq!(unspent, Some(0), "release allocated");
+    result
+}
+
+#[test]
+fn lone_roots_release_without_any_capacity() {
+    use crate::core::work::mail::{HoleMeta, NoleMeta, PoleMeta};
+    let task = Task::new();
+    for meta in [
+        Mail::Nole(NoleMeta::new(task.ident.id)),
+        Mail::Hole(HoleMeta::new(task.ident.id)),
+        Mail::Pole(PoleMeta::new(task.ident.id)),
+    ] {
+        let token = lone(&task, meta);
+        assert_eq!(release_without_allocating(&task, token), Ok(1));
+        assert!(pend::locate(&task, token).is_none());
+        assert!(task.pend.pies.lock().is_empty());
+        assert!(task.pend.heirs.lock().is_empty());
+    }
+}
+
+#[test]
+fn a_root_with_a_child_still_builds_the_node_table() {
+    let a = Task::new();
+    let b = Task::new();
+    let token = root(&a, rights());
+    let child = grant(&a, token, &b).unwrap();
+    FAIL.with(|count| count.set(Some(0)));
+    let result = pend::release(&a, token);
+    let spent = FAIL.with(|count| count.replace(None));
+    assert_eq!(spent, None, "a root with a child still reserves its nodes");
+    assert_eq!(result, Err(PieFail::OoM));
+    assert!(pend::locate(&a, token).is_some());
+    assert!(pend::locate(&b, child).is_some());
+    check(&a);
+    check(&b);
+}
+
+#[test]
+fn a_child_still_builds_the_node_table() {
+    let a = Task::new();
+    let b = Task::new();
+    let token = root(&a, rights());
+    let child = grant(&a, token, &b).unwrap();
+    FAIL.with(|count| count.set(Some(0)));
+    let result = pend::release(&b, child);
+    let spent = FAIL.with(|count| count.replace(None));
+    assert_eq!(spent, None, "a child still reserves its nodes");
+    assert_eq!(result, Err(PieFail::OoM));
+    assert!(pend::locate(&b, child).is_some());
+    assert!(pend::locate(&a, token).is_some());
+    check(&a);
+    check(&b);
+}
+
+#[test]
+fn a_pole_with_a_recorded_map_still_builds_the_node_table() {
+    use crate::core::work::mail::PoleMeta;
+    let task = Task::new();
+    let meta = PoleMeta::new(task.ident.id);
+    let token = lone(&task, Mail::Pole(meta.clone()));
+    meta.note_map();
+    FAIL.with(|count| count.set(Some(0)));
+    let result = pend::release(&task, token);
+    let spent = FAIL.with(|count| count.replace(None));
+    assert_eq!(spent, None, "a mapped Pole still reserves its nodes");
+    assert_eq!(result, Err(PieFail::OoM));
+    assert!(pend::locate(&task, token).is_some());
+    assert_eq!(release(&task, token), Ok(1));
+    assert!(task.pend.pies.lock().is_empty());
+}
+
+#[test]
+fn a_pole_operation_lease_or_a_reservation_keeps_a_lone_root_busy() {
+    use crate::core::work::mail::PoleMeta;
+    use crate::core::work::mail::pole::PoleOperation;
+    let task = Task::new();
+    let meta = PoleMeta::new(task.ident.id);
+    let token = lone(&task, Mail::Pole(meta.clone()));
+    let lease = PoleOperation::acquire(&meta).unwrap();
+    assert_eq!(pend::release(&task, token), Err(PieFail::Busy));
+    assert!(pend::locate(&task, token).is_some());
+    drop(lease);
+    meta.stage_for(7);
+    assert_eq!(pend::release(&task, token), Err(PieFail::Busy));
+    assert!(pend::locate(&task, token).is_some());
+    meta.stage_for(0);
+    assert_eq!(pend::release(&task, token), Ok(1));
+    assert!(task.pend.pies.lock().is_empty());
+}
+
+#[test]
+fn an_in_flight_publication_keeps_a_lone_pole_root_busy() {
+    use crate::core::memory::nest::Access;
+    use crate::core::work::mail::PoleMeta;
+    use crate::memory::address::PageCount;
+    use crate::memory::flat::FlatRange;
+    use crate::pend::SourceAuthorization;
+    let task = Task::new();
+    let meta = PoleMeta::new(task.ident.id);
+    let source = SourceAuthorization::new(
+        FlatRange::new(PageCount::new(1).unwrap()),
+        Access::READ,
+        task.ident.id,
+    )
+    .unwrap();
+    meta.attach_source(&source);
+    let token = lone(&task, Mail::Pole(meta.clone()));
+    source.enter_publish(3, None, Access::READ).unwrap();
+    assert_eq!(pend::release(&task, token), Err(PieFail::Busy));
+    assert!(pend::locate(&task, token).is_some());
+    source.leave_publish(3);
+    assert_eq!(pend::release(&task, token), Ok(1));
+    assert!(task.pend.pies.lock().is_empty());
+}
+
+#[test]
+fn a_lone_root_retries_transient_contention_without_allocating() {
+    use crate::core::work::mail::PoleMeta;
+    let task = Task::new();
+    let meta = PoleMeta::new(task.ident.id);
+    let token = lone(&task, Mail::Pole(meta.clone()));
+    meta.control.busy_for(1);
+    assert_eq!(release_without_allocating(&task, token), Ok(1));
+    assert!(pend::locate(&task, token).is_none());
+}
+
+#[test]
+fn a_lone_root_preserves_the_bounded_contention_budget() {
+    use crate::core::work::mail::PoleMeta;
+    let task = Task::new();
+    let meta = PoleMeta::new(task.ident.id);
+    let token = lone(&task, Mail::Pole(meta.clone()));
+    meta.control.busy_for(crate::pend::RETRIES + 1);
+    assert_eq!(release_without_allocating(&task, token), Err(PieFail::Busy));
+    assert_eq!(meta.control.busy_remaining(), 1);
+    assert!(pend::locate(&task, token).is_some());
+    meta.control.busy_for(0);
+    assert_eq!(release_without_allocating(&task, token), Ok(1));
 }

@@ -1,7 +1,7 @@
 //! Kernel baseline for capability marks: they label references but do not add authority.
 
 use ::resource::raw::{Hole, reserve, table_size};
-use env::{MailFail, Mark, Permission, Wait, pie, unit};
+use env::{HoleFail, Mark, Permission, Wait, pie, unit};
 
 const SOURCE: Mark = Mark::of("mark-baseline-source");
 const DUPLICATE: Mark = Mark::of("mark-baseline-duplicate");
@@ -15,7 +15,7 @@ pub fn acceptance() {
     let owner = unit::self_id();
     let before = table_size();
 
-    let source = pie::unseal(env::UnsealArgs::hole(SOURCE)).unwrap();
+    let source = env::hole::unseal(SOURCE, env::HoleLimits::default()).unwrap();
     pie::narrow(source, Permission::FETCH | Permission::VEST).unwrap();
     assert_eq!(
         reserve(source).unwrap(),
@@ -33,7 +33,7 @@ pub fn acceptance() {
     assert_eq!(reserve(relabeled).unwrap(), (owner, owner, grant_mark));
     assert!(matches!(
         Hole::from_raw(relabeled).push(b"store denied", Wait::POLL),
-        Err(error) if error.source == MailFail::Denied
+        Err(error) if error.source == HoleFail::Denied
     ));
     assert!(matches!(
         pie::accord(source, owner, Permission::FETCH | Permission::STORE, grant_mark),
@@ -47,8 +47,8 @@ pub fn acceptance() {
     let inherited = pie::accord(source, owner, Permission::FETCH, Mark::NONE).unwrap();
     assert_eq!(reserve(inherited).unwrap(), (owner, owner, SOURCE));
 
-    let first = pie::unseal(env::UnsealArgs::hole(DUPLICATE)).unwrap();
-    let second = pie::unseal(env::UnsealArgs::hole(DUPLICATE)).unwrap();
+    let first = env::hole::unseal(DUPLICATE, env::HoleLimits::default()).unwrap();
+    let second = env::hole::unseal(DUPLICATE, env::HoleLimits::default()).unwrap();
     assert_ne!(first, second);
     assert_eq!(
         reserve(first).unwrap(),
@@ -70,7 +70,7 @@ pub fn acceptance() {
     pie::release(second, env::ReleaseMode::Revoke).unwrap();
     assert_eq!(ipc::session::establish::find(owner, DUPLICATE), Ok(first));
 
-    let unmarked = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
+    let unmarked = env::hole::unseal(Mark::NONE, env::HoleLimits::default()).unwrap();
     assert_eq!(
         reserve(unmarked).unwrap(),
         (env::TaskId::new(0), owner, Mark::NONE)
@@ -90,7 +90,7 @@ pub fn acceptance() {
     pie::revoke(owner, relabeled).unwrap();
     pie::revoke(owner, inherited).unwrap();
     for token in [first, unmarked, source] {
-        pie::seal(token).unwrap();
+        env::hole::seal(token).unwrap();
         pie::release(token, env::ReleaseMode::Revoke).unwrap();
         assert!(reserve(token).is_err());
     }

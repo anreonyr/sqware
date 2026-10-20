@@ -1,5 +1,6 @@
 mod await_wait;
 mod cell;
+pub(crate) mod codec;
 mod watch;
 
 use super::Liveness;
@@ -9,7 +10,7 @@ use crate::machine::sync::{Level, SpinLock};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use env::{AwaitReply, MailFail, Source, TaskId};
+use env::{TaskId, ToleAwaitReply, ToleEventSource, ToleFail};
 
 pub(crate) use await_wait::AwaitWait;
 pub(crate) use cell::Cell;
@@ -62,13 +63,13 @@ impl ToleMeta {
     pub(crate) fn cells_len(&self) -> usize {
         self.cells.lock().len()
     }
-    pub(crate) fn poll(&self, task: &Arc<Task>) -> Result<AwaitReply, MailFail> {
+    pub(crate) fn poll(&self, task: &Arc<Task>) -> Result<ToleAwaitReply, ToleFail> {
         if !self.alive() {
-            return Err(MailFail::Dead);
+            return Err(ToleFail::Dead);
         }
         let count = self.cells.lock().len();
         if count == 0 {
-            return Ok(AwaitReply::Pending);
+            return Ok(ToleAwaitReply::Pending);
         }
         let start = self.cursor.load(Ordering::Relaxed) % count;
         let mut own = false;
@@ -83,23 +84,23 @@ impl ToleMeta {
             let status = cell.poll(task);
             if let Some(fail) = status {
                 self.cursor.store((at + 1) % count, Ordering::Relaxed);
-                return Ok(AwaitReply::Source {
+                return Ok(ToleAwaitReply::Source {
                     source: cell.watch.source(),
                     fail,
                 });
             }
         }
         if own {
-            Ok(AwaitReply::Pending)
+            Ok(ToleAwaitReply::Pending)
         } else {
-            Err(MailFail::Denied)
+            Err(ToleFail::Denied)
         }
     }
 }
-pub(crate) fn attach(meta: &ToleMeta, cell: Cell) -> Result<(), MailFail> {
+pub(crate) fn attach(meta: &ToleMeta, cell: Cell) -> Result<(), ToleFail> {
     let _commit = crate::core::work::commit();
     if !meta.alive() {
-        return Err(MailFail::Dead);
+        return Err(ToleFail::Dead);
     }
     let mut shared = [false; 4];
     {
@@ -111,9 +112,9 @@ pub(crate) fn attach(meta: &ToleMeta, cell: Cell) -> Result<(), MailFail> {
             return Ok(());
         }
         if cells.len() >= MAX {
-            return Err(MailFail::OoM);
+            return Err(ToleFail::OoM);
         }
-        cells.try_reserve(1).map_err(|_| MailFail::OoM)?;
+        cells.try_reserve(1).map_err(|_| ToleFail::OoM)?;
         for (at, (key, _)) in cell.keys.iter().enumerate() {
             shared[at] = cells.iter().any(|old| old.covers(*key));
         }
@@ -125,23 +126,35 @@ pub(crate) fn attach(meta: &ToleMeta, cell: Cell) -> Result<(), MailFail> {
                     messenger::unforward(*key, meta.id);
                 }
             }
-            return Err(MailFail::OoM);
+            return Err(ToleFail::OoM);
         }
     }
     meta.cells.lock().push(cell);
     messenger::knock(key(meta), &meta.life());
     Ok(())
 }
-pub(crate) fn detach(meta: &ToleMeta, actor: TaskId, source: Source) -> Result<(), MailFail> {
+pub(crate) fn detach(
+    meta: &ToleMeta,
+    actor: TaskId,
+    source: ToleEventSource,
+) -> Result<(), ToleFail> {
+    detach_where(meta, actor, |known| known == source)
+}
+
+fn detach_where(
+    meta: &ToleMeta,
+    actor: TaskId,
+    matches: impl Fn(ToleEventSource) -> bool,
+) -> Result<(), ToleFail> {
     let _commit = crate::core::work::commit();
     if !meta.alive() {
-        return Err(MailFail::Dead);
+        return Err(ToleFail::Dead);
     }
     let cell = {
         let mut cells = meta.cells.lock();
         cells
             .iter()
-            .position(|c| c.watches(actor, source))
+            .position(|c| c.actor == actor && matches(c.watch.source()))
             .map(|at| cells.remove(at))
     };
     if let Some(cell) = cell {
