@@ -611,8 +611,7 @@ fn source_fail(error: env::PieFail) -> MemoryFail {
     }
 }
 
-/// 独立保留授权：只认内核铸的那类真对象（持有者自己的、活的 Pie）。
-/// 普通自造 Nole、`Mark`、只有 FETCH/STORE/VEST 都不算。
+/// 核验调用者表内活的 VEST 授权及内核铸造的保留对象身份。
 fn require_retention(task: &Arc<Task>, token: PieToken) -> Result<(), MemoryFail> {
     let pie = crate::core::work::pend::locate(task, token).ok_or(MemoryFail::Denied)?;
     if !pie.alive() || !pie.permission().contains(Permission::VEST) {
@@ -621,7 +620,7 @@ fn require_retention(task: &Arc<Task>, token: PieToken) -> Result<(), MemoryFail
     let Mail::Nole(meta) = pie.mail() else {
         return Err(MemoryFail::Denied);
     };
-    if !meta.retains() || meta.owner() != task.ident.id {
+    if !meta.retains() {
         return Err(MemoryFail::Denied);
     }
     Ok(())

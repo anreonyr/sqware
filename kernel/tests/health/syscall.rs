@@ -28,7 +28,7 @@ use crate::machine::sync::SpinLock;
 
 #[path = "retention/mod.rs"]
 mod external_retention;
-pub use external_retention::accept as external_retention;
+pub use external_retention::{accept as external_retention, delegated as retention_delegation};
 
 struct Caller {
     team: Arc<Team>,
@@ -1019,8 +1019,7 @@ pub fn traverse_pages() {
         "the answers are those very frames, not a fresh set"
     );
 
-    // 别的一枚 cap（属主是别人）不能替它开门。
-    let foreign = {
+    let delegated = {
         let pie = pend::Pie::try_new(
             Mail::Nole(NoleMeta::mint_retention(env::TaskId::new(0x1234)).expect("cap")),
             Mark::NONE,
@@ -1034,13 +1033,23 @@ pub fn traverse_pages() {
     };
     assert_eq!(
         user.call(EnvCall::Memory(MemoryCall::Traverse {
-            retention: foreign,
+            retention: delegated,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        0,
+        "a kernel-minted cap held in this task's own account authorizes"
+    );
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: PieToken::mint(0xdead_beef),
             range: VirtAddr::new(scratch),
             out: VirtAddr::new(scratch + 64),
         })),
         MemoryFail::Denied.code(),
-        "the cap must be the calling task's own"
+        "a token this task does not hold authorizes nothing"
     );
+    assert_eq!(pend::release(&user.task, delegated).unwrap(), 1);
 
     // 输出跑到末尾未映射的那一页：整段先验后拷，前缀哨兵不动。
     let edge = scratch + PAGE_SIZE - 4;
@@ -3194,7 +3203,6 @@ pub fn resource_registration() {
         held > 0,
         "the trusted controller's own cap authorizes: {held}"
     );
-    // 同一枚 cap 转到别人手里也不授权：保留只认铸给谁的那一个 owner。
     let shared = PieToken::mint(
         pend::accord(
             &system.task,
@@ -3209,15 +3217,30 @@ pub fn resource_registration() {
     let service_source = acquire(&service, allocation(), env::PieToken::NONE);
     assert!(service_source > 0);
     let window = env::ReferenceRange::new(reference(service_source as usize), 0, 1).unwrap();
+    let delegated = acquire(&service, env::AcquireSource::Reference(window), shared);
+    assert!(
+        delegated > 0,
+        "the delegated child authorizes its holder: {delegated}"
+    );
+    assert_eq!(
+        acquire(&service, env::AcquireSource::Reference(window), cap.token()),
+        env::MemoryFail::Denied.code(),
+        "the parent cap is not in this account"
+    );
+    assert_eq!(
+        pend::revoke(&system.task, &Arc::downgrade(&service.task), shared).unwrap(),
+        1
+    );
     assert_eq!(
         acquire(&service, env::AcquireSource::Reference(window), shared),
         env::MemoryFail::Denied.code(),
-        "a handed-on retention cap is not the holder's own"
+        "a revoked child authorizes no new retention"
     );
     for (caller, handle) in [
         (&system, source),
         (&system, held),
         (&service, service_source),
+        (&service, delegated),
     ] {
         assert_eq!(
             caller.call(EnvCall::Memory(MemoryCall::Release {

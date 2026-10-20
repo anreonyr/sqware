@@ -871,9 +871,11 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
   于是没有“第一个来问的就给它”这条路；`retention::ENTRIES = 1` 明写进账本尺寸。
   任务号在 `hold()` 后才存在，因此这一项在普通 `Frozen::grant` 后铸造；
   `ledger::write` 对全部账目统一检查 `Entry::valid()`。
-- `require_retention` 的判据不变：内核铸的 `retains()` 对象 + 活的 Pie + `VEST` +
+- PR6 当时 `require_retention` 的判据：内核铸的 `retains()` 对象 + 活的 Pie + `VEST` +
   **owner 就是调用者**。普通自造 Nole、`Mark`、任务数字、只有 `FETCH/STORE/VEST`
   都造不出授权；同一枚 cap 转给别人之后，别人也过不了 owner 那一关。
+  这是历史检查点；当前已批准的委托合同改为核调用者表内活 Pie、VEST 与内核铸保留类，
+  不以历史 owner 限定唯一使用者。源范围/源权限、资源归属及 Seal 规则不随之放宽。
 
 ### System 侧（`programs/src/system/supply/retention/`）
 
@@ -952,8 +954,9 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
 ### 内核侧的反向与保留证据
 
 - `resource_registration_and_revocation`：
-  引导那一枚 cap 只对**铸给它的那张表**授权（`Acquire{Reference, retention=cap}` 成功），
-  同一枚 cap `accord` 给别人之后别人 `Denied`；本用例取过的每一份引用逐格结清。
+  PR6 验证引导 cap 仅对铸给它的表授权，同一枚 cap `accord` 给别人之后别人 `Denied`；
+  本用例取过的每一份引用逐格结清。该委托拒绝预期由当前获批合同替代：
+  合法子授权应成功，非本表 token、伪造对象、缺 VEST 及撤销仍拒绝新增保留。
 - `memory_branch_revocation_and_retention`：来源那一枚被摘掉之后，**独立保留仍持同一批帧**；
   对已经不在表里的来源再做一次 release 报 `Denied`（重复/迟到的通知不动保留）。
 - `memory_retention`：普通自造 Nole 不授权；内核铸的那一枚才授权，且保留自己强持范围。
@@ -967,8 +970,9 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
 - PR7 必须安装独立平台控制者，把真实数据/描述符/表/队列逐段登记后才发布。
   IOMMU Off + busy 的数据隔离与 CQ/FQ/PQ 各自 on/busy 的控制页停用分别确认；
   仅清 CPU PTE、仅屏蔽 IRQ、仅写 Offline、切 Bare 都不能满足 `Platform` 合同。
-- 保留 cap 是**按收件任务铸的**（owner 判据）：System 不能把它转授给第二位控制者当作
-  保留权用；这是合同要的“只给明确可信控制者”，不是当前实现的缺口。
+- PR6 原合同按收件任务的 owner 判据限制保留 cap，System 当时不能转授保留权；
+  当前已批准允许沿既有 Accord/Grant 链委托，仅实际持有合法活授权者可新取保留。
+  本节保留历史验收事实；本轮实现与运行结果记入 `system-next-refactor-plan.md`。
 - 多 hart 交错、真实撤销与在途发布的整机竞态仍不在本轮证据里。
 
 ### 同组独立审查与范围保留

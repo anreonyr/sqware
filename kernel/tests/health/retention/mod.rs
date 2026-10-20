@@ -1,6 +1,9 @@
 mod accessor;
+mod delegate;
 mod effects;
 mod platform;
+
+pub use delegate::accept as delegated;
 
 use super::super::retention_core::{DeviceRange, Failure, Holds, Registration, Scope};
 use super::{Caller, KVirt, PAGE_SIZE, pend};

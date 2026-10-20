@@ -486,6 +486,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn retention_authorization_delegates_via_accord() {
+        kernel::entry::check::syscall::retention_delegation();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn memory_preparation_failures() {
         kernel::entry::check::syscall::preparation_failures();
     }

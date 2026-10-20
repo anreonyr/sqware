@@ -2,6 +2,8 @@
 
 状态：此前检查点和验收范围保留在下文。当前派生生命周期增量已按本轮限定范围完成实现、自查、实跑及收尾记录：首次交付、Forget 与父关闭子图的七个新增内核回归通过；最终验收暴露的已封闭引用无法释放问题已修复，新增宿主回归有修前红、修后绿。五个场景和四 Hart race 均重新通过，宿主 46 项与 workspace dev/release、kernel tests 检查通过。健康集仍为 117 passed、1 个缺 initrd 哨兵失败，不称全部测试全绿。本增量没有独立复审，不沿用首检查点的 DeepSeek 批准。本检查点以本地分支 checkpoint/sub-pole-lifecycle 提交封存，后续修改另作提交；没有推送或合入共享分支。
 
+后续状态：保留授权沿既有 Accord/Grant 链委托的第一笔已实施、实跑并经新的 DeepSeek reviewer 独立静态复核，无阻塞项。健康集 118 passed、1 个缺 initrd 哨兵失败，宿主 46 项、三项构建检查、五场景与四 Hart race 通过。没有新增调用、确认凭据或全局持有根；恢复方的生产装配及 Driver 迁移仍未实施。
+
 ## 总体边界
 
 - UnitFile 是声明式装配配置，由各功能模块的纯配置组成；模块拥有自己的机制和状态，Assembly 组合操作，schedule 执行计划。
@@ -1115,6 +1117,80 @@ Nest 不认识设备，也不承接 DMA 恢复；CPU 失效完成不能替代硬
 原有 DMA 产品与探针场景的旧回归结果不是当前生命周期增量或 Driver 化完成证据。
 当前生命周期增量已完成限定范围的收尾；不自行追加设计、实现、Driver/DMA 或 ABI 收尾，
 也不擅自提交、推送或合入。
+
+### 后续检查点：保留授权委托与恢复方装配
+
+- 基线为 `7274c61b`，后续工作位于 `feature/external-retention`，不改写已封存提交。
+  用户要求真实用户态可用，不接受只有内核测试能调用的内部核心；这不意味着必须新增系统调用。
+- 用户随后明确：本轮不以恢复者也死亡为设计前提，不接受永久占用作为完成结果。
+  指定恢复者持续承担结清责任；使用方死亡后，恢复者完成停止、撤销及同步，再解除持有。
+  确认前保留只是等待结清，最终须证明帧、来源占用及持有记录净回收。
+- 复核既有代码后，主线程与 DeepSeek 撤回新增 Register/Confirm、逐义务凭据及全局持有根的方案；
+  它们未获批准，也未写生产或测试代码。普通 Acquire、IndependentHold、Release 语义保持。
+  恢复者可在自己的引用表中用现有 Acquire 的 retention 授权取得真实持有，
+  源任务死亡不清除恢复者的表；实际停止确认后用现有 Release 解除。
+- `kernel/tests/health/retention/effects.rs` 已走上述两个真实 MemoryCall；
+  `retention/mod.rs:60-120` 已验证源 Task/Pole/Pie 消失后七帧仍保留，
+  停止确认超时不释放、恢复后真实净回收。该测试不是最终 Driver 装配完成证据。
+- 当前真正缺口是生产授权及职责装配：引导只把保留授权交给 System，
+  改前 require_retention 要求授权对象 owner 等于调用者，阻止了既有 Accord 子授权的使用。
+  用户已批准第一笔小改动：保留授权可沿既有 Accord/Grant 链委托；
+  使用者须实际持有活 Pie、内核铸 retention Nole 及 VEST，历史 owner 不再等于唯一获权使用者。
+  Nole 归属及 Seal 规则、源范围/源权限检查、所有普通引用生命周期和 ABI 保持。
+- 第一笔仅实现上述授权规则与真实调用回归：合法委托可用，伪造/越权/缺权限/撤销仍拒绝新增保留；
+  已取得的持有不因授权撤销提前结束，恢复方完成安全确认后通过既有 Release 净回收。
+  不新增类型、调用或持有总管；主线程统一构建、实跑，并对实际增量独立复核后单独记录、提交。
+- 第二笔再确定实际恢复执行方及其授权交付点、迁移现有恢复流程，
+  不能用测试 System 夹具代替最终 Driver 架构，也不默认把设备恢复职责放入 System/Hub。
+- 本轮不新增恢复者自身故障的恢复框架、不改通用 Release/Forget 来冒充退出结清，
+  不以提前释放制造零泄漏，不删除窗口授权、不重编号 ABI、不把设备责任搬入 Nest。
+  第一笔委托已实施并验证；第二笔恢复方的实际装配方案仍待收敛、裁决和实施。
+
+#### 保留授权沿 Accord 委托（已验证并复核）
+
+- 唯一生产行为变化在 `require_retention`：调用者表内活 Pie、VEST、
+  内核铸 retention Nole 身份仍必须满足，不再把历史 owner 当唯一使用者。
+  Nole 归属及 Seal、源 FETCH/窗口/形态、普通 IndependentHold 和 Release 全部保持。
+- 新增 `retention_authorization_delegates_via_accord` 经真实 envcall dispatch 验证
+  跨任务 Accord 子授权及 Acquire，且 Nole owner 仍是原方；非本表父/子 token、
+  同 Mark 的自造 Nole、缺 VEST、实际 Narrow 掉 VEST、Revoke 及真实 Seal 均拒绝新增保留。
+  重叠保留合法，释放只撤自己一份；源和铸发方退出后已取得的持有不早释，
+  最后 Release 后来源占用归零、可再发表，七个已观测数据帧 Weak 全部失活。
+  初发根 cap 和源授权的准备复用引导及既有夹具；不冒称已运行独立恢复 Driver。
+- `traverse_pages` 与 `resource_registration` 两处旧 owner 拒绝断言按获批语义改为正证，
+  同时补非本表 token、父 token 和撤销后的负证，新增引用与测试 Pie 逐份释放。
+  不是删除伪造/越权断言或放宽源权限来制造通过。
+- 现场统一位于 `target/retention-delegation/`。在相应正证上回放旧 owner 谓词，
+  `owner-predicate-before/qtest.log` 为 115 passed、4 failed：
+  三个委托正证真实 Denied，加一个缺 initrd 哨兵。
+  恢复获批谓词后 `approved-predicate-health/qtest.log` 为 117 passed、2 failed；
+  多出的失败是新测试把既有不合法的 Narrow(empty) 当作成功，不是生产判据失败。
+- 只修测试为新授 FETCH|VEST 子授权后实际 Narrow 到 FETCH，不改内核 Narrow 规则。
+  Seal 负证改用独立活来源及尚在表内的子授权，先成功再真实 Seal 后拒绝，
+  不让已撤销 token 或已死来源掩盖目标判据。两处 `check_publish` 自检在提交段内，
+  精确核 Busy/Ok；追加 `seen.len()==7`，排除空集回收假证。
+- 最终 `health-final-count/qtest.log` 为 **118 passed、1 failed**，
+  唯一失败仍是缺 initrd 的 scene 哨兵，qtest 原始退出 101，不称全绿。
+  新例及两个更新后的旧例通过；全尾段真实 Seal、issuer doom 和七帧回收均已执行。
+- 主线程关闭增量编译、offline 运行 workspace dev/release 与 kernel tests 三项 cargo check，
+  全部通过。pend 宿主以 x86_64-unknown-linux-gnu、共用 `target/host-tests` 实跑 46 项通过，
+  日志 `host.log`；宿主集合不替代内核入口判据的 QEMU 验证。
+  release 六条既有未使用方法警告、宿主三条既有 race-scene cfg 警告保留。
+- 五场景 accept、product、system-fault、iommu-product、iommu-dma 各自通过，
+  现场 `scenes/<scene>/`。四 Hart race 使用 release debug assertions、
+  `--feed-script programs/tests/memory-transfer/race.py -- --features semihosting,race-scene -- scene`，
+  完整驱动退出 0、feed 结果 ok；现场 `race/` 共 158 events，
+  两阶段 armed、wait/wake 各 1，press 2→1、peer PTE 1→0、resumed=1，原断言保持。
+- 新 DeepSeek namer 核对唯一判据及职责命名，新 reviewer 独立静态复核实际增量无阻塞；
+  reviewer 不运行构建/QEMU，运行证据归主线程。已修两项测试构造、文档漏改及七帧计数自检，
+  新测试 scoped rustfmt 与 `git diff --check` 通过，不全树重排。
+  owner 退出的 seal_owned 与在途 Acquire 的真实跨 Hart 交错未定向注入验证，
+  退出封 Mail 未取提交段的形态本笔未改；不以 Transfer race 代替此项证明。
+  新例自证七个数据帧与来源占用的回收，不将其扩称整套堆、表页账的新增净零验证。
+- 六个变动源码/测试路径的内容清单为 `code.sha256`，含未跟踪新测试，
+  清单 SHA256 为 `c63b57142208377d69f00b56f6693771f402b7e3688a9a274ee7e44fdcf81ad1`。
+  本检查点在 `feature/external-retention` 本地提交封存，不推送或合入共享分支；
+  不把委托可用宣称为生产 Driver 装配已完成。
 
 ## Operator 通用条目与授权机制
 
