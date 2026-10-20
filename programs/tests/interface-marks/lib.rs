@@ -37,7 +37,12 @@ mod tests {
             .flat_map(|registry| registry.iter())
             .flat_map(|group| group.iter())
             .collect();
-        assert_eq!(actual.len(), 58);
+        assert_eq!(actual.len(), 59);
+        let dma: Vec<_> = actual.iter()
+            .filter(|definition| definition.name == "hub-entry-dma")
+            .collect();
+        assert_eq!(dma.len(), 1);
+        assert_eq!(dma[0].mark, env::Mark::of("hub-entry-dma"));
         let additions = actual.iter().filter(|definition| !crate::baseline::VALUES.iter().any(|(name, _)| *name == definition.name)).count();
         assert_eq!(actual.len() - additions + crate::baseline::RETIRED.len(), crate::baseline::VALUES.len());
         for &(name, value) in crate::baseline::VALUES {

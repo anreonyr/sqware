@@ -1,4 +1,4 @@
-use super::super::{CoalitionId, Grant, PrincipalId, Reply, Wire};
+use super::super::{CoalitionId, FoundId, Grant, PrincipalId, Reply, Wire};
 use super::{CallError, Face, unit};
 use env::{PieToken, TaskId, Wait};
 
@@ -31,8 +31,8 @@ impl Organization {
             expel: Face::discover(operator, authority, Grant::Expel, wait)?,
         })
     }
-    pub fn found(&self, wait: Wait) -> Result<CoalitionId, CallError> {
-        match self.found.call(Wire::Found, wait)? {
+    pub fn found(&self, id: FoundId, wait: Wait) -> Result<CoalitionId, CallError> {
+        match self.found.call(Wire::Found(id), wait)? {
             Reply::Coalition(c) => Ok(c),
             _ => Err(CallError::Malformed),
         }

@@ -148,34 +148,81 @@ test = false
 bench = false
 doctest = false
 
+# IOMMU 驱动那一张镜像（生产只此一张）：常驻服务，由装配表静态起；
+# 起手故障与平台暂不确认那些场景由 Harness 编排（见 `src/harness/device/`）。
 [[bin]]
-name = "prog-system-dma"
-path = "src/service/dma/main.rs"
+name = "prog-iommu"
+path = "src/driver/iommu/main.rs"
 test = false
 bench = false
-doctest = false
 
+# PCI 驱动与设备恢复方（β）：各一张镜像、各自独立 Task/Space。
 [[bin]]
-name = "prog-system-fault-dma"
-path = "src/system/fault_main.rs"
+name = "prog-pci"
+path = "src/driver/pci/main.rs"
 test = false
 bench = false
-doctest = false
 
 [[bin]]
-name = "prog-system-start-before-dma"
-path = "src/system/start_before_main.rs"
+name = "prog-recovery"
+path = "src/driver/recovery/main.rs"
 test = false
 bench = false
-doctest = false
+
+# 场景那两台（α 与控制器）：同一身子、不同镜像（景的差异是编译期常量）。
+[[bin]]
+name = "prog-device-work"
+path = "src/harness/device/work_main.rs"
+test = false
+bench = false
 
 [[bin]]
-name = "prog-system-start-after-dma"
-path = "src/system/start_after_main.rs"
+name = "prog-device-work-before"
+path = "src/harness/device/work_before_main.rs"
 test = false
 bench = false
-doctest = false
 
+[[bin]]
+name = "prog-device-work-after"
+path = "src/harness/device/work_after_main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "prog-device-ctl"
+path = "src/harness/device/control_main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "prog-device-ctl-fault"
+path = "src/harness/device/control_fault_main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "prog-device-ctl-before"
+path = "src/harness/device/control_before_main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "prog-device-ctl-after"
+path = "src/harness/device/control_after_main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "prog-iommu-ruin"
+path = "src/harness/probe/device_ruin/main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "prog-device-ctl-ruin"
+path = "src/harness/device/control_ruin_main.rs"
+test = false
+bench = false
 
 [[bin]]
 name = "prog-router"

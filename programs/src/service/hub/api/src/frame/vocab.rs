@@ -38,7 +38,8 @@ pub const DTB: &str = "dtb";
 /// boot 那一类底下那两格的名字：**门铃**（中断那枚空载荷信号）
 pub const SUPERVISOR_EXTERNAL: &str = "supervisor_external";
 
-/// 四格 ＋ 一格"读不懂"。**前四格对应四个不同的下一步**；Fail::Bad 是本端那一格
+/// 四格 ＋ 一格“读不懂”，再加 DMA 安全绑定那两面要的两格（同参幂等与容量）。
+/// **前四格对应四个不同的下一步**；Fail::Bad 是本端那一格
 #[derive(Clone, Copy, PartialEq, Eq, Debug, env::WireCodes)]
 pub enum Fail {
     /// 没这件 / 这一类不在册
@@ -55,4 +56,10 @@ pub enum Fail {
     Dead,
     #[code(5)]
     Bad,
+    /// 同编号异参（或旧编号复活）：不得用它推进任何新绑定
+    #[code(6)]
+    Conflict,
+    /// 册满 / 编号耗尽
+    #[code(7)]
+    Full,
 }

@@ -177,7 +177,10 @@ pub fn reclaim(
             _ => break,
         }
     }
-    if item.claimed && !unit::join_task(item.owner, Wait::POLL).unwrap_or(true) {
+    // A live delegated owner retains its subtree receipt, even before Loader Claim.
+    if (item.claimed || item.owner != unit::self_id())
+        && matches!(unit::join_task(item.owner, Wait::POLL), Ok(false))
+    {
         return Ok(Progress::Done);
     }
     match unit::oust(team) {

@@ -85,15 +85,17 @@ impl Control {
     }
 
     pub(in crate::system::control) fn resume(&mut self, name: &str) -> Result<(), Fail> {
-        let task = self.task(name).ok_or(Fail::Unknown)?;
-        if self
-            .table
-            .find(name)
-            .is_none_or(|r| r.state != State::Debarked)
-        {
+        let row = self.table.find(name).ok_or(Fail::Unknown)?;
+        if row.state != State::Debarked {
             return Err(Fail::NotReady);
         }
-        env::unit::embark_task(task).map_err(|_| Fail::NotReady)?;
+        let Slot::Live {
+            team: Some(team), ..
+        } = row.slot
+        else {
+            return Err(Fail::Unknown);
+        };
+        env::unit::embark_team(team).map_err(|_| Fail::NotReady)?;
         self.table.set_state(name, State::Ready);
         Ok(())
     }

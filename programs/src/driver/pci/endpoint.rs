@@ -13,8 +13,10 @@ impl Endpoint {
     /// 把 `ecam` 那一个功能的第 `index` 根内存 BAR 落进 `window`（窗口起址, 字节数）。
     ///
     /// 落位从窗口里按 BAR 的直径对齐取一段；放不下当场拒（不硬塞、不另找地方）。
-    /// 落位之后打开内存空间与 bus master：这是后端真能发起 DMA 的前提。
-    pub fn claim(ecam: &Ecam, index: u8, window: (u64, u64)) -> Result<Self, &'static str> {
+    /// 落位只打开**内存空间**：BAR 与寄存器面从此可达，但端点还**没有**发起 DMA 的授权
+    /// ——那是独立的一手（`Ecam::command_or(COMMAND_MASTER)`），归调用方在帧持有、
+    /// 恢复权与 IOMMU 约束都就绪之后再做。
+    pub fn place(ecam: &Ecam, index: u8, window: (u64, u64)) -> Result<Self, &'static str> {
         let (size, wide) = ecam.bar_size(index).ok_or("pci: endpoint bar")?;
         if !wide || size == 0 {
             return Err("pci: endpoint bar width");
@@ -27,7 +29,7 @@ impl Endpoint {
             return Err("pci: bar placement");
         }
         ecam.place_bar(index, address, wide);
-        ecam.command_or(ecam::COMMAND_MEMORY | ecam::COMMAND_MASTER);
+        ecam.command_or(ecam::COMMAND_MEMORY);
         Ok(Self {
             requester: ecam.requester(),
             address,

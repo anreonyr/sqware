@@ -1,4 +1,4 @@
-//! 从镜像清单选择单元，并按依赖关系排序。
+//! 从已选部署取启动单元，并按依赖关系排序。
 
 use alloc::vec::Vec;
 
@@ -8,10 +8,13 @@ use crate::boot::Catalog;
 use crate::system::control::unit::start::Error;
 use crate::unit::UnitFile;
 
-/// 只选择声明依赖且包含在镜像中的单元。
+/// 启动项必须在部署和镜像清单中同时存在。
 pub fn programs(catalog: &Catalog) -> Result<Vec<&'static UnitFile>, Error> {
-    let deployment = crate::unit::select_deployment(|image| catalog.find(image).is_some())
-        .map_err(|_| Error::Step("deployment entry missing or ambiguous"))?;
+    let deployment = crate::unit::select_deployment(catalog.deployment(), catalog.entry())
+        .map_err(|why| {
+            debug!("system: invalid deployment {}: {why:?}", catalog.deployment());
+            Error::Step("invalid deployment selection")
+        })?;
     let mut list: Vec<&'static UnitFile> = deployment
         .start
         .iter()

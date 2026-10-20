@@ -18,6 +18,10 @@ pub mod tick;
 /// 共享件住本目录顶层，由各 bin 各自 `use programs::harness::probe::count` 取一次。
 pub mod probe;
 
+/// 场景那一档（`device/`）：α（真实设备执行实例）与控制器（页的主人、编排者与验收方）。
+/// 固定扇区／哨兵／杀服务／反复敲门铃都在这一档，不进生产协议。
+pub mod device;
+
 /// 独立压测镜像共用的执行主体。
 pub mod bench;
 

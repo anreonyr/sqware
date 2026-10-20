@@ -66,6 +66,7 @@ pub fn start() -> Result<(), BootError> {
         return Err(BootError::MissingImage);
     }
 
+    crate::entry::report::shutdown::arm();
     if let Some(entry) = spawn_entry()? {
         crate::core::work::room::halt::beacon::arm(&entry);
     }

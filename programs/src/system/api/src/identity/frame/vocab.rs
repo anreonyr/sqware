@@ -2,6 +2,7 @@ use super::super::limits::{MAX_ACTIVE_COALITIONS, MAX_PAGE_ITEMS};
 use env::TaskId;
 use env::wire::Span;
 
+pub use super::super::found_id::FoundId;
 pub use wire::OK;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, env::WireCodes)]
@@ -42,7 +43,7 @@ pub enum Wire {
     Waive,
     Restrict(Subject),
     Derive(PrincipalId),
-    Found,
+    Found(FoundId),
     Admit(CoalitionId, PrincipalId),
     Expel(CoalitionId, PrincipalId),
     Bind(TaskId, Install),
@@ -58,6 +59,7 @@ pub enum Wire {
 impl Wire {
     pub(super) fn validate(self) -> Option<()> {
         match self {
+            Self::Found(id) => (id.value != 0).then_some(()),
             Self::Heir(a, b) => (a.authority == b.authority).then_some(()),
             Self::Amid(p, c) | Self::Admit(c, p) | Self::Expel(c, p) => {
                 (p.authority == c.authority).then_some(())

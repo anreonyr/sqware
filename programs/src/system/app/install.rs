@@ -9,9 +9,10 @@ pub(crate) fn resources(
 ) -> Result<Resources<'static>, crate::system::app::InstallError> {
     super::config::validate().map_err(crate::system::app::InstallError::Configuration)?;
     let status = boot::status();
-    let deployment = crate::unit::select_deployment(|image| boot.catalog.find(image).is_some())
-        .map_err(|_| {
-            crate::system::app::InstallError::Configuration("deployment entry missing or ambiguous")
+    let deployment = crate::unit::select_deployment(boot.catalog.deployment(), boot.catalog.entry())
+        .map_err(|why| {
+            programs::debug!("system: invalid deployment {}: {why:?}", boot.catalog.deployment());
+            crate::system::app::InstallError::Configuration("invalid deployment selection")
         })?;
     let inputs = deployment
         .start
@@ -44,22 +45,6 @@ pub(crate) fn resources(
     )?;
     resources.insert(super::operator::Layout::default())?;
     resources.insert(super::operator::BootstrapReceipt::default())?;
-    // 端点服务那一台镜像：装配期就从清单里取好，运行期不再重查。
-    let service = crate::unit::PROGRAMS
-        .iter()
-        .copied()
-        .find(|program| program.name() == "system-dma");
-    let service_image = service.and_then(|program| {
-        boot.catalog
-            .find(program.loader.image)
-            .map(|entry| (entry.elf, program.loader.space))
-    });
-    resources.insert(crate::system::device::dma::Dma::new(
-        service_image.map(|(elf, _)| elf),
-        service_image.map(|(_, space)| space),
-        // 走哪一条路由**这一景自己的装配**给出（普通产品是 `Normal`）。
-        startup_path(deployment.name),
-    ))?;
     control::install(
         &mut resources,
         status.clone(),
@@ -80,11 +65,11 @@ pub(crate) fn resources(
         .insert(status)?
         .insert(boot::Faces::default())?
         .insert(boot.machine)?
-        .insert(policy::Flow {
+        .insert(policy::Settle::new(policy::Flow {
             settling: false,
             forced: false,
             done: false,
-        })?
+        }))?
         .insert(policy::Activity {
             owed: 0,
             quiet: env::chrono::clock(),
@@ -101,18 +86,4 @@ pub(crate) fn resources(
         })?
         .insert(life::Deadline(0))?;
     Ok(resources)
-}
-
-/// 这一景那张图上，产品 DMA 走哪一条路：景名就是装配的事实。
-///
-/// 三个 `iommu-product*` 景各有一张自己的入口镜像（`crates/image` 按入口认景），
-/// 故这里只认名字，不引入任何运行时开关。
-fn startup_path(deployment: &str) -> crate::system::device::path::Path {
-    use crate::system::device::path::Path;
-    match deployment {
-        "iommu-product-fault" => Path::Fault,
-        "iommu-product-start-before" => Path::StartupBeforePublish,
-        "iommu-product-start-after" => Path::StartupAfterPublish,
-        _ => Path::Normal,
-    }
 }

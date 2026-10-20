@@ -13,12 +13,19 @@ pub use wire::OK;
 
 pub mod bond;
 pub mod claim;
+pub mod dma;
 pub mod inventory;
 pub mod list;
 pub mod vocab;
 
 pub use self::bond::*;
 pub use self::claim::*;
+pub use self::dma::{
+    BindingId, BindingState, Close, CloseBinding, DeviceId, DmaClaim, DmaSaid, DmaWire,
+    Enroll, Failure, Inspect, Settle, DMA_BACK, DMA_CLAIM, DMA_CLOSE, DMA_ENROLL,
+    DMA_INSPECT, DMA_SETTLE, PARTY_CONTROL, PARTY_HUB, PARTY_IOMMU, PARTY_PCI, PARTY_RECOVERY,
+};
+pub use self::dma::Call as DmaCall;
 pub use self::inventory::*;
 pub use self::list::*;
 pub use self::vocab::*;

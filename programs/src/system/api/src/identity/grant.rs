@@ -25,7 +25,7 @@ impl Grant {
             Wire::Waive => Self::Waive,
             Wire::Restrict(_) => Self::Restrict,
             Wire::Derive(_) => Self::Derive,
-            Wire::Found => Self::Found,
+            Wire::Found(_) => Self::Found,
             Wire::Admit(..) => Self::Admit,
             Wire::Expel(..) => Self::Expel,
             Wire::Bind(..) => Self::Bind,

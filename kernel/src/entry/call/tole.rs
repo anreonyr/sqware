@@ -13,7 +13,8 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use env::{PieFail, PieKind, PieToken, ToleCall, ToleEventSource, ToleFail, Wait};
 
-pub(super) fn dispatch(frame: &mut TrapContext, call: ToleCall, _: Arc<TaskIdent>) -> Outcome {
+pub(super) fn dispatch(frame: &mut TrapContext, call: ToleCall, ident: Arc<TaskIdent>) -> Outcome {
+    drop(ident);
     match call {
         ToleCall::Unseal { shared } => answer(frame, create(shared)),
         ToleCall::Seal { token } => answer(
@@ -76,9 +77,9 @@ fn attach(
 
 fn await_group(frame: &mut TrapContext, token: PieToken, millis: Wait) -> Outcome {
     let result = with_group(token, Need::Fetch, |task, group| {
-        let wait = AwaitWait::new(group.clone(), token, task, millis);
-        messenger::mail_await(wait)
-    });
+        Ok(AwaitWait::new(group.clone(), token, task, millis))
+    })
+    .and_then(messenger::mail_await);
     match result {
         Ok(Handoff::Resume(reply)) => AwaitWait::write_result(frame, Ok(reply)),
         Ok(Handoff::Switch(pa)) => return Outcome::Switch(pa as *mut TrapContext),

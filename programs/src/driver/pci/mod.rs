@@ -1,9 +1,18 @@
-//! PCI 端点那一侧的**用户态机制**：ECAM 配置空间、一棵内存 BAR 的落位，
-//! 以及 virtio-pci 1.x 的能力表与队列。
+//! PCI 驱动那一台：**独立 Task/Space** 里的总线枚举、BAR 落位与 MASTER。
 //!
-//! 与 [`crate::driver::iommu`] 分开：这里是**端点设备**（`virtio-blk-pci`）的面，
-//! 那里是**翻译单元**（IOMMU）的面；把两边接起来的是具体的景/产品。
+//! 与 [`crate::driver::iommu`] 分开：这里是**端点设备**（`virtio-blk-pci`）在总线
+//! 那一侧的面，那里是**翻译单元**（IOMMU）的面；设备协议（virtio 寄存器）归设备
+//! 恢复方与执行实例，不在这里。
+//!
+//! - [`ecam`] / [`endpoint`]：配置空间、探尺与落位（只开内存空间）；
+//! - [`virtio`]：能力表四格与队列寄存器（设备那一侧用）；
+//! - [`api`] / [`bindings`] / [`core`] / [`serve`]：本台那一域的门、声明窗与核心。
 
+pub mod api;
+pub mod bindings;
+pub mod core;
 pub mod ecam;
 pub mod endpoint;
+pub mod placement;
+pub mod serve;
 pub mod virtio;

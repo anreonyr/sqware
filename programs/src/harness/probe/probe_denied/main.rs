@@ -59,7 +59,7 @@ fn main() -> Report<'static> {
         .derive(p, Wait::AtMost(MS))
         .expect("probe-denied: derive failed");
     let c = org
-        .found(Wait::AtMost(MS))
+        .found(system_api::identity::FoundId { value: 1 }, Wait::AtMost(MS))
         .expect("probe-denied: found failed");
     assert_eq!(query.amid(q, c, Wait::AtMost(MS)), Ok(false));
 

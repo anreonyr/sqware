@@ -10,10 +10,9 @@ pub(crate) mod scene;
 pub(crate) mod schedule;
 pub(crate) mod wait;
 pub use execute::run;
+pub(crate) use execute::supervise;
 
 mod config;
-pub(crate) mod device;
-pub(crate) mod retention;
 pub(crate) mod supplies;
 
 mod waiting;

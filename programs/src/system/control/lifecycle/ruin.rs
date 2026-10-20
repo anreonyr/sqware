@@ -10,10 +10,28 @@ use crate::system::{
 use ::schedule::{Progress, Res, ResMut};
 use env::Wait;
 
+pub(crate) fn drain(
+    active: Res<Active>,
+    mut settle: ResMut<crate::system::app::policy::Settle>,
+) -> Result<Progress, Fail> {
+    let job = active.0.as_ref().ok_or(Fail::Unknown)?;
+    if matches!(
+        job.key.request.name.as_str(),
+        "hub" | "pci" | "iommu" | "recovery"
+    ) {
+        if !settle.settled() {
+            settle.ask();
+        }
+        if !settle.settled() {
+            return Ok(Progress::Pending);
+        }
+    }
+    Ok(Progress::Done)
+}
+
 pub(crate) fn pre(
     mut active: ResMut<Active>,
     mut control: ResMut<Control>,
-    mut supplies: ResMut<crate::system::app::supplies::Supplies>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     control.input(&job.key.request.name)?.program;
@@ -33,7 +51,6 @@ pub(crate) fn pre(
         return Err(Fail::Unknown);
     };
     job.progress.execution.task = Some(task);
-    supplies.retention.offline(task);
     control
         .table
         .set_state(&job.key.request.name, State::Stopping);
@@ -100,22 +117,6 @@ pub fn release_supply(
     if let Some(task) = job.progress.execution.task {
         supplies.release_target(task).map_err(|_| Fail::NotReady)?;
     }
-    Ok(Progress::Done)
-}
-
-pub fn settle_retention(
-    active: Res<Active>,
-    mut supplies: ResMut<crate::system::app::supplies::Supplies>,
-) -> Result<Progress, Fail> {
-    let job = active.0.as_ref().ok_or(Fail::Unknown)?;
-    let Some(controller) = job.progress.execution.task else {
-        return Ok(Progress::Done);
-    };
-    supplies.retention.offline(controller);
-    supplies
-        .retention
-        .retry(&mut crate::system::app::retention::References);
-    crate::system::app::retention::report(&supplies);
     Ok(Progress::Done)
 }
 

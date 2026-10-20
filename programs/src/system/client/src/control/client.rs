@@ -178,8 +178,24 @@ pub struct Instance<'a> {
     task: TaskId,
 }
 impl Instance<'_> {
-    pub fn result(&self, wait: Wait) -> Result<Option<env::Reason>, Fail> {
+    pub fn inspect(&self, wait: Wait) -> Result<frame::Said, Fail> {
         let said = read(self.face.call(frame::Req::StateInstance(self.task), wait)?)?;
+        if said.task != self.task || State::of_code(said.a).is_none() {
+            return Err(Fail::Bad);
+        }
+        Ok(said)
+    }
+
+    pub fn team(&self, wait: Wait) -> Result<env::TeamId, Fail> {
+        let said = self.inspect(wait)?;
+        if said.team == env::TeamId::new(0) {
+            return Err(Fail::Bad);
+        }
+        Ok(said.team)
+    }
+
+    pub fn result(&self, wait: Wait) -> Result<Option<env::Reason>, Fail> {
+        let said = self.inspect(wait)?;
         Ok(said.completed.then_some(said.reason as usize))
     }
 
@@ -201,7 +217,7 @@ impl Instance<'_> {
         read(self.face.call(frame::Req::RuinInstance(self.task), wait)?).map(|_| ())
     }
     pub fn state(&self, wait: Wait) -> Result<State, Fail> {
-        State::of_code(read(self.face.call(frame::Req::StateInstance(self.task), wait)?)?.a)
+        State::of_code(self.inspect(wait)?.a)
             .ok_or(Fail::Bad)
     }
 }

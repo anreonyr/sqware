@@ -3,6 +3,7 @@
 
 pub mod iommu;
 pub mod pci;
+pub mod recovery;
 pub mod router;
 pub mod rtc;
 pub mod shared;

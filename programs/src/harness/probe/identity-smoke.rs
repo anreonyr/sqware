@@ -13,7 +13,9 @@ fn main() {
     let destination = args.next().expect("destination initrd");
     assert!(args.next().is_none());
     let blob = std::fs::read(source).expect("read acceptance initrd");
-    let entries: Vec<_> = Entries::new(&blob).expect("valid acceptance header")
+    let manifest = Entries::new(&blob).expect("valid acceptance header");
+    let deployment = manifest.deployment();
+    let entries: Vec<_> = manifest
         .map(|entry| entry.expect("valid acceptance entry"))
         .filter(|entry| UNITS.contains(&entry.name)).collect();
     assert_eq!(entries.len(), UNITS.len(), "all fixture programs must exist");
@@ -22,7 +24,7 @@ fn main() {
     }
     let boot = entries.iter().position(|entry| entry.name == "system").unwrap();
     let items: Vec<_> = entries.iter().map(|entry| (entry.kind, entry.name, entry.elf)).collect();
-    let filtered = pack(&items, boot).expect("valid fixture manifest");
+    let filtered = pack(&items, boot, deployment).expect("valid fixture manifest");
     std::fs::write(destination, filtered).expect("write fixture initrd");
     println!("identity smoke: {} actual programs; no Hub or driver", entries.len());
 }

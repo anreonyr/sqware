@@ -334,6 +334,18 @@ impl NamespaceInstallations {
         }
     }
 
+    pub fn program_grant(&self, program: &str, namespace: usize) -> Option<GrantInfo> {
+        let mut records = self
+            .tasks
+            .iter()
+            .filter(|record| record.program == Some(program));
+        let record = records.next()?;
+        if records.next().is_some() {
+            return None;
+        }
+        self.grant(record.coordinates.task, namespace)
+    }
+
     #[cfg(test)]
     pub fn prepared_task(
         &self,

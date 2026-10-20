@@ -186,8 +186,8 @@ mod tests {
         assert!(Request::fetch(&bytes[..len + 1]).is_none());
         let response = frame::said_task(TaskId::new(0x0102_0304_0506_0708));
         let mut answer = Said::EMPTY;
-        assert_eq!(response.store(&mut answer), Some(19));
-        assert_eq!(answer, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 7, 6, 5, 4, 3, 2, 1]);
+        assert_eq!(response.store(&mut answer), Some(27));
+        assert_eq!(answer, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]
@@ -196,11 +196,12 @@ mod tests {
             status: 0,
             a: 3,
             task: TaskId::new(0x0102_0304_0506_0708),
+            team: env::TeamId::new(0x1112_1314_1516_1718),
         };
         let mut bytes = Said::EMPTY;
         let n = said.store(&mut bytes).unwrap();
         assert_eq!(n, Said::LEN);
-        assert_eq!(&bytes[..n], &[0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 7, 6, 5, 4, 3, 2, 1]);
+        assert_eq!(&bytes[..n], &[0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 7, 6, 5, 4, 3, 2, 1, 24, 23, 22, 21, 20, 19, 18, 17]);
         assert_eq!(Said::fetch(&bytes[..n]), Some(said));
 
         let account = AccountRequest {

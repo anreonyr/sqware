@@ -70,7 +70,10 @@ pub fn acceptance() {
     ));
 
     // ② 发布硬件地址之前先把这些页 retain 好，并拿到它们真实的物理页起址。
-    let pages = Pages::take(retention, PAGES).expect("iommu-probe: retained pages");
+    let mut pages = Pages::default();
+    pages
+        .take(retention, PAGES)
+        .expect("iommu-probe: retained pages");
     let data = pages.physical(DATA);
     let context = DeviceContext::first_stage(pages.physical(ROOT));
     for (index, word) in context.words().iter().enumerate() {
@@ -127,7 +130,6 @@ pub fn acceptance() {
         Err((_, seen)) => seen,
     };
     let (command_csr, fault_csr) = queues.disable();
-    drop(queues);
     let page_csr = regs::read32(base, regs::PQCSR);
     let isolated = stopped & 0xF == regs::DDTP_MODE_OFF && stopped & regs::DDTP_BUSY == 0;
     let commands_off = queue::quiet(command_csr, regs::QUEUE_ON);
@@ -145,6 +147,8 @@ pub fn acceptance() {
     ));
     let refused = denied & regs::TR_FAULT != 0 && regs::cause(denied) == regs::DMA_DISABLED;
 
+    windows(base, &pages, &context, &mut queues);
+    drop(queues);
     pages
         .close()
         .unwrap_or_else(|fail| panic!("iommu-probe: {fail}"));
@@ -170,6 +174,45 @@ pub fn acceptance() {
         panic!("iommu-probe: {name}");
     }
     note(&format!("iommu-probe: translated {IOVA:#x} -> {data:#x}"));
+}
+
+fn windows(base: usize, pages: &Pages, context: &DeviceContext, queues: &mut CommandQueue) {
+    let mut previous = IOVA;
+    for serial in [64, 511, 512, hub_api::BINDING_MAX - 1] {
+        let before = regs::read64(base, regs::DDTP);
+        assert_eq!(before & (0xf | regs::DDTP_BUSY), regs::DDTP_MODE_OFF);
+        for page in [DDT, ROOT, MIDDLE, LEAF] {
+            pages.fill(page, 0);
+        }
+        for (index, word) in context.words().iter().enumerate() {
+            pages.put64(DDT, DEVICE_ID as usize * 64 + index * 8, *word);
+        }
+        let iova = hub_api::iova_base(serial).expect("iommu-probe: window serial") as usize;
+        table::map_pages(pages, ROOT, MIDDLE, LEAF, iova, DATA, 1).unwrap();
+        crate::driver::iommu::order::sync();
+        queues.enable().expect("iommu-probe: window queues");
+        regs::ddtp_set(base, regs::DDTP_MODE_1LVL, Some(pages.physical(DDT)))
+            .expect("iommu-probe: window directory");
+        queues.invalidate_all();
+        assert!(queues.fence(), "iommu-probe: window fence");
+        let response = regs::translate(base, DEVICE_ID, iova, false);
+        assert_eq!(response & regs::TR_FAULT, 0, "iommu-probe: window translation");
+        assert_eq!(
+            response & regs::TR_PPN_FIELD,
+            regs::page_number(pages.physical(DATA)) << regs::PPN_SHIFT,
+        );
+        let stale = regs::translate(base, DEVICE_ID, previous, false);
+        assert_ne!(stale & regs::TR_FAULT, 0, "iommu-probe: old window aliases new leaf");
+        let stopped = regs::ddtp_set(base, regs::DDTP_MODE_OFF, None)
+            .expect("iommu-probe: window directory off");
+        let (commands, faults) = queues.disable();
+        assert!(queue::quiet(commands, regs::QUEUE_ON) && !queue::command_error(commands));
+        assert!(queue::quiet(faults, regs::QUEUE_ON) && !queue::queue_error(faults));
+        note(&format!(
+            "iommu-probe: window serial={serial} iova={iova:#x} response={response:#x} previous={previous:#x} stale_response={stale:#x} ddtp_off={stopped:#x} cqcsr={commands:#x} fqcsr={faults:#x}",
+        ));
+        previous = iova;
+    }
 }
 
 /// 让硬件按当前 DDT / DC / 页表翻一次 `IOVA`，返回响应寄存器的原值。

@@ -1,0 +1,122 @@
+"""Check retained ownership during Ruin and the completed native stop chain."""
+
+import json
+import re
+import sys
+from pathlib import Path
+
+
+def one(console, pattern):
+    matches = list(re.finditer("^" + pattern + "$", console, re.MULTILINE))
+    assert len(matches) == 1, f"expected one native proof: {pattern}"
+    return matches[0]
+
+
+def tasks(console):
+    main = int(one(console, r"ctl: constructed device-work tid=(\d+) owner=hub")[1])
+    auxiliary = int(one(console, r"ctl: binding 1 auxiliary=(\d+) alive=true")[1])
+    beta = int(one(console, r"system: minted recovery tid=(\d+)")[1])
+    assert len({main, auxiliary, beta}) == 3, "execution and recovery must be distinct"
+    return main, auxiliary, beta
+
+
+def reaps(events):
+    out = {}
+    for event in events:
+        reap = event.get("kind", {}).get("room", {}).get("reap", {})
+        if reap:
+            tid = reap["tid"]
+            assert tid not in out, f"duplicate reap: {tid}"
+            out[tid] = event["when"]
+    return out
+
+
+def pending(console, events):
+    main, auxiliary, beta = tasks(console)
+    one(console, r"ruin: requested recovery")
+    one(console, rf"hub: binding 1 execution domain stopped \(tid={main}\)")
+    one(console, r"iommu: binding 1 invalidated frames held=6 \(not released\)")
+    one(console, r"pci: binding 1 disabling bus-master")
+    retired = reaps(events)
+    assert main in retired and auxiliary in retired, "alpha Team not completely reaped"
+    assert beta not in retired, "static Driver reaped while DMA read held"
+    for forbidden in (
+        "pci: endpoint bus-master off=0x0",
+        "recovery: binding 1 stopped",
+        "iommu: binding 1 queues stopped",
+        "iommu: binding 1 released",
+        "recovery: binding 1 detached",
+        "hub: binding 1 closed",
+        "ruin: recovery dead after reply",
+    ):
+        assert forbidden not in console, f"premature retirement: {forbidden}"
+
+
+def completed(console, events, backend):
+    main, auxiliary, beta = tasks(console)
+    requester = one(console, r"pci: space task=\d+ ecam=0x[0-9a-f]+ requester=(\d+) bar=\d+")[1]
+    ordered = (
+        r"iommu: binding 1 published requester=" + requester + r" held=6 ddtp=0x[0-9a-f]+",
+        r"pci: endpoint bus-master on=0x4",
+        r"hub: binding 1 active \(business released\) iova=0x[0-9a-f]+",
+        r"work: rang the in-flight request doorbell",
+        r"ruin: requested recovery",
+        rf"hub: binding 1 execution domain stopped \(tid={main}\)",
+        r"iommu: binding 1 invalidated frames held=6 \(not released\)",
+        r"pci: binding 1 disabling bus-master",
+        r"pci: endpoint bus-master off=0x0",
+        r"recovery: binding 1 stopped reset=1 status=0 queue_enable=0",
+        r"iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0",
+        r"iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true",
+        r"recovery: binding 1 detached",
+        rf"hub: binding 1 closed and released device {requester}",
+        r"ruin: recovery dead after reply",
+        r"exit tid=1 reason=0x0 note: iommu-ruin: done",
+        r"task: all tasks exited, system halted",
+    )
+    positions = [one(console, pattern).start() for pattern in ordered]
+    assert positions == sorted(positions), "native stop chain out of order"
+    one(console, rf"ctl: binding 1 auxiliary={auxiliary} alive=false")
+    one(console, r"ctl: drained read sector_ok=true status=0 used=\d+ len=\d+")
+    one(console, r"ctl: in-flight binding settled by static Driver Ruin")
+    one(console, r"exit tid=\d+ reason=0x0 note: device-ctl-ruin: done")
+    frames = one(console, r"memory: frame_allocations before=(\d+) after=(\d+)")
+    assert frames[1] == frames[2], "physical allocation objects not reclaimed"
+    assert events and events[-1].get("kind") == {"halt": "halt"}, "incomplete trace"
+    retired = reaps(events)
+    assert all(tid in retired for tid in (main, auxiliary, beta)), "missing native reap"
+    assert max(retired[main], retired[auxiliary]) < retired[beta], "Driver reaped before alpha Team"
+
+    held = [i for i, event in enumerate(backend) if event["phase"] == "held"]
+    assert len(held) == 1, "expected exactly one held guest read"
+    index = held[0]
+    request = backend[index]
+    assert (request["offset"], request["length"]) == (0, 512), "not the guest sector"
+    assert [event["phase"] for event in backend[index:index + 3]] == [
+        "held", "resuming", "replied",
+    ], "held read must receive a successful reply after the receipt"
+    reply = backend[index + 2]
+    assert backend[index + 1]["cookie"] == request["cookie"] == reply["cookie"]
+    assert (reply["offset"], reply["length"], reply["error"]) == (0, 512, 0)
+    assert all(event["phase"] == "disconnected" for event in backend[index + 3:])
+    print(f"Ruin: alpha Team {main}/{auxiliary} reaped before Driver {beta}; frames {frames[1]} → {frames[2]}")
+
+
+def check(console_path, events_path, capture_path):
+    capture = Path(capture_path)
+    events = [json.loads(line) for line in Path(events_path).read_text().splitlines()]
+    held_events = [
+        json.loads(line)
+        for line in capture.with_suffix(".held-diagnose.jsonl").read_text().splitlines()
+    ]
+    assert events[:len(held_events)] == held_events, "held snapshot is not this trace's prefix"
+    pending(capture.with_suffix(".held-console").read_text(), held_events)
+    backend = [
+        json.loads(line)
+        for line in capture.with_suffix(".block-events").read_text().splitlines()
+    ]
+    completed(Path(console_path).read_text(), events, backend)
+
+
+if __name__ == "__main__":
+    check(*sys.argv[1:])

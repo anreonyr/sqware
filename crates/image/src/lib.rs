@@ -44,7 +44,7 @@ mod user {
     }
 }
 
-/// 认得的场景名——**从引导镜像那张表里收**（一个景存在 ⇔ 它有一条引导镜像），故不会与它脱节。
+/// 可打包的部署名。
 fn scenes() -> Vec<&'static str> {
     unit::DEPLOYMENTS
         .iter()
@@ -52,7 +52,7 @@ fn scenes() -> Vec<&'static str> {
         .collect()
 }
 
-/// 这一景的引导镜像（哪一台的 `entry` 含这个景）。
+/// 部署声明选定的引导镜像。
 fn entry_of(scene: &str) -> Option<&'static str> {
     unit::Deployment::find(scene).and_then(unit::Deployment::entry_image)
 }
@@ -300,8 +300,8 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .iter()
         .position(|(name, _)| *name == entry)
         .ok_or_else(|| format!("initrd: 景 {scenario} 的引导镜像 {entry} 不在这一景的清单里"))?;
-    let mut blob = env::ledger::manifest::pack(&items, entry_at)
-        .ok_or_else(|| "initrd: 清单越界（条数 / 名字长度 / 空镜像）".to_string())?;
+    let mut blob = env::ledger::manifest::pack(&items, entry_at, deployment.name)
+        .ok_or_else(|| "initrd: 非法部署或镜像清单".to_string())?;
     let capsule = capsule::encode(items[entry_at].2)
         .map_err(|error| format!("bootstrap {entry}: {error:?}"))?;
     let offset = blob
@@ -826,14 +826,94 @@ mod tests {
     }
 
     #[test]
-    fn selecting_a_deployment_rejects_missing_or_multiple_entries() {
+    fn selecting_a_deployment_rejects_unknown_names_and_mismatched_entries() {
+        let entry = env::ledger::manifest::Entry {
+            kind: env::ProgramKind::Supervisor,
+            name: "system",
+            elf: b"elf",
+        };
+        for name in ["", "unknown", "system", "system-iommu"] {
+            assert!(matches!(
+                unit::select_deployment(name, entry),
+                Err(unit::DeploymentSelectionError::Unknown)
+            ));
+        }
         assert!(matches!(
-            unit::select_deployment(|_| false),
-            Err(unit::DeploymentSelectionError::Missing)
+            unit::select_deployment("accept", entry),
+            Err(unit::DeploymentSelectionError::EntryMismatch)
         ));
         assert!(matches!(
-            unit::select_deployment(|_| true),
-            Err(unit::DeploymentSelectionError::Ambiguous)
+            unit::select_deployment("product", env::ledger::manifest::Entry {
+                kind: env::ProgramKind::User,
+                ..entry
+            }),
+            Err(unit::DeploymentSelectionError::EntryMismatch)
+        ));
+    }
+
+    #[test]
+    fn packaged_selection_roundtrips_for_every_deployment() {
+        for deployment in unit::DEPLOYMENTS {
+            let images = bins_for(deployment).unwrap();
+            let items: Vec<_> = images.iter()
+                .map(|(name, kind)| (*kind, *name, b"actual image placeholder".as_slice()))
+                .collect();
+            let entry_at = images.iter()
+                .position(|(name, _)| Some(*name) == deployment.entry_image()).unwrap();
+            let blob = env::ledger::manifest::pack(&items, entry_at, deployment.name).unwrap();
+            let entries = env::ledger::manifest::Entries::new(&blob).unwrap();
+            let selected = unit::select_deployment(entries.deployment(), entries.entry().unwrap()).unwrap();
+            assert_eq!(unit::DEPLOYMENTS.iter().filter(|other| other.name == deployment.name).count(), 1);
+            assert_eq!(selected.name, deployment.name);
+            assert_eq!(selected.entry, deployment.entry);
+            assert_eq!(selected.start, deployment.start);
+            assert_eq!(entries.count(), items.len());
+        }
+    }
+
+    #[test]
+    fn product_deployments_share_one_system_image_without_losing_their_start_lists() {
+        let variants = [
+            ("product", None),
+            ("iommu-product", Some("device-ctl")),
+            ("iommu-product-fault", Some("device-ctl-fault")),
+            ("iommu-product-before", Some("device-ctl-before")),
+            ("iommu-product-after", Some("device-ctl-after")),
+        ];
+        for (name, controller) in variants {
+            let deployment = unit::Deployment::find(name).unwrap();
+            assert_eq!(deployment.entry, "system");
+            assert_eq!(deployment.entry_image(), Some("system"));
+            let bins = bins_for(deployment).unwrap();
+            assert_eq!(bins.iter().filter(|(name, _)| *name == "system").count(), 1);
+            assert!(!bins.iter().any(|(name, _)| name.starts_with("system-iommu")));
+            for candidate in ["device-ctl", "device-ctl-fault", "device-ctl-before", "device-ctl-after"] {
+                assert_eq!(deployment.start.contains(&candidate), controller == Some(candidate));
+            }
+        }
+        assert!(!unit::PACKAGES.iter().any(|package| package.name.starts_with("system-iommu")));
+        assert!(!unit::PROGRAMS.iter().any(|program| program.name().starts_with("system-iommu")));
+    }
+
+    #[test]
+    fn deployment_selection_does_not_depend_on_other_entry_images_being_present() {
+        use env::ledger::manifest::{Entries, pack};
+        let items: &[(env::ProgramKind, &str, &[u8])] = &[
+            (env::ProgramKind::Supervisor, "accept-system", b"accept elf"),
+            (env::ProgramKind::Supervisor, "system", b"system elf"),
+            (env::ProgramKind::User, "device-ctl-fault", b"controller elf"),
+        ];
+        let blob = pack(items, 1, "iommu-product-fault").unwrap();
+        let entries = Entries::new(&blob).unwrap();
+        assert_eq!(
+            unit::select_deployment(entries.deployment(), entries.entry().unwrap()).unwrap().name,
+            "iommu-product-fault",
+        );
+        let wrong = pack(items, 0, "iommu-product-fault").unwrap();
+        let entries = Entries::new(&wrong).unwrap();
+        assert!(matches!(
+            unit::select_deployment(entries.deployment(), entries.entry().unwrap()),
+            Err(unit::DeploymentSelectionError::EntryMismatch)
         ));
     }
 }

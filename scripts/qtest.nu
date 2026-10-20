@@ -13,6 +13,7 @@
 #   nu scripts/qtest.nu --package kernel             # 指定包（工作区里用）
 #   nu scripts/qtest.nu --package kernel --scene rig # 造 rig 景、带它跑整机那一例
 #   nu scripts/qtest.nu --package kernel --scene accept
+#   nu scripts/qtest.nu --package kernel --scene iommu-ruin -- --features semihosting
 #   nu scripts/qtest.nu --package kernel --scene accept --feed-script programs/tests/terminal/session.py
 #   nu scripts/qtest.nu --package kernel --scene memory-transfer --feed-script programs/tests/memory-transfer/driver.py -- --features semihosting
 #   nu scripts/qtest.nu --package kernel --scene memory-transfer-tlb --feed-script programs/tests/memory-transfer/tlb.py -- --features semihosting
@@ -212,6 +213,17 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   let script_dir = $env.FILE_PWD
   let repo = ($script_dir | path dirname)
   let trapdir = ($env.TRACE_OUT? | default ($repo | path join "trace"))
+  let feed_script = if $scene == "iommu-ruin" and ($feed_script | is-empty) {
+    $repo | path join "programs/tests/device-recovery/ruin.py"
+  } else {
+    $feed_script
+  }
+  let hold = if $scene == "iommu-ruin" {
+    $"target/ruin-(random uuid).nbd"
+  } else {
+    ""
+  }
+  $env.DMA_HOLD = $hold
   let summary = match $scene {
     "memory-transfer" => "scene-memory-transfer-phases.json"
     "memory-transfer-tlb" => "scene-memory-transfer-tlb-summary.json"
@@ -238,9 +250,13 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   # 它跑得动的前提（debug 下每轮都挂在 20 ms 那一缝上）。
   if not ($scene | is-empty) {
     let prof = if ($profile | is-empty) { "release" } else { $profile }
-    # 产品那一景的设备变体：镜像就是 **product**（入口 `system`），
-    # 只是把 `--iommu --endpoint` 接上，故造图那一格按 `product` 走。
-    let image_scene = if $scene == "iommu-product" { "product" } else { $scene }
+    # 产品那四景各有自己的部署（入口镜像按景名认）：编排都在 Harness 那两台单元里，
+    # 故场景名→镜像名只做一次映射，不给生产镜像塞景码。
+    let image_scene = match $scene {
+      "iommu-product-start-before" => "iommu-product-before"
+      "iommu-product-start-after" => "iommu-product-after"
+      _ => $scene
+    }
     let image = (^cargo image $image_scene $prof | complete)
     if $image.exit_code != 0 {
       print -n $image.stdout
@@ -274,10 +290,11 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     $FEED | save --force $helper
     rm -f $port_file
     if not ($feed_script | is-empty) { rm -f $"($cap).result" }
-    # 三景使用本轮完整导出；正式成功标记仅由本进程发布。
-    if not ($summary | is-empty) {
+    # 只使用本轮导出；正式成功标记仅由本进程发布。
+    if not ($summary | is-empty) or $scene == "iommu-ruin" {
       rm --force ($repo | path join "sqware-diagnose.jsonl")
       rm --force $cap
+      rm --force $env.QEMU_TEE_LOG
       rm --force ($trapdir | path join $"scene-($scene)-diagnose.jsonl")
     }
     $env.FEED_HELPER = $helper
@@ -323,14 +340,30 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   }
   # 端点那一景的那张盘：**可再生**（每次按同一花纹重建，落在 `<TRACE_OUT>/` 里，
   # 不进库），且由参数表那边只读挂上。景那一侧按同一花纹核读回的数据，故盘是承重的。
-  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after"] {
+  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after" "iommu-ruin"] {
     let disk = ($trapdir | path join "iommu-dma.img")
     ^python3 -c 'import sys, pathlib; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 4096)' $disk
+    if not ($hold | is-empty) {
+      $env.DMA_HOLD_DISK = $disk
+      $env.DMA_HOLD_SERVER = ($repo | path join "programs/tests/device-recovery/block.py")
+      $env.DMA_HOLD_PID = ($trapdir | path join "block.pid")
+      $env.DMA_HOLD_ERR = ($trapdir | path join "block.err")
+      ^bash -c 'nohup python3 "$DMA_HOLD_SERVER" "$DMA_HOLD" "$DMA_HOLD_DISK" >"$DMA_HOLD_ERR" 2>&1 & echo $! > "$DMA_HOLD_PID"'
+      let ready = (^python3 -c 'import pathlib, sys, time; p=pathlib.Path(sys.argv[1]+".json"); end=time.monotonic()+5
+while not p.exists() and time.monotonic()<end: time.sleep(.01)
+sys.exit(0 if p.exists() else 1)' $hold | complete)
+      if $ready.exit_code != 0 {
+        ^cat $env.DMA_HOLD_ERR
+        ^bash -c 'kill "$(cat "$DMA_HOLD_PID")" "$(cat "$FEED_PID")" 2>/dev/null; true'
+        error make {msg: "在途块设备夹具未启动"}
+      }
+    }
     ["--endpoint" $disk]
   } else {
     []
   }
-  let board = (^nu ($script_dir | path join "qemu-args.nu") --board-only ...$iommu_argv ...$serial_argv ...$endpoint_argv
+  let hold_argv = if ($hold | is-empty) { [] } else { ["--endpoint-hold" $hold] }
+  let board = (^nu ($script_dir | path join "qemu-args.nu") --board-only ...$iommu_argv ...$serial_argv ...$endpoint_argv ...$hold_argv
       | lines | where { |l| ($l | str trim) != "" })
   let qemu_args = ($board | each { |a| $"--qemu-arg=($a)" })
   let pkg = if ($package | is-empty) { [] } else { ["--package" $package] }
@@ -400,6 +433,11 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
         $code = 1
       }
     }
+    let retained = "^probe-lease: declared retention acquired, checked and released$"
+    if ($console | where {|line| $line =~ $retained } | is-empty) {
+      print "验收探针未验证声明供给的保留授权"
+      $code = 1
+    }
   }
 
   if $code == 0 and $scene == "memory-transfer" {
@@ -463,6 +501,28 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     }
   }
 
+  if $code == 0 and not ($scene | is-empty) {
+    let frames = (open --raw $env.QEMU_TEE_LOG | lines
+      | parse -r '^memory: frame_allocations before=(?<before>[0-9]+) after=(?<after>[0-9]+)$')
+    if ($frames | length) != 1 or ($frames | any {|row| $row.before != $row.after }) {
+      print "本景未成功完成：物理帧分配未回到起场基线"
+      $code = 1
+    }
+  }
+
+  if $scene == "iommu-ruin" {
+    let exported = ($repo | path join "sqware-diagnose.jsonl")
+    let archived = ($trapdir | path join "scene-iommu-ruin-diagnose.jsonl")
+    if ($exported | path exists) { cp --force $exported $archived }
+    if $code == 0 {
+      let checked = (^python3 ($repo | path join "programs/tests/device-recovery/ruin_check.py")
+        $env.QEMU_TEE_LOG $archived $cap | complete)
+      print -n $checked.stdout
+      print -n $checked.stderr
+      if $checked.exit_code != 0 { $code = 1 }
+    }
+  }
+
   if $code == 0 and $scene == "iommu-probe" {
     # 引导那一台报收尾：拆除与隔离判据都在它自己那一侧逐条核过（身子见 `probe/iommu.rs`）。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
@@ -471,28 +531,78 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
       print $"本景未成功完成：缺少 ($proof)"
       $code = 1
     }
+    for coordinate in [
+      "64 iova=0x208000000"
+      "511 iova=0x23fe00000"
+      "512 iova=0x240000000"
+      "126975 iova=0x3fffe00000"
+    ] {
+      let window = $"^iommu-probe: window serial=($coordinate) response=0x[0-9a-f]+ previous=0x[0-9a-f]+ stale_response=0x[0-9a-f]+ ddtp_off=0x0 cqcsr=0x0 fqcsr=0x0$"
+      if ($console | where {|line| $line =~ $window } | length) != 1 {
+        print $"本景未成功完成：缺少唯一的窗口翻译与旧窗拒绝读数 ($coordinate)"
+        $code = 1
+      }
+    }
   }
 
   if $code == 0 and $scene in ["iommu-product" "iommu-product-fault"] {
-    # 产品那一侧：System 自己完成保留/发布、放一台跨 Team 服务去做真 DMA；
-    # 确认（同一条停止链）之后才释放，释放之后才验“再也推不动”。
-    # 正常景显式 `Close::Normal`；故障景收服务走 `offline(Fault)`，
-    # 并在平台第一次回 `Pending` 时留着保留、不重启，恢复真确认后才释放。
+    # 产品那一侧：System 只装配（UnitFile/Deployment/Assembly/Control/Supply），
+    # PCI／IOMMU／设备恢复各守本硬件职责（各自独立 Task/Space），Hub 只做发现、绑定、
+    # 停止新请求与恢复协调；场景编排（固定扇区／哨兵／杀服务）在 Harness 那两台单元里。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
     mut want = [
-      "^system-dma: served used=[1-9].*written_ok=true sector_ok=true"
-      # 承重那一格：每一个字段都钉死。把平台 stop 换成空实现，这几格就回不到 0。
-      "^system-dma: confirmed and released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true$"
-      "^system-dma: reset endpoint idle used_moved=false sentinel_held=true"
-      # 整机也真的收场（与普通 product 同一格）。
-      "^exit tid=1 reason=0x0 note: system: done"
+      # 三个硬件域各自独立 Task/Space：各报自己的号与它自己映射的那一段（本域 VA）。
+      "^iommu: space task=[0-9]+ iommu=0x[0-9a-f]+ retain=[0-9]+ ddtp=0x0 \\(off\\)$"
+      "^pci: space task=[0-9]+ ecam=0x[0-9a-f]+ requester=[0-9]+ bar=[0-9]+$"
+      "^recovery: ready hub=[0-9]+ pci=[0-9]+$"
+      # 执行实例由控制器用受限构造建出（owner = Hub），再由 Hub 放行；
+      # 停止与核销也归 Hub（实例面按真实 owner 核）。
+      "^ctl: constructed device-work tid=[0-9]+ owner=hub$"
+      "^hub: execution instance launched tid=[0-9]+$"
+      "^ctl: binding 1 auxiliary=[0-9]+ alive=true$"
+      "^ctl: binding 1 auxiliary=[0-9]+ alive=false$"
+      # 落位与开启分开：落位时 MASTER 是关的（真回读），IOMMU 发布、恢复映射与子授权都
+      # 就绪之后才开。
+      "bus-master off=0x0$"
+      "^pci: endpoint bus-master on=0x4$"
+      # Hub 放行业务：发布之后才 Active（执行侧从它那一条孔拿到坐标）。
+      "^iommu: binding 1 published requester=[0-9]+ held=6"
+      "^hub: binding 1 active \\(business released\\) iova=0x[0-9a-f]+$"
+      # 固定工作负载：真读一个扇区、花纹对得上、状态是 OK（判据在控制器那一侧）。
+      "^ctl: served used=1 len=513 written_ok=true sector_ok=true status=0$"
+      # 收场：先整域停执行方 CPU 控制，再按真实停链协调。
+      "^hub: binding 1 execution domain stopped \\(tid=[0-9]+\\)$"
+      "^iommu: binding 1 invalidated frames held=6 \\(not released\\)$"
+      "^pci: endpoint bus-master off=0x0$"
+      "^recovery: binding 1 stopped reset=1 status=0 queue_enable=0$"
+      "^iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0$"
+      # 每一个字段都钉死：把停链换成空实现，这几格就回不到 0；帧在停链期间一直持着。
+      "^iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true$"
+      "^recovery: binding 1 detached$"
+      "^hub: binding 1 closed and released device [0-9]+$"
+      # 整机也真的收场（与普通 product 同一格）：任务都退了、没有残余持有。
+      "^exit tid=1 reason=0x0 note: system: done$"
+      "^task: all tasks exited, system halted$"
+      "^memory: frame_allocations before=[0-9]+ after=[0-9]+$"
     ]
     if $scene == "iommu-product" {
-      $want = ($want | append "^system-dma: requested Close::Normal")
+      $want = ($want | append [
+        "^work: requesting Close::Normal$"
+        "^ctl: binding 1 closed and reclaimed$"
+      ])
     } else {
       $want = ($want | append [
-        "^system-dma: service doomed"
-        "^system-dma: NOT released .*failure=Some\\(Pending\\)"
+        "^ctl: constructed device-work tid=[0-9]+ owner=hub$"
+        "^hub: execution instance launched tid=[0-9]+$"
+        "^ctl: alpha exit requested \\(hub recovers owner death\\)$"
+        "^ctl: rebind probe claimed serial=2 \\(device free again\\)$"
+        "^work: rang the stale iova doorbell$"
+        "^ctl: stale iova submitted sentinel_held=true status_held=true$"
+        "^iommu: binding 2 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=[1-9][0-9]* last_did=[0-9]+$"
+        "^iommu: binding 2 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true$"
+        "^hub: binding 2 closed and released device [0-9]+$"
+        "^ctl: binding 2 auxiliary=[0-9]+ alive=true$"
+        "^ctl: binding 2 auxiliary=[0-9]+ alive=false$"
       ])
     }
     for $pattern in $want {
@@ -501,47 +611,91 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
         $code = 1
       }
     }
+    let devices = ($console | parse -r '^pci: space task=[0-9]+ ecam=0x[0-9a-f]+ requester=(?<requester>[0-9]+) bar=[0-9]+$')
+    if ($devices | length) != 1 {
+      print "本景未成功完成：发现的 PCI requester 不唯一"
+      $code = 1
+    } else {
+      let requester = ($devices | first | get requester)
+      mut linked = [$"^hub: binding 1 closed and released device ($requester)$"]
+      if $scene == "iommu-product-fault" {
+        $linked = ($linked | append [
+          $"^hub: binding 2 closed and released device ($requester)$"
+          $"^iommu: binding 2 queues stopped .* faults=[1-9][0-9]* last_did=($requester)$"
+        ])
+      }
+      for $pattern in $linked {
+        if ($console | where {|line| $line =~ $pattern } | is-empty) {
+          print $"本景未成功完成：设备身份未对上 ($pattern)"
+          $code = 1
+        }
+      }
+    }
+    # 停链次序是合同：撤翻译 → 清 MASTER → 设备 reset/drain → 关队列 → 释放；
+    # 帧在确认之前一直持着；释放之后才放下恢复映射，才允许重绑。
+    let ordered = [
+      ["^hub: binding 1 execution domain stopped" "^iommu: binding 1 invalidated"]
+      ["^iommu: binding 1 invalidated" "^pci: endpoint bus-master off=0x0$"]
+      ["^pci: endpoint bus-master off=0x0$" "^recovery: binding 1 stopped"]
+      ["^recovery: binding 1 stopped" "^iommu: binding 1 queues stopped"]
+      ["^iommu: binding 1 queues stopped" "^iommu: binding 1 released"]
+      ["^iommu: binding 1 invalidated" "^iommu: binding 1 released"]
+      ["^iommu: binding 1 released" "^recovery: binding 1 detached"]
+      ["^recovery: binding 1 detached" "^hub: binding 1 closed and released device [0-9]+$"]
+    ]
+    for $pair in $ordered {
+      let before = ($console | enumerate | where {|row| $row.item =~ $pair.0 } | get index | first)
+      let after = ($console | enumerate | where {|row| $row.item =~ $pair.1 } | get index | first)
+      if ($before | is-empty) or ($after | is-empty) or ($before >= $after) {
+        print $"本景未按合同次序收口：($pair.0) 必须早于 ($pair.1)"
+        $code = 1
+      }
+    }
   }
 
   if $code == 0 and $scene in ["iommu-product-start-before" "iommu-product-start-after"] {
-    # 起手受控失败那两景：System 在一个**明确的点**上停一次（受控注入，不是硬件自然
-    # 超时），主动把子任务收进死亡路径、把范围关成 `Fault`。要看到的是：子任务没留
-    # 活僵尸、登记过的范围真被关掉（结果按真实报），且两档之间设备那一侧的现场截然
-    # 不同——发布之前失败 = 设备从来没被接上（bus-master 还在、stopped=false）；
-    # 发布之后失败 = 平台真把设备停了才释放（stopped=true）。
+    # 起手受控失败那两景：执行方在一个**明确的点**上停（发布之前／发布之后），
+    # 由 Hub 按同一道门与同一条停链结清。要看到的是：没留活僵尸、本次责任真被结清、
+    # 且两档之间设备那一侧的现场截然不同——发布之前失败 = 设备从来没被接上；
+    # 发布之后失败 = 平台真把设备停了才释放。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
     mut want = [
-      "^system-dma: startup failed, child reclaimed$"
-      "^system-dma: startup failure settled ddtp=0x"
-      "^exit tid=1 reason=0x0 note: system: done"
+      "^work: claimed serial=1$"
+      "^ctl: constructed device-work-(before|after) tid=[0-9]+ owner=hub$"
+      "^ctl: binding 1 auxiliary=[0-9]+ alive=true$"
+      "^ctl: binding 1 auxiliary=[0-9]+ alive=false$"
+      "^hub: execution instance launched tid=[0-9]+$"
+      "^hub: binding 1 execution domain stopped \\(tid=[0-9]+\\)$"
+      "^iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true$"
+      "^recovery: binding 1 detached$"
+      "^hub: binding 1 closed and released device [0-9]+$"
+      "^exit tid=1 reason=0x0 note: system: done$"
+      "^task: all tasks exited, system halted$"
+      "^memory: frame_allocations before=[0-9]+ after=[0-9]+$"
     ]
     if $scene == "iommu-product-start-before" {
       $want = ($want | append [
-        "^system-dma: startup fault injected before publish$"
-        # 发布之前失败：停机链不会跑，回退自己撤掉端点发起权限并按同一形状回读。
-        "^system-dma: startup failed, endpoint bus-master=0x0$"
-        # 范围已登记、可达标记还没点：关成 `Fault` 真发生了（`close=Ok(())`，结果按真实报）。
-        "^system-dma: startup failed, range close=Ok.*$"
-        "^system-dma: startup failure settled ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true$"
+        # 发布之前中止：从来没有过“已发布”那一行，执行方也没交过窗。
+        "^work: requesting Close::Fault before publish$"
+        "^ctl: binding 1 settled after abort$"
       ])
-    } else {
-      $want = ($want | append [
-        "^system-dma: startup fault injected after publish$"
-        # 范围已登记且已发布：关成 `Fault` 之后平台必须真把设备停了才算完。
-        "^system-dma: startup failed, range close=Ok.*$"
-        "^system-dma: startup failure settled ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true$"
-      ])
-      # 已发布那一档走的是平台整条停机链，**不许**用清 bus-master 冒充排空：
-      # 回退自己那一步（只有发布之前那一档才会打的那一行）在这里必须不出现。
       let forged = (
         $console
-        | where {|line| $line =~ "^system-dma: startup failed, endpoint bus-master=" }
+        | where {|line| $line =~ "^iommu: binding 1 published" }
         | length
       )
       if $forged != 0 {
-        print "本景未按预期收口：发布之后不该出现回退自己撤 bus-master 的那一行"
+        print "本景未按预期收口：发布之前中止不该出现已发布那一行"
         $code = 1
       }
+    } else {
+      $want = ($want | append [
+        # 发布之后中止：发布真发生过（撤翻译与整条停链才跑得有意义）。
+        "^work: requesting Close::Fault after publish$"
+        "^iommu: binding 1 published"
+        "^iommu: binding 1 invalidated frames held=6 \\(not released\\)$"
+        "^ctl: binding 1 settled after abort$"
+      ])
     }
     for $pattern in $want {
       if ($console | where {|line| $line =~ $pattern } | is-empty) {
@@ -580,6 +734,9 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
 
   if not ($scene | is-empty) {
     ^bash -c 'p=$(cat "$FEED_PID"); kill "$p" 2>/dev/null; true'
+    if not ($hold | is-empty) {
+      ^bash -c 'p=$(cat "$DMA_HOLD_PID"); kill "$p" 2>/dev/null; true'
+    }
     # 串口是一根"只喂不读"的输入线；机侧控制台仍走 semihosting（见头注）。这一手是为
     # 串口路由万一被改动时留的后手——读不到东西是正常的。
     if $code != 0 and ($cap | path exists) {

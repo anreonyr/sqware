@@ -10,12 +10,11 @@ use ::resource::pile::Pile;
 use env::PAGE_SIZE;
 use env::unit;
 use env::{Access, HoleCondition, Name, Page, PieKind, PieToken, Policy, TaskId, Trap, Wait};
-use hub_api::{self as hub, Deed, Grant, Inventory, Said, Window, Wire};
+use hub_api::{self as hub, Deed, DmaCall, Grant, Inventory, Said, Window, Wire};
 use ipc::hand::Sender;
+use ipc::rpc::{self, request::Receiver as RequestReceiver};
 use ipc::session::{Session, establish};
 use programs::debug;
-use system_api::identity::CoalitionId;
-use system_api::identity::PageId as _;
 use system_api::identity::Selector;
 use system_api::operator::{self as operator_api, Permit};
 use system_client::identity::Organization;
@@ -29,6 +28,8 @@ use crate::service::hub::core::{Entry, Ledger, Owner};
 use crate::support::machine::Machine;
 use crate::unit::hub::{E_HUB, INVENTORY_MARK};
 
+use self::directory::Directory;
+use self::peers::Peers;
 use self::sweep::alive;
 use ::resource::raw::{Hole, reserve};
 use env::pie;
@@ -39,9 +40,14 @@ const PROBE_MS: usize = 1000;
 
 pub mod bond;
 pub mod claim;
+pub mod directory;
+pub mod dma;
+mod enrollment_failure;
+mod execution;
 mod grant;
 use self::grant::ship;
 pub mod list;
+pub mod peers;
 pub mod sweep;
 
 struct League {
@@ -56,158 +62,169 @@ struct League {
 pub fn serve() -> Result<(), Start> {
     programs::debug::put("hub: serve enter");
     // 一～七：起手。
-    let (mut ledger, league, plates, doors, _dtb) = (|| {
-        let sire = unit::sire();
+    let (mut ledger, league, plates, mut doors, _dtb, dma, tree, devices, device_anchor, subject) =
+        (|| {
+            let sire = unit::sire();
 
-        let inventory = receive_inventory(sire).map_err(|why| {
-            crate::debug::put("hub: inventory descriptor failed");
-            why
-        })?;
-        crate::debug::put("hub: inventory received");
+            let inventory = receive_inventory(sire).map_err(|why| {
+                crate::debug::put("hub: inventory descriptor failed");
+                why
+            })?;
+            crate::debug::put("hub: inventory received");
 
-        // 二、通过一个只读清单和按序直接交付的本地资源槽立账。
-        let (mut ledger, dtb) = book(sire, inventory).map_err(|why| {
-            crate::debug::put("hub: inventory ledger failed");
-            why
-        })?;
+            // 二、通过一个只读清单和按序直接交付的本地资源槽立账。
+            let (mut ledger, dtb) = book(sire, inventory).map_err(|why| {
+                crate::debug::put("hub: inventory ledger failed");
+                why
+            })?;
 
-        // 三、树那条会话。
-        let session = Session::open(sire, operator::BERTH, Wait::AtMost(MS))
-            .map_err(|_| Start::Tree(E_HUB))?;
-        let tree = Face::of(session);
-
-        // 四、盟册的**定面**（立盟 ＋ 代报名都在它上面）。
-        let league = find_league(&tree).ok_or(Start::Face(E_HUB))?;
-
-        // 五、**逐类立一枚盟**：那一枚盟号就是 permit 里那句"许驱这一类"的对象（也留给 `bond`
-        let classes = ledger.classes().ok_or(Start::Tree(E_HUB))?;
-        let me = unit::self_id();
-        let subject = league
-            .query
-            .resolve(me, Wait::AtMost(MS))
-            .map_err(|_| Start::Face(E_HUB))?
-            .ok_or(Start::Face(E_HUB))?
-            .current
-            .principal;
-        // **先立齐，再一趟报**（原来是每类一趟 `activate`：十几类就是十几趟同步往返，
-        // 全压在"报就绪"之前——那一族见 `kernel/src/layout.rs` 头注）。枚数由
-        // Identity 的 `MAX_ACTIVE_COALITIONS` 把关，装不下就是装配错、当场收手。
-        let mut leagues = [CoalitionId::EMPTY; system_api::identity::limits::MAX_ACTIVE_COALITIONS];
-        let mut n = 0usize;
-        for class in &classes {
-            let Ok(id) = league.organization.found(Wait::AtMost(MS)) else {
-                return Err(Start::Face(E_HUB));
-            };
-            if league
-                .organization
-                .admit(id, subject, Wait::AtMost(MS))
-                .is_err()
-            {
-                return Err(Start::Face(E_HUB));
-            }
-            let Some(slot) = leagues.get_mut(n) else {
-                return Err(Start::Face(E_HUB));
-            };
-            *slot = id;
-            n += 1;
-            ledger.league(class.clone(), || id);
-        }
-        hub_client::activate(&league.activation, me, &leagues[..n])
-            .map_err(|_| Start::Face(E_HUB))?;
-
-        let bond = env::hole::unseal(Grant::Bond.mark(), env::HoleLimits::default())
-            .map_err(|_| Start::Tree(E_HUB))?;
-        let list = env::hole::unseal(Grant::List.mark(), env::HoleLimits::default())
-            .map_err(|_| Start::Tree(E_HUB))?;
-        let claim = env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
-            .map_err(|_| Start::Tree(E_HUB))?;
-        let publisher = system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS))
-            .map_err(|_| Start::Tree(E_HUB))?;
-        let service_anchor = publisher.anchor().map_err(|_| Start::Tree(E_HUB))?;
-        let endpoint_view =
-            operator_api::ResourceView::new(env::Access::STORE).ok_or(Start::Tree(E_HUB))?;
-        for (index, (name, entry)) in [
-            (Grant::Bond.name(), bond),
-            (Grant::List.name(), list),
-            (Grant::Claim.name(), claim),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            publisher
-                .bind(
-                    service_anchor,
-                    name,
-                    entry,
-                    endpoint_view,
-                    Permit::Public,
-                    operator_api::OperationId(index as u64 + 1),
-                    Wait::AtMost(MS),
-                )
+            // 三、树那条会话。
+            let session = Session::open(sire, operator::BERTH, Wait::AtMost(MS))
                 .map_err(|_| Start::Tree(E_HUB))?;
-        }
-        let devices = system_client::operator::Capability::injected(1, sire, Wait::AtMost(MS))
-            .map_err(|_| Start::Tree(E_HUB))?;
-        let device_anchor = devices.anchor().map_err(|_| Start::Tree(E_HUB))?;
-        let mut operation = 1u64;
+            let tree = Face::of(session);
 
-        // Device entries are bound beneath the actual class Entry in Hub's device namespace.
-        for class in &classes {
-            let Some(coalition) = ledger.coalition_of(class.clone()) else {
-                return Err(Start::Tree(E_HUB));
+            // 四、盟册的**定面**（立盟 ＋ 代报名都在它上面）。
+            let league = find_league(&tree).ok_or(Start::Face(E_HUB))?;
+
+            // 五、**逐类立一枚盟**：那一枚盟号就是 permit 里那句"许驱这一类"的对象（也留给 `bond`
+            let classes = ledger.classes().ok_or(Start::Tree(E_HUB))?;
+            let me = unit::self_id();
+            let subject = league
+                .query
+                .resolve(me, Wait::AtMost(MS))
+                .map_err(|_| Start::Face(E_HUB))?
+                .ok_or(Start::Face(E_HUB))?
+                .current
+                .principal;
+            let devices = system_client::operator::Capability::injected(1, sire, Wait::AtMost(MS))
+                .map_err(|_| Start::Tree(E_HUB))?;
+            let device_anchor = devices.anchor().map_err(|_| Start::Tree(E_HUB))?;
+            let directory = Directory {
+                devices: &devices, anchor: device_anchor, league: &league, subject,
             };
-            let group = devices
-                .part(
-                    device_anchor,
-                    class,
-                    operator_api::OperationId(operation),
-                    Wait::AtMost(MS),
-                )
-                .map_err(|_| Start::Tree(E_HUB))?
-                .entry;
-            operation = operation.checked_add(1).ok_or(Start::Tree(E_HUB))?;
-            let doors: Vec<(&str, PieToken)> = ledger
-                .doors(class.clone())
-                .map(|(name, door)| (name.as_str(), door))
-                .collect();
-            for (name, entry) in doors {
-                devices
+            for class in &classes {
+                ledger.prepare_league(class.clone()).map_err(|_| Start::Room(E_HUB))?;
+                ledger.advance_league(class, &mut &directory)
+                    .ok_or(Start::Face(E_HUB))?
+                    .map_err(|_| Start::Face(E_HUB))?;
+            }
+
+            let bond = env::hole::unseal(Grant::Bond.mark(), env::HoleLimits::default())
+                .map_err(|_| Start::Tree(E_HUB))?;
+            let list = env::hole::unseal(Grant::List.mark(), env::HoleLimits::default())
+                .map_err(|_| Start::Tree(E_HUB))?;
+            let claim = env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
+                .map_err(|_| Start::Tree(E_HUB))?;
+            // DMA 安全绑定那一面：发现、认领、关闭、查看与整机结清共用这一扇门。
+            let dma = env::hole::unseal(Grant::Dma.mark(), env::HoleLimits::default())
+                .map_err(|_| Start::Tree(E_HUB))?;
+            let publisher =
+                system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS))
+                    .map_err(|_| Start::Tree(E_HUB))?;
+            let service_anchor = publisher.anchor().map_err(|_| Start::Tree(E_HUB))?;
+            let endpoint_view =
+                operator_api::ResourceView::new(env::Access::STORE).ok_or(Start::Tree(E_HUB))?;
+            for (index, (name, entry)) in [
+                (Grant::Bond.name(), bond),
+                (Grant::List.name(), list),
+                (Grant::Claim.name(), claim),
+                (Grant::Dma.name(), dma),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                publisher
                     .bind(
-                        group,
+                        service_anchor,
                         name,
                         entry,
                         endpoint_view,
-                        Permit::Identity(Selector::MemberOf(coalition)),
-                        operator_api::OperationId(operation),
+                        Permit::Public,
+                        operator_api::OperationId(index as u64 + 1),
                         Wait::AtMost(MS),
                     )
                     .map_err(|_| Start::Tree(E_HUB))?;
-                operation = operation.checked_add(1).ok_or(Start::Tree(E_HUB))?;
             }
-        }
-        debug!("hub: {} devices, {} classes", ledger.count(), classes.len());
+            let mut operation = 1u64;
 
-        // **八、报"我起完了"**（Setup::Machine 的 `ready` 那条通道）：铸一枚刻它的孔、**交给
-        // （设备格都在树上、盟都立好了）。
-        establish::lend(sire, crate::unit::hub::READY_MARK).map_err(|why| {
-            crate::debug::put(&alloc::format!("hub: ready channel {why:?}"));
-            Start::Desk(E_HUB)
-        })?;
+            // Device entries are bound beneath the actual class Entry in Hub's device namespace.
+            for class in &classes {
+                let Some(coalition) = ledger.coalition_of(class.clone()) else {
+                    return Err(Start::Tree(E_HUB));
+                };
+                let group = devices
+                    .part(
+                        device_anchor,
+                        class,
+                        operator_api::OperationId(operation),
+                        Wait::AtMost(MS),
+                    )
+                    .map_err(|_| Start::Tree(E_HUB))?
+                    .entry;
+                operation = operation.checked_add(1).ok_or(Start::Tree(E_HUB))?;
+                let doors: Vec<(&str, PieToken)> = ledger
+                    .doors(class.clone())
+                    .map(|(name, door)| (name.as_str(), door))
+                    .collect();
+                for (name, entry) in doors {
+                    devices
+                        .bind(
+                            group,
+                            name,
+                            entry,
+                            endpoint_view,
+                            Permit::Identity(Selector::MemberOf(coalition)),
+                            operator_api::OperationId(operation),
+                            Wait::AtMost(MS),
+                        )
+                        .map_err(|_| Start::Tree(E_HUB))?;
+                    operation = operation.checked_add(1).ok_or(Start::Tree(E_HUB))?;
+                }
+            }
+            debug!("hub: {} devices, {} classes", ledger.count(), classes.len());
 
-        // 九、挂组那一张表：三枚面 ＋ 每一台那一枚门（**挂在孔上，面由孔推**）。
-        let mut doors: Vec<PieToken> = Vec::new();
-        doors
-            .try_reserve(3 + ledger.count())
-            .map_err(|_| Start::Desk(E_HUB))?;
-        doors.extend([bond, list, claim]);
-        for class in &classes {
-            doors.extend(ledger.doors(class.clone()).map(|(_, door)| door));
-        }
-        Ok::<_, Start>((ledger, league, (bond, list, claim), doors, dtb))
-    })()?;
+            // **八、报"我起完了"**（Setup::Machine 的 `ready` 那条通道）：铸一枚刻它的孔、**交给
+            // （设备格都在树上、盟都立好了）。
+            establish::lend(sire, crate::unit::hub::READY_MARK).map_err(|why| {
+                crate::debug::put(&alloc::format!("hub: ready channel {why:?}"));
+                Start::Desk(E_HUB)
+            })?;
 
-    // 十、常驻：一只组等那几枚孔；**从哪一枚读到就是哪一面**（设备门那一枚的面由"它不是面那
-    //     三枚"推出来，认台靠**这一枚孔自己**）。
+            // 九、挂组那一张表：四枚面 ＋ 每一台那一枚门（**挂在孔上，面由孔推**）。
+            let mut doors: Vec<PieToken> = Vec::new();
+            doors
+                .try_reserve(4 + ledger.count())
+                .map_err(|_| Start::Desk(E_HUB))?;
+            doors.extend([bond, list, claim, dma]);
+            for class in &classes {
+                doors.extend(ledger.doors(class.clone()).map(|(_, door)| door));
+            }
+            Ok::<_, Start>((
+                ledger,
+                league,
+                (bond, list, claim),
+                doors,
+                dtb,
+                dma,
+                tree,
+                devices,
+                device_anchor,
+                subject,
+            ))
+        })()?;
+
+    // 十、协调入口那几面：三个硬件域与 Control（树上查回来的门牌）；
+    //     再加一本“设备目录”的装置（新设备的门牌与类联盟由它挂出去）。
+    let mut peers = None;
+    let directory = Directory {
+        devices: &devices,
+        anchor: device_anchor,
+        league: &league,
+        subject,
+    };
+
+    // 十一、常驻：一只组等那几枚孔；**从哪一枚读到就是哪一面**（设备门那一枚的面由"它不是面那
+    //     三枚"推出来，认台靠**这一枚孔自己**；DMA 那一面自己那一枚）。
     let pile = Pile::unseal(false).map_err(|why| {
         crate::debug::put(&alloc::format!("hub: pile creation {why:?}"));
         Start::Desk(E_HUB)
@@ -228,25 +245,104 @@ pub fn serve() -> Result<(), Start> {
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
-        match pile.await_(Wait::AtMost(PROBE_MS)) {
+        let wait = if ledger.executions_pending() || ledger.open_bindings_all().any(|binding| {
+            matches!(
+                binding.state,
+                hub_api::BindingState::Preparing | hub_api::BindingState::Closing
+            )
+        }) {
+            Wait::AtMost(1)
+        } else {
+            Wait::AtMost(PROBE_MS)
+        };
+        match pile.await_(wait) {
             Ok(env::ToleAwaitReply::Source {
                 source: env::ToleEventSource::Hole { token, .. },
                 ..
             }) => {
-                // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
-                let hole = Hole::from_raw(token);
-                while let Ok((len, from)) = hole.pull(&mut buf, Wait::POLL) {
-                    turn(&mut ledger, &league, plates, token, from, &buf[..len]);
+                if token == dma {
+                    // DMA 那一面走类型化的一问一答（回信孔由 ipc::rpc 铸、交、核）。
+                    drain_dma(&mut ledger, &mut peers, &tree, &directory, token, &mut buf);
+                } else {
+                    // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
+                    let hole = Hole::from_raw(token);
+                    while let Ok((len, from)) = hole.pull(&mut buf, Wait::POLL) {
+                        // 设备门牌上的 DMA 认领（“哪一台”由这一枚门回答）；
+                        // 其余形状仍走普通设备那一面的招待。
+                        if peers
+                            .as_ref()
+                            .and_then(|peers| {
+                                dma::claim_at_door(&mut ledger, peers, token, from, &buf[..len])
+                            })
+                            .is_none()
+                        {
+                            turn(&mut ledger, &league, plates, token, from, &buf[..len]);
+                        }
+                    }
                 }
             }
             // **挂起过 / 期限到**：这是常态（没有客人），故它顺带就是探活那一拍。
             Ok(_) => {}
             Err(_) => return Err(Start::Dead(E_HUB)),
         }
-        // 探活：主人没了的格当场空出来（读数只在真空出东西时印一行）。
+        // 探活：主人没了的格当场空出来（读数只在真空出东西时印一行）；
+        // DMA 绑定的主人没了只转收场，绝不因此变为可重绑。
         let freed = ledger.vacate(alive);
         if freed > 0 {
             debug!("hub: vacated {freed}");
+        }
+        if let Some(peers) = peers.as_ref() {
+            dma::advance(&mut ledger, peers);
+        }
+        for class in ledger.classes().ok_or(Start::Room(E_HUB))? {
+            for (_, door) in ledger.doors(class) {
+                if !doors.contains(&door) {
+                    pile.attach(env::ToleEventSource::Hole {
+                        token: door,
+                        condition: HoleCondition::Pull,
+                    })
+                    .map_err(|_| Start::Desk(E_HUB))?;
+                    doors.push(door);
+                }
+            }
+        }
+    }
+}
+
+/// DMA 那一面上的几问：取干净这一批、一问一答。
+fn drain_dma(
+    ledger: &mut Ledger,
+    peers: &mut Option<Peers>,
+    tree: &Face,
+    directory: &Directory,
+    entry: PieToken,
+    buffer: &mut [u8],
+) {
+    let receiver = RequestReceiver::<DmaCall>::from_raw(entry, DmaCall::BACK, DmaCall::back);
+    loop {
+        match receiver.receive(buffer, Wait::POLL) {
+            Ok(incoming) => {
+                if peers.is_none() && matches!(incoming.request, hub_api::DmaWire::Enroll(_)) {
+                    match Peers::find(tree, Wait::AtMost(MS)) {
+                        Ok(found) => *peers = Some(found),
+                        Err(reason) => debug!("hub: coordinators unavailable: {reason}"),
+                    }
+                }
+                let said = dma::turn(
+                    ledger,
+                    peers.as_ref(),
+                    directory,
+                    incoming.from,
+                    incoming.request,
+                );
+                let _ = incoming.reply.send(said);
+            }
+            Err(rejected) => match rejected.fail {
+                // 单槽取干了。
+                rpc::Fail::Receive(_) => break,
+                // 坏帧 / 读不懂：不猜、也不回话。
+                _ => continue,
+            },
         }
     }
 }
@@ -314,6 +410,11 @@ pub(super) fn send_status(mine: Grant, status: u8, back: PieToken) {
             });
         }
         Grant::Claim => put_deed(back, Deed::of(status)),
+        // DMA 那一面的一答是它自己那一形（正常路径在 drain_dma 里，这里只为穷尽）。
+        Grant::Dma => {
+            let mut tx = Sender::<hub_api::DmaSaid>::from_raw(back);
+            let _ = tx.send(hub_api::DmaSaid::of(status));
+        }
     }
 }
 
@@ -411,6 +512,9 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
             page: dtb,
             door: env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
                 .map_err(|_| Start::Load(E_HUB))?,
+            dma: false,
+            requester: 0,
+            pci: TaskId::new(0),
         },
     )?;
     let interrupt_item = inventory.item(1).ok_or(Start::Load(E_HUB))?;
@@ -429,6 +533,9 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
             page: interrupt,
             door: env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
                 .map_err(|_| Start::Load(E_HUB))?,
+            dma: false,
+            requester: 0,
+            pci: TaskId::new(0),
         },
     )?;
     for (index, device) in devices.iter().enumerate() {
@@ -448,6 +555,9 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
                 line: device.line,
                 page: token,
                 door,
+                dma: false,
+                requester: 0,
+                pci: TaskId::new(0),
             },
         )?;
     }

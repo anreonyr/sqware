@@ -1182,10 +1182,10 @@ pub(crate) fn frame() -> Result<Plan<crate::system::app::Fault>, BuildError> {
     frame.build()
 }
 fn settle(
-    flow: Res<crate::system::app::policy::Flow>,
+    settle: Res<crate::system::app::policy::Settle>,
     mut jobs: ResMut<Jobs>,
 ) -> Result<Progress, crate::system::app::Fault> {
-    if flow.settling {
+    if settle.flow.settling {
         let requests = jobs.take_construct_batch();
         for (id, request) in requests {
             request.image.release();

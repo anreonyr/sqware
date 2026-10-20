@@ -80,7 +80,7 @@ fn main() -> Report<'static> {
         .derive(p, Wait::AtMost(MS))
         .expect("probe-rule: no sub identity");
     let c = coal
-        .found(Wait::AtMost(MS))
+        .found(system_api::identity::FoundId { value: 1 }, Wait::AtMost(MS))
         .expect("probe-rule: no coalition id");
     coal.admit(c, p, Wait::AtMost(MS))
         .expect("probe-rule: manager admit failed");

@@ -105,9 +105,11 @@ pub use supply::{Binding, descriptor_mark, valid_supplies};
 mod deployment;
 #[allow(unused_imports)]
 pub use deployment::{
-    Bootstrap, DEPLOYMENTS, Dependency, Deployment, DeploymentSelectionError, SCENE, Target,
+    Bootstrap, DEPLOYMENTS, Dependency, Deployment, SCENE, Target,
     select as select_deployment,
 };
+mod deployment_selection_error;
+pub use deployment_selection_error::DeploymentSelectionError;
 mod package;
 pub use package::{PACKAGES, Package};
 mod loader;

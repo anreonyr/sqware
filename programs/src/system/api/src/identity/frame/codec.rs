@@ -165,7 +165,8 @@ impl Wire {
                 put(&Task::new(task)?, bytes, &mut at)?;
                 put(&coalitions, bytes, &mut at)?;
             }
-            Self::Waive | Self::Found => {}
+            Self::Found(id) => put(&id, bytes, &mut at)?,
+            Self::Waive => {}
         }
         (at <= MAX_FRAME).then_some(at)
     }
@@ -204,7 +205,7 @@ impl Wire {
                 Grant::Waive => Self::Waive,
                 Grant::Restrict => Self::Restrict(get(bytes, &mut at)?),
                 Grant::Derive => Self::Derive(get(bytes, &mut at)?),
-                Grant::Found => Self::Found,
+                Grant::Found => Self::Found(get(bytes, &mut at)?),
                 Grant::Admit => Self::Admit(get(bytes, &mut at)?, get(bytes, &mut at)?),
                 Grant::Expel => Self::Expel(get(bytes, &mut at)?, get(bytes, &mut at)?),
                 Grant::Bind => Self::Bind(get::<Task>(bytes, &mut at)?.0, get(bytes, &mut at)?),

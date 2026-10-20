@@ -124,7 +124,9 @@ pub(crate) fn exercise(
         entry(identity::Grant::Expel),
     )
     .unwrap();
-    let coalition = organization.found(wait).unwrap();
+    let coalition = organization
+        .found(identity::FoundId { value: 1 }, wait)
+        .unwrap();
     organization.admit(coalition, p, wait).unwrap();
     let memberships = identity::CoalitionSet::new(&[coalition]).unwrap();
     face(identity::Grant::Activate)

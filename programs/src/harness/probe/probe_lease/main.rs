@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-//! Publish a resource with real Task ownership, then exit.
+//! Verify declared retention supply, publish a Task-owned resource, then exit.
 
 extern crate alloc;
 extern crate programs;
@@ -27,9 +27,14 @@ const E_TRIP: usize = 1;
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-lease: landed, leaving";
 
+mod retention;
+
 #[programs::entry]
 fn main() -> Report<'static> {
+    retention::check();
     let sire = unit::sire();
+    ipc::session::establish::lend(sire, programs::unit::READY_MARK)
+        .expect("probe-lease: ready signal");
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-lease: no tree link");
     };

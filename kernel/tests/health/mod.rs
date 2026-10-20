@@ -47,7 +47,7 @@ pub mod pole;
 pub mod race_scene;
 pub mod residency;
 #[allow(dead_code)]
-#[path = "../../../programs/src/system/supply/retention/mod.rs"]
+#[path = "../../../programs/src/driver/iommu/hold/mod.rs"]
 pub(crate) mod retention_core;
 pub mod shell;
 pub mod source_binding;

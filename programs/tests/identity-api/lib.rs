@@ -59,6 +59,20 @@ mod tests {
             assert!(!matches!(Wire::take(&bytes[..len]), Some((Some(_), _))));
         }
     }
+
+    #[test]
+    fn found_requires_a_nonzero_stable_creation_id_on_the_wire() {
+        let back = PieToken::from_bytes(&17u64.to_le_bytes()).unwrap();
+        let mut bytes = [0; MAX_FRAME];
+        assert_eq!(Wire::Found(FoundId { value: 0 }).store(back, &mut bytes), None);
+        let len = Wire::Found(FoundId { value: u64::MAX }).store(back, &mut bytes).unwrap();
+        assert_eq!(len, 17);
+        assert_eq!(Wire::take(&bytes[..9]), Some((None, back)));
+        bytes[9..17].fill(0);
+        assert_eq!(Wire::take(&bytes[..len]), Some((None, back)));
+        roundtrip(Wire::Found(FoundId { value: u64::MAX }));
+    }
+
     #[test]
     fn all_actions_and_install_shapes_roundtrip_strictly() {
         let task = TaskId::new(8);
@@ -81,7 +95,7 @@ mod tests {
             Wire::Waive,
             Wire::Restrict(s),
             Wire::Derive(p(0)),
-            Wire::Found,
+            Wire::Found(FoundId { value: 1 }),
             Wire::Admit(c(0), p(0)),
             Wire::Expel(c(0), p(0)),
             Wire::Bind(task, Install::Authorized(s)),

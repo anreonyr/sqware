@@ -19,6 +19,7 @@ struct Effects {
     embark_fail: bool,
     embark_busy: bool,
     debark_fail: Option<UnitFail>,
+    alive_tasks: Vec<TaskId>,
 }
 thread_local! {
     static EFFECTS: RefCell<Effects> = RefCell::new(Effects::default());
@@ -35,6 +36,10 @@ pub mod debug {
     pub fn put(_: &str) {}
 }
 pub mod unit {
+    pub fn self_id() -> crate::TaskId {
+        crate::TaskId::new(1)
+    }
+
     pub fn join(
         _: crate::UnitTarget,
         _: crate::Wait,
@@ -49,8 +54,8 @@ pub mod unit {
                 .map_or(crate::JoinReply::Pending, crate::JoinReply::Reaped))
         })
     }
-    pub fn join_task(_: crate::TaskId, _: crate::Wait) -> Result<bool, crate::Error> {
-        Ok(true)
+    pub fn join_task(task: crate::TaskId, _: crate::Wait) -> Result<bool, crate::Error> {
+        Ok(crate::EFFECTS.with(|effects| !effects.borrow().alive_tasks.contains(&task)))
     }
     pub fn oust(_: crate::TeamId) -> Result<(), crate::Error> {
         crate::EFFECTS.with(|effects| {
@@ -551,6 +556,32 @@ mod tests {
         );
         EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 1));
     }
+
+    #[test]
+    fn unclaimed_delegated_instance_keeps_receipt_while_owner_is_alive() {
+        use system::control::instance::hook;
+        let mut control = fixture(State::Stopping);
+        control.instances[0].claimed = false;
+        control.instances[0].owner = TaskId::new(7);
+        EFFECTS.with(|effects| effects.borrow_mut().alive_tasks.push(TaskId::new(7)));
+        let mut resources = schedule::Resources::new();
+        resources.insert(control).unwrap();
+        let mut jobs = system::assembly::Jobs::default();
+        jobs.active_instance = Some(system::assembly::reference(TaskId::new(2)));
+        resources.insert(jobs).unwrap();
+        assert_eq!(
+            hook::reclaim(resources.write().unwrap(), resources.read().unwrap()),
+            Ok(schedule::Progress::Done)
+        );
+        EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 0));
+        EFFECTS.with(|effects| effects.borrow_mut().alive_tasks.clear());
+        assert_eq!(
+            hook::reclaim(resources.write().unwrap(), resources.read().unwrap()),
+            Ok(schedule::Progress::Done)
+        );
+        EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 1));
+    }
+
     #[test]
     fn missing_instance_and_invalid_transition_have_no_effects() {
         let mut control = fixture(State::Starting);

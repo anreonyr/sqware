@@ -3,7 +3,6 @@ extern crate alloc;
 mod collection;
 mod lease;
 mod pole;
-pub(crate) mod retention;
 
 use alloc::{boxed::Box, vec::Vec};
 use env::Wait;

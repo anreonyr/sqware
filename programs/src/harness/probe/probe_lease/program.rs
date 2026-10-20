@@ -29,10 +29,17 @@ pub static PROBE_LEASE: UnitFile = UnitFile {
         after: Some(&[crate::unit::Dependency::Bootstrap(
             crate::unit::Bootstrap::Operator,
         )]),
-        ready: crate::unit::Ready::OnSpawn,
+        ready: crate::unit::Ready::Signal(crate::unit::READY_MARK),
         ending: Some(Ending::Transient),
 
         construction: &[],
     },
-    supply: crate::unit::SupplyConfig { bindings: &[] },
+    supply: crate::unit::SupplyConfig {
+        bindings: &[crate::unit::Binding {
+            source: system_api::supply::Key::of("system/initrd"),
+            resource: system_api::supply::Key::of("memory/retention"),
+            slot: env::Mark::of("probe-lease/retention"),
+            permission: env::Permission::FETCH,
+        }],
+    },
 };

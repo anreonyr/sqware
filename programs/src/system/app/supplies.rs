@@ -1,14 +1,31 @@
 use crate::boot::Accounts;
 use crate::system::control::unit::Service;
 use crate::system::control::unit::start::Error;
-use crate::system::supply::retention::{DeviceRange, Failure, Holds, Registration};
-use env::{Call, Mark, Name, Page, Permission, Wait};
+use env::{Mark, Name, Page, Permission, Wait};
 use system_api::supply::{Key, LeaseId, LeaseIds, State};
 
 struct Provider {
     source: crate::system::supply::Source,
     ids: LeaseIds,
 }
+
+/// 设备树里 `riscv,iommu` 那段 `reg` 的起址（引导账里那一段的名字）。
+const IOMMU_BASE: u64 = 0x301_0000;
+/// 设备树里 `pci@…` 的 `ECAM` 起址。
+const ECAM_BASE: u64 = 0x3000_0000;
+/// 设备树 `ranges` 里那一段 64 位 PCI 窗口的父地址：精确 BAR 就从这段里取。
+const APERTURE_BASE: u64 = 0x4_0000_0000;
+/// 那一段窗口的字节数。
+const APERTURE_SIZE: u64 = 0x4_0000_0000;
+/// 寄存器与 ECAM 两段窗交出去时的形态（跟源：`ONLY` 必须一致）。
+const REGION_SUBSET: Permission = Permission::FETCH
+    .union(Permission::STORE)
+    .union(Permission::ONLY);
+/// aperture 那一扇还要能再授出（PCI 要从中派生那一根精确 BAR）。
+const APERTURE_SUBSET: Permission = Permission::FETCH
+    .union(Permission::STORE)
+    .union(Permission::VEST)
+    .union(Permission::ONLY);
 #[derive(Clone, Copy)]
 struct LeaseOwner {
     task: env::TaskId,
@@ -47,13 +64,206 @@ impl Drop for InitReceipt {
     }
 }
 
+/// 一扇受限平台窗的登记参数（引导账里的那一段 ＋ 交付形态）。
+#[derive(Clone, Copy)]
+struct PlatformSpec {
+    resource: &'static str,
+    slot: Mark,
+    region: Name,
+    permission: Permission,
+    /// 声明长度（字节）；`None` = 接收方从自己那份映射里量。
+    size: Option<u64>,
+}
+
+impl InitReceipt {
+    /// 一扇**受限平台窗**：来源是引导账里那一段，只由可信装配选择的声明绑定交出去。
+    ///
+    /// 描述那一帧带本扇窗的几何（8 字节 = 物理起址；16 字节 = 起址 ＋ 长度）；
+    /// 长度为零的那一档表示“接收方从自己那份映射里量”。
+    fn platform(&mut self, accounts: &Accounts, spec: PlatformSpec) -> Result<(), &'static str> {
+        use crate::system::supply::{
+            CollectionItem, CollectionResource, CollectionSpec, PoleResource, PoleSpec,
+        };
+        let PlatformSpec {
+            resource,
+            slot,
+            region,
+            permission,
+            size,
+        } = spec;
+        let actor = env::unit::self_id();
+        let Some(token) = accounts.token(region) else {
+            // Absent hardware has no supply definition; a required lease still fails normally.
+            return Ok(());
+        };
+        let info = resource::raw::inspect(token).map_err(|_| "platform region unavailable")?;
+        if !info.alive
+            || info.kind != env::PieKind::Pole
+            || !info.permission.contains(permission)
+            || !info.permission.contains(Permission::VEST)
+        {
+            return Err("platform region authority");
+        }
+        let base = region.base().ok_or("platform region base")?;
+        let shared = env::pie::accord(token, actor, permission | Permission::VEST, slot)
+            .map_err(|_| "platform region local authority")?;
+        self.roots
+            .try_reserve(1)
+            .map_err(|_| "platform root capacity")?;
+        self.roots.push(shared);
+        let mut items = alloc::vec::Vec::new();
+        items
+            .try_reserve_exact(1)
+            .map_err(|_| "platform collection capacity")?;
+        items.push(CollectionItem {
+            shared,
+            slot,
+            kind: env::PieKind::Pole,
+            permission,
+        });
+        let admission = move |request: &crate::system::supply::LeaseRequest| {
+            request.origin.requester == actor
+                && request.owner == actor
+                && request.target.get() != 0
+                && request.permission == Permission::FETCH
+                && !env::unit::join_task(request.target, Wait::POLL).unwrap_or(true)
+        };
+        let key = Key::of(resource);
+        let count = [1u8];
+        let mut description = [0u8; 16];
+        description[..8].copy_from_slice(&base.to_le_bytes());
+        let length = match size {
+            Some(size) => {
+                description[8..].copy_from_slice(&size.to_le_bytes());
+                16usize
+            }
+            None => 8usize,
+        };
+        let manifest = match PoleResource::from_bytes(PoleSpec {
+            key,
+            bytes: &count,
+            description: &description[..length],
+            admission,
+        }) {
+            Ok(manifest) => manifest,
+            Err(mut failure) => {
+                while failure.retry_cleanup().is_err() {
+                    env::room::starve();
+                }
+                return Err("platform manifest");
+            }
+        };
+        let collection = match CollectionResource::new(CollectionSpec {
+            key,
+            manifest,
+            items,
+            admission,
+        }) {
+            Ok(collection) => collection,
+            Err(mut failure) => {
+                while failure.retry_cleanup().is_err() {
+                    env::room::starve();
+                }
+                return Err("platform collection");
+            }
+        };
+        if let Err(mut failure) = self
+            .source
+            .as_mut()
+            .ok_or("platform source")?
+            .register(alloc::boxed::Box::new(collection))
+        {
+            while failure.retry_cleanup().is_err() {
+                env::room::starve();
+            }
+            return Err("platform registration");
+        }
+        Ok(())
+    }
+
+    fn retention(&mut self, accounts: &Accounts) -> Result<(), &'static str> {
+        use crate::system::supply::{
+            CollectionItem, CollectionResource, CollectionSpec, PoleResource, PoleSpec,
+        };
+        let actor = env::unit::self_id();
+        let authority = accounts
+            .token(Name::Call(env::Call::Retain))
+            .ok_or("retention authority missing")?;
+        let permission = Permission::FETCH | Permission::VEST;
+        self.roots
+            .try_reserve(1)
+            .map_err(|_| "retention source capacity")?;
+        let mut items = alloc::vec::Vec::new();
+        items
+            .try_reserve_exact(1)
+            .map_err(|_| "retention collection capacity")?;
+        let shared = env::pie::accord(authority, actor, permission, Mark::of("memory/retention"))
+            .map_err(|_| "retention local authority")?;
+        self.roots.push(shared);
+        items.push(CollectionItem {
+            shared,
+            slot: Mark::of("memory/retention"),
+            kind: env::PieKind::Nole,
+            permission,
+        });
+        let admission = move |request: &crate::system::supply::LeaseRequest| {
+            request.origin.requester == actor
+                && request.owner == actor
+                && request.target.get() != 0
+                && request.permission == Permission::FETCH
+                && !env::unit::join_task(request.target, Wait::POLL).unwrap_or(true)
+        };
+        let key = Key::of("memory/retention");
+        let count = [items.len() as u8];
+        let manifest = match PoleResource::from_bytes(PoleSpec {
+            key,
+            bytes: &count,
+            description: &count,
+            admission,
+        }) {
+            Ok(manifest) => manifest,
+            Err(mut failure) => {
+                while failure.retry_cleanup().is_err() {
+                    env::room::starve();
+                }
+                return Err("retention manifest");
+            }
+        };
+        let collection = match CollectionResource::new(CollectionSpec {
+            key,
+            manifest,
+            items,
+            admission,
+        }) {
+            Ok(collection) => collection,
+            Err(mut failure) => {
+                while failure.retry_cleanup().is_err() {
+                    env::room::starve();
+                }
+                return Err("retention collection");
+            }
+        };
+        if let Err(mut failure) = self
+            .source
+            .as_mut()
+            .ok_or("retention source")?
+            .register(alloc::boxed::Box::new(collection))
+        {
+            while failure.retry_cleanup().is_err() {
+                env::room::starve();
+            }
+            return Err("retention registration");
+        }
+        Ok(())
+    }
+}
+
 pub struct Supplies {
     pub(crate) accounts: Accounts,
     providers: alloc::vec::Vec<Provider>,
     leases: alloc::vec::Vec<LeaseOwner>,
-    pub(crate) retention: Holds,
     source_authority: Option<env::PieToken>,
-    inventory_roots: alloc::vec::Vec<env::PieToken>,
+    source_roots: alloc::vec::Vec<env::PieToken>,
 }
 impl Supplies {
     pub fn new(
@@ -257,42 +467,55 @@ impl Supplies {
             }
             return Err("machine inventory resource registration");
         }
+        receipt.retention(&accounts)?;
+        // 受限平台窗：三扇各自一条集合，只由可信装配选择的声明绑定交出去。
+        // 普通设备库存（`machine/inventory`）不因此获得 IOMMU/ECAM/aperture 的写权。
+        receipt.platform(
+            &accounts,
+            PlatformSpec {
+                resource: "platform/iommu",
+                slot: Mark::of("iommu/region"),
+                region: Name::Page(Page::Region(IOMMU_BASE)),
+                permission: REGION_SUBSET,
+                size: None,
+            },
+        )?;
+        receipt.platform(
+            &accounts,
+            PlatformSpec {
+                resource: "platform/ecam",
+                slot: Mark::of("pci/ecam"),
+                region: Name::Page(Page::Region(ECAM_BASE)),
+                permission: REGION_SUBSET,
+                size: None,
+            },
+        )?;
+        receipt.platform(
+            &accounts,
+            PlatformSpec {
+                resource: "platform/aperture",
+                slot: Mark::of("pci/aperture"),
+                region: Name::Page(Page::Region(APERTURE_BASE)),
+                permission: APERTURE_SUBSET,
+                size: Some(APERTURE_SIZE),
+            },
+        )?;
         let mut providers = alloc::vec::Vec::new();
         providers
             .try_reserve_exact(1)
             .map_err(|_| "supply provider capacity")?;
         let source = receipt.source.take().ok_or("image supply source")?;
         let source_authority = receipt.authority.take().ok_or("image supply authority")?;
-        let inventory_roots = core::mem::take(&mut receipt.roots);
+        let source_roots = core::mem::take(&mut receipt.roots);
         let mut result = Self {
             accounts,
             providers,
             leases: alloc::vec::Vec::new(),
-            retention: Holds::new(),
             source_authority: Some(source_authority),
-            inventory_roots,
+            source_roots,
         };
         result.register(source)?;
         Ok(result)
-    }
-
-    pub(crate) fn retain_memory(
-        &mut self,
-        range: DeviceRange,
-        source: env::AcquireSource,
-    ) -> Result<usize, Failure> {
-        let authority = self
-            .accounts
-            .token(Name::Call(Call::Retain))
-            .ok_or(Failure::Denied)?;
-        self.retention.register(
-            Registration {
-                range,
-                source,
-                retention: authority,
-            },
-            &mut super::retention::References,
-        )
     }
 
     pub fn register(&mut self, source: crate::system::supply::Source) -> Result<(), &'static str> {
@@ -320,20 +543,52 @@ impl Supplies {
         binding: crate::unit::Binding,
     ) -> Result<(), Error> {
         use wire::Message;
+        let task = service.task();
+        if self.leases.iter().any(|record| {
+            record.task == task
+                && record.source == binding.source
+                && record.binding == binding
+                && record.delivered
+        }) {
+            return Ok(());
+        }
+        let (lease, delivery) = self.acquire(task, binding)?;
+        let frame = crate::unit::SupplyFrame {
+            length: delivery.len,
+            description: delivery.description,
+        };
+        let mut buffer = crate::unit::SupplyFrame::EMPTY;
+        let Some(length) = frame.store(&mut buffer) else {
+            self.release_lease(binding.source, lease)?;
+            return Err(Error::Step("supply descriptor frame"));
+        };
+        if let Err(error) = service.send_descriptor(binding.slot, &buffer[..length]) {
+            self.release_lease(binding.source, lease)?;
+            return Err(error);
+        }
+        if let Some(record) = self.leases.iter_mut().find(|record| {
+            record.task == task && record.source == binding.source && record.id == lease
+        }) {
+            record.delivered = true;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn acquire(
+        &mut self,
+        task: env::TaskId,
+        binding: crate::unit::Binding,
+    ) -> Result<(LeaseId, system_api::supply::Delivery), Error> {
         let Some(at) = self.providers.iter().position(|provider| {
             provider.source.key().mark() == binding.source.mark()
                 && provider.source.key().name() == binding.source.name()
         }) else {
             return Err(Error::Step("supply source missing"));
         };
-        let task = service.task();
         let prior = self.leases.iter().position(|record| {
             record.task == task && record.source == binding.source && record.binding == binding
         });
         let lease = if let Some(prior) = prior {
-            if self.leases[prior].delivered {
-                return Ok(());
-            }
             self.leases[prior].id
         } else {
             self.leases
@@ -357,7 +612,7 @@ impl Supplies {
             crate::system::supply::Parameters {
                 source: binding.source,
                 resource: binding.resource,
-                target: service.task(),
+                target: task,
                 slot: binding.slot,
                 permission: binding.permission,
             },
@@ -388,25 +643,7 @@ impl Supplies {
             self.release_lease(binding.source, lease)?;
             return Err(Error::Step("supply delivery missing"));
         }
-        let frame = crate::unit::SupplyFrame {
-            length: delivery.len,
-            description: delivery.description,
-        };
-        let mut buffer = crate::unit::SupplyFrame::EMPTY;
-        let Some(length) = frame.store(&mut buffer) else {
-            self.release_lease(binding.source, lease)?;
-            return Err(Error::Step("supply descriptor frame"));
-        };
-        if let Err(error) = service.send_descriptor(binding.slot, &buffer[..length]) {
-            self.release_lease(binding.source, lease)?;
-            return Err(error);
-        }
-        if let Some(record) = self.leases.iter_mut().find(|record| {
-            record.task == task && record.source == binding.source && record.id == lease
-        }) {
-            record.delivered = true;
-        }
-        Ok(())
+        Ok((lease, delivery))
     }
 
     fn release_lease(&mut self, source: Key, id: LeaseId) -> Result<(), Error> {
@@ -470,9 +707,9 @@ impl Supplies {
             resource::raw::release(authority).map_err(|_| system_api::supply::Fail::SourceLost)?;
             self.source_authority = None;
         }
-        while let Some(root) = self.inventory_roots.last().copied() {
+        while let Some(root) = self.source_roots.last().copied() {
             resource::raw::release(root).map_err(|_| system_api::supply::Fail::SourceLost)?;
-            self.inventory_roots.pop();
+            self.source_roots.pop();
         }
         Ok(())
     }
