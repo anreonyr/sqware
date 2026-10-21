@@ -57,6 +57,15 @@ pub fn select(
 
 pub const DEPLOYMENTS: &[Deployment] = &[
     Deployment {
+        name: "iommu-soak-long",
+        entry: "system",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-soak-long"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-soak-long"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
         name: "iommu-fail-fence",
         entry: "system",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-fault"],

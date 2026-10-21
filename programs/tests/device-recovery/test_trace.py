@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from trace import check
 
@@ -32,6 +33,8 @@ class ExecutionEvidence(unittest.TestCase):
                 {"h": 0, "kind": {"room": {"reap": {"tid": auxiliary}}}},
             ))
         self.console.write_text("\n".join(lines) + "\n")
+        for when, event in enumerate(self.events):
+            event["when"] = when
 
     def check(self):
         self.trace.write_text("\n".join(map(json.dumps, self.events)) + "\n")
@@ -60,6 +63,35 @@ class ExecutionEvidence(unittest.TestCase):
         self.console.write_text(self.console.read_text().split("ctl: constructed device-work tid=12")[0])
         with self.assertRaisesRegex(AssertionError, "all generations"):
             self.check()
+
+    def test_remote_main_exit_is_not_execution_evidence(self):
+        self.events[0]["kind"]["room"] = {"exit": {"tid": 10, "reason": 0xFFFF_FFFE}}
+        with self.assertRaisesRegex(AssertionError, "distinct-Hart"):
+            self.check()
+
+    def test_duplicate_reap_is_rejected(self):
+        self.events.append({"when": 10, "kind": {"room": {"reap": {"tid": 11}}}})
+        with self.assertRaisesRegex(AssertionError, "duplicate reap"):
+            self.check()
+
+    def test_reused_execution_identity_is_rejected(self):
+        self.console.write_text(self.console.read_text().replace("auxiliary=13", "auxiliary=11"))
+        with self.assertRaisesRegex(AssertionError, "identity reused"):
+            self.check()
+
+    def test_trace_is_streamed_and_returns_the_retirement_summary(self):
+        self.events.append({"when": 9, "kind": {"halt": "halt"}})
+        self.trace.write_text("\n".join(map(json.dumps, self.events)) + "\n")
+        original = Path.read_text
+
+        def read(path, *args, **kwargs):
+            self.assertNotEqual(path, self.trace, "trace must not be loaded as one string")
+            return original(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", read), contextlib.redirect_stdout(io.StringIO()):
+            retired, last = check(self.console, self.trace)
+        self.assertEqual(set(retired), {10, 11, 12, 13})
+        self.assertEqual(last, {"halt": "halt"})
 
 
 if __name__ == "__main__":

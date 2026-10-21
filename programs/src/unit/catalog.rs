@@ -168,6 +168,7 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &device::CONTROL_RUIN,
     &device::CONTROL_FORCED,
     &device::CONTROL_SOAK,
+    &device::CONTROL_SOAK_LONG,
     &device::CONTROL_CONFIRMATION,
     &device_ruin::PROGRAM,
     &device_confirmation::PROGRAM,

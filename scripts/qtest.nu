@@ -182,7 +182,7 @@ while True:
 # `-serial` 挤到 serial1（guest 只跟 UART0 说话）。其余参数原样透传。
 # **（诊断：留全份控制台）** `cargo qtest` 在失败时只印 QEMU 输出**尾若干行**（超时那一档尤其
 # 只剩尾巴），而"机器跑到哪一步停住"恰恰要看**前面**。`QEMU_TEE_LOG` 给了就顺路拷一份全份；
-# 不给 = 与从前逐字相同（多一个 `cat` 的空管道而已）。
+# exec 保持 runner 所持 PID 就是 QEMU；捕获进程不隔开超时终止责任。
 const WRAPPER = '#!/usr/bin/env bash
 set -o pipefail
 args=()
@@ -190,7 +190,13 @@ for a in "$@"; do
   [ "$a" = "-nographic" ] || args+=("$a")
 done
 if [ -n "$QEMU_TEE_LOG" ]; then
-  qemu-system-riscv64 "${args[@]}" 2>&1 | tee "$QEMU_TEE_LOG"
+  exec qemu-system-riscv64 "${args[@]}" > >(
+    if tee "$QEMU_TEE_LOG"; then
+      printf 0 1<> "$QEMU_TEE_STATUS"
+    else
+      printf 1 1<> "$QEMU_TEE_STATUS"
+    fi
+  ) 2>&1
 else
   exec qemu-system-riscv64 "${args[@]}"
 fi'
@@ -215,8 +221,10 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   let trapdir = ($env.TRACE_OUT? | default ($repo | path join "trace"))
   let retirement = $scene in ["iommu-ruin" "iommu-forced"]
   let hardware = $scene == "iommu-fail-fence"
+  let soak = $scene in ["iommu-soak" "iommu-soak-long"]
+  let soak_generations = if $scene == "iommu-soak-long" { 1024 } else { 128 }
   let confirmation = $scene in ["iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference"]
-  let evidence = $retirement or $confirmation or $hardware or $scene == "iommu-soak"
+  let evidence = $retirement or $confirmation or $hardware or $soak
   let retire_mode = if $scene == "iommu-forced" { "forced" } else { "ruin" }
   let feed_script = if ($retirement or $hardware) and ($feed_script | is-empty) {
     let driver = if $hardware { "hardware" } else { $retire_mode }
@@ -300,6 +308,8 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     if ($env.QEMU_TEE_LOG? | is-empty) {
       $env.QEMU_TEE_LOG = ($trapdir | path join $"scene-($scene)-console.log")
     }
+    $env.QEMU_TEE_STATUS = ($trapdir | path join $"scene-($scene)-capture.status")
+    "P" | save --force $env.QEMU_TEE_STATUS
     $cap = ($trapdir | path join $"scene-($scene)-feed.log")
     let helper = ($trapdir | path join "scene-feed.py")
     let pid_file = ($trapdir | path join "scene-feed.pid")
@@ -359,7 +369,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   }
   # 端点那一景的那张盘：**可再生**（每次按同一花纹重建，落在 `<TRACE_OUT>/` 里，
   # 不进库），且由参数表那边只读挂上。景那一侧按同一花纹核读回的数据，故盘是承重的。
-  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after" "iommu-ruin" "iommu-forced" "iommu-soak" "iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference" "iommu-fail-fence"] {
+  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after" "iommu-ruin" "iommu-forced" "iommu-soak" "iommu-soak-long" "iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference" "iommu-fail-fence"] {
     let disk = ($trapdir | path join "iommu-dma.img")
     ^python3 -c 'import sys, pathlib; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 4096)' $disk
     if not ($hold | is-empty) {
@@ -416,6 +426,13 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
   let result = (^cargo ...$qtest_argv o+e>| tee { save --force $qtlog } | complete)
   print -n $result.stdout
   mut code = $result.exit_code
+  if not ($scene | is-empty) {
+    let capture_status = (try { open --raw $env.QEMU_TEE_STATUS | str trim } catch { "missing" })
+    if $capture_status != "0" {
+      print $"控制台捕获未成功完成：($capture_status)"
+      $code = 1
+    }
+  }
   if not ($feed_script | is-empty) {
     let result = $"($cap).result"
     $env.FEED_RESULT = $result
@@ -538,7 +555,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     } else if $hardware {
       {script: "hardware_check.py", args: [$cap]}
     } else {
-      {script: "soak.py", args: []}
+      {script: "soak.py", args: [($soak_generations | into string)]}
     }
     let exported = ($repo | path join "sqware-diagnose.jsonl")
     let archived = ($trapdir | path join $"scene-($scene)-diagnose.jsonl")

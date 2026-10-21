@@ -138,6 +138,11 @@ pub static CONTROL_SOAK: UnitFile = control(
     "device-ctl-soak",
     &CONTROL_CONSTRUCTION,
 );
+pub static CONTROL_SOAK_LONG: UnitFile = {
+    let mut unit = control("device-ctl-soak-long", "device-ctl-soak", &CONTROL_CONSTRUCTION);
+    unit.loader.args = &[1024];
+    unit
+};
 pub static CONTROL_CONFIRMATION: UnitFile = control(
     "device-ctl-confirmation",
     "device-ctl-confirmation",

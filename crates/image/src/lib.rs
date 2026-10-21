@@ -872,6 +872,20 @@ mod tests {
     }
 
     #[test]
+    fn long_soak_uses_loader_arguments_without_another_controller_image() {
+        let deployment = unit::Deployment::find("iommu-soak-long").unwrap();
+        assert_eq!(deployment.entry, "system");
+        assert!(deployment.start.contains(&"device-ctl-soak-long"));
+        let controller = unit::PROGRAMS.iter()
+            .find(|program| program.name() == "device-ctl-soak-long").unwrap();
+        assert_eq!(controller.loader.image, "device-ctl-soak");
+        assert_eq!(controller.loader.args, &[1024]);
+        let bins = bins_for(deployment).unwrap();
+        assert_eq!(bins.iter().filter(|(name, _)| *name == "device-ctl-soak").count(), 1);
+        assert!(!bins.iter().any(|(name, _)| *name == "device-ctl-soak-long"));
+    }
+
+    #[test]
     fn product_deployments_share_one_system_image_without_losing_their_start_lists() {
         let variants = [
             ("product", None),

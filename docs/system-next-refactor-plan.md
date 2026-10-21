@@ -2255,6 +2255,106 @@ View::close 与 Reference::release 已是 &mut self；
   定点格式与差异空白检查通过；现场为 `target/driver-recovery/review-fix/`。
 - 此节记录实现和自验，不代替独立 reviewer 对返工版本的复核批准。
 
+#### 1024 代长跑、能力生命周期与证据复核
+
+- 独立 reviewer 对固定提交 `1543b212` 重新审查，确认回收完成点、单次记时、
+  安装基线单调性及 settlement 门均符合合同，关闭上一节 P2；
+  独立执行 shutdown-policy、control-instance、system-shape，共 52 项通过。
+- `iommu-soak-long` 使用原 `device-ctl-soak` 镜像，由既有 Loader 参数传入 1024；
+  默认仍为 128，只接受这两个目标。qtest 从选定场景独立传递期望代数，
+  不从控制台声明选择较小目标。没有新增镜像、启动权威或硬件总管。
+  删除 Harness 的 100 ms 人工代间等待，生产 10 秒空闲期限未变。
+- trace checker 改为逐行扫描，只保留任务 Hart 集、回收时间和末事件；
+  不保存全部 JSON 事件，也不逐代重扫全份 trace。
+  主、辅助任务均须有自身 wait/park 或本核 switch 证据，远端 exit 不算执行证据；
+  任务身份复用和重复 reap 被拒绝。不同 Hart 证据不等于持续同时执行证明。
+
+**首次长跑失败与定位**
+
+- 首次八 Hart、1024 代运行在原 1800 秒宿主期限后失败：
+  只有 916 代完整结清回执，第 917 代停链中；无最终 halt 或分配基线证明。
+  现场为 `target/driver-recovery/long-soak/native-smp8/`，不计成功。
+- runner 当时持有的是 wrapper pipeline 的 shell PID，超时后 QEMU 子进程仍存活。
+  核对其唯一镜像路径和 PID 后，仅终止本次拥有的孤儿 QEMU，记录在
+  `orphan-cleanup.txt`；孤儿继续产生的输出不用于补齐完成证明。
+- 独立 reviewer 流式扫描失败归档的 28203178 条事件，确认不是坏 JSON；
+  最后事件不是 halt。每 128 代 α 整域回收窗口中，
+  Hole Pull 从 257841 增至第七窗 2663955，耗时约从 167.7 秒增至 338.0 秒。
+  窗口不是控制器结清回执边界，不将 α reap 当成绑定已结清。
+- 源码定位两项 P2：每次 construct 新建 launch 孔后丢弃原始 token，
+  controller 和 Hub 都常驻，Hub 每轮扫描并 pull 全部历史空孔；
+  另一处是下一代 command writer 覆盖旧 token，controller 根能力未释放。
+  auxiliary sensor 的来源在 α，会被 doom/cull 递归清理；RPC Reply 也有既有释放规则，
+  没有把它们误报为已确认泄漏。
+
+**修复与逐代判据**
+
+- launch 改为 controller 与 Hub 之间的一条复用通道，所有 construct 借用同一 token；
+  全部绑定结清后才释放，不能 push 后立即 Revoke 撤走未消费消息。
+- 每代 Closed 和 auxiliary 死亡确认后，先释放旧 command writer，再构造下一代；
+  最终一代也释放。两代 Fault 路径使用相同换代规则。
+  Busy 使用既有清理重试，其他释放错误向上传播；异常退出仍由任务回收结清。
+- 每代同一结清边界记录 controller 整张能力表大小，必须与第一代相同，
+  且活 launch、command 各一份；新增和最终物理回收检查没有互相替代。
+- reviewer 另发现既有 P2：DMA 回执只按全局数量统计，全部挪到控制台开头仍可通过。
+  现在每代区间必须恰好有一条成功回执，满足
+  `binding active < DMA served < execution domain stopped`；
+  同代停链也不能越过该代回执。加入移到前面、跨代重复补缺、
+  移到末尾、active 前或 stop 后，以及能力增长/回执缺失的负对照。
+- wrapper 改为 exec QEMU，捕获使用 process substitution，保持 runner PID 就是 VM。
+  捕获前预置 P，tee 完成写 0 或 1，缺失、未完成或失败都令 qtest 失败；
+  捕获成功不覆盖 runner 的失败码。实际 wrapper 的四项 fakeVM 测试核 PID、
+  杀 PID 后 VM 终止、捕获错误及无捕获时的原退出码。
+  真实 `iommu-forced --timeout 1` 负对照退出 1，返回后没有遗留 QEMU，捕获完成为 0。
+
+**固定源码的实际验收**
+
+- 功能源码归档 `source-fixed/source.tar.gz`，SHA256：
+  `0e51bb49852fee01d3ee628b90ae6f5f089686022735987b9983f42b052ab9d0`。
+  manifest 共 1494 个文件，1024 代运行后逐文件校验未变；
+  本节验收记录在功能冻结之后补写，不在该归档内。
+- 修复后八 Hart 128 代通过：64 次正常关闭、64 次主人死亡，
+  controller 报告 156550 ms，物理分配对象 153 → 153。
+- 同一源码八 Hart 1024 代通过：512 次正常关闭、512 次主人死亡，
+  controller 报告 1358821 ms（22 分 38.821 秒），最终 halt，
+  分配对象 153 → 153。仍使用 `--timeout 1800`，没有延长期限。
+  1024 条能力回执全部为 `capabilities=15 launch=1 command=1`。
+  现场为 `long-soak/native-fixed-smp8/`，命令为：
+
+  ```sh
+  CARGO_INCREMENTAL=0 QEMU_SMP=8 \
+  TRACE_OUT="$PWD/target/driver-recovery/long-soak/native-fixed-smp8" \
+  nu scripts/qtest.nu --package kernel --scene iommu-soak-long \
+    -- --features semihosting --timeout 1800
+  ```
+
+- 独立 reviewer 核归档 SHA/manifest，独立运行 76 项 Python 测试，
+  独立回放固定 128 和 1024 代现场，关闭 launch、command、DMA 回执三项 P2；
+  确认 wrapper 具体超时问题已修，未发现新的阻断项。
+  1024 回放核每代 DMA/停链/能力、2048 个 α 任务完整回收、
+  四个常驻服务晚于全部 α 回收、最终 halt、153 → 153，且现场 wrapper 与源码逐字相同。
+  此为独立回放，不声称 reviewer 重新启动了 QEMU。
+- 固定长跑 trace 为 11958739 条事件、约 959 MB。
+  同口径第七窗 Pull 降至 58442，Inspect 降至 270072，
+  时间约 177.7 秒。Collect 及窗口耗时仍增长，不声称性能完全恒定；
+  已知有界历史实例/owner Join 扫描和剩余 Collect 归属列为性能后续项。
+- 主线程重新执行 programs 37、kernel 9、image 1 套，共 467 项宿主测试；
+  execution、IPC、resource、schedule、wire 与 env ABI 再做 10 组，共 168 项。
+  合计 635 项宿主测试通过，Python 76 项通过，workspace debug/release 构建通过。
+- 四 Hart 短原生回归共 13 景通过：accept、product、iommu-product、
+  product-fault、start-before、start-after、Ruin、forced、三种传输拒绝、
+  真正 Reference Release Busy 和真实 IOFENCE 超时。
+  首批误用不存在的 `iommu` 场景名，造镜像即失败；
+  首次 invalidate 未带 debug_assertions/显式测试 feature，checker 因缺注入证据拒绝。
+  两次均保留失败记录，改用实际场景名/规定 feature 后重新验证，不计入成功数。
+- 精确 memory-transfer-race 命令（四 Hart、debug assertions、semihosting/race-scene、
+  `TRACE_OUT="$PWD/trace"`）退出 0。
+  默认健康命令本轮仍退出 101：118 passed，唯一失败是没有 initrd 的 scene 哨兵，
+  不能称默认健康集全绿。现场为 `long-soak/final-native/`。
+- 这是一次约 22 分钟的有界长跑，不是小时级或无限期稳定性证明。
+  设备 reset/drain 内部回读拒绝尚无原生受控注入，
+  不能用 RPC 拒绝、BAR 访问故障或成功 reset 冒充；β 自身死亡仍不在合同内。
+
 ## Operator 通用条目与授权机制
 
 - 提取通用的目录取得、资源绑定、授权、权限收窄、撤销和清理机制，不限定于 /unit/{team}/{task}。

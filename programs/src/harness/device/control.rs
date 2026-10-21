@@ -167,7 +167,7 @@ pub enum Mode {
     /// 请求保持在途，持续存活直到 System 的空闲超时触发全局退场。
     Forced,
     /// 多代真实执行实例，交替正常关闭与主人死亡。
-    Soak,
+    Soak { generations: usize },
     /// 指定收尾操作无法取得确认，保留责任后恢复传输并重试。
     Confirmation,
 }
@@ -176,7 +176,7 @@ impl Mode {
     /// 本景构造哪一张 α 镜像（受限构造按名字选，owner 恒为 Hub）。
     const fn work(self) -> &'static str {
         match self {
-            Self::Normal | Self::Fault | Self::Ruin | Self::Forced | Self::Soak
+            Self::Normal | Self::Fault | Self::Ruin | Self::Forced | Self::Soak { .. }
                 | Self::Confirmation => "device-work",
             Self::Before => "device-work-before",
             Self::After => "device-work-after",
@@ -186,7 +186,9 @@ impl Mode {
 
 /// 用受限构造协议把执行实例建出来，**以 Hub 为 owner**：只有 Hub 能停止/核销它
 /// （实例面按真实 caller 与 owner 核）；再把它的号报给 Hub，由 Hub 放行。
-fn construct(sire: TaskId, hub: TaskId, unit: &str, id: u64) -> Result<TaskId, &'static str> {
+fn construct(
+    sire: TaskId, hub: TaskId, launch: PieToken, unit: &str, id: u64,
+) -> Result<TaskId, &'static str> {
     use system_api::control::construction as api;
     let me = env::unit::self_id();
     // 本台自己的主体（构造出来的那一台沿用本台的 principal）。
@@ -264,9 +266,8 @@ fn construct(sire: TaskId, hub: TaskId, unit: &str, id: u64) -> Result<TaskId, &
         let _ = execution::room::park(::core::time::Duration::from_millis(1));
     }
     // 只报告任务号；Hub 从 Control 查询真实 Team 与 owner。
-    let writer = establish::give(hub, hub_api::LAUNCH_MARK).map_err(|_| "ctl: launch channel")?;
     let bytes = (task.get() as u64).to_le_bytes();
-    ::resource::raw::Hole::from_raw(writer)
+    ::resource::raw::Hole::from_raw(launch)
         .push(&bytes, Wait::AtMost(MS))
         .map_err(|_| "ctl: launch report")?;
     crate::debug::put(&alloc::format!(
@@ -284,7 +285,9 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     let tree = operator::Face::from(&ctx.session);
     let hub = HubDma::find(&tree, Wait::AtMost(MS))?;
     // 执行实例由本台用受限构造建出（owner = Hub），再报给 Hub 放行。
-    let alpha = construct(sire, hub.host(), mode.work(), 1)?;
+    let launch = establish::give(hub.host(), hub_api::LAUNCH_MARK)
+        .map_err(|_| "ctl: launch channel")?;
+    let alpha = construct(sire, hub.host(), launch, mode.work(), 1)?;
     // 本景那一窗页：自己的 Pole ＋ 一份引用 ＋ 本域视图。
     let pole = resource::raw::pole(layout::SPAN as usize, true).map_err(|_| "ctl: pages")?;
     let mut reference = Reference::acquire(
@@ -313,7 +316,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     let entry = env::hole::unseal(ENTRY, env::HoleLimits::default()).map_err(|_| "ctl: entry")?;
     ctx.plate(entry, ENTRY_NAME, Wait::AtMost(MS));
     // 命令孔：本台铸、把读端交给 α。
-    let writer = establish::give(alpha, COMMAND).map_err(|_| "ctl: command channel")?;
+    let mut writer = establish::give(alpha, COMMAND).map_err(|_| "ctl: command channel")?;
     // 等报告。
     let report = receive_report(entry, alpha)?;
     check_auxiliary(report, true)?;
@@ -372,25 +375,42 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             }
             crate::debug::put("ctl: in-flight binding settled by static Driver Ruin");
         }
-        Mode::Soak => {
+        Mode::Soak { generations } => {
             let started = env::chrono::clock();
-            let (mut current, mut writer) = (report, writer);
-            for generation in 1..=128 {
+            let mut current = report;
+            let mut baseline = None;
+            for generation in 1..=generations {
                 round_one(&block, writer, current.serial)?;
                 let fault = generation % 2 == 0;
                 command(writer, if fault { Command::Exit } else { Command::Close })?;
                 await_closed(&hub, current.serial, MS)?;
                 check_auxiliary(current, false)?;
+                let (mut capabilities, mut launches, mut commands) = (0, 0, 0);
+                for info in resource::raw::pies() {
+                    capabilities += 1;
+                    if info.alive && info.kind == env::PieKind::Hole {
+                        launches += usize::from(info.mark == hub_api::LAUNCH_MARK);
+                        commands += usize::from(info.mark == COMMAND);
+                    }
+                }
+                let expected = *baseline.get_or_insert(capabilities);
+                if capabilities != expected || launches != 1 || commands != 1 {
+                    return Err("ctl: generation capability growth");
+                }
+                crate::debug::put(&alloc::format!(
+                    "ctl: generation {generation} capabilities={capabilities} launch={launches} command={commands}",
+                ));
                 crate::debug::put(&alloc::format!(
                     "ctl: generation {generation} serial={} settled fault={fault}",
                     current.serial,
                 ));
-                if generation == 128 {
+                if generation == generations {
                     break;
                 }
-                execution::room::park(::core::time::Duration::from_millis(100))
-                    .map_err(|_| "ctl: generation interval")?;
-                let replacement = construct(sire, hub.host(), mode.work(), generation + 1)?;
+                resource::raw::release(writer).map_err(|_| "ctl: generation command release")?;
+                let replacement = construct(
+                    sire, hub.host(), launch, mode.work(), generation as u64 + 1,
+                )?;
                 writer = establish::give(replacement, COMMAND)
                     .map_err(|_| "ctl: generation command")?;
                 let next = receive_report(entry, replacement)?;
@@ -414,7 +434,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
                 current = next;
             }
             crate::debug::put(&alloc::format!(
-                "ctl: soak generations=128 elapsed_ms={}",
+                "ctl: soak generations={generations} elapsed_ms={}",
                 env::chrono::clock().saturating_sub(started) / 1_000_000,
             ));
         }
@@ -503,8 +523,9 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
                     failure.party, failure.op, failure.code,
                 ));
             }
-            let replacement = construct(sire, hub.host(), "device-work", 2)?;
-            let writer =
+            resource::raw::release(writer).map_err(|_| "ctl: command release")?;
+            let replacement = construct(sire, hub.host(), launch, "device-work", 2)?;
+            writer =
                 establish::give(replacement, COMMAND).map_err(|_| "ctl: rebind command")?;
             let replacement_report = receive_report(entry, replacement)?;
             check_auxiliary(replacement_report, true)?;
@@ -550,6 +571,8 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             check_auxiliary(replacement_report, false)?;
         }
     }
+    resource::raw::release(writer).map_err(|_| "ctl: command release")?;
+    resource::raw::release(launch).map_err(|_| "ctl: launch release")?;
     // 收图与引用（本景的页）：失败保留句柄，交给任务尽头统一结清。
     view.close().map_err(|_| "ctl: view close")?;
     reference.release().map_err(|_| "ctl: reference release")?;
