@@ -738,6 +738,27 @@ mod tests {
     }
 
     #[test]
+    fn failed_prepare_cannot_be_claimed_or_embarked_before_retirement() {
+        use system::control::instance::hook::Key;
+        let resources = hook_resources(State::Starting);
+        run_hook(&resources, Key::Prepare, Err("bootstrap push"));
+        {
+            let mut control = resources.write::<Control>().unwrap();
+            assert_eq!(control.reclaimed_at, 0);
+            let item = &mut control.instances[0];
+            assert_eq!(item.state, State::Stopping);
+            assert_eq!(item.team, Some(TeamId::new(3)));
+            assert!(!item.started);
+            assert_eq!(item.claim(42), None);
+        }
+        EFFECTS.with(|effects| assert_eq!(effects.borrow().embarked, 0));
+        run_hook(&resources, Key::Retire, Ok(schedule::Progress::Done));
+        let control = resources.read::<Control>().unwrap();
+        assert_eq!(control.instances[0].state, State::Dead);
+        assert_eq!(control.instances[0].team, None);
+    }
+
+    #[test]
     fn repeated_retire_completion_cannot_refresh_reclamation_time() {
         use system::control::instance::hook::Key;
         let resources = hook_resources(State::Stopping);

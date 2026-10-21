@@ -17,7 +17,7 @@
 | 项目 | 当前证据 |
 | --- | --- |
 | A1：通用退休依赖替换 System HubDma 闸门 | 已实现全局及静态闸门，宿主和真实Ruin/forced/accept通过 |
-| A2：Control 唯一管理执行实例生命周期 | Complete停止前置已验证；Hub阶段机及启动责任仍待迁移 |
+| A2：Control 唯一管理执行实例生命周期 | Complete停止前置和Assembly启动载体已实现；Hub其余阶段机仍待迁移 |
 | A3：设备协调迁入设备控制 Driver | 未实施 |
 | A4：公共目录与来源元数据分离 | 已实现，相关宿主与真实产品景通过 |
 | A5：PCI 不解析 VirtIO 设备协议 | 未实施 |
@@ -270,3 +270,49 @@ TeamLife 保存唯一退出策略；可信引导任务获得独立 Guard 授权�
   peer回执且未进入目标引用清理，独立verify接受证据。诊断钩子位于Pend锁外，避免日志锁序影响。
 - 尚须Control/Assembly持权装配PCI/IOMMU/Recovery、按退休依赖撤保护，并实测真实Driver
   在DMA责任未结清时意外死亡。当前未声称A7或完整重构完成。
+
+## 第八检查点：Assembly 持有通用启动载体
+
+Assembly 为每个执行实例交付并保存启动 Hole，完成 identity/namespace/supply 后才发布。
+Hub 不再创建、填充、交付、收窄或释放启动载体；其 Identify/Embark/Running/Stop/Oust
+仍待下一阶段迁移。实例 owner/sire 保持 Hub，没有通过改 owner 绕过实例面的授权检查。
+
+内核在 Unit::Build 保存真实调用者的不可变 Creator，Unit 新槽45只提供身份查询，
+不提供创建或生命周期权。Boot/内核直建为0，同Team线程共享真实Creator。
+消费者核验注册的bootstrap Mark、Hole种类、alive、真实creator对应的owner/vestor、
+精确FETCH、实际消息sender、帧provider以及完整版本/角色。System网关由可信creator签发。
+该网关和Operator地址语义不同，不能混用。
+
+载体保存可选根、交付receipt、已填充/收窄进度及首次尝试的固定期限。
+临时失败走真实schedule Pending重入；到期先拒绝新effect，再由Control停止实例。
+释放失败保留同根；WholeTeamComplete闸门仍在所有退休资源清理之前。
+release(Revoke)经内核cull递归处理分支，不依赖先Oust来解除活heir。
+
+测试判据迁移：
+
+| 旧Hub启动载体判据 | 当前生产责任与验证 |
+| --- | --- |
+| create/populate/deliver/restrict失败不重复已完成动作 | bootstrap-carrier直接编译Assembly源码，逐边界失败、相同root重试及真实schedule Pending重入 |
+| 部分启动中止不再发布后续步骤且最终释放一次 | every_partial_prepare_is_releasable_without_publishing_later_steps；Control failed_prepare不能claim/embark |
+| 丢Embark回复不再发布载体、不重复启动 | 载体重复prepare不重发；retention保留Hub Embark丢回复同实例断言 |
+| 失败release保留同句柄，重复完成不再释放 | release_failure_keeps_carrier_then_releases_once，断言所有尝试均用原root |
+| 停止未确认不清理，失败Oust不构成确认 | retention保留Stop/Oust失败和同receipt判据；Control真实hook等待整个Team Complete |
+| 多实例互不串扰、非法来源不被接纳 | 独立carrier/child检查，以及creator、kind、权限、sender、provider、角色、版本、短帧和重复候选负例 |
+
+原测试迁移补丁因删除原启动/回滚判据被自动审批拒绝，没有应用。
+先新增并实跑替代责任处的测试，再精确调整旧Execution夹具；没有放宽保留引用或最终回收检查。
+外部只读Flash复核发现生产hook把临时错误直接转Stopping，主线程修正为固定期限Pending，
+并新增真实schedule驱动用例；对释放的疑问经真实内核递归实现核验，无需调换顺序。
+
+已完成验证：bootstrap-carrier12项、control-instance26项、retention42项、interface-marks5项；
+system-shape20项、workspace dev check通过，仍有既有5项警告。真实内核UnitBuild/Spawn/Creator用例通过，
+包含caller与sire不同、查询真实Creator且child未获得Build权限。
+
+真实产品首次失败于错误System网关，修正后四核product、start-before、start-after通过。
+原生Creator夹具首次在Constructing阶段调用hold失败，改走真实Spawn后通过；没有绕过ready检查。
+上述失败现场保留在target/driver-composition/bootstrap/的creator-native、product。
+修正Pending前八核128代通过，64正常/64 owner死亡，155071ms，帧153→153，
+逐代capability15/launch1/command1；现场soak-128。本记录不把它当作Pending修正后的验证。
+Flash复核确认Pending修正无新漏洞；其提出的未创建Hole即到期边界也纳入逐边界超时测试，
+断言清除Carrier且不调用pie释放。Pending修正后八核soak-128-reviewed通过：64正常/64 owner死亡，
+155137ms，帧153→153，逐代capability15/launch1/command1。没有声称完整A2、Daemon或最终1024代已完成。

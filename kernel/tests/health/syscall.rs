@@ -363,6 +363,65 @@ impl Drop for Caller {
     }
 }
 
+pub fn creator_and_owner() {
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let creator = Caller::new(false);
+    let mut registry = crate::entry::boot::resources::Registry::default();
+    crate::entry::call::resources::register(&mut registry).unwrap();
+    registry.freeze().unwrap().grant(&creator.task).unwrap();
+    let owner_team = TeamBuilder::new(SpaceBuilder::user().build().unwrap())
+        .sire(crate::core::work::unit::task::TaskWeak::stored(
+            Arc::downgrade(&creator.task),
+            crate::core::work::unit::copies::Origin::Sire,
+        ))
+        .spawn().unwrap();
+    let owner = owner_team.task().hold().unwrap();
+    let id = creator.call(EnvCall::Unit(UnitCall::Build {
+        kind: ProgramKind::User,
+        sire: owner.ident.id,
+    }));
+    assert!(id > 0);
+    let team = owner.heir(env::TeamId::new(id as usize)).unwrap();
+    assert_eq!(team.creator(), creator.task.ident.id);
+    assert_eq!(team.sire(), Some(owner.ident.id));
+    assert_ne!(creator.task.ident.id, owner.ident.id);
+    team.space.nest.attach_region(RegionId::Normal, 0x4000_0000, mode::upper().as_usize()).unwrap();
+    let reservation = super::support::reserve(&team.space, KVirt::wrap(0x4000_0000), PAGE_SIZE).unwrap();
+    let code = super::support::attach_frames(
+        &team.space,
+        reservation,
+        alloc::vec![crate::tag!(Pole, crate::core::memory::flat::Frame::allocate().unwrap())],
+        Access::READ | Access::EXECUTE,
+        Access::READ | Access::EXECUTE,
+    ).unwrap();
+    let task = creator.call(EnvCall::Unit(UnitCall::Spawn {
+        team: team.id,
+        entry: 0x4000_0000,
+        args: VirtAddr::new(SCRATCH_AT),
+        count: 0,
+        stack: 0,
+    }));
+    assert!(task > 0, "first task spawn: {task}");
+    let child = Caller {
+        task: crate::core::work::room::scheduler::roster::muster(env::TaskId::new(task as usize))
+            .and_then(|task| task.upgrade()).unwrap(),
+        team: team.clone(),
+        scratch: core::cell::RefCell::new(None),
+        mapped: core::cell::RefCell::new(alloc::vec::Vec::new()),
+    };
+    assert_eq!(child.call(EnvCall::Unit(UnitCall::Creator)), creator.task.ident.id.get() as isize);
+    assert_eq!(child.call(EnvCall::Unit(UnitCall::Sire)), owner.ident.id.get() as isize);
+    assert_eq!(child.call(EnvCall::Unit(UnitCall::Build {
+        kind: ProgramKind::User,
+        sire: child.task.ident.id,
+    })), env::UnitFail::Denied.code());
+    crate::core::work::room::messenger::slay(&child.task);
+    assert!(child.task.reaped());
+    drop(child);
+    team.space.nest.dispose(code).unwrap();
+    assert_eq!(creator.call(EnvCall::Unit(UnitCall::Oust { team: team.id })), 0);
+}
+
 pub fn abi_and_privilege() {
     crate::core::work::room::scheduler::init().expect("scheduler init");
     use env::wire::{Decode, Wire};

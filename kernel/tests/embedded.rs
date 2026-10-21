@@ -685,6 +685,12 @@ mod tests {
         kernel::entry::check::exit_policy::nested_domains();
     }
 
+    #[cfg(debug_assertions)]
+    #[test]
+    fn unit_creator_distinguishes_owner() {
+        kernel::entry::check::syscall::creator_and_owner();
+    }
+
     #[cfg(all(debug_assertions, feature = "critical-scene"))]
     #[test]
     fn critical_domain_exit_stops() {

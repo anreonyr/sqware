@@ -81,3 +81,13 @@ fn guard_calls_preserve_target_and_explicit_authority() {
         assert_eq!(call.pack()[..2], [7, 19]);
     }
 }
+
+#[test]
+fn creator_query_has_its_own_slot_and_no_payload() {
+    let call = UnitCall::Creator;
+    assert_eq!(call.slot(), (1usize << 32) | 45);
+    assert_eq!(
+        EnvCall::from_wire(call.slot(), &call.pack()),
+        Ok(EnvCall::Unit(call))
+    );
+}

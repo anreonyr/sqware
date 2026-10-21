@@ -34,6 +34,7 @@ pub(crate) fn next_id() -> Result<TeamId, NestError> {
 pub(crate) fn make_team(
     space: Arc<Space>,
     sire: Option<Arc<Task>>,
+    creator: TaskId,
     constructing: bool,
 ) -> Result<Arc<Team>, NestError> {
     let parent = sire.as_ref().map(|task| task.ident.team.life.clone());
@@ -64,6 +65,7 @@ pub(crate) fn make_team(
     let team = Arc::try_new(Team {
         space,
         id,
+        creator,
         sire: sire.as_ref().map_or_else(TaskWeak::empty, |task| {
             TaskWeak::stored(Arc::downgrade(task), Origin::Sire)
         }),

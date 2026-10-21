@@ -1,4 +1,4 @@
-use env::{Access, Permission, PieToken, Policy, TaskId, TeamId, Wait};
+use env::{TaskId, TeamId, Wait};
 use resource::raw::Hole;
 use system_api::control::{Fail, State};
 
@@ -23,29 +23,6 @@ impl ExecutionEffects for Effects<'_> {
         }
     }
 
-    fn create(&mut self) -> Result<PieToken, Failure> {
-        env::hole::unseal(hub_api::STARTUP_MARK, env::HoleLimits::default())
-            .map_err(|error| Failure::Hole(error.source))
-    }
-
-    fn populate(&mut self, startup: PieToken) -> Result<(), Failure> {
-        let bytes = (env::unit::sire().get() as u64).to_le_bytes();
-        Hole::from_raw(startup)
-            .push(&bytes, Wait::POLL)
-            .map_err(|error| Failure::Hole(error.source))
-    }
-
-    fn deliver(&mut self, startup: PieToken, task: TaskId) -> Result<(), Failure> {
-        resource::port::ship(startup, task, Access::FETCH, Policy::NONE)
-            .map(|_| ())
-            .map_err(|error| Failure::Pie(error.source))
-    }
-
-    fn restrict(&mut self, startup: PieToken) -> Result<(), Failure> {
-        env::pie::narrow(startup, Permission::STORE)
-            .map_err(|error| Failure::Pie(error.source))
-    }
-
     fn embark(&mut self, task: TaskId) -> Result<(), Failure> {
         self.0.control.instance(task).embark(Wait::AtMost(MS))
             .map_err(Failure::Control)
@@ -68,10 +45,6 @@ impl ExecutionEffects for Effects<'_> {
         }
     }
 
-    fn release(&mut self, startup: PieToken) -> Result<(), Failure> {
-        env::pie::release(startup, env::ReleaseMode::Revoke)
-            .map_err(|error| Failure::Pie(error.source))
-    }
 }
 
 pub fn advance(ledger: &mut Ledger, peers: &Peers) {

@@ -17,13 +17,8 @@ struct Effects {
     exited: bool,
     oust_pending: bool,
     lost_embark_reply: bool,
-    creates: usize,
-    populates: usize,
-    delivers: usize,
-    restricted: bool,
     starts: usize,
     ousts: usize,
-    releases: usize,
 }
 
 impl Effects {
@@ -44,36 +39,8 @@ impl ExecutionEffects for Effects {
         Ok((!self.absent).then_some(TEAM))
     }
 
-    fn create(&mut self) -> Result<PieToken, Failure> {
-        self.call(Step::Create)?;
-        self.creates += 1;
-        Ok(PieToken::mint(4))
-    }
-
-    fn populate(&mut self, _: PieToken) -> Result<(), Failure> {
-        self.call(Step::Populate)?;
-        self.populates += 1;
-        Ok(())
-    }
-
-    fn deliver(&mut self, _: PieToken, task: TaskId) -> Result<(), Failure> {
-        assert_eq!(task, TASK);
-        assert_eq!(self.populates, 1);
-        self.call(Step::Deliver)?;
-        self.delivers += 1;
-        Ok(())
-    }
-
-    fn restrict(&mut self, _: PieToken) -> Result<(), Failure> {
-        self.call(Step::Restrict)?;
-        self.restricted = true;
-        Ok(())
-    }
-
     fn embark(&mut self, task: TaskId) -> Result<(), Failure> {
         assert_eq!(task, TASK);
-        assert_eq!((self.creates, self.populates, self.delivers), (1, 1, 1));
-        assert!(self.restricted);
         self.call(Step::Embark)?;
         if self.starts == 0 {
             self.starts = 1;
@@ -106,12 +73,6 @@ impl ExecutionEffects for Effects {
         Ok(true)
     }
 
-    fn release(&mut self, _: PieToken) -> Result<(), Failure> {
-        assert_eq!(self.ousts, 1);
-        self.call(Step::Release)?;
-        self.releases += 1;
-        Ok(())
-    }
 }
 
 fn drive(execution: &mut Execution, effects: &mut Effects, target: Step) {
@@ -126,25 +87,23 @@ fn drive(execution: &mut Execution, effects: &mut Effects, target: Step) {
 
 #[test]
 fn every_partial_startup_retries_without_recreating_completed_effects() {
-    for fail in [
-        Step::Identify, Step::Create, Step::Populate, Step::Deliver, Step::Restrict, Step::Embark,
-    ] {
+    for fail in [Step::Identify, Step::Embark] {
         let mut execution = Execution::new(TASK, 100);
         let mut effects = Effects { fail: Some(fail), ..Effects::default() };
         drive(&mut execution, &mut effects, Step::Running);
         assert_eq!(execution.team, Some(TEAM));
-        assert_eq!((effects.creates, effects.populates, effects.delivers, effects.starts), (1, 1, 1, 1));
+        assert_eq!(effects.starts, 1);
         assert_eq!(execution.failure, Some(Failure::Pie(PieFail::OoM)));
         assert_eq!(effects.calls.iter().filter(|step| **step == fail).count(), 2);
         execution.retire();
         drive(&mut execution, &mut effects, Step::Done);
         assert!(execution.stopped());
-        assert_eq!((effects.ousts, effects.releases), (1, 1));
+        assert_eq!(effects.ousts, 1);
     }
 }
 
 #[test]
-fn lost_embark_reply_retries_same_instance_and_does_not_republish_bootstrap() {
+fn lost_embark_reply_retries_same_instance_without_starting_twice() {
     let mut execution = Execution::new(TASK, 100);
     let mut effects = Effects { lost_embark_reply: true, ..Effects::default() };
     drive(&mut execution, &mut effects, Step::Embark);
@@ -152,15 +111,13 @@ fn lost_embark_reply_retries_same_instance_and_does_not_republish_bootstrap() {
     assert_eq!(execution.step, Step::Embark);
     assert_eq!(effects.starts, 1);
     drive(&mut execution, &mut effects, Step::Running);
-    assert_eq!((effects.creates, effects.populates, effects.delivers, effects.starts), (1, 1, 1, 1));
+    assert_eq!(effects.starts, 1);
     assert_eq!(effects.calls.iter().filter(|step| **step == Step::Embark).count(), 2);
 }
 
 #[test]
 fn timeout_at_every_startup_boundary_stops_verified_team_without_starting() {
-    for boundary in [
-        Step::Identify, Step::Create, Step::Populate, Step::Deliver, Step::Restrict, Step::Embark,
-    ] {
+    for boundary in [Step::Identify, Step::Embark] {
         let mut execution = Execution::new(TASK, 100);
         let mut effects = Effects::default();
         drive(&mut execution, &mut effects, boundary);
@@ -169,12 +126,11 @@ fn timeout_at_every_startup_boundary_stops_verified_team_without_starting() {
         assert_eq!(effects.starts, 0);
         assert!(execution.stopped());
         assert_eq!(effects.ousts, 1);
-        assert_eq!(effects.releases, usize::from(effects.creates != 0));
     }
 }
 
 #[test]
-fn stop_confirmation_and_failed_release_keep_the_same_receipt_and_handle() {
+fn stop_confirmation_keeps_the_same_receipt_until_oust_completes() {
     let mut execution = Execution::new(TASK, 100);
     let mut effects = Effects::default();
     drive(&mut execution, &mut effects, Step::Running);
@@ -185,19 +141,19 @@ fn stop_confirmation_and_failed_release_keep_the_same_receipt_and_handle() {
         execution.retire();
         execution.advance(0, &mut effects).unwrap();
         assert!(!execution.stopped());
-        assert!(execution.startup.is_some());
-        assert_eq!(effects.releases, 0);
+        assert_eq!(execution.team, Some(TEAM));
+        assert_eq!(execution.step, Step::Oust);
+        assert_eq!(effects.ousts, 0);
     }
     effects.oust_pending = false;
     execution.advance(0, &mut effects).unwrap();
     assert!(execution.stopped());
-    effects.fail = Some(Step::Release);
-    assert!(execution.advance(0, &mut effects).is_err());
     execution.retire();
-    assert_eq!(execution.step, Step::Release);
-    assert!(execution.startup.is_some());
+    assert_eq!(execution.step, Step::Done);
+    assert_eq!(execution.team, Some(TEAM));
     drive(&mut execution, &mut effects, Step::Done);
-    assert_eq!((effects.ousts, effects.releases), (1, 1));
+    execution.advance(0, &mut effects).unwrap();
+    assert_eq!(effects.ousts, 1);
 }
 
 #[test]
@@ -219,7 +175,7 @@ fn main_exit_without_a_binding_still_retires_the_whole_team() {
     effects.exited = true;
     execution.advance(1000, &mut effects).unwrap();
     drive(&mut execution, &mut effects, Step::Done);
-    assert_eq!((effects.ousts, effects.releases), (1, 1));
+    assert_eq!(effects.ousts, 1);
 }
 
 #[test]
@@ -248,7 +204,7 @@ fn settle_after_lost_embark_reply_stops_the_already_running_instance() {
     assert_eq!(ledger.settle(), 1);
     drive(ledger.execution(TASK).unwrap(), &mut effects, Step::Done);
     assert_eq!(ledger.settle(), 0);
-    assert_eq!((effects.starts, effects.ousts, effects.releases), (1, 1, 1));
+    assert_eq!((effects.starts, effects.ousts), (1, 1));
 }
 
 #[test]
@@ -271,7 +227,7 @@ fn failed_identity_query_after_timeout_keeps_retirement_intent() {
     assert_eq!(execution.step, Step::Identify);
     drive(&mut execution, &mut effects, Step::Done);
     assert!(execution.stopped());
-    assert_eq!((effects.creates, effects.starts, effects.ousts), (0, 0, 1));
+    assert_eq!((effects.starts, effects.ousts), (0, 1));
 }
 
 #[test]
@@ -286,9 +242,9 @@ fn failed_stop_or_oust_cannot_become_a_stop_confirmation() {
         assert!(execution.advance(0, &mut effects).is_err());
         assert_eq!(execution.step, boundary);
         assert!(!execution.stopped());
-        assert_eq!(effects.releases, 0);
+        assert_eq!(effects.ousts, 0);
         drive(&mut execution, &mut effects, Step::Done);
-        assert_eq!((effects.ousts, effects.releases), (1, 1));
+        assert_eq!(effects.ousts, 1);
     }
 }
 

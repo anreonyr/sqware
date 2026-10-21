@@ -196,6 +196,7 @@ pub(crate) struct InstanceInstall {
     pub service: Option<crate::system::control::unit::Service>,
     pub identity: Option<system_api::identity::InstallId>,
     pub startup: system_api::loader::StartupMetadata,
+    pub bootstrap: Option<bootstrap::Carrier>,
 }
 pub(crate) struct Launched {
     pub reference: InstanceRef,
@@ -279,6 +280,7 @@ struct ConstructFinish {
 pub(crate) type JobCompletion = work::Completed<JobResult>;
 #[path = "assembly/work.rs"]
 mod work;
+mod bootstrap;
 use work::WorkQueue;
 impl work::JobIdentity for Work {
     fn completed_id(&self) -> Option<JobId> {
@@ -1416,6 +1418,7 @@ fn construct_one(
                     startup: system_api::loader::StartupMetadata {
                         resolve: env::PieToken::NONE,
                     },
+                    bootstrap: None,
                 },
             })
         }

@@ -17,6 +17,7 @@ pub(crate) fn children() -> Result<alloc::vec::Vec<(Key, Plan<&'static str>)>, B
     prepare.system("namespace", prepare_namespace)?;
     prepare.system("identity.exports", identity_exports)?;
     prepare.system("supply", super::supply::prepare)?;
+    prepare.system("bootstrap", bootstrap)?;
     let mut retire = Schedule::sequence();
     retire.system("identity.exports", retire_exports)?;
     retire.system("namespace", retire_namespace)?;
@@ -24,6 +25,7 @@ pub(crate) fn children() -> Result<alloc::vec::Vec<(Key, Plan<&'static str>)>, B
     retire.system("claim", retire_claim)?;
     retire.system("supply", release_supply)?;
     retire.system("identity", unbind)?;
+    retire.system("bootstrap", release_bootstrap)?;
     retire.system("reclaim", hook::reclaim)?;
     Ok(alloc::vec![
         (Key::Prepare, prepare.build()?),
@@ -38,6 +40,13 @@ fn release_supply(
     supplies
         .release_target(task)
         .map_err(|_| "instance supply release")?;
+    Ok(Progress::Done)
+}
+fn bootstrap(mut jobs: ResMut<Jobs>) -> Result<Progress, &'static str> {
+    super::bootstrap::advance(&mut jobs, env::unit::self_id())
+}
+fn release_bootstrap(mut jobs: ResMut<Jobs>) -> Result<Progress, &'static str> {
+    super::bootstrap::release(&mut jobs)?;
     Ok(Progress::Done)
 }
 fn launch(jobs: &Jobs, task: Option<env::TaskId>) -> Result<&Delivery, &'static str> {

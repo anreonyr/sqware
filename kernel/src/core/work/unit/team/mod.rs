@@ -50,6 +50,7 @@ pub struct Team {
     pub(crate) space: Arc<Space>,
     pub(crate) id: TeamId,
     pub(crate) sire: TaskWeak,
+    pub(crate) creator: TaskId,
     pub(crate) state: Arc<SpinLock<TeamState>>,
     pub(crate) tasks: Tasks,
     pub(crate) life: Arc<TeamLife>,
@@ -286,6 +287,11 @@ impl Team {
 
     pub(crate) fn sire(&self) -> Option<TaskId> {
         self.sire.upgrade().map(|t| t.ident.id)
+    }
+
+    /// 实际调用 `Unit::Build` 的那一台；内核直建/启动团队为 0。
+    pub(crate) fn creator(&self) -> TaskId {
+        self.creator
     }
 
     /// 新任务的收据：从这棵树往上数，每个有主（`owner != 0`）的节点都算一条，

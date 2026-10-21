@@ -175,4 +175,8 @@ pub enum UnitCall {
     #[slot(44)]
     #[ret(())]
     Unguard { team: TeamId, authority: PieToken },
+    #[slot(45)]
+    #[infallible]
+    #[ret(TaskId)]
+    Creator,
 }
