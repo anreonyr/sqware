@@ -45,14 +45,20 @@ pub mod unit {
         _: crate::Wait,
         receive: bool,
     ) -> Result<crate::JoinReply, crate::Error> {
-        assert!(receive);
-        crate::EFFECTS.with(|effects| {
-            Ok(effects
-                .borrow_mut()
+        Ok(crate::EFFECTS.with(|effects| {
+            let mut effects = effects.borrow_mut();
+            if !receive {
+                return if effects.alive_tasks.is_empty() {
+                    crate::JoinReply::Complete
+                } else {
+                    crate::JoinReply::Pending
+                };
+            }
+            effects
                 .exits
                 .pop_front()
-                .map_or(crate::JoinReply::Pending, crate::JoinReply::Reaped))
-        })
+                .map_or(crate::JoinReply::Pending, crate::JoinReply::Reaped)
+        }))
     }
     pub fn join_task(task: crate::TaskId, _: crate::Wait) -> Result<bool, crate::Error> {
         Ok(crate::EFFECTS.with(|effects| !effects.borrow().alive_tasks.contains(&task)))
@@ -582,6 +588,70 @@ mod tests {
             Ok(schedule::Progress::Done)
         );
         EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 1));
+    }
+
+    #[test]
+    fn retire_hook_waits_for_every_team_member_to_exit() {
+        use system::control::instance::hook;
+        fn set_alive(tasks: &[TaskId]) {
+            EFFECTS.with(|effects| {
+                let mut effects = effects.borrow_mut();
+                effects.alive_tasks.clear();
+                effects.alive_tasks.extend_from_slice(tasks);
+            });
+        }
+        fn selects(resources: &schedule::Resources<'static>) -> bool {
+            assert!(matches!(
+                hook::budget(
+                    resources.read().unwrap(),
+                    resources.write().unwrap(),
+                    resources.write().unwrap()
+                ),
+                Ok(schedule::Progress::Done)
+            ));
+            assert!(matches!(
+                hook::select(
+                    resources.read().unwrap(),
+                    resources.write().unwrap(),
+                    resources.write().unwrap()
+                ),
+                Ok(schedule::Progress::Done)
+            ));
+            resources
+                .read::<system::assembly::Jobs>()
+                .unwrap()
+                .active_hook_reference()
+                .is_some()
+        }
+
+        let mut control = fixture(State::Ready);
+        control.instances[0].reap(TaskExit {
+            task: TaskId::new(2),
+            cause: ExitCause::Reap,
+            reason: 0,
+        });
+        assert_eq!(control.instances[0].state, State::Stopping);
+        // 主线程 2 已退，辅助成员 4 仍在：Team 尚未 Complete。
+        set_alive(&[TaskId::new(4)]);
+        let mut resources = schedule::Resources::new();
+        resources.insert(control).unwrap();
+        resources.insert(system::assembly::Jobs::default()).unwrap();
+        resources
+            .insert(schedule::Dispatch::<
+                system::control::instance::hook::Key,
+                &'static str,
+            >::new())
+            .unwrap();
+        assert!(!selects(&resources));
+        set_alive(&[]);
+        assert!(selects(&resources));
+        assert!(
+            resources
+                .read::<system::assembly::Jobs>()
+                .unwrap()
+                .active_hook_reference() ==
+            Some(system::assembly::reference(TaskId::new(2)))
+        );
     }
 
     #[test]

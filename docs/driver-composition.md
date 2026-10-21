@@ -140,6 +140,18 @@ CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true QEMU_SMP=4 TRACE
 - 全局退场先关闭新建准入、停止动态执行域、结清其退休依赖，再按依赖顺序退休提供方。
   当前无绑定但已创建的执行实例也必须由 Control 结清，不能只统计绑定数。
 
+### Control 停止与回收的实际边界
+
+2026-10-21 在 `dd12da15` 上复查 `kernel/src/core/work/unit/join/mod.rs`：
+非消费的 Team 查询仅在 `!constructing && all_reaped` 时返回 `JoinReply::Complete`。
+`Reaped` 表示单条成员退出，不能用于整个 Team 的停止证明；TaskId 和 TeamId 均单调分配，
+达到上限后拒绝，不复用。外部退休请求可定位真实 TaskId，在途回复仍须核已有 InstanceRef。
+
+第六检查点的第一份外部草稿误用 `Reaped`，并在 Hub 仍会自行 Oust 时让 Control 先 Oust，
+还把现有资源拆除子计划误称为外部责任已经结清。该草稿未应用、未执行测试，已退回返工。
+这三项必须闭环迁移：完整 Team 停止、外部责任 Done、Control 最终回收。不能通过删除
+owner 回执分支、吞掉 Oust Denied 或放宽最终回收检查拼出通过。
+
 ## 第三检查点：Resource 与供给精确派生
 
 外部 worker 会话 `session-2a1ed33c-ba68-42f2-9ac6-12bdc7ae841f` 已正常完成，

@@ -32,10 +32,10 @@ pub fn select(
     mut jobs: ResMut<crate::system::assembly::Jobs>,
     mut dispatch: ResMut<Dispatch<Key, &'static str>>,
 ) -> Result<Progress, Fail> {
-    while let Some((task, state, started, expected)) = control
+    while let Some((task, team, state, started, expected)) = control
         .instances
         .get(jobs.next_hook())
-        .map(|item| (item.task, item.state, item.started, item.reference))
+        .map(|item| (item.task, item.team, item.state, item.started, item.reference))
     {
         let next = jobs.next_hook() + 1;
         jobs.advance_hook(next);
@@ -47,9 +47,13 @@ pub fn select(
         }
         let key = match state {
             State::Starting if !started => Some(Key::Prepare),
-            State::Stopping if unit::join_task(task, Wait::POLL).unwrap_or(true) => {
-                Some(Key::Retire)
-            }
+            State::Stopping
+                if team.is_some_and(|team| {
+                    matches!(
+                        unit::join(env::UnitTarget::Team(team), Wait::POLL, false),
+                        Ok(env::JoinReply::Complete)
+                    )
+                }) => Some(Key::Retire),
             _ => None,
         };
         let Some(key) = key else { continue };
