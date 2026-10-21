@@ -2133,6 +2133,100 @@ View::close 与 Reference::release 已是 &mut self；
   恢复动态计数修复后的三个宿主合同、两份 Nushell 脚本解析和差异空白检查也通过。
   现场位于 `final/runner-unified/`。
 
+#### Reference Release 原语失败与真实 IOFENCE 超时
+
+以下接续 `5bd9a3e2`，进一步区分“RPC 无法交付”和“生产核心已经执行到失败原语”。
+
+**实际引用释放返回失败**
+
+- 新增 `iommu-fail-reference`，复用确认场景的入口、控制器和默认关闭的内核测试 feature。
+  IOMMU 的 Release RPC 正常交付；夹具只在真正的 Memory Release 入口，
+  对指定 IOMMU 任务所持的六页独立保留引用返回 `MemoryFail::Busy`，
+  不从引用表移除句柄。表页的七页引用不匹配，不会被误注入。
+- 生产 `References` → `Holds` → IOMMU Core 实际处理该失败，
+  Hub 收到并保留 `party=3/op=5/code=4`（Unavailable），不再是传输失败的 code=0。
+  ACK 带准确的预期失败码，控制器仍核 Closing、同一绑定重试和 Closed 后原始失败可查询。
+- 每次失败重试必须继续使用同一真实引用号；解除注入前，
+  内核核该号仍在 IOMMU 引用表中、独立保留仍在、窗口仍为六页，
+  并核两份引用仍存在。解除后，由真正的成功 Release 入口记录同一引用号消失，
+  引用数降为一份表页引用，再继续 DDTP Off、detach、Hub Closed。
+  成功观测在释放 pend 串行锁之后执行，不在该锁内取名册锁。
+- 新增的注入及成功观测均受 testing/debug_assertions/非默认 feature 限制，
+  普通 Release 不增加失败分支或状态。生产驱动的资源持有与错误映射未改。
+- 五次四 Hart 原生场景连续通过，实际句柄如 107；
+  八 Hart 场景也通过，实际句柄 108，物理分配对象 155 → 155。
+  三个原有传输失败场景在八 Hart 下回归通过。
+  不开 feature 的负对照退出 1，普通 product 场景退出 0。
+  注入合同宿主套件增至五项，检查 RPC 确实放行、无关任务/句柄不受影响、
+  同一引用失败后仍可重试以及真正成功后的句柄消失。
+
+**实际命令队列故障与 Fence::Expired**
+
+- 新增 `iommu-fail-fence`，入口仍为生产 system，使用现有 device-ctl-fault，
+  没有新驱动镜像、核心替身或内核故障 feature。
+  QEMU 的 qtest 设备控制口只由这一场景显式打开，普通启动参数不带它。
+  本场景额外依赖 `dtc`，启动帮手之前先检查工具并生成设备树。
+- 设备树由 `qemu-args.nu` 的同一板子参数生成；宿主读取真实 IOMMU 基址及 DRAM 边界，
+  不在测试脚本重写板子地址表。QEMU 11.1.2 已实测支持 TCG 与 qtest 控制口同时运行。
+- 后端先挂起发布后的真实 DMA 读。此时业务尚未收场，宿主保存真实 CQB，
+  关闭命令队列并确认静止，再把 CQB 指向 DRAM 之外并重开队列。
+  随后恢复该读，要求实际扇区、status 和 used ring 正确，才由控制器让 α 退出。
+- IOMMU 发出的 IOTINVAL/IOFENCE 实际遭遇命令取指内存故障：
+  CQCSR 的 MEM_FAULT 真正置位，头尾不同，生产代码的同一 fence 等待到期，
+  输出 `invalidate fence expired frames held=6`，Hub 记录原始 Unavailable。
+  新的生产诊断只在该步骤首次记录失败时输出，不改判据、不延长期限或重发在途命令。
+- 失败窗口的原生 trace 须证明主/辅助任务均已 reap、五个静态服务均未 reap；
+  不允许 invalidate 成功、PCI disable、reset、队列静止、Release 或 Hub Closed 提前出现。
+- 宿主从原命令页读取尚未消费的 IOTINVAL 和 IOFENCE，
+  从真实 IOFENCE 编码取得 cookie 与完成记录物理地址，并读到记录仍为零。
+  随后只恢复原 CQB、清队列错误并重新通知原尾指针；
+  QEMU 硬件必须将同一记录写成同一 cookie（实测 `0x10f00fef`）。
+  原生 Core 随后确认失效并完成停链；控制器还须查询到结清绑定的原始失败，
+  下一代重绑及旧 IOVA 负证也须通过。
+- 检查器逐条核 qtest 原始命令/响应，只允许写 CQB/CQCSR/CQT；
+  禁止宿主写任何命令页、DMA 数据页或 fence 完成记录。
+  成功不是“宿主把完成值补上”，也不是换一条命令、换 cookie 或重置等待期限。
+- 四 Hart、八 Hart 各连续三次真实场景通过，分配对象分别回到 85 和 153 的起场基线。
+  失败快照必须是最终 trace 的严格前缀；每轮保留生成的设备树、控制口往返、
+  后端记录、失败时控制台/trace 和最终现场。
+  原生证据位于 `target/driver-recovery/hardware/verified/`。
+- 新增十四项宿主正反对照，核真实设备地址、命令故障位、未消费命令、
+  旧/缺失完成、禁止写完成内存、原始读数一致、原队列修复、控制口失败、
+  α 整域回收、常驻服务存活和禁止越步。
+
+**本检查点验证与未覆盖项**
+
+- `deep-closure/` 重新运行九个既有四 Hart 场景以及 Ruin、forced，十一项均退出 0。
+  programs 37 套独立宿主 manifest 共 365 项通过，kernel 9 套共 76 项通过，
+  Python 增至 55 项，image 16 项通过。
+  workspace debug/release 与 kernel tests（含 semihosting,dma-confirmation-scene）
+  debug/release 检查通过。脚本解析、定点格式及差异空白检查单独记录。
+- 调用示例：
+
+  ```sh
+  CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true \
+  QEMU_SMP=4 TRACE_OUT="$PWD/target/reference-check" \
+  nu scripts/qtest.nu --package kernel --scene iommu-fail-reference \
+    -- --features semihosting,dma-confirmation-scene -- scene
+
+  CARGO_INCREMENTAL=0 QEMU_SMP=8 TRACE_OUT="$PWD/target/fence-check" \
+  nu scripts/qtest.nu --package kernel --scene iommu-fail-fence \
+    -- --features semihosting
+  ```
+
+- Reference Release 自身失败和硬件 fence 超时现已有原生证明，
+  不再列为只有传输失败覆盖的项目。
+  设备 reset/drain 的原生**回读拒绝**尚未受控注入；目前有真实成功路径、
+  对应 RPC 失败保留/重试，以及生产 Core 回读失败的宿主合同。
+  不用上述证明冒充该设备内部故障已经验证。
+  更长时间 soak 和独立 reviewer 审查仍未完成；β 自身死亡仍不在合同内。
+- 最终代码再次运行默认健康命令：退出 101，118 passed、
+  唯一失败仍为缺 initrd 哨兵；精确的 memory-transfer-race 命令退出 0。
+  kernel tests 含 semihosting,dma-confirmation-scene 的 debug/release 检查、
+  定点 rustfmt、两份脚本解析和 git diff --check 均通过。
+  现场归档于 `deep-closure/health/`、`deep-closure/race-exact/` 和
+  `deep-closure/host/`；未做全树格式重排。
+
 ## Operator 通用条目与授权机制
 
 - 提取通用的目录取得、资源绑定、授权、权限收窄、撤销和清理机制，不限定于 /unit/{team}/{task}。

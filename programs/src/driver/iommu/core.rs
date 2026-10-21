@@ -413,6 +413,12 @@ impl Core {
             }
             Fence::Waiting => Ok(::schedule::Progress::Pending),
             Fence::Expired => {
+                if binding.failure != Some((api::PARTY, api::INVALIDATE)) {
+                    crate::debug::put(&alloc::format!(
+                        "iommu: binding {serial} invalidate fence expired frames held={}",
+                        binding.pages,
+                    ));
+                }
                 binding.failure = Some((api::PARTY, api::INVALIDATE));
                 Err(api::Fail::Unavailable)
             }

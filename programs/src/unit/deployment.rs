@@ -57,6 +57,24 @@ pub fn select(
 
 pub const DEPLOYMENTS: &[Deployment] = &[
     Deployment {
+        name: "iommu-fail-fence",
+        entry: "system",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-fault"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-fault"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-fail-reference",
+        entry: "iommu-confirmation",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
         name: "iommu-fail-invalidate",
         entry: "iommu-confirmation",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"],

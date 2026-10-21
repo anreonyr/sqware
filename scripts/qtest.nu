@@ -214,20 +214,23 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   let repo = ($script_dir | path dirname)
   let trapdir = ($env.TRACE_OUT? | default ($repo | path join "trace"))
   let retirement = $scene in ["iommu-ruin" "iommu-forced"]
-  let confirmation = $scene in ["iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release"]
-  let evidence = $retirement or $confirmation or $scene == "iommu-soak"
+  let hardware = $scene == "iommu-fail-fence"
+  let confirmation = $scene in ["iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference"]
+  let evidence = $retirement or $confirmation or $hardware or $scene == "iommu-soak"
   let retire_mode = if $scene == "iommu-forced" { "forced" } else { "ruin" }
-  let feed_script = if $retirement and ($feed_script | is-empty) {
-    $repo | path join $"programs/tests/device-recovery/($retire_mode).py"
+  let feed_script = if ($retirement or $hardware) and ($feed_script | is-empty) {
+    let driver = if $hardware { "hardware" } else { $retire_mode }
+    $repo | path join $"programs/tests/device-recovery/($driver).py"
   } else {
     $feed_script
   }
-  let hold = if $retirement {
+  let hold = if $retirement or $hardware {
     $"target/ruin-(random uuid).nbd"
   } else {
     ""
   }
   $env.DMA_HOLD = $hold
+  $env.DMA_CONTROL = if $hardware { $"target/control-(random uuid).qtest" } else { "" }
   $env.DMA_HOLD_SECONDS = if $scene == "iommu-forced" { "30" } else { "10" }
   let summary = match $scene {
     "memory-transfer" => "scene-memory-transfer-phases.json"
@@ -283,6 +286,17 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     $scene_args = ["--qemu-arg=-initrd" $"--qemu-arg=($at)"]
 
     mkdir $trapdir
+    if $hardware {
+      if (which dtc | is-empty) {
+        error make {msg: "硬件故障场景需要 dtc 读取 QEMU 生成的设备树"}
+      }
+      $env.DMA_DTB = ($trapdir | path join "board.dtb")
+      let dump_args = (^nu ($script_dir | path join "qemu-args.nu") --board-only --iommu | lines)
+      let dump = (^qemu-system-riscv64 ...$dump_args -machine $"dumpdtb=($env.DMA_DTB)" | complete)
+      if $dump.exit_code != 0 {
+        error make {msg: $"设备树生成失败：($dump.stderr)"}
+      }
+    }
     if ($env.QEMU_TEE_LOG? | is-empty) {
       $env.QEMU_TEE_LOG = ($trapdir | path join $"scene-($scene)-console.log")
     }
@@ -345,7 +359,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   }
   # 端点那一景的那张盘：**可再生**（每次按同一花纹重建，落在 `<TRACE_OUT>/` 里，
   # 不进库），且由参数表那边只读挂上。景那一侧按同一花纹核读回的数据，故盘是承重的。
-  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after" "iommu-ruin" "iommu-forced" "iommu-soak" "iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release"] {
+  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after" "iommu-ruin" "iommu-forced" "iommu-soak" "iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference" "iommu-fail-fence"] {
     let disk = ($trapdir | path join "iommu-dma.img")
     ^python3 -c 'import sys, pathlib; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 4096)' $disk
     if not ($hold | is-empty) {
@@ -368,7 +382,8 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     []
   }
   let hold_argv = if ($hold | is-empty) { [] } else { ["--endpoint-hold" $hold] }
-  let board = (^nu ($script_dir | path join "qemu-args.nu") --board-only ...$iommu_argv ...$serial_argv ...$endpoint_argv ...$hold_argv
+  let control_argv = if $hardware { ["--qtest-socket" $env.DMA_CONTROL] } else { [] }
+  let board = (^nu ($script_dir | path join "qemu-args.nu") --board-only ...$iommu_argv ...$serial_argv ...$endpoint_argv ...$hold_argv ...$control_argv
       | lines | where { |l| ($l | str trim) != "" })
   let qemu_args = ($board | each { |a| $"--qemu-arg=($a)" })
   let pkg = if ($package | is-empty) { [] } else { ["--package" $package] }
@@ -520,6 +535,8 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
       {script: "ruin_check.py", args: [$cap $retire_mode]}
     } else if $confirmation {
       {script: "confirmation.py", args: [($scene | str replace "iommu-fail-" "")]}
+    } else if $hardware {
+      {script: "hardware_check.py", args: [$cap]}
     } else {
       {script: "soak.py", args: []}
     }

@@ -6,6 +6,8 @@ use std::sync::Mutex;
 
 #[path = "fixtures/references.rs"]
 mod references;
+#[path = "fixtures/hold.rs"]
+mod hold;
 #[path = "fixtures/pend.rs"]
 mod pend;
 #[path = "fixtures/task.rs"]
@@ -63,7 +65,7 @@ mod machine {
 fn configure(enabled: bool, op: u8) {
     let root = env::TaskId::new(41);
     assert!(!fixture::reject(
-        root, root, true, &injection::command(enabled, 100, 200, op, 1, 200),
+        root, root, true, &injection::command(enabled, 100, 200, u64::from(op), 1, 200),
     ));
 }
 
@@ -126,7 +128,7 @@ fn nonroot_or_other_owned_command_cannot_remove_injection() {
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
     REFERENCES.with(|count| count.set(2));
     configure(true, iommu::RELEASE);
-    let bytes = injection::command(false, 100, 200, iommu::RELEASE, 1, 200);
+    let bytes = injection::command(false, 100, 200, u64::from(iommu::RELEASE), 1, 200);
     let root = env::TaskId::new(41);
     assert!(!fixture::reject(root, root, false, &bytes));
     assert!(!fixture::reject(env::TaskId::new(42), root, true, &bytes));
@@ -142,4 +144,25 @@ fn missing_dma_reference_is_a_failure_not_a_successful_retention_proof() {
     assert!(std::panic::catch_unwind(|| reject(&request(iommu::RELEASE))).is_err());
     REFERENCES.with(|count| count.set(2));
     configure(false, iommu::RELEASE);
+}
+
+#[test]
+fn reference_failure_reaches_the_primitive_and_keeps_the_same_handle() {
+    let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
+    REFERENCES.with(|count| count.set(2));
+    let root = env::TaskId::new(41);
+    let command = |enabled| injection::command(
+        enabled, 100, 200, injection::REFERENCE_RELEASE, 1, 200,
+    );
+    assert!(!fixture::reject(root, root, true, &command(true)));
+    assert!(!reject(&request(iommu::RELEASE)), "RPC delivery must remain real");
+    assert!(!fixture::reject_reference(env::TaskId::new(201), 777));
+    assert!(!fixture::reject_reference(env::TaskId::new(200), 778));
+    assert!(fixture::reject_reference(env::TaskId::new(200), 777));
+    assert!(fixture::reject_reference(env::TaskId::new(200), 777));
+    assert!(!fixture::reject(root, root, true, &command(false)));
+    assert!(!fixture::reject_reference(env::TaskId::new(200), 777));
+    REFERENCES.with(|count| count.set(1));
+    fixture::reference_released(env::TaskId::new(200), 777);
+    REFERENCES.with(|count| count.set(2));
 }

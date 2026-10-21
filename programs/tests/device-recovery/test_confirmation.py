@@ -11,7 +11,7 @@ from fixtures.confirmation import evidence
 
 class ConfirmationEvidence(unittest.TestCase):
     def test_all_three_boundaries(self):
-        for step in ("invalidate", "reset", "release"):
+        for step in ("invalidate", "reset", "release", "reference"):
             with self.subTest(step=step), contextlib.redirect_stdout(io.StringIO()):
                 completed(*evidence(step), step)
 
@@ -68,6 +68,23 @@ class ConfirmationEvidence(unittest.TestCase):
         console, events = evidence("release")
         with self.assertRaisesRegex(AssertionError, "native fault"):
             completed(console + "user fault killed: tid=10\n", events, "release")
+
+    def test_reference_failure_requires_the_same_owned_handle(self):
+        console, events = evidence("reference")
+        with self.assertRaises(AssertionError):
+            completed(
+                console.replace("still owned reference=777", "still owned reference=778"),
+                events, "reference",
+            )
+        with self.assertRaises(AssertionError):
+            completed(console.replace("reference=777 pages=6", "reference=0 pages=6"), events, "reference")
+        with self.assertRaises(AssertionError):
+            completed(console.replace("reference=777 references=1", "reference=778 references=1"), events, "reference")
+
+    def test_reference_failure_must_be_a_driver_error_not_transport_error(self):
+        console, events = evidence("reference")
+        with self.assertRaises(AssertionError):
+            completed(console.replace("code=4", "code=0"), events, "reference")
 
 
 if __name__ == "__main__":

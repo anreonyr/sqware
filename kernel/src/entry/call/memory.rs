@@ -883,6 +883,10 @@ fn window(
 /// 所以在这里重试父侧已可证明结束的分配槽；不可证明的照旧占着。
 fn release(reference: env::FlatReference, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail> {
     let task = caller(ident).ok_or(MemoryFail::Denied)?;
+    #[cfg(all(debug_assertions, feature = "dma-confirmation-scene"))]
+    if crate::entry::check::dma_confirmation::reject_reference(ident.id, reference.get()) {
+        return Err(MemoryFail::Busy);
+    }
     let _serial = task.pend.lock();
     let hold = task
         .pend
@@ -892,6 +896,11 @@ fn release(reference: env::FlatReference, ident: &Arc<TaskIdent>) -> Result<usiz
     let source = hold.source().clone();
     drop(hold);
     source.reap_derivations();
+    #[cfg(all(debug_assertions, feature = "dma-confirmation-scene"))]
+    {
+        drop(_serial);
+        crate::entry::check::dma_confirmation::reference_released(ident.id, reference.get());
+    }
     Ok(0)
 }
 

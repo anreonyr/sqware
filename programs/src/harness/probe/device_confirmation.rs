@@ -11,6 +11,7 @@ pub(crate) const ACK: env::Mark = env::Mark::of("device-confirmation/ack");
 
 pub fn run() -> Result<(), env::Reason> {
     let boot = app::bootstrap::take().map_err(|why| why.code())?;
+    let primitive = boot.catalog.deployment() == "iommu-fail-reference";
     let (party, op, target) = match boot.catalog.deployment() {
         "iommu-fail-invalidate" => (
             hub_api::PARTY_IOMMU,
@@ -22,7 +23,7 @@ pub fn run() -> Result<(), env::Reason> {
             crate::driver::recovery::api::STOP,
             "recovery",
         ),
-        "iommu-fail-release" => (
+        "iommu-fail-release" | "iommu-fail-reference" => (
             hub_api::PARTY_IOMMU,
             crate::driver::iommu::api::RELEASE,
             "iommu",
@@ -40,6 +41,7 @@ pub fn run() -> Result<(), env::Reason> {
             party,
             op,
             target,
+            primitive,
             injection: env::hole::unseal(
                 env::Mark::of("confirmation/injection"),
                 env::HoleLimits::default(),
@@ -83,7 +85,11 @@ fn prepare(mut state: ResMut<State>, control: Res<Control>) -> Result<Progress, 
         state.phase == 0,
         hub.get(),
         target.get(),
-        state.op,
+        if state.primitive {
+            injection::REFERENCE_RELEASE
+        } else {
+            u64::from(state.op)
+        },
         1,
         retainer.get(),
     );
@@ -109,7 +115,20 @@ fn prepare(mut state: ResMut<State>, control: Res<Control>) -> Result<Progress, 
         }
     };
     resource::raw::Hole::from_raw(ack)
-        .push(&[state.party, state.op], env::Wait::POLL)
+        .push(
+            &[
+                state.party,
+                state.op,
+                if state.primitive {
+                    crate::driver::iommu::api::fail_to_code(Some(
+                        crate::driver::iommu::api::Fail::Unavailable,
+                    ))
+                } else {
+                    0
+                },
+            ],
+            env::Wait::POLL,
+        )
         .map_err(|_| app::Fault::Room)?;
     Ok(Progress::Done)
 }

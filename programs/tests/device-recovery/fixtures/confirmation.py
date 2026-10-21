@@ -8,12 +8,27 @@ def evidence(step):
         "invalidate": (3, 3, 7, "iommu: binding 1 invalidated"),
         "reset": (4, 2, 8, "recovery: binding 1 stopped"),
         "release": (3, 5, 7, "iommu: binding 1 released"),
+        "reference": (3, 5, 7, "iommu: binding 1 released"),
     }[step]
-    failure = (
+    code = 4 if step == "reference" else 0
+    rejected = (
+        "confirmation: reference release rejected from=7 reference=777 pages=6 references=2 ticks=3\n"
+        if step == "reference" else
         f"confirmation: transport rejected from=4 to={target} op={op} serial=1 references=2 ticks=3\n"
-        f"hub: binding 1 step failed party={party} op={op} code=0 (holding)\n"
-        f"ctl: confirmation failed party={party} op={op} code=0 state=Closing\n"
-        "confirmation: injection removed hits=5 references=2 ticks=5\n"
+    )
+    failure = (
+        rejected
+        + f"hub: binding 1 step failed party={party} op={op} code={code} (holding)\n"
+        + f"ctl: confirmation failed party={party} op={op} code={code} state=Closing\n"
+        + (
+            "confirmation: failed reference still owned reference=777 pages=6\n"
+            if step == "reference" else ""
+        )
+        + "confirmation: injection removed hits=5 references=2 ticks=5\n"
+        + (
+            "confirmation: reference released from=7 reference=777 references=1\n"
+            if step == "reference" else ""
+        )
     )
     console = (
         "system: minted hub tid=4\n"

@@ -443,9 +443,9 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             let ack = establish::claim(
                 sire, crate::harness::probe::device_confirmation::ACK, Wait::AtMost(MS),
             ).map_err(|_| "ctl: confirmation acknowledgement")?;
-            let mut expected = [0u8; 2];
+            let mut expected = [0u8; 3];
             if resource::raw::Hole::from_raw(ack).pull(&mut expected, Wait::AtMost(MS))
-                .map_err(|_| "ctl: confirmation armed")? != (2, sire)
+                .map_err(|_| "ctl: confirmation armed")? != (3, sire)
             {
                 return Err("ctl: confirmation sender");
             }
@@ -454,7 +454,8 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             loop {
                 if let Ok((state, Some(failure))) = hub.inspect(Wait::AtMost(MS), serial) {
                     if state != hub_api::BindingState::Closing
-                        || (failure.party, failure.op, failure.code) != (expected[0], expected[1], 0)
+                        || (failure.party, failure.op, failure.code)
+                            != (expected[0], expected[1], expected[2])
                     {
                         return Err("ctl: wrong confirmation failure");
                     }
@@ -468,14 +469,14 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             }
             check_auxiliary(report, false)?;
             crate::debug::put(&alloc::format!(
-                "ctl: confirmation failed party={} op={} code=0 state=Closing",
-                expected[0], expected[1],
+                "ctl: confirmation failed party={} op={} code={} state=Closing",
+                expected[0], expected[1], expected[2],
             ));
             resource::raw::Hole::from_raw(request).push(&[2], Wait::AtMost(MS))
                 .map_err(|_| "ctl: confirmation resume")?;
-            let mut observed = [0u8; 2];
+            let mut observed = [0u8; 3];
             if resource::raw::Hole::from_raw(ack).pull(&mut observed, Wait::AtMost(MS))
-                .map_err(|_| "ctl: confirmation resumed")? != (2, sire)
+                .map_err(|_| "ctl: confirmation resumed")? != (3, sire)
                 || observed != expected
             {
                 return Err("ctl: confirmation resume sender");
@@ -484,7 +485,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             let (state, failure) = hub.inspect(Wait::AtMost(MS), serial)?;
             if state != hub_api::BindingState::Closed
                 || failure.map(|failure| (failure.party, failure.op, failure.code))
-                    != Some((expected[0], expected[1], 0))
+                    != Some((expected[0], expected[1], expected[2]))
             {
                 return Err("ctl: original failure lost after retry");
             }
@@ -496,6 +497,12 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             crate::debug::put("ctl: alpha exit requested (hub recovers owner death)");
             await_closed(&hub, serial, MS)?;
             check_auxiliary(report, false)?;
+            if let (_, Some(failure)) = hub.inspect(Wait::AtMost(MS), serial)? {
+                crate::debug::put(&alloc::format!(
+                    "ctl: closed binding {serial} failure party={} op={} code={}",
+                    failure.party, failure.op, failure.code,
+                ));
+            }
             let replacement = construct(sire, hub.host(), "device-work", 2)?;
             let writer =
                 establish::give(replacement, COMMAND).map_err(|_| "ctl: rebind command")?;
