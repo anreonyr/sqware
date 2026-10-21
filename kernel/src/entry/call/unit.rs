@@ -259,6 +259,32 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 return Outcome::fail(frame, error);
             }
         }
+        UnitCall::Guard { team, authority } => {
+            let target = match me.clan(team) {
+                Some(target) => target,
+                None if team == ident.team.id => ident.team.clone(),
+                None => return Outcome::fail(frame, UnitFail::Denied),
+            };
+            if !crate::core::work::unit::team::exit::authorize(me.as_ref(), authority) {
+                return Outcome::fail(frame, UnitFail::Denied);
+            }
+            if let Err(error) = target.guard(ident.id) {
+                return Outcome::fail(frame, error);
+            }
+        }
+        UnitCall::Unguard { team, authority } => {
+            let target = match me.clan(team) {
+                Some(target) => target,
+                None if team == ident.team.id => ident.team.clone(),
+                None => return Outcome::fail(frame, UnitFail::Denied),
+            };
+            if !crate::core::work::unit::team::exit::authorize(me.as_ref(), authority) {
+                return Outcome::fail(frame, UnitFail::Denied);
+            }
+            if let Err(error) = target.unguard(ident.id) {
+                return Outcome::fail(frame, error);
+            }
+        }
     }
     Outcome::Resume
 }

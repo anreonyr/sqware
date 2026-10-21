@@ -22,7 +22,7 @@
 | A4：公共目录与来源元数据分离 | 已实现，相关宿主与真实产品景通过 |
 | A5：PCI 不解析 VirtIO 设备协议 | 未实施 |
 | A6：绑定保留首次失败 | 已实现，宿主回归通过 |
-| A7：关键常驻域引用清理前安全终止 | 未实施 |
+| A7：关键常驻域引用清理前安全终止 | 内核机制四/八核基础通过；Control及Driver装配未实施 |
 | A8：Domain 与 IOVA 范围共同标识 | 未实施 |
 | A9：IOMMU 分配 IOVA，绑定编号只表达身份 | 未实施 |
 | A10：显式资源交付与身份核验 | 未实施 |
@@ -240,3 +240,33 @@ Control 的退休 hook 直接查询非消费的 Team `Complete`，不再以主�
 - 验证记录补丁首次因宿主重启后的工具路径失效而未写入，代码已提交为dc4b52ac；
   本补记补齐该提交的真实证据，不改写已推送提交。
 - 本检查点未完成A2；启动载体、逐实例退休义务和Hub重复生命周期阶段机仍须闭环迁移。
+
+## 第七检查点：通用执行域退出保护基础
+
+TeamLife 保存唯一退出策略；可信引导任务获得独立 Guard 授权，和 Retain 分角色，
+只有FETCH、不向外授出VEST。Guard/Unguard使用Unit新槽43/44，已查本地历史无占用。
+策略安装要求实际Paused；普通Nole、保留权、缺token或非owner不构成退出策略权。
+撤保护的外部责任条件由可信Control保证，内核不接收无效的done布尔证明。
+
+- Armed或Tripped的每次死亡都走不返回的终止路径；在slay、reap、trap doom及Pend清理前拦截。
+  未启用保护的任务保留原清理行为，不能通过全局testing标志绕过保护。
+- 全局停止用单个原子owner发布，避免先发布alarm后发布owner的窗口。peer在撤地址空间租约、
+  禁中断后仅回执一次，再进入不返回的HSMStop/循环；主hart等全部回执后永久停住。
+  此回执证明CPU静默，不证明设备已经排空。
+- 独立复核指出Paused可能来自尚未完成的Debark；主线程补查真实成员状态，on-hart或死亡
+  成员均禁止安装/撤除。trap死亡声明与策略修改使用同一commit；父子方向都拒绝重叠保护。
+  原生核心回归覆盖Paused但成员仍on-hart、正常撤除后真实清理及父先/子先两种冲突。
+- 首份外部草稿在Tripped后允许其他路径继续清理，且testing分支返回cleanup；未应用并退回。
+  修订又有基于未应用旧稿的Nole上下文和mail模块上下文，主线程按真实源码精确适配。
+- workspace dev check、env初验38项通过；新编码补入后ABI/账本子集9项、Pend51项通过。Pend首次因fixture
+  缺退出适配编译失败，补为明确只包含未保护任务的模型；不以它证明Guard安全。它仍有cfg警告。
+- 真实内核核心权限/状态用例通过；补验撤除保护后，普通资源经真实hook被清理，也通过。
+- 首次critical测试发生在同伴hart启动前，没有静默回执，不算通过；现场guard/critical-4保留。
+  专用case复用真实启动流程后，四核、八核分别记录3、7个peer静默回执，目标没有进入引用清理。
+  VM永久停止使原qtest按预期超时退出101；严格独立verify判定器接受证据，6项负对照通过。
+  不把这两个runner红结果称为测试全绿。命令及边界见kernel/tests/critical/README.md。
+- 普通四核iommu-product通过，现场guard/iommu-product，保留引用及正常回收判据未放宽。
+- 父子冲突与成员静默修正后，原生core-overlap通过；最终八核critical-8-final仍取得7个
+  peer回执且未进入目标引用清理，独立verify接受证据。诊断钩子位于Pend锁外，避免日志锁序影响。
+- 尚须Control/Assembly持权装配PCI/IOMMU/Recovery、按退休依赖撤保护，并实测真实Driver
+  在DMA责任未结清时意外死亡。当前未声称A7或完整重构完成。

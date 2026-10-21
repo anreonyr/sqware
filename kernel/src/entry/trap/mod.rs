@@ -439,6 +439,7 @@ fn doom(ident: Option<&Arc<TaskIdent>>, cause: env::ExitCause, reason: usize) {
     .or_else(|| crate::core::work::room::conductor::current().running_task());
     let Some(task) = task else { return };
     let _commit = crate::core::work::commit();
+    crate::core::work::unit::team::exit::member_dying(&task, reason);
     if !task.dead() {
         task.state
             .lock()

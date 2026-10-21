@@ -60,6 +60,7 @@ pub(super) fn reap(task: Arc<Task>, cause: TaskExitCause, reason: usize) {
         state.doom(None, cause, reason);
         (cause, reason)
     };
+    crate::core::work::unit::team::exit::member_dying(&task, reason);
     hooked(&task);
     {
         let _commit = crate::core::work::commit();

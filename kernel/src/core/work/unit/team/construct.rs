@@ -58,6 +58,7 @@ pub(crate) fn make_team(
         tasks: tasks.clone(),
         children: SpinLock::new(Vec::new()),
         life: Life::try_new().map_err(|_| NestError::OutOfMemory)?,
+        exit: super::exit::ExitPolicy::new(),
     })
     .map_err(|_| NestError::OutOfMemory)?;
     let team = Arc::try_new(Team {

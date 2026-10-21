@@ -678,6 +678,21 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn execution_domain_policy_core() {
+        kernel::entry::check::exit_policy::policy();
+        kernel::entry::check::exit_policy::authority();
+        kernel::entry::check::exit_policy::install_requires_debark();
+        kernel::entry::check::exit_policy::nested_domains();
+    }
+
+    #[cfg(all(debug_assertions, feature = "critical-scene"))]
+    #[test]
+    fn critical_domain_exit_stops() {
+        kernel::entry::check::critical::run();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn typed_resource_call_domains() {
         kernel::entry::check::syscall::resource_domains();
     }

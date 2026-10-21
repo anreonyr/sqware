@@ -24,6 +24,8 @@ fresh-scene = []
 # 与 `fresh-scene` 同款**非默认**，同样只在 `cfg(debug_assertions)` 里编得出来，
 # 选景靠这一格 ＋ 共享页上那枚标记；没有常开 ABI、没有常开 trace schema。
 race-scene = []
+# 专用 critical 场景：真实进入 guard 停止路径，机器不返回健康面。
+critical-scene = []
 # 指定 DMA 收尾操作的传输失败夹具；仅测试、仅 debug_assertions。
 dma-confirmation-scene = []
 # 大叶验收用例（`tests/health/transfer.rs` 的 `mega_leaf`，夹具在 `frame_layout.rs`）的

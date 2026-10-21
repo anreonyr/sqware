@@ -1,6 +1,8 @@
 #![allow(dead_code, unused_imports)]
 #![feature(allocator_api)]
 extern crate alloc;
+#[path = "fixture/exit.rs"]
+pub mod exit_fixture;
 
 #[path = "../../src/core/memory/address/count.rs"]
 mod count;
@@ -360,6 +362,9 @@ mod work {
         }
     }
     pub mod unit {
+        pub mod team {
+            pub use crate::exit_fixture as exit;
+        }
         pub(crate) use crate::space_fixture as space;
         pub mod task {
             use crate::pend::Pend;

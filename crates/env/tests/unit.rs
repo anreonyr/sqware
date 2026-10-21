@@ -67,3 +67,17 @@ fn build_encodes_sire_and_team_completion_has_no_task_exit() {
     assert_eq!(JoinReply::from_triple(5, 0, 0), JoinReply::Complete);
     assert!(!JoinReply::Complete.is_reaped());
 }
+
+#[test]
+fn guard_calls_preserve_target_and_explicit_authority() {
+    let team = TeamId::new(7);
+    let authority = env::PieToken::mint(19);
+    for (slot, call) in [
+        (43, UnitCall::Guard { team, authority }),
+        (44, UnitCall::Unguard { team, authority }),
+    ] {
+        assert_eq!(call.slot(), (1usize << 32) | slot);
+        assert_eq!(EnvCall::from_wire(call.slot(), &call.pack()), Ok(EnvCall::Unit(call)));
+        assert_eq!(call.pack()[..2], [7, 19]);
+    }
+}
