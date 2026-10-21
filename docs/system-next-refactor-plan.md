@@ -2227,6 +2227,34 @@ View::close 与 Reference::release 已是 &mut self；
   现场归档于 `deep-closure/health/`、`deep-closure/race-exact/` 和
   `deep-closure/host/`；未做全树格式重排。
 
+#### 独立审查返工：从回收完成点记录进展
+
+- 独立 reviewer 在 `0117e513` → `98d2eded` 差异中发现 P2：
+  静态服务回收与动态新建可抵消净存活数下降，同类动态实例替换也可保持总数不变。
+  因而“仍有回收进展”可能被误判为空闲；DMA settlement 门没有被绕过。
+  reviewer 直接编译旧 activity 实现的两个 scratch 对照确认该行为，
+  未把 128 代场景的 100 ms 代间间隔当成该边界已覆盖。
+- 不拆成两套净计数。Control 私有保存 `reclaimed_at`，只在现存权威完成点更新：
+  静态生命周期 finalize 的实际 Live slot detach，以及动态 Retire hook 成功后
+  `Some(Team)` 变为 `None`。新建、Prepare、持续存活、Pending、失败和重复完成不更新。
+  原有 native fixture 的静态 detach 也走同一条核心方法，不保留第二份完成规则。
+- Activity 删除 `owed`，只把 `quiet` 单调推进到 Control 提供的只读完成时间；
+  安装时的初始基线保留，初始零值或较旧完成时间不能回拨期限。
+  没有新锁、第二个总管、心跳或超时延长。
+- 首次实现把该字段暴露为 pub(crate)，被既有 system-shape 隐私断言拒绝。
+  保留断言，改为 Control 域内私有字段和只读查询；未放宽状态封装准则。
+- shutdown-policy 直接编译真实 Activity、静态 Table 和 detach 实现，扩为八项：
+  静态/动态抵消、动态替换、静态同名重建、持续存活、新增、未完成清理、
+  时间基线与重复完成。
+  control-instance 增加四项，经过真实 hook 调度及 finish，核成功 Retire 唯一记时、
+  Pending/失败不记时、Prepare 不记时、重复 Retire 不记时；
+  原有构造测试同时核新建不产生回收进展。
+- 返工后 programs 37 套宿主配置共 374 项通过，workspace debug/release 通过。
+  accept、product、iommu-product-fault、Ruin、forced、真实 fence 故障原生场景通过；
+  封装修正后 forced 和 product-fault 再次通过。
+  定点格式与差异空白检查通过；现场为 `target/driver-recovery/review-fix/`。
+- 此节记录实现和自验，不代替独立 reviewer 对返工版本的复核批准。
+
 ## Operator 通用条目与授权机制
 
 - 提取通用的目录取得、资源绑定、授权、权限收窄、撤销和清理机制，不限定于 /unit/{team}/{task}。

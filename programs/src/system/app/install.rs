@@ -71,7 +71,6 @@ pub(crate) fn resources(
             done: false,
         }))?
         .insert(policy::Activity {
-            owed: 0,
             quiet: env::chrono::clock(),
             walking: false,
         })?

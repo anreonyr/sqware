@@ -111,8 +111,11 @@ pub fn finish(
                 (Key::Retire, Ok(crate::system::assembly::JobOutcome::Retire(done)))
                     if done == reference =>
                 {
-                    item.team = None;
+                    let reclaimed = item.team.take().is_some();
                     item.state = State::Dead;
+                    if reclaimed {
+                        control.reclaimed_at = env::chrono::clock();
+                    }
                 }
                 _ => return Err(Fail::Room),
             }

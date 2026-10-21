@@ -148,6 +148,7 @@ pub mod system {
                 pub use system_api::control::State;
             }
             pub struct Control {
+                pub reclaimed_at: u64,
                 pub instances: alloc::vec::Vec<super::instance::state::Instance>,
             }
         }
@@ -355,6 +356,7 @@ mod tests {
     fn fixture(state: State) -> Control {
         EFFECTS.with(|effects| *effects.borrow_mut() = Effects::default());
         Control {
+            reclaimed_at: 0,
             instances: vec![Instance {
                 reference: crate::system::assembly::reference(TaskId::new(2)),
                 owner: TaskId::new(1),
@@ -605,6 +607,78 @@ mod tests {
             );
         });
     }
+
+    fn hook_resources(state: State) -> schedule::Resources<'static> {
+        let control = fixture(state);
+        EFFECTS.with(|effects| effects.borrow_mut().now = 42);
+        let mut resources = schedule::Resources::new();
+        resources.insert(control).unwrap();
+        resources.insert(system::assembly::Jobs::default()).unwrap();
+        resources.insert(
+            schedule::Dispatch::<system::control::instance::hook::Key, &'static str>::new(),
+        ).unwrap();
+        resources
+    }
+
+    fn run_hook(
+        resources: &schedule::Resources<'static>,
+        key: system::control::instance::hook::Key,
+        result: Result<schedule::Progress, &'static str>,
+    ) {
+        let mut child = schedule::Schedule::sequence();
+        child.system("effect", move || result).unwrap();
+        let mut plan = system::control::instance::hook::plan(vec![(key, child.build().unwrap())]).unwrap();
+        plan.prepare(resources);
+        plan.advance(&mut schedule::Cursor::default(), resources).unwrap();
+    }
+
+    #[test]
+    fn only_successful_retire_hook_records_reclamation_time() {
+        use system::control::instance::hook::Key;
+        let resources = hook_resources(State::Stopping);
+        run_hook(&resources, Key::Retire, Ok(schedule::Progress::Done));
+        let control = resources.read::<Control>().unwrap();
+        assert_eq!(control.reclaimed_at, 42);
+        assert_eq!(control.instances[0].team, None);
+        assert_eq!(control.instances[0].state, State::Dead);
+    }
+
+    #[test]
+    fn pending_or_failed_retire_hook_cannot_record_reclamation() {
+        use system::control::instance::hook::Key;
+        for result in [Ok(schedule::Progress::Pending), Err("cleanup failed")] {
+            let resources = hook_resources(State::Stopping);
+            run_hook(&resources, Key::Retire, result);
+            let control = resources.read::<Control>().unwrap();
+            assert_eq!(control.reclaimed_at, 0);
+            assert_eq!(control.instances[0].team, Some(TeamId::new(3)));
+            assert_eq!(control.instances[0].state, State::Stopping);
+        }
+    }
+
+    #[test]
+    fn prepare_hook_is_not_reclamation_progress() {
+        use system::control::instance::hook::Key;
+        let resources = hook_resources(State::Starting);
+        run_hook(&resources, Key::Prepare, Ok(schedule::Progress::Done));
+        let control = resources.read::<Control>().unwrap();
+        assert_eq!(control.reclaimed_at, 0);
+        assert_eq!(control.instances[0].team, Some(TeamId::new(3)));
+        assert_eq!(control.instances[0].state, State::Debarked);
+    }
+
+    #[test]
+    fn repeated_retire_completion_cannot_refresh_reclamation_time() {
+        use system::control::instance::hook::Key;
+        let resources = hook_resources(State::Stopping);
+        run_hook(&resources, Key::Retire, Ok(schedule::Progress::Done));
+        EFFECTS.with(|effects| effects.borrow_mut().now = 84);
+        resources.write::<Control>().unwrap().instances[0].state = State::Stopping;
+        run_hook(&resources, Key::Retire, Ok(schedule::Progress::Done));
+        let control = resources.read::<Control>().unwrap();
+        assert_eq!(control.reclaimed_at, 42);
+        assert_eq!(control.instances[0].team, None);
+    }
 }
 
 #[test]
@@ -619,6 +693,7 @@ fn resuming_busy_team_keeps_transition_retriable() {
         }
     });
     let mut control = Control {
+        reclaimed_at: 0,
         instances: vec![Instance {
             reference: crate::system::assembly::reference(TaskId::new(2)),
             owner: TaskId::new(1),
@@ -653,6 +728,7 @@ fn full_instance_table_rejects_before_construction() {
     use system_api::{control::Fail, loader::Built};
     EFFECTS.with(|e| *e.borrow_mut() = Effects::default());
     let mut control = Control {
+        reclaimed_at: 0,
         instances: (0..INSTANCE_CAP)
             .map(|n| Instance {
                 reference: crate::system::assembly::reference(TaskId::new(n + 2)),
@@ -699,6 +775,7 @@ fn failed_construction_does_not_publish_an_instance() {
     use system_api::control::Fail;
     EFFECTS.with(|e| *e.borrow_mut() = Effects::default());
     let mut control = Control {
+        reclaimed_at: 0,
         instances: Vec::new(),
     };
     assert!(matches!(
@@ -729,6 +806,7 @@ fn successful_construction_is_registered_before_return() {
         }
     });
     let mut control = Control {
+        reclaimed_at: 0,
         instances: Vec::new(),
     };
     let built = control
@@ -746,6 +824,7 @@ fn successful_construction_is_registered_before_return() {
         )
         .unwrap();
     assert_eq!(built.task, TaskId::new(8));
+    assert_eq!(control.reclaimed_at, 0, "creation is not reclamation progress");
     assert_eq!(control.instances.len(), 1);
     let instance = &control.instances[0];
     assert_eq!(
@@ -766,6 +845,7 @@ fn one_owner_can_register_multiple_live_instances() {
     use system_api::loader::Built;
     EFFECTS.with(|e| *e.borrow_mut() = Effects::default());
     let mut control = Control {
+        reclaimed_at: 0,
         instances: Vec::new(),
     };
     for (task, team) in [(8, 9), (10, 11)] {

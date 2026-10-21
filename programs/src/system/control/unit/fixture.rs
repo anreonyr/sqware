@@ -17,9 +17,4 @@ impl Control {
         self.table.set_state(program.name(), State::Ready);
         Ok(())
     }
-
-    pub(crate) fn fixture_detach_unit(&mut self, name: &str) {
-        self.table.detach(name);
-        self.table.set_state(name, State::Dead);
-    }
 }

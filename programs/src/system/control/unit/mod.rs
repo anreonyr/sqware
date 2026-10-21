@@ -10,10 +10,12 @@ use alloc::{
 };
 use env::{TaskId, Wait};
 
+mod reclamation;
 mod service;
 pub use service::Service;
 mod wait;
 pub struct Control {
+    pub(in crate::system::control) reclaimed_at: u64,
     pub(in crate::system::control) status: Arc<Status>,
     pub(in crate::system::control) targets: &'static [crate::unit::Target],
     pub(in crate::system::control) table: Table,
@@ -30,6 +32,7 @@ pub(crate) struct Pending {
 impl Control {
     pub fn new(status: Arc<Status>, targets: &'static [crate::unit::Target]) -> Self {
         Self {
+            reclaimed_at: 0,
             status,
             targets,
             table: Table::new(),

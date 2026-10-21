@@ -10,4 +10,5 @@ publish = false
 path = "lib.rs"
 
 [dev-dependencies]
+env = { path = "../../../crates/env" }
 schedule = { path = "../../../crates/schedule" }

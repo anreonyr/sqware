@@ -1,13 +1,15 @@
 use super::instance::Instance;
+use crate::system::control::unit::{table::Table, verdict};
 
 pub struct Control {
-    pub services: usize,
+    pub table: Table,
     pub instances: Vec<Instance>,
+    pub reclaimed_at: u64,
 }
 
 impl Control {
     pub fn living_count(&self) -> usize {
-        self.services
+        self.table.living().count()
     }
 
     pub fn instances(&self) -> impl Iterator<Item = &Instance> {
@@ -15,6 +17,6 @@ impl Control {
     }
 
     pub fn walking(&self) -> bool {
-        true
+        verdict::walking(&self.table)
     }
 }

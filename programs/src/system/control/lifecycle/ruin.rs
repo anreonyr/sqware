@@ -160,8 +160,7 @@ pub fn finalize(
     mut control: ResMut<Control>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    control.table.detach(&job.key.request.name);
-    control.table.set_state(&job.key.request.name, State::Dead);
+    control.detach_unit(&job.key.request.name);
     job.progress.execution.instance = None;
     Ok(Progress::Done)
 }

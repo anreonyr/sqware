@@ -863,7 +863,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         .resources
         .write::<Control>()
         .unwrap()
-        .fixture_detach_unit("login");
+        .detach_unit("login");
     {
         let mut roster = assembly
             .resources
