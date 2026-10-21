@@ -1983,6 +1983,156 @@ View::close 与 Reference::release 已是 &mut self；
   多代真实 α 长跑、既有八 Hart 执行证据缺口及最终独立审查。
   β 自身死亡仍不在本轮合同内。
 
+#### 强制全局退场、真实多代 α 与确认不可达
+
+本节接续已推送的 `0117e513` 检查点，仍在 `feature/driver-recovery` 上实施。
+α/β 的生产分域、生命周期和停链顺序不变；没有新增设备总管、系统调用或能力种类。
+
+**强制全局退场**
+
+- 新增 `iommu-forced` 部署，入口仍是生产 `system` 镜像。
+  Harness 控制器提交真实读请求后持续存活，不能靠业务退出走正常退场。
+  使用实际的 10 秒空闲期限，未修改生产超时。
+- 复用独立 NBD 后端挂起真实请求。宿主等待空闲期限、α 整个 Team 回收、
+  翻译失效和 PCI disable 意图；挂起窗口内 PCI/IOMMU/recovery/控制器均不得回收，
+  不得完成端点停止、引用释放、绑定结清或全局退场。
+  本场景宿主夹具的保护期限为 30 秒，不是生产期限的延长。
+- 后端恢复后必须有实际扇区数据和成功 status、完整停链、所有静态服务回收、
+  `system: frame Step(Idle)` 以及生产根任务的 self-doom 事件。
+  生产强制路径没有改成正常成功返回；内核允许 self-doom 干净结束，
+  因而本场景还必须通过独立的原生证据检查，不能只看 QEMU 退出码。
+- 首轮宿主驱动误匹配 `system: frame Idle`，导致交互驱动未完成；
+  真实文本是 `Step(Idle)`。失败留在 `target/driver-recovery/forced/first/`，
+  未当作通过。修正后先连续通过五次，最终代码又连续通过五次。
+
+**动态实例活动与调度容器竞争**
+
+- 新增 `iommu-soak`：同一个常驻控制器创建 128 代真实 α，
+  每代包含主任务和辅助任务，完成一次真实 DMA 读，
+  交替正常关闭与主人死亡，共 64 + 64 次。
+  下一代只在前一绑定结清后交窗，重置请求页，使用新构造号和新绑定号。
+  128 代跨过 Hub 的 32 条关闭历史窗口，不是纯账本循环或单域翻译探针。
+- 首轮只完成七代便被强制退场：System 的活动计数只看静态服务，
+  动态 α 的回收没有更新空闲基线。该次原生退出 0，但没有完成场景；
+  补上的严格 checker 对原现场退出 1，不能把它算成 soak 成功。
+- 活动采样现在同时数静态服务和仍持有 Team 的动态实例。
+  只在实际数量下降或首次采样时更新时间，持续存活本身不算进展；
+  没有增加心跳状态，也没有延长 10 秒期限。
+  实现落在 `system/app/activity.rs`，直接复用 Control 的现存实例记录。
+  三项宿主测试编译真实实现；临时恢复旧静态计数后三项均失败、退出 101，
+  恢复修复后三项通过。
+- 辅助任务周期性执行自身的 park，提供真实 syscall 所在 Hart 的观测。
+  它此前在独占空闲 Hart 上可能一直运行而没有 `switch` 事件。
+  checker 仍要求主、辅助任务的实际执行 Hart 至少有一对不同，
+  并要求两者完整 reap；辅助任务的自身 park 可作执行证据，
+  远端 exit/reap 不可冒充执行。新增五项正反对照。
+  这仍不是持续同时运行区间的证明。
+- 周期性 park 的多代试跑暴露 `remove_from_starved` 断言：
+  空闲核已经从本地或远端队列取出 Ready 任务，但尚未把它放入运行槽，
+  另一 Hart 的 Slay 在所有就绪容器中都找不到该任务。
+  `soak/activity-fixed/` 曾被并行试跑复用，日志不作为独立重复样本计数；
+  后续验收全部使用唯一目录并串行运行 QEMU。
+- 新的 `conductor/dispatch.rs` 用既有提交锁覆盖“本地取出或偷取 → 入运行槽”，
+  `fetch` 及空闲等待中的所有取任务入口共用这一条规则。
+  不新增中间任务状态，不取消 Slay 断言；提交锁不会跨越 WFI。
+  三项宿主合同直接编译实际 dispatch，仅替代队列、入槽和提交边界。
+  去掉外层提交锁的负对照退出 101，本地和偷取两项均报
+  `Slay observed Ready outside its container`；恢复后全部通过。
+
+**原生确认不可达与恢复重试**
+
+- 三个 Harness 部署 `iommu-fail-invalidate`、`iommu-fail-reset`、
+  `iommu-fail-release` 共用 `iommu-confirmation` 入口和同一控制器。
+  生产 IOMMU、PCI、recovery 镜像不增加场景分支或替身管理者。
+- `dma-confirmation-scene` 是默认关闭的内核测试 feature；
+  hook 还受 `debug_assertions` 和 `testing()` 限制。
+  只有无父 Team 的引导任务对自身孔发送的完整测试控制帧可配置它。
+  被拒的请求必须匹配内核提供的发送者、实际孔 owner、操作码和绑定号；
+  不是信任生产报文自报的身份。
+- 注入点在已核授权、复制请求之后、交付之前，返回真实传输错误。
+  对应 Hub 记录原始 `party/op/code=0` 并留在同一步。
+  控制器先确认 `Closing` 与准确失败，再要求移除注入，
+  随后同一绑定必须继续停链并变为 `Closed`，原始失败仍须可查询。
+- 首次拒绝及解除注入之前，夹具从真实 IOMMU 任务的引用表读取并断言两份引用：
+  表页引用和 DMA 引用。两份引用不是两页，也不是物理分配对象数。
+  配合本绑定的六页取得记录、完整停链及最终分配基线检查，
+  不用 Hub 的状态位代替实际引用持有。
+  kernel trace 还须证明 α 两个任务早于拒绝时刻回收，
+  五个静态服务晚于解除时刻回收。
+- 最初夹具把帧缓冲上界 24 误当实际报文长度，并假定根任务号为 1；
+  debug 场景的真实根号为 10，IOMMU/恢复步骤实际过线长度分别为 18/17。
+  同时修正控制器请求读端的显式交付，并复用唯一 ACK 孔，避免重复发现歧义。
+  初版失败现场保留在 `confirmation/first/`，不作为验收。
+  四项宿主测试编译实际注入函数和两份真实协议，
+  核调用者、owner、操作、绑定、短帧、引导配置权限与引用缺失负对照。
+- 三个边界在最终代码上各连续通过三次四 Hart 原生运行。
+  不开 feature 的负对照退出 1：即使原生整机能收尾，
+  也因缺少注入证明而被 wrapper 拒绝，不能静默测试到正常路径。
+- 这里证明的是**操作确认不可达时保留责任与资源，以及恢复后的重试**。
+  没有模拟硬件成功确认，也没有在本轮原生测试中制造
+  `Fence::Expired`、设备 reset 回读拒绝或内核 Reference Release 自身失败。
+  后三者不能用这组三个传输拒绝场景冒充已覆盖。
+
+**验收与交付边界**
+
+- 最终批次位于 `target/driver-recovery/final/`，每次运行有独立目录、退出码、
+  控制台和结构化现场。新的 Ruin/forced/soak/confirmation 证据场景共用
+  qtest 的归档与 checker 调用规则；任一 checker 失败均使 wrapper 失败。
+- 九个既有四 Hart 场景全部退出 0：accept、product、system-fault、
+  iommu-probe、iommu-dma、iommu-product、iommu-product-fault、
+  iommu-product-start-before、iommu-product-start-after。
+  最终代码的 Ruin 五次、forced 五次、三个确认边界各三次均通过。
+- 128 代四 Hart 场景通过：164910 ms，物理分配对象 85 → 85。
+  最终八 Hart 场景通过：164741 ms，153 → 153。
+  每代均核真实 DMA 数据、完整停链、不同 Hart 的主/辅助任务执行及完整回收；
+  PCI/IOMMU/recovery/Hub 必须跨全部代存活。
+  另有三次八 Hart 既有 fault 场景通过两代执行 checker。
+  这些是有界的分钟级 128 代测试，不称作小时级或无限期稳定性证明。
+- 宿主检查：programs 37 套独立 manifest、365 项通过；
+  kernel 9 套独立 manifest、75 项通过；image 16 项、env 38 项、
+  Python 39 项通过。所有宿主 Cargo 命令显式使用
+  `--target x86_64-unknown-linux-gnu`。
+  本轮曾漏传 image 的 host target，错误日志保留；
+  改用实际 host 命令后通过，未修改源码来适配错误的 RISC-V std 构建。
+- workspace debug/release、kernel tests 含 semihosting 的 debug/release 检查通过。
+  新的关键生产函数及注入夹具做定点 rustfmt 检查，不宣称全树格式检查。
+  `git diff --check` 和 Nushell 解析检查通过。
+- 默认健康命令仍退出 101：118 passed、1 个缺 initrd 哨兵失败，不报告全绿。
+  精确的 race 命令退出 0，证据另存 `final/race-exact/`：
+
+  ```sh
+  CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true \
+  QEMU_SMP=4 TRACE_OUT="$PWD/trace" \
+  nu scripts/qtest.nu --package kernel --scene memory-transfer-race \
+    --feed-script programs/tests/memory-transfer/race.py \
+    -- --features semihosting,race-scene -- scene
+  ```
+
+- 场景调用示例：
+
+  ```sh
+  CARGO_INCREMENTAL=0 QEMU_SMP=4 TRACE_OUT="$PWD/target/forced-check" \
+  nu scripts/qtest.nu --package kernel --scene iommu-forced -- --features semihosting
+
+  CARGO_INCREMENTAL=0 QEMU_SMP=8 TRACE_OUT="$PWD/target/soak-check" \
+  nu scripts/qtest.nu --package kernel --scene iommu-soak \
+    -- --features semihosting --timeout 300
+
+  CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true \
+  QEMU_SMP=4 TRACE_OUT="$PWD/target/confirmation-check" \
+  nu scripts/qtest.nu --package kernel --scene iommu-fail-release \
+    -- --features semihosting,dma-confirmation-scene -- scene
+  ```
+
+- 本轮进行差异自审，未冒称独立 reviewer 批准，未合入 `master`。
+  尚未覆盖上列硬件内部/内存释放原语自身的原生故障注入及更长时间 soak；
+  β 自身死亡恢复仍明确不在合同内。
+- qtest 的统一归档入口落定后再次按真实命令复测 Ruin、forced、
+  四 Hart 128 代 soak 和 release 确认失败场景，四项均退出 0；
+  该次 soak 为 163636 ms、85 → 85。
+  恢复动态计数修复后的三个宿主合同、两份 Nushell 脚本解析和差异空白检查也通过。
+  现场位于 `final/runner-unified/`。
+
 ## Operator 通用条目与授权机制
 
 - 提取通用的目录取得、资源绑定、授权、权限收窄、撤销和清理机制，不限定于 /unit/{team}/{task}。

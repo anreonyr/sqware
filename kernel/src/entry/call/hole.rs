@@ -76,6 +76,15 @@ fn push(
         if !ident.team.space.copy_in(&mut cell, KVirt::wrap(msg)) {
             return Err(HoleFail::Denied);
         }
+        #[cfg(all(debug_assertions, feature = "dma-confirmation-scene"))]
+        if crate::entry::check::dma_confirmation::reject(
+            meta.owner(),
+            me,
+            ident.team.life.parent.is_none(),
+            &cell,
+        ) {
+            return Err(HoleFail::Denied);
+        }
         let bytes = Arc::try_new(cell).map_err(|_| HoleFail::OoM)?;
         reservation.commit(bytes, me)
     });

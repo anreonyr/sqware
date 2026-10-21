@@ -28,6 +28,8 @@ pub mod backtrace;
 pub mod boot_devices;
 pub mod closed_transfer;
 pub mod depend;
+#[cfg(feature = "dma-confirmation-scene")]
+pub mod dma_confirmation;
 pub mod fault;
 pub mod flat;
 pub mod frame;

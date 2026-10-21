@@ -213,17 +213,22 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   let script_dir = $env.FILE_PWD
   let repo = ($script_dir | path dirname)
   let trapdir = ($env.TRACE_OUT? | default ($repo | path join "trace"))
-  let feed_script = if $scene == "iommu-ruin" and ($feed_script | is-empty) {
-    $repo | path join "programs/tests/device-recovery/ruin.py"
+  let retirement = $scene in ["iommu-ruin" "iommu-forced"]
+  let confirmation = $scene in ["iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release"]
+  let evidence = $retirement or $confirmation or $scene == "iommu-soak"
+  let retire_mode = if $scene == "iommu-forced" { "forced" } else { "ruin" }
+  let feed_script = if $retirement and ($feed_script | is-empty) {
+    $repo | path join $"programs/tests/device-recovery/($retire_mode).py"
   } else {
     $feed_script
   }
-  let hold = if $scene == "iommu-ruin" {
+  let hold = if $retirement {
     $"target/ruin-(random uuid).nbd"
   } else {
     ""
   }
   $env.DMA_HOLD = $hold
+  $env.DMA_HOLD_SECONDS = if $scene == "iommu-forced" { "30" } else { "10" }
   let summary = match $scene {
     "memory-transfer" => "scene-memory-transfer-phases.json"
     "memory-transfer-tlb" => "scene-memory-transfer-tlb-summary.json"
@@ -291,7 +296,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     rm -f $port_file
     if not ($feed_script | is-empty) { rm -f $"($cap).result" }
     # 只使用本轮导出；正式成功标记仅由本进程发布。
-    if not ($summary | is-empty) or $scene == "iommu-ruin" {
+    if not ($summary | is-empty) or $evidence {
       rm --force ($repo | path join "sqware-diagnose.jsonl")
       rm --force $cap
       rm --force $env.QEMU_TEE_LOG
@@ -340,7 +345,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   }
   # 端点那一景的那张盘：**可再生**（每次按同一花纹重建，落在 `<TRACE_OUT>/` 里，
   # 不进库），且由参数表那边只读挂上。景那一侧按同一花纹核读回的数据，故盘是承重的。
-  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after" "iommu-ruin"] {
+  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after" "iommu-ruin" "iommu-forced" "iommu-soak" "iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release"] {
     let disk = ($trapdir | path join "iommu-dma.img")
     ^python3 -c 'import sys, pathlib; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 4096)' $disk
     if not ($hold | is-empty) {
@@ -510,13 +515,20 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     }
   }
 
-  if $scene == "iommu-ruin" {
+  if $evidence {
+    let checker = if $retirement {
+      {script: "ruin_check.py", args: [$cap $retire_mode]}
+    } else if $confirmation {
+      {script: "confirmation.py", args: [($scene | str replace "iommu-fail-" "")]}
+    } else {
+      {script: "soak.py", args: []}
+    }
     let exported = ($repo | path join "sqware-diagnose.jsonl")
-    let archived = ($trapdir | path join "scene-iommu-ruin-diagnose.jsonl")
+    let archived = ($trapdir | path join $"scene-($scene)-diagnose.jsonl")
     if ($exported | path exists) { cp --force $exported $archived }
     if $code == 0 {
-      let checked = (^python3 ($repo | path join "programs/tests/device-recovery/ruin_check.py")
-        $env.QEMU_TEE_LOG $archived $cap | complete)
+      let checked = (^python3 ($repo | path join "programs/tests/device-recovery" $checker.script)
+        $env.QEMU_TEE_LOG $archived ...$checker.args | complete)
       print -n $checked.stdout
       print -n $checked.stderr
       if $checked.exit_code != 0 { $code = 1 }

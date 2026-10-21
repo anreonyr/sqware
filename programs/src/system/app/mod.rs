@@ -1,4 +1,5 @@
 pub(crate) mod boot;
+mod activity;
 pub(crate) mod bootstrap;
 mod execute;
 pub(crate) mod install;

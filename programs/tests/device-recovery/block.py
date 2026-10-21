@@ -75,7 +75,7 @@ def serve(path, disk):
                         raise AssertionError(f"guest request is not a sector read: {offset}+{length}")
                     held = True
                     record("held", cookie=cookie, offset=offset, length=length)
-                    until = time.monotonic() + 10
+                    until = time.monotonic() + float(os.environ.get("DMA_HOLD_SECONDS", "10"))
                     while not resume.exists():
                         if time.monotonic() >= until:
                             raise TimeoutError("NBD read never released")

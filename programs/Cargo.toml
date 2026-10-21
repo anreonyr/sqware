@@ -225,6 +225,30 @@ test = false
 bench = false
 
 [[bin]]
+name = "prog-device-ctl-forced"
+path = "src/harness/device/control_forced_main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "prog-device-ctl-soak"
+path = "src/harness/device/control_soak_main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "prog-device-ctl-confirmation"
+path = "src/harness/device/control_confirmation_main.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "prog-iommu-confirmation"
+path = "src/harness/probe/device_confirmation/main.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "prog-router"
 path = "src/driver/router/main.rs"
 test = false

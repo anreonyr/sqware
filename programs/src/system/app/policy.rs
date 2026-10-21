@@ -14,11 +14,7 @@ pub struct Flow {
     pub forced: bool,
     pub done: bool,
 }
-pub struct Activity {
-    pub owed: usize,
-    pub quiet: u64,
-    pub walking: bool,
-}
+pub use super::activity::{Activity, activity};
 pub struct Bound(pub Wait);
 pub struct Shutoff(pub Option<u64>);
 
@@ -72,16 +68,6 @@ pub fn health(status: Res<Arc<Status>>) -> Result<Progress, Fail> {
     }
     Ok(Progress::Done)
 }
-pub fn activity(control: Res<Control>, mut activity: ResMut<Activity>) -> Result<Progress, Fail> {
-    let living = control.living_count();
-    if activity.owed == 0 || living < activity.owed {
-        activity.quiet = env::chrono::clock();
-    }
-    activity.owed = living;
-    activity.walking = control.walking();
-    Ok(Progress::Done)
-}
-
 /// 找 Hub 那一面（找到就留着；没找到下一格再来）。
 pub fn gate_open(
     layout: Res<crate::system::app::operator::Layout>,
@@ -153,9 +139,11 @@ pub fn idle(
     } else if activity.walking && now.saturating_sub(activity.quiet) >= 10_000_000_000 {
         // 超时退场与正常退场走同一道门：没结清就不进 settling。
         if settle.settled() {
+            programs::debug::put("system: forced shutdown admitted after DMA settlement");
             settle.flow.forced = true;
             settle.flow.settling = true;
         } else {
+            programs::debug::put("system: idle deadline reached; awaiting DMA settlement");
             settle.ask();
         }
     }

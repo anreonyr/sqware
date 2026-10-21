@@ -22,6 +22,8 @@ pub mod churn;
 pub mod device;
 #[path = "../harness/probe/device_ruin/program.rs"]
 pub mod device_ruin;
+#[path = "../harness/probe/device_confirmation/program.rs"]
+pub mod device_confirmation;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
 /// 测具那 29 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
@@ -164,7 +166,11 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &device::CONTROL_BEFORE,
     &device::CONTROL_AFTER,
     &device::CONTROL_RUIN,
+    &device::CONTROL_FORCED,
+    &device::CONTROL_SOAK,
+    &device::CONTROL_CONFIRMATION,
     &device_ruin::PROGRAM,
+    &device_confirmation::PROGRAM,
     // 真实 Task 等待那一景：**装载者 ＋ 控制单元**两台——控制单元要真的被装载（有 sire），
     // 故它那一 Team 的成员带着收据；真实等待链本身在控制单元里（见 `probe/memory_transfer`）。
     &memory_transfer::ENTRY,

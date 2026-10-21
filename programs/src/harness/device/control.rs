@@ -164,13 +164,20 @@ pub enum Mode {
     After,
     /// 请求保持在途，由 System Control 显式退役静态恢复驱动。
     Ruin,
+    /// 请求保持在途，持续存活直到 System 的空闲超时触发全局退场。
+    Forced,
+    /// 多代真实执行实例，交替正常关闭与主人死亡。
+    Soak,
+    /// 指定收尾操作无法取得确认，保留责任后恢复传输并重试。
+    Confirmation,
 }
 
 impl Mode {
     /// 本景构造哪一张 α 镜像（受限构造按名字选，owner 恒为 Hub）。
     const fn work(self) -> &'static str {
         match self {
-            Self::Normal | Self::Fault | Self::Ruin => "device-work",
+            Self::Normal | Self::Fault | Self::Ruin | Self::Forced | Self::Soak
+                | Self::Confirmation => "device-work",
             Self::Before => "device-work-before",
             Self::After => "device-work-after",
         }
@@ -328,7 +335,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         command(writer, Command::Window)?;
     }
     match mode {
-        Mode::Ruin => {
+        Mode::Ruin | Mode::Forced => {
             block.fill(layout::DATA, layout::SENTINEL);
             block.put32(layout::STATUS, 0, 0xFF);
             block.arm(dma::iova_base(serial).ok_or("ctl: iova")?, 0);
@@ -336,11 +343,15 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             if receive_report(entry, alpha)?.want != 3 {
                 return Err("ctl: in-flight request not submitted");
             }
-            let request = establish::give(sire, crate::harness::probe::device_ruin::REQUEST)
-                .map_err(|_| "ctl: Ruin request channel")?;
-            resource::raw::Hole::from_raw(request).push(&[1], Wait::AtMost(MS))
-                .map_err(|_| "ctl: Ruin request")?;
-            await_closed(&hub, serial, 6000)?;
+            if mode == Mode::Ruin {
+                let request = establish::give(sire, crate::harness::probe::device_ruin::REQUEST)
+                    .map_err(|_| "ctl: Ruin request channel")?;
+                resource::raw::Hole::from_raw(request).push(&[1], Wait::AtMost(MS))
+                    .map_err(|_| "ctl: Ruin request")?;
+            } else {
+                crate::debug::put("ctl: awaiting forced global shutdown with in-flight read");
+            }
+            await_closed(&hub, serial, if mode == Mode::Forced { 30000 } else { 6000 })?;
             let delivered = block.delivered();
             let status = block.status();
             let (_, len) = block.used_entry();
@@ -352,7 +363,60 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
                 return Err("ctl: held read did not reach retained memory");
             }
             check_auxiliary(report, false)?;
+            if mode == Mode::Forced {
+                crate::debug::put("ctl: drained read verified; awaiting global retirement");
+                loop {
+                    execution::room::park(::core::time::Duration::from_millis(100))
+                        .map_err(|_| "ctl: forced retirement wait")?;
+                }
+            }
             crate::debug::put("ctl: in-flight binding settled by static Driver Ruin");
+        }
+        Mode::Soak => {
+            let started = env::chrono::clock();
+            let (mut current, mut writer) = (report, writer);
+            for generation in 1..=128 {
+                round_one(&block, writer, current.serial)?;
+                let fault = generation % 2 == 0;
+                command(writer, if fault { Command::Exit } else { Command::Close })?;
+                await_closed(&hub, current.serial, MS)?;
+                check_auxiliary(current, false)?;
+                crate::debug::put(&alloc::format!(
+                    "ctl: generation {generation} serial={} settled fault={fault}",
+                    current.serial,
+                ));
+                if generation == 128 {
+                    break;
+                }
+                execution::room::park(::core::time::Duration::from_millis(100))
+                    .map_err(|_| "ctl: generation interval")?;
+                let replacement = construct(sire, hub.host(), mode.work(), generation + 1)?;
+                writer = establish::give(replacement, COMMAND)
+                    .map_err(|_| "ctl: generation command")?;
+                let next = receive_report(entry, replacement)?;
+                check_auxiliary(next, true)?;
+                if next.serial <= current.serial || next.want != 1 {
+                    return Err("ctl: generation did not receive a fresh binding");
+                }
+                for page in 0..layout::PAGES {
+                    block.fill(page, 0);
+                }
+                env::pie::accord_window(
+                    pole,
+                    replacement,
+                    env::Permission::FETCH | env::Permission::STORE | env::Permission::VEST,
+                    dma::window_mark(next.serial),
+                    0,
+                    layout::PAGES,
+                )
+                .map_err(|_| "ctl: generation window")?;
+                command(writer, Command::Window)?;
+                current = next;
+            }
+            crate::debug::put(&alloc::format!(
+                "ctl: soak generations=128 elapsed_ms={}",
+                env::chrono::clock().saturating_sub(started) / 1_000_000,
+            ));
         }
         Mode::Before | Mode::After => {
             // 发布前/后中止：α 自己收场，Hub 按同一道门与同一条停链结清。
@@ -369,6 +433,62 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             crate::debug::put(&alloc::format!(
                 "ctl: binding {serial} closed and reclaimed"
             ));
+        }
+        Mode::Confirmation => {
+            round_one(&block, writer, serial)?;
+            let request = establish::give(sire, crate::harness::probe::device_confirmation::REQUEST)
+                .map_err(|_| "ctl: confirmation request")?;
+            resource::raw::Hole::from_raw(request).push(&[1], Wait::AtMost(MS))
+                .map_err(|_| "ctl: confirmation arm")?;
+            let ack = establish::claim(
+                sire, crate::harness::probe::device_confirmation::ACK, Wait::AtMost(MS),
+            ).map_err(|_| "ctl: confirmation acknowledgement")?;
+            let mut expected = [0u8; 2];
+            if resource::raw::Hole::from_raw(ack).pull(&mut expected, Wait::AtMost(MS))
+                .map_err(|_| "ctl: confirmation armed")? != (2, sire)
+            {
+                return Err("ctl: confirmation sender");
+            }
+            command(writer, Command::Exit)?;
+            let until = env::chrono::clock().saturating_add(5_000_000_000);
+            loop {
+                if let Ok((state, Some(failure))) = hub.inspect(Wait::AtMost(MS), serial) {
+                    if state != hub_api::BindingState::Closing
+                        || (failure.party, failure.op, failure.code) != (expected[0], expected[1], 0)
+                    {
+                        return Err("ctl: wrong confirmation failure");
+                    }
+                    break;
+                }
+                if env::chrono::clock() >= until {
+                    return Err("ctl: confirmation failure was not observed");
+                }
+                execution::room::park(::core::time::Duration::from_millis(1))
+                    .map_err(|_| "ctl: confirmation wait")?;
+            }
+            check_auxiliary(report, false)?;
+            crate::debug::put(&alloc::format!(
+                "ctl: confirmation failed party={} op={} code=0 state=Closing",
+                expected[0], expected[1],
+            ));
+            resource::raw::Hole::from_raw(request).push(&[2], Wait::AtMost(MS))
+                .map_err(|_| "ctl: confirmation resume")?;
+            let mut observed = [0u8; 2];
+            if resource::raw::Hole::from_raw(ack).pull(&mut observed, Wait::AtMost(MS))
+                .map_err(|_| "ctl: confirmation resumed")? != (2, sire)
+                || observed != expected
+            {
+                return Err("ctl: confirmation resume sender");
+            }
+            await_closed(&hub, serial, MS)?;
+            let (state, failure) = hub.inspect(Wait::AtMost(MS), serial)?;
+            if state != hub_api::BindingState::Closed
+                || failure.map(|failure| (failure.party, failure.op, failure.code))
+                    != Some((expected[0], expected[1], 0))
+            {
+                return Err("ctl: original failure lost after retry");
+            }
+            crate::debug::put("ctl: confirmation retry settled; original failure preserved");
         }
         Mode::Fault => {
             round_one(&block, writer, serial)?;

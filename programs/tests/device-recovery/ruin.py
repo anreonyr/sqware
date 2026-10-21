@@ -9,7 +9,8 @@ import time
 from .ruin_check import pending
 
 
-def run(conn, capture):
+def run(conn, capture, mode="ruin"):
+    assert mode in ("ruin", "forced")
     capture = pathlib.Path(capture)
     console = pathlib.Path(os.environ["QEMU_TEE_LOG"])
     hold = pathlib.Path(os.environ["DMA_HOLD"])
@@ -28,7 +29,8 @@ def run(conn, capture):
     reader = threading.Thread(target=read, daemon=True)
     reader.start()
 
-    def wait(predicate, message, seconds=10):
+    def wait(predicate, message, seconds=None):
+        seconds = seconds or (30 if mode == "forced" else 10)
         until = time.monotonic() + seconds
         while not predicate():
             if errors:
@@ -68,26 +70,31 @@ def run(conn, capture):
                 "iommu: binding 1 released",
                 "hub: binding 1 closed",
                 "ruin: recovery dead after reply",
+                "system: forced shutdown admitted after DMA settlement",
+                "task: all tasks exited, system halted",
             ]:
                 if forbidden in log:
                     raise AssertionError(f"premature retirement while read suspended: {forbidden}")
             time.sleep(0.005)
         log = text(console)
         trace = pathlib.Path("sqware-diagnose.jsonl").read_text().rpartition("\n")[0] + "\n"
-        pending(log, [json.loads(line) for line in trace.splitlines()])
+        pending(log, [json.loads(line) for line in trace.splitlines()], mode)
         capture.with_suffix(".held-console").write_text(log)
         capture.with_suffix(".held-diagnose.jsonl").write_text(trace)
-        resume.write_text("Ruin pending with frame references held\n")
-        wait(lambda: "ruin: recovery dead after reply" in text(console), "Ruin did not complete after resume")
+        resume.write_text(f"{mode} pending with frame references held\n")
+        completion = (
+            "system: frame Step(Idle)" if mode == "forced" else "ruin: recovery dead after reply"
+        )
+        wait(lambda: completion in text(console), f"{mode} did not complete after resume")
         reader.join(timeout=10)
         if reader.is_alive():
-            raise AssertionError("guest did not terminate after Ruin")
+            raise AssertionError(f"guest did not terminate after {mode}")
         if errors:
             raise errors[0]
         capture.with_suffix(".hold").write_text(
-            "guest DMA read held during Ruin (boot reads excluded)\n"
+            f"guest DMA read held during {mode} (boot reads excluded)\n"
             "PCI disable pending while suspended; IOMMU retains 6 frame references\n"
-            "Ruin completed only after request resumed\n"
+            f"{mode} completed only after request resumed\n"
         )
     except Exception:
         capture.with_suffix(".observed-console").write_text(

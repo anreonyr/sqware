@@ -128,6 +128,21 @@ pub static CONTROL_RUIN: UnitFile = control(
     "device-ctl-ruin",
     &CONTROL_CONSTRUCTION,
 );
+pub static CONTROL_FORCED: UnitFile = control(
+    "device-ctl-forced",
+    "device-ctl-forced",
+    &CONTROL_CONSTRUCTION,
+);
+pub static CONTROL_SOAK: UnitFile = control(
+    "device-ctl-soak",
+    "device-ctl-soak",
+    &CONTROL_CONSTRUCTION,
+);
+pub static CONTROL_CONFIRMATION: UnitFile = control(
+    "device-ctl-confirmation",
+    "device-ctl-confirmation",
+    &CONTROL_CONSTRUCTION,
+);
 pub static CONTROL_FAULT: UnitFile = control(
     "device-ctl-fault",
     "device-ctl-fault",

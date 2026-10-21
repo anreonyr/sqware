@@ -45,6 +45,10 @@ extern "C" fn entry(args: usize) -> ! {
         env::unit::self_id().get()
     ));
     loop {
-        core::hint::spin_loop();
+        for _ in 0..1024 {
+            core::hint::spin_loop();
+        }
+        execution::room::park(core::time::Duration::from_millis(1))
+            .expect("work: auxiliary park");
     }
 }
