@@ -2992,6 +2992,293 @@ pub fn window_inheritance() {
     );
 }
 
+/// 本地精确派生：目标固定为调用者，窗口继承或按来源起点收窄。
+///
+/// 走真实调用面（`PieCall::Derive` / class 7 slot 13），并复用同一条 pend 授权发布：
+/// VEST、权限子集、ONLY 移交、父子撤销都由生产实现判定，这里只量它的结果。
+pub fn local_derive() {
+    use env::{GrantRange, NoleCall, PieCall, PieFail, PieToken, PoleCall};
+
+    crate::core::work::room::scheduler::init().expect("scheduler init");
+    let owner = Caller::new(false);
+    let peer = Caller::new(false);
+    let subset = Permission::FETCH | Permission::STORE | Permission::VEST;
+    let pages = |offset: usize, count: usize| GrantRange::Pages { offset, count };
+    let token = |code: isize| {
+        assert!(code > 0, "token: {code}");
+        PieToken::mint(code as usize)
+    };
+
+    // 一份 4 页来源 → 根（整段，无窗口）。
+    let (_, _, source_reference) = owner.attach_alloc_reference(4 * PAGE_SIZE, 6);
+    let root = token(pole_call(
+        &owner,
+        PoleCall::Unseal {
+            reference: source_reference,
+            shared: true,
+        },
+    ));
+    assert_eq!(
+        owner.call(EnvCall::Memory(MemoryCall::Release {
+            reference: source_reference
+        })),
+        0
+    );
+
+    // 本地派生 (1,2)：目标是调用者，父是 root。
+    let child = token(pie_call(
+        &owner,
+        PieCall::Derive {
+            src: root,
+            subset,
+            mark: env::Mark::NONE,
+            range: pages(1, 2),
+        },
+    ));
+    let child_pie = pend::locate(&owner.task, child).unwrap();
+    assert_eq!(
+        child_pie.grant().window(),
+        Some((PageOffset::new(1), PageCount::new(2).unwrap()))
+    );
+    assert_eq!(child_pie.sire(), Some(root));
+    assert!(child_pie.lord().ptr_eq(&Arc::downgrade(&owner.task)));
+
+    // 嵌套本地派生只收窄；越出父窗口的请求不落地。
+    let nested = token(pie_call(
+        &owner,
+        PieCall::Derive {
+            src: child,
+            subset,
+            mark: env::Mark::NONE,
+            range: pages(1, 1),
+        },
+    ));
+    assert_eq!(
+        pend::locate(&owner.task, nested).unwrap().grant().window(),
+        Some((PageOffset::new(1), PageCount::new(1).unwrap()))
+    );
+    let before = owner.task.pend.pies.lock().len();
+    for range in [pages(0, 1), pages(3, 1), pages(1, 3)] {
+        assert_eq!(
+            pie_call(
+                &owner,
+                PieCall::Derive {
+                    src: child,
+                    subset,
+                    mark: env::Mark::NONE,
+                    range,
+                },
+            ),
+            PieFail::Denied.code(),
+            "widening local derive {range:?} must be refused"
+        );
+        assert_eq!(owner.task.pend.pies.lock().len(), before);
+    }
+
+    // 继承父窗口：不请求就是父那一段。
+    let inherited = token(pie_call(
+        &owner,
+        PieCall::Derive {
+            src: child,
+            subset,
+            mark: env::Mark::NONE,
+            range: GrantRange::Inherit,
+        },
+    ));
+    assert_eq!(
+        pend::locate(&owner.task, inherited)
+            .unwrap()
+            .grant()
+            .window(),
+        Some((PageOffset::new(1), PageCount::new(2).unwrap()))
+    );
+
+    let transferred = token(pie_call(
+        &owner,
+        PieCall::Accord {
+            src: nested,
+            dst: peer.task.ident.id,
+            subset,
+            mark: env::Mark::NONE,
+        },
+    ));
+    assert_eq!(
+        pend::locate(&peer.task, transferred).unwrap().grant().window(),
+        Some((PageOffset::new(1), PageCount::new(1).unwrap()))
+    );
+    let (address, size) = open_pair(&peer, transferred);
+    assert!(address > 0);
+    assert_eq!(size, PAGE_SIZE);
+
+    // 空窗口在真实解码行就被拒（返回 Unknown，不进入 dispatch）。
+    assert_eq!(
+        owner.raw(
+            (7usize << 32) | 13,
+            [root.get(), subset.bits() as usize, 0, 1, 0, 0],
+        ),
+        env::DispatchFail::Unknown.code()
+    );
+
+    // 无 VEST 的派生枚不能再授出；子集不能加 ONLY。
+    let bare = token(pie_call(
+        &owner,
+        PieCall::Derive {
+            src: root,
+            subset: subset & !Permission::VEST,
+            mark: env::Mark::NONE,
+            range: GrantRange::Inherit,
+        },
+    ));
+    assert_eq!(
+        pie_call(
+            &owner,
+            PieCall::Derive {
+                src: bare,
+                subset,
+                mark: env::Mark::NONE,
+                range: GrantRange::Inherit,
+            },
+        ),
+        PieFail::Denied.code()
+    );
+    assert_eq!(
+        pie_call(
+            &owner,
+            PieCall::Derive {
+                src: root,
+                subset: subset | Permission::ONLY,
+                mark: env::Mark::NONE,
+                range: GrantRange::Inherit,
+            },
+        ),
+        PieFail::Denied.code()
+    );
+
+    // 非 Pole 资源没有授权页坐标：带 Pages 的本地派生拒绝。
+    let nole = token(with_running(owner.task.clone(), || {
+        owner.call(EnvCall::Nole(NoleCall::Unseal))
+    }));
+    assert_eq!(
+        pie_call(
+            &owner,
+            PieCall::Derive {
+                src: nole,
+                subset,
+                mark: env::Mark::NONE,
+                range: pages(0, 1),
+            },
+        ),
+        PieFail::Denied.code()
+    );
+
+    // ONLY 源本地派生即移交：源不可再用，撤销子后复原。
+    let (_, _, exclusive_reference) = owner.attach_alloc_reference(4 * PAGE_SIZE, 6);
+    let exclusive = token(pole_call(
+        &owner,
+        PoleCall::Unseal {
+            reference: exclusive_reference,
+            shared: false,
+        },
+    ));
+    assert_eq!(
+        owner.call(EnvCall::Memory(MemoryCall::Release {
+            reference: exclusive_reference
+        })),
+        0
+    );
+    let exclusive_subset = subset | Permission::ONLY;
+    let exclusive_child = token(pie_call(
+        &owner,
+        PieCall::Derive {
+            src: exclusive,
+            subset: exclusive_subset,
+            mark: env::Mark::NONE,
+            range: GrantRange::Inherit,
+        },
+    ));
+    assert_eq!(
+        pie_call(
+            &owner,
+            PieCall::Derive {
+                src: exclusive,
+                subset: exclusive_subset,
+                mark: env::Mark::NONE,
+                range: GrantRange::Inherit,
+            },
+        ),
+        PieFail::HandedOver.code()
+    );
+    assert_eq!(
+        pie_call(
+            &owner,
+            PieCall::Revoke {
+                dst: owner.task.ident.id,
+                token: exclusive_child,
+            },
+        ),
+        0
+    );
+    assert!(
+        pie_call(
+            &owner,
+            PieCall::Derive {
+                src: exclusive,
+                subset: exclusive_subset,
+                mark: env::Mark::NONE,
+                range: GrantRange::Inherit,
+            },
+        ) > 0,
+        "revoking the only child restores the exclusive source"
+    );
+
+    // 跨任务 Accord 后，本地派生继承的是那一枚的精确窗口。
+    let remote = token(pie_call(
+        &owner,
+        PieCall::AccordWindow {
+            src: root,
+            dst: peer.task.ident.id,
+            subset,
+            mark: env::Mark::NONE,
+            offset: 1,
+            count: 3,
+        },
+    ));
+    let remote_local = token(pie_call(
+        &peer,
+        PieCall::Derive {
+            src: remote,
+            subset,
+            mark: env::Mark::NONE,
+            range: GrantRange::Inherit,
+        },
+    ));
+    assert_eq!(
+        pend::locate(&peer.task, remote_local)
+            .unwrap()
+            .grant()
+            .window(),
+        Some((PageOffset::new(1), PageCount::new(3).unwrap()))
+    );
+
+    // 父 Revoke 清掉本地子孙，不伤根和另一侧兄弟。
+    assert_eq!(
+        pie_call(
+            &owner,
+            PieCall::Revoke {
+                dst: owner.task.ident.id,
+                token: child,
+            },
+        ),
+        0
+    );
+    assert!(pend::locate(&owner.task, child).is_none());
+    assert!(pend::locate(&owner.task, nested).is_none());
+    assert!(pend::locate(&owner.task, inherited).is_none());
+    assert!(pend::locate(&peer.task, transferred).is_none());
+    assert!(pend::locate(&owner.task, root).is_some());
+    assert!(pend::locate(&peer.task, remote_local).is_some());
+}
+
 /// 一次 `Open` 的两个返回值（地址与长度）：`Open` 的调用者取自运行槽，
 /// 故这里自己把任务放上运行槽，不等同 `Caller::pair` 的那一手。
 fn open_pair(caller: &Caller, token: env::PieToken) -> (isize, usize) {

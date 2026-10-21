@@ -1,6 +1,6 @@
 use alloc::sync::Arc;
 
-use env::{Mark, PieCall, PieFail, PieInfo, PieToken, ReleaseMode, TaskId, VirtAddr};
+use env::{GrantRange, Mark, PieCall, PieFail, PieInfo, PieToken, ReleaseMode, TaskId, VirtAddr};
 
 use crate::core::memory::address::{PageCount, PageOffset};
 use crate::core::memory::address::VirtAddr as KVirt;
@@ -49,6 +49,12 @@ pub(crate) fn dispatch(frame: &mut TrapContext, call: PieCall, ident: Arc<TaskId
             offset,
             count,
         } => accord_window(frame, src, dst, subset, mark, offset, count),
+        PieCall::Derive {
+            src,
+            subset,
+            mark,
+            range,
+        } => derive(frame, src, subset, mark, range),
     }
 }
 
@@ -93,6 +99,30 @@ fn accord_window(
             mark,
             Some((PageOffset::new(offset), count)),
         )
+    })();
+    answer(frame, r);
+}
+
+/// 本地精确派生：目标就是调用者，范围继承父窗口或按来源起点收窄。
+fn derive(
+    frame: &mut TrapContext,
+    src_token: PieToken,
+    subset: Permission,
+    mark: Mark,
+    range: GrantRange,
+) {
+    let r = (|| -> Result<usize, PieFail> {
+        let window = match range {
+            GrantRange::Inherit => None,
+            GrantRange::Pages { offset, count } => {
+                let count = PageCount::new(count).ok_or(PieFail::NotAligned)?;
+                Some((PageOffset::new(offset), count))
+            }
+        };
+        let caller = current().running_task().ok_or(PieFail::Denied)?;
+        let src = pend::locate(&caller, src_token).ok_or(PieFail::Denied)?;
+        gate::usable(&src)?;
+        pend::derive(&caller, src_token, subset, mark, window)
     })();
     answer(frame, r);
 }

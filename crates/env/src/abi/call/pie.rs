@@ -4,6 +4,8 @@ use crate::abi::permission::Permission;
 use crate::wire::{Mark, PieToken, TaskId, VirtAddr};
 use mold::{Envcall, Fail};
 
+use super::pie_range::GrantRange;
+
 /// Pie 域（class 7：权柄轴）的失败词汇。
 #[derive(Fail)]
 pub enum PieFail {
@@ -78,5 +80,14 @@ pub enum PieCall {
         mark: Mark,
         offset: usize,
         count: usize,
+    },
+    /// 本地精确派生：目标就是调用者，范围继承父窗口或按来源起点收窄。
+    #[slot(13)]
+    #[ret(PieToken)]
+    Derive {
+        src: PieToken,
+        subset: Permission,
+        mark: Mark,
+        range: GrantRange,
     },
 }

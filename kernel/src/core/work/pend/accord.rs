@@ -51,6 +51,17 @@ pub(crate) fn accord(
     accord_window(caller, src, dst, subset, mark, None)
 }
 
+/// 本地派生：目标就是 `caller`，范围继承或收窄，仍走同一条授权发布实现。
+pub(crate) fn derive(
+    caller: &Arc<Task>,
+    src: PieToken,
+    subset: Permission,
+    mark: Mark,
+    window: Option<(PageOffset, PageCount)>,
+) -> Result<usize, PieFail> {
+    accord_window(caller, src, &Arc::downgrade(caller), subset, mark, window)
+}
+
 /// 同 `accord`，但可给这一枚子分支一个**有效窗口**。
 ///
 /// 请求的那一段用**相对来源起点的绝对页偏移**说（不是相对父分支的偏移），

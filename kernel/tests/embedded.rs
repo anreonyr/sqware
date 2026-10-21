@@ -468,6 +468,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn local_derive_inherits_and_narrows() {
+        kernel::entry::check::syscall::local_derive();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn memory_control_and_task_death() {
         kernel::entry::check::syscall::control_and_death();
     }

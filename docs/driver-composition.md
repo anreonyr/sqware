@@ -28,7 +28,7 @@
 | A10：显式资源交付与身份核验 | 未实施 |
 | A11：逐绑定异步推进 | 未实施 |
 | A12：单端点限制收敛到实现 | 未实施 |
-| A13：Derive 加 Accord 替换 AccordWindow | 未实施 |
+| A13：Derive 加 Accord 替换 AccordWindow | 本地 Derive 已验证；调用方及旧 ABI 待迁移 |
 | 单个 Daemon 真实装配与受限守护 | 未实施 |
 | 双设备、双 Domain、相同数值 IOVA | 未实施 |
 | 最终固定源码四/八核与 1024 代回归 | 未实施 |
@@ -86,3 +86,38 @@ CARGO_INCREMENTAL=0 QEMU_SMP=4 TRACE_OUT="$PWD/target/driver-composition/pr1/iom
   并检查父范围、继承、溢出和只收窄。Derive 应复用它，不复制状态。
 - 按名字维护 Driver 特例：`ControlConfig` 实际包含 after/ending/ready/construction，
   不采用审查中关于 Declaration 的错误字段描述；新策略须接入实际声明及授权机制。
+
+## 第二检查点：精确派生基础
+
+唯一外部 worker：`opencode-go / deepseek-v4.1-flash`，会话
+`session-f46cff24-c892-4d07-85c9-f3e40cefb51d`。只允许实现 ABI、内核共享授权发布及相关测试；
+不提交、不推送、不启子 agent。主线程接管独立验证与集成。
+
+- `Pie::Derive(src, subset, mark, GrantRange)` 在调用者表内派生，使用新 slot 13。
+- slot 12 历史上曾用于 Forget，不能复用；slot 11 暂保留到全部调用方迁移完成。
+- `GrantRange::Inherit / Pages` 使用三字编码，来源绝对页坐标不与 ViewSelection 混用。
+- 复用内核有效窗口、权限、ONLY、父子撤销和同步机制，不建立另一份范围账。
+- 本检查点不等于 A13 完成；Resource/供给/Driver/测具仍须迁移后删除旧 ABI。
+
+后续生命周期迁移已确认可复用 `Unit::Join(Team, receive=false)` 的 `Complete`：
+内核同时检查不再 constructing 且全树 all_reaped，能够确认整个执行域停止，
+不需要用 Oust 充当唯一停止证明。Control 应使用该事实分离 CPU 停止与资源回收；
+不能把 `join_task` 或代表任务的退出结果当作整个 Team 已停止。
+
+验证记录（2026-10-21）：
+
+- 外部 worker 实现基础 ABI/内核共享路径及测试，执行 pend 51 项、workspace dev/release
+  check 和 kernel tests check。主线程在其停止后接管差异；未声称 worker 完成全部 A13。
+- 主线程独立执行 pend 51 项、env 38 项，全部通过。
+- 首次四核原生测试退出 101：测试把 `[2,3)` 误判为越出 `[1,3)`。
+  改为真正越界的 `[3,4)`；保留原断言强度，未修改生产权限检查。
+- 主线程补验本地派生后跨任务 Accord、精确一页映射及父撤销清理远端后代。
+  修正后的四核原生 `local_derive_inherits_and_narrows` 通过。
+- 首次失败与修正成功分别保存在 `target/driver-composition/derive/local/` 和
+  `target/driver-composition/derive/local-fixed/`，没有覆盖失败现场。
+
+```sh
+cargo test --manifest-path kernel/tests/pend/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test -p env --target x86_64-unknown-linux-gnu --offline
+CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true QEMU_SMP=4 TRACE_OUT="$PWD/target/driver-composition/derive/local-fixed" nu scripts/qtest.nu --package kernel -- --features semihosting -- local_derive_inherits_and_narrows
+```
