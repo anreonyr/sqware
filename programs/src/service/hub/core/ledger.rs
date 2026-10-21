@@ -52,7 +52,7 @@ impl Ledger {
             return Err(());
         }
         self.cells.try_reserve(1).map_err(|_| ())?;
-        self.cells.push(Cell::Vacant(entry));
+        self.cells.push(Cell::Vacant { entry, origin: None });
         Ok(())
     }
 
@@ -76,6 +76,7 @@ impl Ledger {
         let delivered = deliver(&entry)?;
         self.cells[at] = Cell::Held {
             entry: entry.clone(),
+            origin: self.cells[at].device(),
             owner,
         };
         Ok((entry, delivered))
@@ -85,13 +86,13 @@ impl Ledger {
     pub fn vacate(&mut self, alive: impl Fn(PieToken) -> bool) -> usize {
         let mut freed = 0;
         for cell in self.cells.iter_mut() {
-            let Cell::Held { entry, owner } = cell else {
+            let Cell::Held { entry, origin, owner } = cell else {
                 continue;
             };
             if alive(owner.sensor) {
                 continue;
             }
-            *cell = Cell::Vacant(entry.clone());
+            *cell = Cell::Vacant { entry: entry.clone(), origin: *origin };
             freed += 1;
         }
         freed

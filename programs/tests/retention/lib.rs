@@ -33,26 +33,14 @@ mod binding {
     use env::{PieToken, TaskId, TeamId};
     use hub_api::{BindingState, Fail};
 
-    use crate::hub_core::{ClaimRequest, Entry, ExecutionStep, Ledger};
+    use crate::hub_core::{ClaimRequest, ExecutionStep, Ledger};
 
     const HUB: usize = 1;
-    const PCI: usize = 2;
     const RECOVERY: usize = 3;
 
     fn ledger() -> Ledger {
         let mut ledger = Ledger::new().with_hub(TaskId::new(HUB));
-        ledger
-            .enroll(Entry {
-                name: "virtio-blk-pci".into(),
-                class: "virtio-blk".into(),
-                line: 0,
-                page: PieToken::NONE,
-                door: PieToken::NONE,
-                dma: true,
-                requester: 0,
-                pci: TaskId::new(PCI),
-            })
-            .expect("device enrollment");
+        crate::enrollment::enroll(&mut ledger, &[0]);
         ledger
     }
 
@@ -152,6 +140,34 @@ mod binding {
     }
 
     #[test]
+    fn first_failure_survives_retries_and_settlement_but_does_not_leak_to_rebinding() {
+        use hub_api::{Close, Failure};
+        use crate::hub_core::Step;
+
+        let mut ledger = ledger();
+        let serial = claim(&mut ledger, 9, 1).unwrap();
+        let first = Failure { party: 1, op: 2, code: 3 };
+        let later = Failure { party: 4, op: 5, code: 6 };
+        ledger.note_failure(serial, first);
+        ledger.close(serial, Close::Fault).unwrap();
+        ledger.binding_mut(serial).unwrap().step = Step::Release;
+        ledger.note_failure(serial, later);
+        ledger.note_failure(u64::MAX, later);
+        assert_eq!(ledger.binding(serial).unwrap().failure, Some(first));
+        assert_eq!(ledger.binding(serial).unwrap().step, Step::Release);
+        assert!(ledger.binding(u64::MAX).is_none());
+
+        ledger.finish(serial);
+        assert_eq!(ledger.binding(serial).unwrap().state, BindingState::Closed);
+        assert_eq!(ledger.binding(serial).unwrap().failure, Some(first));
+        let next = claim(&mut ledger, 9, 2).unwrap();
+        assert_eq!(ledger.binding(next).unwrap().failure, None);
+        ledger.note_failure(next, later);
+        assert_eq!(ledger.binding(next).unwrap().failure, Some(later));
+        assert_eq!(ledger.binding(serial).unwrap().failure, Some(first));
+    }
+
+    #[test]
     fn settlement_permanently_closes_admission() {
         let mut ledger = ledger();
         let serial = claim(&mut ledger, 9, 1).expect("first claim");
@@ -241,13 +257,9 @@ mod binding {
 
     #[test]
     fn history_never_evicts_an_open_binding_or_immediately_discards_its_completion() {
-        let mut ledger = ledger();
+        let mut ledger = Ledger::new().with_hub(TaskId::new(HUB));
+        crate::enrollment::enroll(&mut ledger, &[0, 1]);
         let pinned = claim(&mut ledger, 9, 1).unwrap();
-        ledger.enroll(Entry {
-            name: "other".into(), class: "virtio-blk".into(), line: 0,
-            page: PieToken::NONE, door: PieToken::mint(1),
-            dma: true, requester: 1, pci: TaskId::new(PCI),
-        }).unwrap();
         for id in 2..=100 {
             let serial = ledger.claim(ClaimRequest {
                 from: TaskId::new(9), id, requester: 1,

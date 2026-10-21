@@ -512,9 +512,6 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
             page: dtb,
             door: env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
                 .map_err(|_| Start::Load(E_HUB))?,
-            dma: false,
-            requester: 0,
-            pci: TaskId::new(0),
         },
     )?;
     let interrupt_item = inventory.item(1).ok_or(Start::Load(E_HUB))?;
@@ -533,9 +530,6 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
             page: interrupt,
             door: env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
                 .map_err(|_| Start::Load(E_HUB))?,
-            dma: false,
-            requester: 0,
-            pci: TaskId::new(0),
         },
     )?;
     for (index, device) in devices.iter().enumerate() {
@@ -555,9 +549,6 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
                 line: device.line,
                 page: token,
                 door,
-                dma: false,
-                requester: 0,
-                pci: TaskId::new(0),
             },
         )?;
     }

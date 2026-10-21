@@ -24,6 +24,14 @@ fn prepare(ledger: &mut Ledger, requester: u32) {
     ledger.prepare_enrollment(TaskId::new(2), request(requester)).unwrap();
 }
 
+pub(super) fn enroll(ledger: &mut Ledger, requesters: &[u32]) {
+    let mut effects = Effects::default();
+    for &requester in requesters {
+        prepare(ledger, requester);
+        assert_eq!(ledger.advance_enrollment(requester, &mut effects), Some(Ok(())));
+    }
+}
+
 fn hidden(ledger: &mut Ledger) {
     assert!(ledger.device(8).is_none());
     assert!(ledger.device_by_door(PieToken::mint(100)).is_none());
@@ -201,4 +209,40 @@ fn capacity_names_and_settlement_are_checked_before_acquiring_resources() {
     assert_eq!(ledger.prepare_enrollment(TaskId::new(2), request(0)), Err(Fail::Denied));
     assert_eq!(ledger.advance_enrollment(0, &mut effects), None);
     assert!(effects.calls.is_empty());
+}
+
+#[test]
+fn machine_entries_have_no_pci_identity_and_claim_transitions_preserve_device_origin() {
+    use hub_api::DeviceId;
+    use crate::hub_core::Entry;
+
+    let mut ledger = Ledger::new();
+    let machine = Entry {
+        name: "machine".into(), class: "virtio-blk".into(), line: 0,
+        page: PieToken::mint(20), door: PieToken::mint(21),
+    };
+    ledger.enroll(machine.clone()).unwrap();
+    assert!(ledger.device(0).is_none());
+    assert!(ledger.device_by_door(machine.door).is_none());
+    assert_eq!(ledger.devices().count(), 0);
+
+    enroll(&mut ledger, &[0]);
+    let device = DeviceId { pci: TaskId::new(2), requester: 0 };
+    let door = ledger.doors("virtio-blk".into())
+        .find(|(name, _)| name.as_str() == "device-0").unwrap().1;
+    let owner = Owner { task: TaskId::new(9), sensor: PieToken::mint(9) };
+    assert_eq!(ledger.device(0), Some(device));
+    assert_eq!(ledger.device_by_door(door), Some(device));
+    assert_eq!(ledger.devices().collect::<Vec<_>>(), vec![device]);
+    assert!(matches!(ledger.claim_with(door, owner.clone(), |_| false,
+        |_| -> Result<(), Fail> { Err(Fail::Full) }), Err(Fail::Full)));
+    assert_eq!(ledger.device_by_door(door), Some(device));
+    let (entry, ()) = ledger.claim_with(door, owner, |_| false, |_| Ok(())).unwrap();
+    assert_eq!(entry.name, "device-0");
+    assert_eq!(ledger.device_by_door(door), Some(device));
+    assert_eq!(ledger.list("virtio-blk".into(), 0).held[0], 0b10);
+    assert_eq!(ledger.vacate(|_| false), 1);
+    assert_eq!(ledger.device_by_door(door), Some(device));
+    assert_eq!(ledger.list("virtio-blk".into(), 0).held[0], 0);
+    assert_eq!(ledger.count(), 2);
 }

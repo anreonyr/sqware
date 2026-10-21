@@ -294,18 +294,9 @@ fn failed_stop_or_oust_cannot_become_a_stop_confirmation() {
 
 #[test]
 fn stopped_execution_receipt_is_retained_until_its_binding_is_closed() {
-    use crate::hub_core::{ClaimRequest, Entry};
+    use crate::hub_core::ClaimRequest;
     let mut ledger = Ledger::new();
-    ledger.enroll(Entry {
-        name: "device".into(),
-        class: "class".into(),
-        line: 0,
-        page: PieToken::NONE,
-        door: PieToken::NONE,
-        dma: true,
-        requester: 8,
-        pci: TaskId::new(2),
-    }).unwrap();
+    crate::enrollment::enroll(&mut ledger, &[8]);
     ledger.launch(TASK, 100).unwrap();
     let mut effects = Effects::default();
     drive(ledger.execution(TASK).unwrap(), &mut effects, Step::Running);

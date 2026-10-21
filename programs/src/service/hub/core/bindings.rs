@@ -18,11 +18,9 @@ impl Ledger {
     pub fn device(&self, requester: u32) -> Option<DeviceId> {
         self.cells
             .iter()
-            .find(|cell| cell.ready() && cell.entry().dma && cell.entry().requester == requester)
-            .map(|cell| DeviceId {
-                pci: cell.entry().pci,
-                requester: cell.entry().requester,
-            })
+            .filter(|cell| cell.ready())
+            .filter_map(|cell| cell.device())
+            .find(|device| device.requester == requester)
     }
 
     /// 这台设备此刻开着几笔绑定（未结清）。
@@ -37,11 +35,8 @@ impl Ledger {
     pub fn device_by_door(&self, door: PieToken) -> Option<DeviceId> {
         self.cells
             .iter()
-            .find(|cell| cell.ready() && cell.entry().dma && cell.entry().door == door)
-            .map(|cell| DeviceId {
-                pci: cell.entry().pci,
-                requester: cell.entry().requester,
-            })
+            .filter(|cell| cell.ready() && cell.entry().door == door)
+            .find_map(|cell| cell.device())
     }
 
     /// 已登记设备的坐标窗口（**不对外开**：认领走门牌，清单不开放）。
@@ -49,11 +44,8 @@ impl Ledger {
     pub fn devices(&self) -> impl Iterator<Item = DeviceId> + '_ {
         self.cells
             .iter()
-            .filter(|cell| cell.ready() && cell.entry().dma)
-            .map(|cell| DeviceId {
-                pci: cell.entry().pci,
-                requester: cell.entry().requester,
-            })
+            .filter(|cell| cell.ready())
+            .filter_map(|cell| cell.device())
     }
 
     /// 认领一台：同调用者同编号同参幂等；异参或旧编号冲突；设备已有开着的一笔则 `Taken`。
@@ -171,7 +163,7 @@ impl Ledger {
     /// 记一笔原始失败（失败方、操作、原失败码）。
     pub fn note_failure(&mut self, serial: u64, failure: Failure) {
         if let Some(binding) = self.binding_mut(serial) {
-            binding.failure = Some(failure);
+            binding.failure.get_or_insert(failure);
         }
     }
 
