@@ -1,5 +1,6 @@
 //! Reserve lifecycle capacity before invoking the builder, then publish once.
 use super::state::{self as instance, Instance};
+use crate::system::control::instance::receipt::Receipt;
 use crate::system::control::unit::{Control, table::State};
 use env::TaskId;
 use system_api::{control::Fail, loader::Built};
@@ -25,7 +26,7 @@ impl Control {
             if let Some(at) = self
                 .instances
                 .iter()
-                .position(|item| item.state == State::Dead)
+                .position(|item| item.state == State::Dead && item.receipt == Receipt::Consumed)
             {
                 self.instances.remove(at);
             } else {
@@ -43,7 +44,7 @@ impl Control {
             },
             owner: admission.owner,
             task: built.task,
-            team: Some(built.team),
+            receipt: Receipt::Owner(built.team),
             state: State::Starting,
             claimed: false,
             started: false,

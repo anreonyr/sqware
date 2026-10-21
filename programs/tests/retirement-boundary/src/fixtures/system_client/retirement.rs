@@ -7,10 +7,11 @@ impl Face {
         Ok(Self)
     }
 
-    pub fn begin(
+    pub fn begin_for(
         &self,
+        target: crate::TaskId,
         _: Wait,
     ) -> Result<crate::ipc::rpc::request::Pending<crate::system_api::retirement::Call>, ()> {
-        crate::backend::begin().map(|()| crate::ipc::rpc::request::Pending::new())
+        crate::backend::begin(target).map(|()| crate::ipc::rpc::request::Pending::new())
     }
 }

@@ -243,6 +243,7 @@ pub(crate) enum JobOutcome {
     Prepare(InstanceRef),
     Activate(InstanceRef),
     Retire(InstanceRef),
+    Release(InstanceRef),
     Debark(InstanceRef),
     StaticLifecycle(crate::system::control::lifecycle::Action, Option<TaskId>),
     Command(system_api::control::frame::Said),
@@ -660,6 +661,7 @@ impl Jobs {
             let Some(request) = incoming.as_ref() else {
                 continue;
             };
+            if command.from != request.from { continue; }
             if matches!(
                 request.wire,
                 system_api::control::frame::Wire::StateInstance(_)
@@ -682,7 +684,9 @@ impl Jobs {
                 command.waiters.push(incoming.take().unwrap().reply);
                 return Ok(command.id);
             }
-            if matches!((&command.wire, &request.wire), (system_api::control::frame::Wire::RuinInstance(old), system_api::control::frame::Wire::RuinInstance(new)) if old == new)
+            if matches!((&command.wire, &request.wire),
+                (system_api::control::frame::Wire::RuinInstance(old), system_api::control::frame::Wire::RuinInstance(new))
+                | (system_api::control::frame::Wire::ReleaseInstance(old), system_api::control::frame::Wire::ReleaseInstance(new)) if old == new)
             {
                 if command.waiters.try_reserve(1).is_err() {
                     return Err((
@@ -1487,7 +1491,7 @@ pub(crate) fn completed(
     while index < jobs.launches.len() {
         let task = jobs.launches[index].instance.task;
         if control.instance(task).is_none_or(|item| {
-            item.state == crate::system::control::unit::table::State::Dead && item.team.is_none()
+            item.state == crate::system::control::unit::table::State::Dead && item.team().is_none()
         }) {
             let launch = jobs.launches.remove(index);
             if let Some(key) = launch.instance.create {

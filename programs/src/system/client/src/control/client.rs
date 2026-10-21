@@ -216,6 +216,9 @@ impl Instance<'_> {
     pub fn ruin(&self, wait: Wait) -> Result<(), Fail> {
         read(self.face.call(frame::Req::RuinInstance(self.task), wait)?).map(|_| ())
     }
+    pub fn release(&self, wait: Wait) -> Result<(), Fail> {
+        read(self.face.call(frame::Req::ReleaseInstance(self.task), wait)?).map(|_| ())
+    }
     pub fn state(&self, wait: Wait) -> Result<State, Fail> {
         State::of_code(self.inspect(wait)?.a)
             .ok_or(Fail::Bad)

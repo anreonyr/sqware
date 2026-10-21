@@ -51,7 +51,7 @@ fn delay_retire(
         .unwrap();
     assert_eq!(item.state, UnitState::Stopping);
     assert!(
-        item.team.is_some(),
+        item.team().is_some(),
         "retire hook reported reclaimed before completion"
     );
     if !fault.waited {
@@ -824,7 +824,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             .read::<Control>()
             .unwrap()
             .instances()
-            .all(|item| item.team.is_none());
+            .all(|item| item.team().is_none());
         let registered = assembly
             .resources
             .read::<crate::system::assembly::namespace::NamespaceInstallations>()

@@ -316,3 +316,30 @@ system-shape20项、workspace dev check通过，仍有既有5项警告。真实�
 Flash复核确认Pending修正无新漏洞；其提出的未创建Hole即到期边界也纳入逐边界超时测试，
 断言清除Carrier且不调用pie释放。Pending修正后八核soak-128-reviewed通过：64正常/64 owner死亡，
 155137ms，帧153→153，逐代capability15/launch1/command1。没有声称完整A2、Daemon或最终1024代已完成。
+
+## 第九检查点（待调用方迁移）：Control 收据交回
+
+Instance以Receipt::Owner/Returned/Consumed保存唯一Team坐标。普通退休完成后仍保留owner
+收据；新的ReleaseInstance(操作码11，复用Ruin授权)由真实owner交回最终核销责任，Control仅在
+真实Oust成功后记Consumed和回复OK。Busy/Denied/其他失败保留同收据；回复消失后独立重试。
+Returned未结清时不驱逐、不允许全局退场，等待间隔保持有界。Dead不能被stop复活。
+
+退休帧增加固定target，0为全局；共享Participant的scope在创建时固定，核对相同target回包。
+逐实例调用尚未装配，Hub暂对非零target保持Pending。此接口不能单独证明A2完成。
+
+- 主线程实跑Control-instance32项、Control-api9项、Control-RPC5项、retirement-boundary10项，
+  含同收据Busy/Denied失败、辅助成员仍活、真实schedule回收、无新owner调用的独立重试、
+  容量不能驱逐未归还/未核销收据、跨实例/全局错scope回包不能放行。
+  核销后若schedule尚待finish，依据真实Consumed继续退休分派，不再依赖已失效的Team查询；
+  新用例保留原核销记时、不重复Oust。没有把Unknown/Denied用作该分派证明。
+- workspace dev check通过，保留既有5项警告。四核accept和iommu-product通过，仅计一般回归。
+  accept未执行loader.rs旧acceptance函数，因此撤回曾误计的新增Release原生证明并移除未执行断言；
+  新Release尚需接入真实产品调用方，再取得原生证据。现场receipt/accept、receipt/product。
+- 外部整包草稿因缺grant、Assembly接点及fixture迁移被自动审批拒绝，未直接应用。
+  根线程逐文件重写，补齐sender隔离、模块及调用点、真实核销计时和测试后验证。
+- Flash复核提出将Denied/Absent归一Consumed，未采纳：这违反真实核销证明要求。
+  老调用方自行Oust后再交回属于不兼容的双重消费，必须把调用方改为唯一Release路径，不能伪造完成。
+  它所列的活实例/回复消失/Denied测试缺口已有对应31项用例；Returned到finish的Room为内部
+  不变量错误，实际reclaim已限定owner早退，不能用Pending掩盖未核销的完成结果。
+- 本检查点保留在本地，迁移Hub及普通owner调用方后再推送。当前Owner收据不驱逐会使未迁移
+  调用方在256条历史后背压；这是明确的中间缺口，未声称1024代通过或A2完成。

@@ -4,6 +4,7 @@
 extern crate alloc;
 extern crate env as abi;
 extern crate self as env;
+extern crate system_api as abi_system;
 
 pub use abi::{PieToken, TaskId, TeamId, Wait};
 
@@ -73,6 +74,44 @@ mod tests {
 
     fn done() -> Result<Option<system_api::retirement::Retirement>, ()> {
         Ok(Some(system_api::retirement::Retirement::done()))
+    }
+
+    #[test]
+    fn different_instance_replies_cannot_discharge_each_others_obligations() {
+        use system::app::participant::Participant;
+        use crate::system_api::retirement::Retirement as Reply;
+        let (a, b) = (TaskId::new(7), TaskId::new(8));
+        backend::reset(vec![Ok(()), Ok(())], vec![Ok(()); 4], vec![
+            Ok(Some(Reply::done_for(b))), Ok(Some(Reply::done_for(a))),
+            Ok(Some(Reply::done_for(a))), Ok(Some(Reply::done_for(b))),
+        ]);
+        let mut first = Participant::new(HUB, a);
+        let mut second = Participant::new(HUB, b);
+        let (system, namespaces) = (system::app::namespace::System, system::assembly::namespace::NamespaceInstallations);
+        first.discover(&system, &namespaces);
+        second.discover(&system, &namespaces);
+        first.advance();
+        second.advance();
+        assert!(!first.done && !second.done);
+        first.advance();
+        assert!(first.done && !second.done);
+        second.advance();
+        assert!(second.done);
+        assert_eq!(backend::targets(), [a, b, a, b]);
+    }
+
+    #[test]
+    fn instance_done_does_not_complete_global_retirement() {
+        use crate::system_api::retirement::Retirement as Reply;
+        backend::reset(vec![Ok(())], vec![Ok(()), Ok(())], vec![
+            Ok(Some(Reply::done_for(TaskId::new(7)))), done(),
+        ]);
+        let mut gate = settle(&DEVICE);
+        discover(&mut gate);
+        assert!(!gate.admit(false));
+        assert!(!gate.settled());
+        assert!(gate.admit(false));
+        assert_eq!(backend::targets(), [TaskId::new(0); 2]);
     }
 
     fn settle(program: &'static UnitFile) -> Settle {
@@ -181,7 +220,7 @@ mod tests {
         backend::reset(
             vec![Ok(())],
             vec![Ok(()), Ok(())],
-            vec![Ok(Some(system_api::retirement::Retirement { state: 255 })), done()],
+            vec![Ok(Some(system_api::retirement::Retirement { state: 255, ..system_api::retirement::Retirement::pending() })), done()],
         );
         let mut settle = settle(&DEVICE);
         discover(&mut settle);

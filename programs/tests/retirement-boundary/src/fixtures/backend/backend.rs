@@ -12,6 +12,7 @@ struct Backend {
     discover_calls: usize,
     begin_calls: usize,
     poll_calls: usize,
+    targets: Vec<crate::TaskId>,
 }
 
 thread_local! {
@@ -32,6 +33,7 @@ pub(crate) fn reset(
             discover_calls: 0,
             begin_calls: 0,
             poll_calls: 0,
+            targets: Vec::new(),
         };
     });
 }
@@ -52,10 +54,11 @@ pub(crate) fn discover() -> Result<(), ()> {
     })
 }
 
-pub(crate) fn begin() -> Result<(), ()> {
+pub(crate) fn begin(target: crate::TaskId) -> Result<(), ()> {
     BACKEND.with(|backend| {
         let mut backend = backend.borrow_mut();
         backend.begin_calls += 1;
+        backend.targets.push(target);
         backend.begin.pop_front().unwrap_or(Err(()))
     })
 }
@@ -73,4 +76,8 @@ pub(crate) fn calls() -> (usize, usize, usize) {
         let backend = backend.borrow();
         (backend.discover_calls, backend.begin_calls, backend.poll_calls)
     })
+}
+
+pub(crate) fn targets() -> Vec<crate::TaskId> {
+    BACKEND.with(|backend| backend.borrow().targets.clone())
 }

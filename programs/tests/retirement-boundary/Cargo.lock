@@ -57,6 +57,7 @@ version = "0.1.0"
 dependencies = [
  "env",
  "schedule",
+ "system-api",
 ]
 
 [[package]]
@@ -72,6 +73,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "system-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "wire",
 ]
 
 [[package]]

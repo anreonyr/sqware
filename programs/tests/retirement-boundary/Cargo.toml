@@ -12,3 +12,4 @@ path = "src/lib.rs"
 [dev-dependencies]
 env = { path = "../../../crates/env" }
 schedule = { path = "../../../crates/schedule" }
+system-api = { path = "../../src/system/api" }

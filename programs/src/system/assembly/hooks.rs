@@ -127,7 +127,7 @@ fn namespace_coordinates(
     mut namespaces: ResMut<super::namespace::NamespaceInstallations>,
 ) -> Result<Progress, &'static str> {
     let task = jobs.active_hook_task().ok_or("instance hook target")?;
-    let team = control.instance(task).and_then(|instance| instance.team);
+    let team = control.instance(task).and_then(|instance| instance.team());
     namespaces
         .coordinates(super::namespace::Coordinates { task, team })
         .map_err(|_| "instance namespace coordinates")?;

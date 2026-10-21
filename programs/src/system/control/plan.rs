@@ -56,7 +56,7 @@ pub fn ruin_rest(
     // Dynamic tasks may hold resources from any static provider. Their retire
     // hooks reclaim the teams before static services begin to relinquish them.
     // 退休提供方全部结清后才递 Ruin，保留其完成外部责任所需的资源。
-    if settle.flow.settling && control.instances().all(|item| item.team.is_none()) {
+    if settle.flow.settling && control.instances().all(|item| item.settled()) {
         for name in control.closing_service_names() {
             if !operations.contains(name) {
                 operations

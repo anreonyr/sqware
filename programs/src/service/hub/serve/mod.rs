@@ -366,11 +366,12 @@ fn drain_retirement(ledger: &mut Ledger, entry: PieToken, buffer: &mut [u8]) {
             Ok(incoming) => {
                 let done = incoming.from == unit::sire()
                     && incoming.request.state == system_api::retirement::ASK
+                    && incoming.request.target == TaskId::new(0)
                     && ledger.settle() == 0;
                 let reply = if done {
-                    system_api::retirement::Retirement::done()
+                    system_api::retirement::Retirement::done_for(incoming.request.target)
                 } else {
-                    system_api::retirement::Retirement::pending()
+                    system_api::retirement::Retirement::pending_for(incoming.request.target)
                 };
                 let _ = incoming.reply.send(reply);
             }

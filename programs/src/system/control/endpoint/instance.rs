@@ -22,6 +22,7 @@ pub fn answer(
             call::frame::Wire::DebarkInstance(task) => Command::Debark(*task),
             call::frame::Wire::RuinInstance(task) => Command::Ruin(*task),
             call::frame::Wire::StateInstance(task) => Command::State(*task),
+            call::frame::Wire::ReleaseInstance(task) => Command::Release(*task),
             _ => {
                 inbox.0.push_back(incoming);
                 continue;
@@ -31,7 +32,8 @@ pub fn answer(
             Command::Embark(task)
             | Command::Debark(task)
             | Command::Ruin(task)
-            | Command::State(task) => task,
+            | Command::State(task)
+            | Command::Release(task) => task,
         };
         let Some(reference) = control.instance(task).map(|instance| instance.reference) else {
             answer::reply(
@@ -63,6 +65,7 @@ pub fn answer(
             call::frame::Wire::DebarkInstance(task) => Command::Debark(*task),
             call::frame::Wire::RuinInstance(task) => Command::Ruin(*task),
             call::frame::Wire::StateInstance(task) => Command::State(*task),
+            call::frame::Wire::ReleaseInstance(task) => Command::Release(*task),
             _ => {
                 finish_command(
                     &mut jobs,
@@ -78,7 +81,8 @@ pub fn answer(
             Command::Embark(task)
             | Command::Debark(task)
             | Command::Ruin(task)
-            | Command::State(task) => task,
+            | Command::State(task)
+            | Command::Release(task) => task,
         };
         if control.instance(task).map(|instance| instance.reference) != Some(work.reference) {
             finish_command(
@@ -146,7 +150,7 @@ pub fn answer(
                     let mut said = call::frame::said_state(answer::wire_state(state));
                     if let Some(item) = control.instance(task) {
                         said.task = item.task;
-                        said.team = item.team.unwrap_or(env::TeamId::new(0));
+                        said.team = item.team().unwrap_or(env::TeamId::new(0));
                         said.completed = item.reason.is_some();
                         said.reason = item.reason.unwrap_or(0) as u64;
                     }
@@ -161,6 +165,9 @@ pub fn answer(
                         }
                         Command::Ruin(_) => {
                             crate::system::assembly::JobOutcome::Retire(work.reference)
+                        }
+                        Command::Release(_) => {
+                            crate::system::assembly::JobOutcome::Release(work.reference)
                         }
                         Command::State(_) => unreachable!(),
                     }
@@ -194,6 +201,7 @@ fn finish_command(
         Ok(
             crate::system::assembly::JobOutcome::Activate(reference)
             | crate::system::assembly::JobOutcome::Retire(reference)
+            | crate::system::assembly::JobOutcome::Release(reference)
             | crate::system::assembly::JobOutcome::Debark(reference),
         ) if reference == expected => call::frame::said_status(call::frame::OK),
         Ok(_) => call::frame::said_status(call::frame::fail_to_code(Some(call::Fail::Unknown))),
@@ -290,7 +298,8 @@ pub fn receive(
                 wire @ (call::frame::Wire::EmbarkInstance(_)
                 | call::frame::Wire::DebarkInstance(_)
                 | call::frame::Wire::RuinInstance(_)
-                | call::frame::Wire::StateInstance(_)),
+                | call::frame::Wire::StateInstance(_)
+                | call::frame::Wire::ReleaseInstance(_)),
             ) => {
                 if inbox.0.try_reserve(1).is_err() {
                     answer::reply(reply, call::frame::said_status(call::frame::FULL));

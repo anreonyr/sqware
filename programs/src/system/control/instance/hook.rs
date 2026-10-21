@@ -1,6 +1,7 @@
 //! Instance lifecycle extension points executed as bounded schedule subplans.
 use crate::system::app::Fault as Fail;
 use crate::system::control::unit::Control;
+use crate::system::control::instance::receipt::Receipt;
 use crate::system::control::unit::table::State;
 
 use ::schedule::{BuildError, Dispatch, Invocation, Plan, Progress, Res, ResMut, Schedule};
@@ -32,10 +33,11 @@ pub fn select(
     mut jobs: ResMut<crate::system::assembly::Jobs>,
     mut dispatch: ResMut<Dispatch<Key, &'static str>>,
 ) -> Result<Progress, Fail> {
-    while let Some((task, team, state, started, expected)) = control
+    while let Some((task, team, state, started, expected, consumed)) = control
         .instances
         .get(jobs.next_hook())
-        .map(|item| (item.task, item.team, item.state, item.started, item.reference))
+        .map(|item| (item.task, item.team(), item.state, item.started, item.reference,
+            item.receipt == Receipt::Consumed))
     {
         let next = jobs.next_hook() + 1;
         jobs.advance_hook(next);
@@ -48,7 +50,7 @@ pub fn select(
         let key = match state {
             State::Starting if !started => Some(Key::Prepare),
             State::Stopping
-                if team.is_some_and(|team| {
+                if consumed || team.is_some_and(|team| {
                     matches!(
                         unit::join(env::UnitTarget::Team(team), Wait::POLL, false),
                         Ok(env::JoinReply::Complete)
@@ -115,7 +117,10 @@ pub fn finish(
                 (Key::Retire, Ok(crate::system::assembly::JobOutcome::Retire(done)))
                     if done == reference =>
                 {
-                    let reclaimed = item.team.take().is_some();
+                    if matches!(item.receipt, Receipt::Returned(_)) {
+                        return Err(Fail::Room);
+                    }
+                    let reclaimed = item.team().is_some();
                     item.state = State::Dead;
                     if reclaimed {
                         control.reclaimed_at = env::chrono::clock();
@@ -169,7 +174,7 @@ pub fn reclaim(
         .iter_mut()
         .find(|item| item.reference == reference)
         .ok_or("instance hook target")?;
-    let Some(team) = item.team else {
+    let Some(team) = item.receipt.team() else {
         return Ok(Progress::Done);
     };
     for at in 0..64 {
@@ -185,15 +190,19 @@ pub fn reclaim(
         }
     }
     // A live delegated owner retains its subtree receipt, even before Loader Claim.
-    if (item.claimed || item.owner != unit::self_id())
+    let owner_held = matches!(item.receipt, Receipt::Owner(_));
+    if owner_held && (item.claimed || item.owner != unit::self_id())
         && matches!(unit::join_task(item.owner, Wait::POLL), Ok(false))
     {
         return Ok(Progress::Done);
     }
-    match unit::oust(team) {
-        Ok(()) => Ok(Progress::Done),
-        Err(error) if error.source == env::UnitFail::Busy => Ok(Progress::Pending),
-        Err(error) if error.source == env::UnitFail::Denied => Ok(Progress::Done),
+    match item.receipt.consume() {
+        Ok(consumed) => {
+            if consumed { control.reclaimed_at = env::chrono::clock(); }
+            Ok(Progress::Done)
+        }
+        Err(env::UnitFail::Busy) => Ok(Progress::Pending),
+        Err(env::UnitFail::Denied) if owner_held => Ok(Progress::Done),
         Err(_) => Err("instance reclaim"),
     }
 }

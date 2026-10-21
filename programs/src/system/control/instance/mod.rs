@@ -1,4 +1,5 @@
 use self::state::Instance;
+use self::receipt::Receipt;
 use super::unit::table::State;
 use crate::system::app::Fault as ControlFail;
 use crate::system::control::unit::Control;
@@ -24,7 +25,7 @@ impl Control {
         };
         match item.state {
             State::Starting => Ok(None),
-            State::Debarked => match item.team {
+            State::Debarked => match item.team() {
                 Some(team) => Ok(Some(Ok(Built {
                     task: item.task,
                     team,
@@ -52,7 +53,7 @@ impl Control {
             return false;
         };
         instance.stop();
-        if let Some(team) = instance.team {
+        if let Some(team) = instance.team() {
             let _ = unit::slay_team(team);
         }
         true
@@ -91,15 +92,19 @@ impl Control {
             return false;
         }
         item.stop();
-        if let Some(team) = item.team {
+        if let Some(team) = item.team() {
             let _ = unit::slay_team(team);
         }
         true
     }
 
     pub(crate) fn reap_instances(&mut self, settling: bool) {
+        self.reclaim_returned();
         for item in &mut self.instances {
-            if item.team.is_none() {
+            if item.state == State::Dead {
+                continue;
+            }
+            if item.team().is_none() {
                 continue;
             }
             if item.claimed {
@@ -108,7 +113,7 @@ impl Control {
                 {
                     item.reap(exit);
                 }
-            } else if let Some(team) = item.team {
+            } else if let Some(team) = item.team() {
                 // Receive every member independently; main/auxiliary policy is Control's.
                 for _ in 0..64 {
                     match unit::join(env::UnitTarget::Team(team), Wait::POLL, true) {
@@ -127,13 +132,15 @@ impl Control {
                 item.stop();
             }
             if item.state == State::Stopping {
-                if let Some(team) = item.team {
+                if let Some(team) = item.team() {
                     let _ = unit::slay_team(team);
                 }
             }
         }
         self.instances.retain(|item| {
-            item.team.is_some() || !unit::join_task(item.owner, Wait::POLL).unwrap_or(true)
+            item.team().is_some()
+                || matches!(item.receipt, Receipt::Returned(_))
+                || !unit::join_task(item.owner, Wait::POLL).unwrap_or(true)
         });
     }
 
@@ -141,7 +148,7 @@ impl Control {
         for item in self
             .instances
             .iter()
-            .filter(|item| !item.claimed && item.team.is_some() && item.state == State::Debarked)
+            .filter(|item| !item.claimed && item.team().is_some() && item.state == State::Debarked)
         {
             let ms = item
                 .claim_until
@@ -153,7 +160,8 @@ impl Control {
         if self
             .instances
             .iter()
-            .any(|item| matches!(item.state, State::Starting | State::Stopping))
+            .any(|item| matches!(item.state, State::Starting | State::Stopping)
+                || matches!(item.receipt, Receipt::Returned(_)))
         {
             wait = Wait::AtMost(1);
         }
@@ -178,3 +186,5 @@ pub(crate) use command::Command;
 
 pub(crate) mod schedule;
 pub(crate) mod state;
+pub(crate) mod receipt;
+mod release;

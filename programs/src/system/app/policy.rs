@@ -38,7 +38,7 @@ impl Settle {
                 {
                     continue;
                 }
-                participants.push(Participant::new(*declaration));
+                participants.push(Participant::new(*declaration, env::TaskId::new(0)));
             }
         }
         Self {
@@ -73,26 +73,7 @@ impl Settle {
             return;
         };
         for participant in &mut self.participants {
-            if participant.done || participant.face.is_some() || participant.pending.is_some() {
-                continue;
-            }
-            let Some(grant) = namespaces.program_grant(
-                participant.declaration.provider,
-                participant.declaration.namespace,
-            ) else {
-                continue;
-            };
-            let Ok(bound) = system.capability().find(
-                grant.entry,
-                participant.declaration.face,
-                system_api::operator::Permit::Public,
-                Wait::AtMost(MS),
-            ) else {
-                continue;
-            };
-            if let Ok(face) = system_client::retirement::Face::of(bound.resource) {
-                participant.face = Some(face);
-            }
+            participant.discover(system, namespaces);
         }
     }
 
@@ -125,34 +106,7 @@ impl Settle {
         let Some(participant) = self.participants.get_mut(index) else {
             return;
         };
-        if participant.done {
-            return;
-        }
-        if let Some(mut pending) = participant.pending.take() {
-            match pending.poll() {
-                Ok(Some(reply)) if reply.settled() => participant.done = true,
-                Ok(Some(_)) => {}
-                Ok(None) => participant.pending = Some(pending),
-                Err(_) => participant.face = None,
-            }
-            return;
-        }
-        let begin = participant
-            .face
-            .as_ref()
-            .map(|face| face.begin(Wait::AtMost(MS)));
-        let Some(begin) = begin else {
-            return;
-        };
-        match begin {
-            Ok(mut pending) => match pending.poll() {
-                Ok(Some(reply)) if reply.settled() => participant.done = true,
-                Ok(Some(_)) => {}
-                Ok(None) => participant.pending = Some(pending),
-                Err(_) => participant.face = None,
-            },
-            Err(_) => participant.face = None,
-        }
+        participant.advance();
     }
 
     fn enter(&mut self, forced: bool) -> bool {
@@ -169,9 +123,6 @@ impl Settle {
         self.enter(forced)
     }
 }
-
-/// 退休面发现与一次请求的时限（毫秒）。
-const MS: usize = 1000;
 
 pub fn health(status: Res<Arc<Status>>) -> Result<Progress, Fail> {
     for id in [
@@ -246,7 +197,7 @@ pub fn done(
     settle.flow.done = settle.flow.settling
         && control.done()
         && operations.is_empty()
-        && control.instances().all(|item| item.team.is_none());
+        && control.instances().all(|item| item.settled());
     if settle.flow.done && settle.flow.forced {
         return Err(Fail::Idle);
     }

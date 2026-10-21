@@ -1,6 +1,6 @@
 //! Generic retirement request: the provider alone decides what must settle.
 
-use env::PieToken;
+use env::{PieToken, TaskId};
 use env::wire::Span as _;
 use wire::Message;
 
@@ -9,27 +9,42 @@ pub const PENDING: u8 = 1;
 pub const DONE: u8 = 2;
 
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-#[frame(len = 16)]
+#[frame(len = 24)]
 pub struct Retirement {
     pub state: u8,
+    pub target: TaskId,
     pub back: PieToken,
 }
 
 impl Retirement {
     pub const fn ask(back: PieToken) -> Self {
-        Self { state: ASK, back }
+        Self::ask_for(TaskId::new(0), back)
+    }
+
+    pub const fn ask_for(target: TaskId, back: PieToken) -> Self {
+        Self { state: ASK, target, back }
     }
 
     pub const fn pending() -> Self {
+        Self::pending_for(TaskId::new(0))
+    }
+
+    pub const fn pending_for(target: TaskId) -> Self {
         Self {
             state: PENDING,
+            target,
             back: PieToken::NONE,
         }
     }
 
     pub const fn done() -> Self {
+        Self::done_for(TaskId::new(0))
+    }
+
+    pub const fn done_for(target: TaskId) -> Self {
         Self {
             state: DONE,
+            target,
             back: PieToken::NONE,
         }
     }

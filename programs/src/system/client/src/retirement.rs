@@ -19,7 +19,11 @@ impl Face {
     }
 
     pub fn begin(&self, within: Wait) -> Result<Pending<Call>, ipc::rpc::Fail> {
+        self.begin_for(TaskId::new(0), within)
+    }
+
+    pub fn begin_for(&self, target: TaskId, within: Wait) -> Result<Pending<Call>, ipc::rpc::Fail> {
         self.sender
-            .begin(Deadline::new(within), |back| Retirement::ask(back))
+            .begin(Deadline::new(within), |back| Retirement::ask_for(target, back))
     }
 }

@@ -8,6 +8,7 @@ pub(crate) enum Command {
     Debark(TaskId),
     Ruin(TaskId),
     State(TaskId),
+    Release(TaskId),
 }
 
 impl Control {
@@ -20,8 +21,12 @@ impl Control {
             Command::Embark(task)
             | Command::Debark(task)
             | Command::Ruin(task)
-            | Command::State(task) => task,
+            | Command::State(task)
+            | Command::Release(task) => task,
         };
+        if matches!(command, Command::Release(_)) {
+            return self.release_instance(owner, task);
+        }
         let item = self
             .instances
             .iter_mut()
@@ -38,14 +43,14 @@ impl Control {
             Command::Embark(_) if item.state == State::Debarked => {
                 if item.claim(env::chrono::clock()).is_none() {
                     item.stop();
-                    if let Some(team) = item.team {
+                    if let Some(team) = item.team() {
                         let _ = unit::slay_team(team);
                     }
                     return Err(Fail::NotReady);
                 }
                 let resumed = item.started;
                 let running = if resumed {
-                    unit::embark_team(item.team.ok_or(Fail::Unknown)?)
+                    unit::embark_team(item.team().ok_or(Fail::Unknown)?)
                 } else {
                     unit::embark_task(task)
                 };
@@ -54,7 +59,7 @@ impl Control {
                     Err(error) if error.source == env::UnitFail::Busy => return Ok(None),
                     Err(_) => {
                         item.stop();
-                        if let Some(team) = item.team {
+                        if let Some(team) = item.team() {
                             let _ = unit::slay_team(team);
                         }
                         return Err(Fail::NotReady);
@@ -70,7 +75,7 @@ impl Control {
             }
             Command::Embark(_) if item.state == State::Ready => {}
             Command::Debark(_) if item.state == State::Ready => {
-                match unit::debark_team(item.team.ok_or(Fail::Unknown)?) {
+                match unit::debark_team(item.team().ok_or(Fail::Unknown)?) {
                     Ok(()) => {}
                     Err(error) if error.source == env::UnitFail::Busy => return Ok(None),
                     Err(_) => return Err(Fail::NotReady),
@@ -78,7 +83,7 @@ impl Control {
                 item.state = State::Debarked;
             }
             Command::Ruin(_) => {
-                if let Some(team) = item.team {
+                if let Some(team) = item.team() {
                     item.stop();
                     let _ = unit::slay_team(team);
                     return Ok(None);
