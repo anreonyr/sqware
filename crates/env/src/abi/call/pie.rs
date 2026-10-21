@@ -69,18 +69,6 @@ pub enum PieCall {
     #[slot(10)]
     #[ret(bool)]
     Same { a: PieToken, b: PieToken },
-    /// 同 `Accord`，但给这一枚子分支一个**有效窗口**：`offset` 是相对来源起点的
-    /// 绝对页偏移，`count` 是页数；必须落在父的有效窗口里（只收窄）。
-    #[slot(11)]
-    #[ret(PieToken)]
-    AccordWindow {
-        src: PieToken,
-        dst: TaskId,
-        subset: Permission,
-        mark: Mark,
-        offset: usize,
-        count: usize,
-    },
     /// 本地精确派生：目标就是调用者，范围继承父窗口或按来源起点收窄。
     #[slot(13)]
     #[ret(PieToken)]

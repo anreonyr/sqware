@@ -41,14 +41,6 @@ pub(crate) fn dispatch(frame: &mut TrapContext, call: PieCall, ident: Arc<TaskId
                     .map(usize::from),
             );
         }
-        PieCall::AccordWindow {
-            src,
-            dst,
-            subset,
-            mark,
-            offset,
-            count,
-        } => accord_window(frame, src, dst, subset, mark, offset, count),
         PieCall::Derive {
             src,
             subset,
@@ -71,34 +63,6 @@ fn accord(
         gate::usable(&src)?;
         let dst = muster(dst_id).ok_or(PieFail::Denied)?;
         pend::accord(&caller, src_token, dst.as_weak(), subset, mark)
-    })();
-    answer(frame, r);
-}
-
-/// 带有效窗口的 `Accord`：`offset`/`count` 用相对来源起点的绝对页说。
-fn accord_window(
-    frame: &mut TrapContext,
-    src_token: PieToken,
-    dst_id: TaskId,
-    subset: Permission,
-    mark: Mark,
-    offset: usize,
-    count: usize,
-) {
-    let r = (|| -> Result<usize, PieFail> {
-        let count = PageCount::new(count).ok_or(PieFail::NotAligned)?;
-        let caller = current().running_task().ok_or(PieFail::Denied)?;
-        let src = pend::locate(&caller, src_token).ok_or(PieFail::Denied)?;
-        gate::usable(&src)?;
-        let dst = muster(dst_id).ok_or(PieFail::Denied)?;
-        pend::accord_window(
-            &caller,
-            src_token,
-            dst.as_weak(),
-            subset,
-            mark,
-            Some((PageOffset::new(offset), count)),
-        )
     })();
     answer(frame, r);
 }

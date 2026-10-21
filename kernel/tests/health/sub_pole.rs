@@ -161,30 +161,28 @@ pub fn overlap_is_rejected_whole() {
         "Open 操作整份资源：相交就拒"
     );
     assert_eq!(
-        pend::accord_window(
+        pend::derive(
             &fixture.task,
             fixture.token,
-            &Arc::downgrade(&fixture.task),
             whole_permission(),
             env::Mark::NONE,
             None,
         )
         .err(),
         Some(env::PieFail::Busy),
-        "Accord 同样操作整份资源"
+        "Derive 同样操作整份资源"
     );
 
     // 不相交的一条分支窗口照旧能映出去。
     let branch = token_of(
-        pend::accord_window(
+        pend::derive(
             &fixture.task,
             fixture.token,
-            &Arc::downgrade(&fixture.task),
             whole_permission(),
             env::Mark::NONE,
             Some((PageOffset::ZERO, PageCount::new(1).unwrap())),
         )
-        .expect("disjoint accord window"),
+        .expect("disjoint derive window"),
     );
     assert!(
         pole::open(&fixture.meta, branch, &target, rw()).is_ok(),

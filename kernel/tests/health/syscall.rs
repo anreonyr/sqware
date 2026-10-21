@@ -2555,7 +2555,7 @@ pub fn capability() {
 /// 每一段都走真实调用面（`EnvCall::Pie` / `EnvCall::Memory`），不是直接调内部函数。
 pub fn branch_window() {
     use crate::entry::call::pole::create_pole;
-    use env::{AcquireSource, MemoryFail, PieCall, PieFail, PieToken, PoleCall};
+    use env::{AcquireSource, GrantRange, MemoryFail, PieCall, PieFail, PieToken, PoleCall};
 
     crate::core::work::room::scheduler::init().expect("scheduler init");
     let owner = Caller::new(false);
@@ -2566,6 +2566,28 @@ pub fn branch_window() {
     let token = |code: isize| {
         assert!(code > 0, "token: {code}");
         PieToken::mint(code as usize)
+    };
+    let derive = |caller: &Caller, src: PieToken, offset: usize, count: usize| {
+        pie_call(
+            caller,
+            PieCall::Derive {
+                src,
+                subset,
+                mark: env::Mark::NONE,
+                range: GrantRange::Pages { offset, count },
+            },
+        )
+    };
+    let accord = |caller: &Caller, src: PieToken, dst: env::TaskId| {
+        pie_call(
+            caller,
+            PieCall::Accord {
+                src,
+                dst,
+                subset,
+                mark: env::Mark::NONE,
+            },
+        )
     };
     // 一份 4 页私有来源 → 根（整段，无窗口）。
     let (_, _, source_reference) = owner.attach_alloc_reference(4 * PAGE_SIZE, 6);
@@ -2600,49 +2622,31 @@ pub fn branch_window() {
         "a plain root carries no window"
     );
 
-    // 越窗 / 空长 / 溢出：都拒，且**目标表里不落地**。空长当场报对齐（它连一段都不是）。
-    let before = peer.task.pend.pies.lock().len();
+    // 越窗 / 空长 / 溢出：都拒，且两张表都不落地。
     for (offset, count, expected) in [
-        (2usize, 3usize, PieFail::Denied),
-        (1, 0, PieFail::NotAligned),
-        (usize::MAX, 2, PieFail::Denied),
-        (4, 1, PieFail::Denied),
+        (2usize, 3usize, PieFail::Denied.code()),
+        (1, 0, env::DispatchFail::Unknown.code()),
+        (usize::MAX, 2, env::DispatchFail::Unknown.code()),
+        (4, 1, PieFail::Denied.code()),
     ] {
-        let code = pie_call(
-            &owner,
-            PieCall::AccordWindow {
-                src: root,
-                dst,
-                subset,
-                mark: env::Mark::NONE,
-                offset,
-                count,
-            },
-        );
+        let owner_before = owner.task.pend.pies.lock().len();
+        let peer_before = peer.task.pend.pies.lock().len();
+        let code = derive(&owner, root, offset, count);
         assert_eq!(
-            code,
-            expected.code(),
+            code, expected,
             "window ({offset},{count}) must be refused"
         );
-        assert_eq!(
-            peer.task.pend.pies.lock().len(),
-            before,
-            "a refused window must not land"
-        );
+        assert_eq!(owner.task.pend.pies.lock().len(), owner_before);
+        assert_eq!(peer.task.pend.pies.lock().len(), peer_before);
     }
 
-    // 窗口 (1,2) 落在整段里：落地，且窗口就是那一段。
-    let child = token(pie_call(
-        &owner,
-        PieCall::AccordWindow {
-            src: root,
-            dst,
-            subset,
-            mark: env::Mark::NONE,
-            offset: 1,
-            count: 2,
-        },
-    ));
+    // 本地派生 (1,2)，再普通 Accord 给对端：范围与权限都由父窗口继承。
+    let local = token(derive(&owner, root, 1, 2));
+    assert_eq!(
+        pend::locate(&owner.task, local).unwrap().grant().window(),
+        Some((PageOffset::new(1), PageCount::new(2).unwrap()))
+    );
+    let child = token(accord(&owner, local, dst));
     assert_eq!(
         pend::locate(&peer.task, child).unwrap().grant().window(),
         Some((PageOffset::new(1), PageCount::new(2).unwrap()))
@@ -2650,34 +2654,15 @@ pub fn branch_window() {
 
     // 嵌套：从这一枚再派生只能更窄，不能拿回窗口外的那几页。
     for (offset, count) in [(0usize, 2usize), (2, 2), (1, 3)] {
-        let code = pie_call(
-            &peer,
-            PieCall::AccordWindow {
-                src: child,
-                dst: owner.task.ident.id,
-                subset,
-                mark: env::Mark::NONE,
-                offset,
-                count,
-            },
-        );
+        let code = derive(&peer, child, offset, count);
         assert_eq!(
             code,
             PieFail::Denied.code(),
             "nested window ({offset},{count}) must not widen"
         );
     }
-    let grand = token(pie_call(
-        &peer,
-        PieCall::AccordWindow {
-            src: child,
-            dst: owner.task.ident.id,
-            subset,
-            mark: env::Mark::NONE,
-            offset: 1,
-            count: 1,
-        },
-    ));
+    let nested_local = token(derive(&peer, child, 1, 1));
+    let grand = token(accord(&peer, nested_local, owner.task.ident.id));
     assert_eq!(
         pend::locate(&owner.task, grand).unwrap().grant().window(),
         Some((PageOffset::new(1), PageCount::new(1).unwrap()))
@@ -2777,8 +2762,11 @@ pub fn branch_window() {
         "revoking the branch closes the view it opened"
     );
     assert_eq!(open_pair(&peer, child).0, env::PoleFail::Denied.code());
+    assert!(pend::locate(&owner.task, local).is_some());
+    assert_eq!(pie_call(&owner, PieCall::Revoke { dst: owner.task.ident.id, token: local }), 0);
+    assert!(pend::locate(&owner.task, local).is_none());
 
-    // 旧 Accord 不变：不带窗口的派生拿到的是整段。
+    // 普通 Accord 不带窗口：继承父的范围，这里是整段。
     let (_, _, plain) = owner.attach_alloc_reference(4 * PAGE_SIZE, 6);
     let other = token(pole_call(
         &owner,
@@ -2791,32 +2779,35 @@ pub fn branch_window() {
         owner.call(EnvCall::Memory(MemoryCall::Release { reference: plain })),
         0
     );
-    let legacy = token(pie_call(
-        &owner,
-        PieCall::Accord {
-            src: other,
-            dst,
-            subset,
-            mark: env::Mark::NONE,
-        },
-    ));
+    let plain_remote = token(accord(&owner, other, dst));
     assert_eq!(
-        pend::locate(&peer.task, legacy).unwrap().grant().window(),
+        pend::locate(&peer.task, plain_remote)
+            .unwrap()
+            .grant()
+            .window(),
         None,
         "a plain accord still hands the whole source"
     );
-    assert_eq!(open_pair(&peer, legacy).1, 4 * PAGE_SIZE);
+    assert_eq!(open_pair(&peer, plain_remote).1, 4 * PAGE_SIZE);
+
+    // 各来源独立关闭自己的分支，不影响另一份来源。
+    assert_eq!(pie_call(&owner, PieCall::Release { token: root, mode: env::ReleaseMode::Revoke }), 0);
+    assert!(pend::locate(&owner.task, root).is_none());
+    assert!(pend::locate(&peer.task, plain_remote).is_some());
+    assert_eq!(pie_call(&owner, PieCall::Release { token: other, mode: env::ReleaseMode::Revoke }), 0);
+    assert!(pend::locate(&owner.task, other).is_none());
+    assert!(pend::locate(&peer.task, plain_remote).is_none());
 }
 
-/// 继承那一条路（旧 `Accord`）也要**承重**：带窗口的父派生出的子，有效窗口必须还是父那一段。
+/// 继承那一条路也要**承重**：带窗口的父派生出的子，有效窗口必须还是父那一段。
 ///
-/// 这一条原先没有判据——把 `effective_window` 的“不请求就继承”改成 `Ok(None)`（于是旧
-/// `Accord` 把整段来源交出去）全量测试照绿。故这里三样都量：子枚的 `window()`、
-/// `Open` 的长度与首 PA、窗外 `Acquire` 仍拒；再经一层旧 `Accord` 与一层收窄之后仍不放大，
+/// 这一条原先没有判据——把 `effective_window` 的“不请求就继承”改成 `Ok(None)`（于是普通
+/// Accord 把整段来源交出去）全量测试照绿。故这里三样都量：子枚的 `window()`、
+/// `Open` 的长度与首 PA、窗外 `Acquire` 仍拒；再经一层 Accord 与一层收窄之后仍不放大，
 /// 继承来的那一枚派生出的子资源也正好是那段窗口。
 pub fn window_inheritance() {
     use crate::entry::call::pole::create_pole;
-    use env::{AcquireSource, MemoryFail, PieCall, PieToken, PoleCall};
+    use env::{AcquireSource, GrantRange, MemoryFail, PieCall, PieToken, PoleCall};
 
     crate::core::work::room::scheduler::init().expect("scheduler init");
     let owner = Caller::new(false);
@@ -2827,6 +2818,28 @@ pub fn window_inheritance() {
     let token = |code: isize| {
         assert!(code > 0, "token: {code}");
         PieToken::mint(code as usize)
+    };
+    let derive = |caller: &Caller, src: PieToken, offset: usize, count: usize| {
+        pie_call(
+            caller,
+            PieCall::Derive {
+                src,
+                subset,
+                mark: env::Mark::NONE,
+                range: GrantRange::Pages { offset, count },
+            },
+        )
+    };
+    let accord = |caller: &Caller, src: PieToken, dst: env::TaskId| {
+        pie_call(
+            caller,
+            PieCall::Accord {
+                src,
+                dst,
+                subset,
+                mark: env::Mark::NONE,
+            },
+        )
     };
     let (_, _, source_reference) = owner.attach_alloc_reference(4 * PAGE_SIZE, 6);
     let root = token(pole_call(
@@ -2843,79 +2856,41 @@ pub fn window_inheritance() {
         0
     );
 
-    // 一段 (1,2) 的窗口给对端；接下来每一次派生都是旧 `Accord`。
-    let child = token(pie_call(
-        &owner,
-        PieCall::AccordWindow {
-            src: root,
-            dst,
-            subset,
-            mark: env::Mark::NONE,
-            offset: 1,
-            count: 2,
-        },
-    ));
+    // 一段 (1,2) 的本地派生根，再普通 Accord 给对端；接下来每次都继承父窗口。
+    let local = token(derive(&owner, root, 1, 2));
+    let child = token(accord(&owner, local, dst));
     let window = Some((PageOffset::new(1), PageCount::new(2).unwrap()));
     assert_eq!(
         pend::locate(&peer.task, child).unwrap().grant().window(),
         window
     );
 
-    let inherited = token(pie_call(
-        &peer,
-        PieCall::Accord {
-            src: child,
-            dst: owner.task.ident.id,
-            subset,
-            mark: env::Mark::NONE,
-        },
-    ));
+    let inherited = token(accord(&peer, child, owner.task.ident.id));
     assert_eq!(
         pend::locate(&owner.task, inherited)
             .unwrap()
             .grant()
             .window(),
         window,
-        "an old accord must inherit the parent's window"
+        "a plain accord must inherit the parent's window"
     );
 
-    // 再经一层旧 `Accord` 回到对端：仍不放大。
-    let again = token(pie_call(
-        &owner,
-        PieCall::Accord {
-            src: inherited,
-            dst,
-            subset,
-            mark: env::Mark::NONE,
-        },
-    ));
+    // 再经一层普通 Accord 回到对端：仍不放大。
+    let again = token(accord(&owner, inherited, dst));
     assert_eq!(
         pend::locate(&peer.task, again).unwrap().grant().window(),
         window
     );
 
-    // 收窄一层之后，旧 `Accord` 继承的是**收窄后**那一段（子段只能更窄）。
-    let narrow = token(pie_call(
-        &peer,
-        PieCall::AccordWindow {
-            src: again,
-            dst: owner.task.ident.id,
-            subset,
-            mark: env::Mark::NONE,
-            offset: 1,
-            count: 1,
-        },
-    ));
+    // 本地收窄一层之后，普通 Accord 继承的是**收窄后**那一段（子段只能更窄）。
+    let narrow_local = token(derive(&peer, again, 1, 1));
+    let narrow = token(accord(&peer, narrow_local, owner.task.ident.id));
     let tight = Some((PageOffset::new(1), PageCount::new(1).unwrap()));
-    let inherited_narrow = token(pie_call(
-        &owner,
-        PieCall::Accord {
-            src: narrow,
-            dst,
-            subset,
-            mark: env::Mark::NONE,
-        },
-    ));
+    assert_eq!(
+        pend::locate(&owner.task, narrow).unwrap().grant().window(),
+        tight
+    );
+    let inherited_narrow = token(accord(&owner, narrow, dst));
     assert_eq!(
         pend::locate(&peer.task, inherited_narrow)
             .unwrap()
@@ -2990,6 +2965,25 @@ pub fn window_inheritance() {
         derived_meta.source().same_range(&window_range),
         "the sub-resource is exactly the inherited window"
     );
+
+    // 最终回收：撤销远端那一枚会带走继承与收窄的后代，本地派生根随后单独放下。
+    assert_eq!(pie_call(&owner, PieCall::Revoke { dst, token: child }), 0);
+    for (task, token) in [
+        (&peer.task, child),
+        (&owner.task, inherited),
+        (&peer.task, again),
+        (&owner.task, narrow),
+        (&peer.task, inherited_narrow),
+    ] {
+        assert!(pend::locate(task, token).is_none());
+    }
+    assert!(pend::locate(&owner.task, local).is_some());
+    assert_eq!(
+        pie_call(&owner, PieCall::Revoke { dst: owner.task.ident.id, token: local }),
+        0
+    );
+    assert!(pend::locate(&owner.task, local).is_none());
+    assert!(pend::locate(&owner.task, root).is_some());
 }
 
 /// 本地精确派生：目标固定为调用者，窗口继承或按来源起点收窄。
@@ -3231,16 +3225,23 @@ pub fn local_derive() {
         "revoking the only child restores the exclusive source"
     );
 
-    // 跨任务 Accord 后，本地派生继承的是那一枚的精确窗口。
+    // 本地先精确派生，再普通 Accord 跨任务；对端本地派生继承的是那一枚的精确窗口。
+    let remote_source = token(pie_call(
+        &owner,
+        PieCall::Derive {
+            src: root,
+            subset,
+            mark: env::Mark::NONE,
+            range: pages(1, 3),
+        },
+    ));
     let remote = token(pie_call(
         &owner,
-        PieCall::AccordWindow {
-            src: root,
+        PieCall::Accord {
+            src: remote_source,
             dst: peer.task.ident.id,
             subset,
             mark: env::Mark::NONE,
-            offset: 1,
-            count: 3,
         },
     ));
     let remote_local = token(pie_call(

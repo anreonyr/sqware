@@ -158,13 +158,12 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         crate::driver::iommu::api::Call::BACK,
         Wait::AtMost(MS),
     )?;
-    env::pie::accord_window(
+    // 收到的窗已量到 `layout::SPAN`；只收窄权限，范围由普通 Accord 继承。
+    env::pie::accord(
         window,
         iommu.host(),
         env::Permission::FETCH.union(env::Permission::STORE),
         dma::window_mark(serial),
-        0,
-        layout::PAGES,
     )
     .map_err(|_| "work: window handover")?;
     crate::debug::put(&alloc::format!(

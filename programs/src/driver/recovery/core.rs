@@ -93,14 +93,13 @@ impl Core {
         if device.granted {
             return Ok(());
         }
-        // Keep the recovery mapping across bindings; only the child window is per execution.
-        env::pie::accord_window(
+        // 映射已量到正好 `pages * PAGE_SIZE`；普通 Accord 继承这一段。
+        // 恢复映射跨绑定保留；每次执行只重交子授权。
+        env::pie::accord(
             mapping.pie_token(),
             device.execution,
             BAR_SUBSET,
             dma::binding_mark(device.serial),
-            0,
-            device.pages as usize,
         )
         .map_err(|_| api::Fail::Unavailable)?;
         device.granted = true;

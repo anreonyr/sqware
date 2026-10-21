@@ -1108,6 +1108,13 @@ fn derive_range_wire_roundtrips_and_rejects_invalid_ranges() {
         EnvCall::from_wire(call.slot(), &call.pack()),
         Ok(EnvCall::Pie(call))
     );
+    for slot in [11, 12] {
+        assert_eq!(
+            EnvCall::from_wire((7usize << 32) | slot, &[0; 6]),
+            Err(Decode::BadSlot),
+            "slot {slot} must stay unassigned"
+        );
+    }
 
     let inherit = PieCall::Derive {
         src: token,
@@ -1149,14 +1156,23 @@ fn local_derive_inherits_exact_parent_window_and_only_narrows() {
     let owner = Task::new();
     let peer = Task::new();
     let root = rooted(&owner, Mail::Pole(PoleMeta::new(owner.ident.id)), rights());
-    let child = PieToken::mint(
-        pend::accord_window(
+    let branch = PieToken::mint(
+        pend::derive(
             &owner,
             root,
-            &Arc::downgrade(&peer),
             rights(),
             Mark::NONE,
             Some((PageOffset::new(1), PageCount::new(3).unwrap())),
+        )
+        .unwrap(),
+    );
+    let child = PieToken::mint(
+        pend::accord(
+            &owner,
+            branch,
+            &Arc::downgrade(&peer),
+            rights(),
+            Mark::NONE,
         )
         .unwrap(),
     );

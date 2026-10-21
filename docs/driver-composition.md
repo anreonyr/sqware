@@ -28,7 +28,7 @@
 | A10：显式资源交付与身份核验 | 未实施 |
 | A11：逐绑定异步推进 | 未实施 |
 | A12：单端点限制收敛到实现 | 未实施 |
-| A13：Derive 加 Accord 替换 AccordWindow | Derive、Resource 与供给已验证；Driver 与旧 ABI 待迁移 |
+| A13：Derive 加 Accord 替换 AccordWindow | 全部调用方与旧 ABI 已迁移；原生窗口、真实失败和八核128代通过 |
 | 单个 Daemon 真实装配与受限守护 | 未实施 |
 | 双设备、双 Domain、相同数值 IOVA | 未实施 |
 | 最终固定源码四/八核与 1024 代回归 | 未实施 |
@@ -157,3 +157,35 @@ CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true QEMU_SMP=4 TRACE
   `target/driver-composition/derive/supply-product/` 和 `supply-accept/`。
 - worker 首次 supply 编译发现 fixture 缺失新 derivation 模块，补齐模块后 23 项通过；
   不把该编译失败计作成功。workspace dev check 保留原有 5 项 warning。
+
+## 第四检查点：Driver 与旧 ABI 迁移
+
+外部 worker 从 `45453c84` 实施，固定 `opencode-go / deepseek-v4.1-flash`，会话
+`session-f303d8fb-7f1c-440f-80ec-4ef02a006cf5` 已停止，主线程接管剩余验证及返工。
+之后只有主线程写工作区；外部审查/补丁生成应保持只读，避免并发覆盖未提交记录。
+
+- PCI 从宽 aperture 本地派生精确 BAR，保存 ONLY 本地根；交付失败重试复用同一句柄。
+- Recovery 与 Work 已检查收到的是请求的完整精确范围，普通 Accord 继承该范围；
+  不向接收者扩大范围或权限。测具先 Derive 窄根，再 Accord。
+- 旧 class 7 slot 11 ABI、调用方和兼容封装已删除；slot 11/12 测试保持拒绝。
+  授权发布只有私有共享后端，Traverse 检查保持不变。
+- 主线程审查发现 pending Placement 未纳入 disable/release；新增取消回归修前红（退出101）、
+  修后通过。现在禁用前不能释放；释放失败保留同一根并阻止重绑，成功后才允许下一绑定。
+- 主线程独立通过 PCI 6、pend 51、device-recovery 5、iommu-pages 14 项宿主测试。
+- 首次三项窗口原生测试 2 通过、1 失败：新增收尾错误地用 Revoke 处理来源根，
+  并误期望关闭一个来源会删除另一个来源的副本。改用 Release 并保留来源独立性断言后，3 项通过。
+  失败和成功现场分别为 `target/driver-composition/derive/retired-window/` 与 `retired-window-fixed/`。
+- 旧 ABI 删除后，四核原生 local_derive 1 项通过；真实 iommu-product、start-before、
+  start-after、Ruin 和 forced 均通过。Ruin 与 forced 保持辅助 Team 先于 Driver 回收，
+  两景最终帧数均为 85→85。现场为 `derive/retired-local/` 与 `derive/final-iommu-*`。
+- 八核 128 代首次运行在第 48 代被测试器默认 60 秒时限中断，未完成验收；已完成代的
+  回收记录保留。失败现场为 `derive/final-iommu-soak/`。按公开 `--timeout 180` 参数
+  重跑，所有代数、顺序、能力数量和最终帧数断言保持原样。
+- 八核 128 代重跑通过：64 次正常退出、64 次 owner 死亡，156278 ms；最终帧数
+  153→153，逐代 capability=15、launch=1、command=1。现场为 `derive/final-iommu-soak-180/`。
+- 四核真实 Reference Release Busy 通过：失败时两枚 IOMMU 引用保留，重试同一绑定，
+  最终帧数 87→87。八核真实硬件 CQ memory fault / Fence::Expired 通过：恢复原队列后
+  同一 IOFENCE cookie 完成，最终帧数 153→153；不是用伪失败替代硬件超时。
+- 当前源码四核整机 accept 通过，现场为 `derive/final-accept/`。
+- 本检查点不等于完成完整重构；A1–A3、A5、A7–A12、Daemon 和最终固定源码
+  双 Domain/1024 代仍须实施验收。没有据本检查点声称全绿。
