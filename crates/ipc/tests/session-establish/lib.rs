@@ -60,11 +60,11 @@ impl std::ops::BitOr for Permission {
 pub struct PieError;
 pub type PieResult<T> = Result<T, PieError>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MailFail {
+pub enum HoleFail {
     Busy,
     Dead,
 }
-impl MailFail {
+impl HoleFail {
     pub const fn code(self) -> isize {
         match self {
             Self::Busy => -1,
@@ -72,12 +72,12 @@ impl MailFail {
         }
     }
 }
-pub struct MailError {
-    pub source: MailFail,
+pub struct HoleError {
+    pub source: HoleFail,
 }
-pub type MailResult<T> = Result<T, MailError>;
+pub type HoleResult<T> = Result<T, HoleError>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MailCondition {
+pub enum HoleCondition {
     Pull,
     Push,
     Empty,
@@ -297,11 +297,11 @@ pub mod raw {
                     q.remove(i)
                 })
                 .ok_or(PullError {
-                    source: MailFail::Busy,
+                    source: HoleFail::Busy,
                 })?;
             if frame.1.len() > buffer.len() {
                 return Err(PullError {
-                    source: MailFail::Dead,
+                    source: HoleFail::Dead,
                 });
             }
             buffer[..frame.1.len()].copy_from_slice(&frame.1);
@@ -334,17 +334,17 @@ pub mod raw {
         pub fn depth(&self) -> Result<usize, PullError> {
             Ok(fake::INBOX.with(|x| x.borrow().iter().filter(|(t, _, _)| *t == self.0).count()))
         }
-        pub fn wait(&self, _: MailCondition, _: Wait) -> MailResult<bool> {
+        pub fn wait(&self, _: HoleCondition, _: Wait) -> HoleResult<bool> {
             Ok(false)
         }
     }
     #[derive(Debug)]
     pub struct PullError {
-        pub source: MailFail,
+        pub source: HoleFail,
     }
     #[derive(Debug)]
     pub struct PushError {
-        pub source: MailFail,
+        pub source: HoleFail,
     }
     pub fn pies() -> Pies {
         fake::SCANS.with(|x| *x.borrow_mut() += 1);
@@ -378,14 +378,7 @@ pub mod raw {
     }
 }
 pub mod pie {
-    pub fn unseal(args: crate::UnsealArgs) -> PieResult<PieToken> {
-        match args { crate::UnsealArgs::Hole { mark } => hole_token(mark) }
-    }
-
     use super::*;
-    pub fn seal(_: PieToken) -> PieResult<()> {
-        Ok(())
-    }
     pub fn release(t: PieToken, _mode: crate::ReleaseMode) -> PieResult<()> {
         fake::RELEASE.with(|x| x.borrow_mut().push(t));
         Ok(())
@@ -393,25 +386,6 @@ pub mod pie {
     pub fn revoke(peer: TaskId, t: PieToken) -> PieResult<()> {
         fake::CLEAN.with(|x| x.borrow_mut().push((peer, t)));
         Ok(())
-    }
-    fn hole_token(mark: Mark) -> PieResult<PieToken> {
-        if fake::UNSEAL_FAIL.with(|x| x.replace(false)) {
-            return Err(PieError);
-        }
-        let t = fake::NEXT.with(|x| {
-            let n = *x.borrow();
-            *x.borrow_mut() += 1;
-            PieToken(n)
-        });
-        fake::CANDIDATES.with(|x| {
-            x.borrow_mut().push(fake::Candidate {
-                token: t,
-                alive: true,
-                hole: true,
-                query: Some((TaskId(0), TaskId(1), mark)),
-            })
-        });
-        Ok(t)
     }
     pub fn narrow(_: PieToken, _: Permission) -> PieResult<()> {
         if fake::NARROW_FAIL.with(|x| x.replace(false)) {
@@ -899,9 +873,34 @@ mod tests {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum UnsealArgs { Hole { mark: Mark } }
-impl UnsealArgs { pub fn hole(mark: Mark) -> Self { Self::Hole { mark } } }
+#[derive(Default)]
+pub struct HoleLimits;
+pub mod hole {
+    use super::*;
+
+    pub fn seal(_: crate::PieToken) -> crate::HoleResult<()> {
+        Ok(())
+    }
+    pub fn unseal(mark: crate::Mark, _: crate::HoleLimits) -> crate::HoleResult<crate::PieToken> {
+        if fake::UNSEAL_FAIL.with(|x| x.replace(false)) {
+            return Err(HoleError { source: HoleFail::Dead });
+        }
+        let t = fake::NEXT.with(|x| {
+            let n = *x.borrow();
+            *x.borrow_mut() += 1;
+            PieToken(n)
+        });
+        fake::CANDIDATES.with(|x| {
+            x.borrow_mut().push(fake::Candidate {
+                token: t,
+                alive: true,
+                hole: true,
+                query: Some((TaskId(0), TaskId(1), mark)),
+            })
+        });
+        Ok(t)
+    }
+}
 #[derive(Clone, Copy)]
 pub enum ReleaseMode { Revoke, Keep }
 

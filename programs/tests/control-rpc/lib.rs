@@ -5,7 +5,7 @@ extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
 
-pub use abi_env::{Mark, PieToken, Reason, TaskId, Wait};
+pub use abi_env::{HoleFail, Mark, PieToken, Reason, TaskId, TeamId, Wait};
 use core::marker::PhantomData;
 use std::{cell::RefCell, vec::Vec};
 use wire::message::Message;
@@ -96,6 +96,7 @@ pub mod rpc {
     #[derive(Debug)]
     pub enum Fail {
         Open(()),
+        Create(HoleFail),
         Grant(()),
         Encode,
         Decode,
@@ -241,10 +242,56 @@ mod tests {
 
     fn said(status: u8, state: u8, task: usize) -> Vec<u8> {
         use wire::Message;
-        let value = system_api::control::Said { status, a: state, task: TaskId::new(task), reason: 0, completed: false };
+        let value = system_api::control::Said { status, a: state, task: TaskId::new(task), team: env::TeamId::new(0), reason: 0, completed: false };
         let mut bytes = vec![0; system_api::control::Said::LEN];
         value.store(&mut bytes).unwrap(); bytes
     }
+
+    #[test]
+    fn instance_team_uses_control_identity_and_rejects_mismatched_answers() {
+        let face = Face::of(token(9)).unwrap();
+        let instance = face.instance(TaskId::new(22));
+        let answer = |task, team| {
+            let mut value = frame::said_task(TaskId::new(task));
+            value.team = TeamId::new(team);
+            let mut bytes = vec![0; frame::Said::LEN];
+            value.store(&mut bytes).unwrap();
+            bytes
+        };
+        RESPONSE.with(|response| *response.borrow_mut() = Some(Ok(answer(22, 42))));
+        assert_eq!(instance.team(Wait::AtMost(19)), Ok(TeamId::new(42)));
+        let (bytes, wait, back) = CAPTURE.with(|capture| capture.borrow_mut().take().unwrap());
+        assert_eq!(wait, Wait::AtMost(19));
+        assert_eq!(
+            Request::fetch(&bytes),
+            Some((Some(Wire::StateInstance(TaskId::new(22))), back))
+        );
+        for bytes in [answer(23, 42), answer(22, 0), vec![0; 19]] {
+            RESPONSE.with(|response| *response.borrow_mut() = Some(Ok(bytes)));
+            assert_eq!(instance.team(Wait::POLL), Err(frame::Fail::Bad));
+        }
+        RESPONSE.with(|response| *response.borrow_mut() = Some(Err(rpc::Fail::WrongSource)));
+        assert_eq!(instance.team(Wait::POLL), Err(frame::Fail::Bad));
+        RESPONSE.with(|response| *response.borrow_mut() = Some(Ok(said(1, 0, 0))));
+        assert_eq!(instance.team(Wait::POLL), Err(frame::Fail::Unknown));
+    }
+
+    #[test]
+    fn instance_inspect_accepts_retired_identity_but_rejects_invalid_state_or_task() {
+        let face = Face::of(token(9)).unwrap();
+        let instance = face.instance(TaskId::new(22));
+        RESPONSE.with(|response| *response.borrow_mut() = Some(Ok(said(0, 4, 22))));
+        let retired = instance.inspect(Wait::POLL).unwrap();
+        assert_eq!(retired.task, TaskId::new(22));
+        assert_eq!(retired.team, TeamId::new(0));
+        for bytes in [said(0, 255, 22), said(0, 4, 23)] {
+            RESPONSE.with(|response| *response.borrow_mut() = Some(Ok(bytes)));
+            assert_eq!(instance.inspect(Wait::POLL), Err(frame::Fail::Bad));
+        }
+        RESPONSE.with(|response| *response.borrow_mut() = Some(Ok(said(0, 4, 23))));
+        assert_eq!(instance.result(Wait::POLL), Err(frame::Fail::Bad));
+    }
+
     #[test]
     fn named_task_query_preserves_budget_and_rejects_invalid_or_wrong_source_answers() {
         let face = Face::of(token(9)).unwrap();

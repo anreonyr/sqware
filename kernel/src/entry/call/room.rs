@@ -15,7 +15,10 @@ use super::outcome::Outcome;
 
 pub(super) fn dispatch(frame: &mut TrapContext, call: RoomCall, ident: Arc<TaskIdent>) -> Outcome {
     match call {
-        RoomCall::Starve => Outcome::Switch(current().starve() as *mut TrapContext),
+        RoomCall::Starve => {
+            drop(ident);
+            Outcome::Switch(current().starve() as *mut TrapContext)
+        }
         RoomCall::Reap { reason, note, len } => {
             crate::core::work::room::messenger::set_exit_note(note.get(), len);
             crate::core::work::room::messenger::set_exit_reason(reason);

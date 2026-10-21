@@ -94,6 +94,10 @@ mod work {
         LOCK.lock().unwrap()
     }
 
+    /// “这一步必须在提交段里做”的核内自检：宿主侧没有持有的抄本
+    /// （这里的 `commit` 就是一把普通互斥锁），故只在核内校验。
+    pub fn assert_held() {}
+
     pub mod room {
         pub mod scheduler {
             pub mod roster {
@@ -141,15 +145,26 @@ mod work {
         pub struct OperationState {
             busy: AtomicBool,
             reserved: AtomicUsize,
+            busy_attempts: AtomicUsize,
         }
         impl OperationState {
             pub fn new() -> Arc<Self> {
                 Arc::new(Self {
                     busy: AtomicBool::new(false),
                     reserved: AtomicUsize::new(0),
+                    busy_attempts: AtomicUsize::new(0),
                 })
             }
             pub fn operation(self: &Arc<Self>) -> Option<Operation> {
+                if self
+                    .busy_attempts
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                        remaining.checked_sub(1)
+                    })
+                    .is_ok()
+                {
+                    return None;
+                }
                 self.busy
                     .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
                     .ok()
@@ -160,6 +175,12 @@ mod work {
             }
             pub fn stage_for(&self, team: usize) {
                 self.reserved.store(team, Ordering::Relaxed);
+            }
+            pub fn busy_for(&self, attempts: usize) {
+                self.busy_attempts.store(attempts, Ordering::Relaxed);
+            }
+            pub fn busy_remaining(&self) -> usize {
+                self.busy_attempts.load(Ordering::Relaxed)
             }
         }
         pub struct Operation(Arc<OperationState>);
@@ -280,8 +301,12 @@ mod work {
                 &self,
                 permission: env::Permission,
                 token: env::PieToken,
+                window: Option<(
+                    crate::core::memory::address::PageOffset,
+                    crate::core::memory::address::PageCount,
+                )>,
             ) -> Result<Arc<crate::core::work::grant::Grant>, env::PieFail> {
-                let grant = crate::core::work::grant::Grant::try_new(permission)?;
+                let grant = crate::core::work::grant::Grant::try_new_window(permission, window)?;
                 if let Mail::Pole(meta) = self {
                     meta.register_grant(token, grant.clone())?;
                 }

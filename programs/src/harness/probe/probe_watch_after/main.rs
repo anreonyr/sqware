@@ -11,7 +11,6 @@ use core::time::Duration;
 use env::Wait;
 use programs::Report;
 
-use env::pie;
 use env::unit;
 use ipc::session::Session;
 use programs::debug;
@@ -52,8 +51,11 @@ fn main() -> Report<'static> {
         if let Some(previous) = binding.take() {
             client.unbind(previous, Wait::AtMost(MS)).unwrap();
         }
-        let entry =
-            pie::unseal(env::UnsealArgs::hole(env::Mark::of("probe-swatch-after"))).unwrap();
+        let entry = env::hole::unseal(
+            env::Mark::of("probe-swatch-after"),
+            env::HoleLimits::default(),
+        )
+        .unwrap();
         let current = client
             .bind(
                 anchor,

@@ -1,6 +1,6 @@
 use alloc::collections::VecDeque;
 
-use env::{MailCondition, MailFail};
+use env::{HoleCondition, HoleFail};
 
 use super::queue::Queue;
 use super::slot::Slot;
@@ -15,9 +15,9 @@ pub(super) enum Pending {
 
 pub(super) const RING_CAP: usize = 4;
 
-pub(crate) fn ring(meta: &HoleMeta) -> Result<(), MailFail> {
+pub(crate) fn ring(meta: &HoleMeta) -> Result<(), HoleFail> {
     if !meta.alive() {
-        return Err(MailFail::Dead);
+        return Err(HoleFail::Dead);
     }
     {
         let mut pending = meta.pending.lock();
@@ -31,14 +31,15 @@ pub(crate) fn ring(meta: &HoleMeta) -> Result<(), MailFail> {
             Pending::Rung { count, .. } if *count < RING_CAP => {
                 *count += 1;
             }
-            _ => return Err(MailFail::Busy),
+            _ => return Err(HoleFail::Busy),
         }
     };
-    let _ = messenger::wake(key(meta, MailCondition::Pull), &meta.life());
+    let _ = messenger::wake(key(meta, HoleCondition::Pull), &meta.life());
+    let _ = messenger::wake(key(meta, HoleCondition::Signal), &meta.life());
     Ok(())
 }
 
-pub(crate) fn hush(meta: &HoleMeta) -> Result<(), MailFail> {
+pub(crate) fn hush(meta: &HoleMeta) -> Result<(), HoleFail> {
     let mut pending = meta.pending.lock();
     match &mut *pending {
         Pending::Rung { count, .. } if *count > 1 => *count -= 1,
@@ -49,10 +50,10 @@ pub(crate) fn hush(meta: &HoleMeta) -> Result<(), MailFail> {
                 bytes: 0,
             });
         }
-        _ => return Err(MailFail::Busy),
+        _ => return Err(HoleFail::Busy),
     }
     drop(pending);
-    let _ = messenger::wake(key(meta, MailCondition::Push), &meta.life());
-    let _ = messenger::wake(key(meta, MailCondition::Empty), &meta.life());
+    let _ = messenger::wake(key(meta, HoleCondition::Push), &meta.life());
+    let _ = messenger::wake(key(meta, HoleCondition::Empty), &meta.life());
     Ok(())
 }

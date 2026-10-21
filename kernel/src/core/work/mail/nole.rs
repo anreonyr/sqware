@@ -1,14 +1,13 @@
 use alloc::sync::{Arc, Weak};
 use core::time::Duration;
 
-use env::TaskId;
+use env::{NoleFail, TaskId};
 
 use super::Liveness;
 use crate::machine::sync::{Level, SpinLock};
 
 use crate::core::work::room::messenger::{self, Handoff, WakeKey};
 use crate::core::work::unit::life::Life;
-use env::MailFail;
 
 pub struct NoleMeta {
     state: SpinLock<Liveness>,
@@ -28,7 +27,7 @@ impl NoleMeta {
     }
 
     /// 内核铸的保留授权 Nole：只有经这扇门造出来的对象 `retains()` 为真。
-    /// 这是内核的**真铸造厂**（不是调试期的假正面）；收货方由引导交付那一处指定，
+    /// 这是内核的**真铸造厂**（不是调试期的假正面）；初始收货方由引导交付那一处指定，
     /// 普通请求调不到这一格。
     pub(crate) fn mint_retention(
         owner: TaskId,
@@ -90,14 +89,14 @@ pub(crate) fn key(meta: &NoleMeta) -> WakeKey {
     WakeKey::Nole { id: meta.id }
 }
 
-pub(crate) fn ring(meta: &NoleMeta) -> Result<(), MailFail> {
+pub(crate) fn ring(meta: &NoleMeta) -> Result<(), NoleFail> {
     if !meta.alive() {
-        return Err(MailFail::Dead);
+        return Err(NoleFail::Dead);
     }
     {
         let mut ring = meta.ring.lock();
         if *ring {
-            return Err(MailFail::Busy);
+            return Err(NoleFail::Busy);
         }
         *ring = true;
     }
@@ -105,18 +104,18 @@ pub(crate) fn ring(meta: &NoleMeta) -> Result<(), MailFail> {
     Ok(())
 }
 
-pub(crate) fn hush(meta: &NoleMeta) -> Result<(), MailFail> {
+pub(crate) fn hush(meta: &NoleMeta) -> Result<(), NoleFail> {
     let mut ring = meta.ring.lock();
     if !*ring {
-        return Err(MailFail::Busy);
+        return Err(NoleFail::Busy);
     }
     *ring = false;
     Ok(())
 }
 
-pub(crate) fn wait(meta: &NoleMeta, dur: Duration) -> Result<Handoff<bool>, MailFail> {
+pub(crate) fn wait(meta: &NoleMeta, dur: Duration) -> Result<Handoff<bool>, NoleFail> {
     if !meta.alive() {
-        return Err(MailFail::Dead);
+        return Err(NoleFail::Dead);
     }
     if meta.ready() {
         return Ok(Handoff::Resume(true));

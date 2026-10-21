@@ -83,19 +83,17 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
         crate::system::assembly::hooks::instance()?,
     )?;
     frame.system("static", crate::system::control::startup)?;
-    frame.system("device", crate::system::app::device::begin)?;
     frame.system("retire.static", crate::system::control::retire_completed)?;
     frame.system("assembly.completed", crate::system::assembly::completed)?;
     frame.system("running", f::running)?;
     frame.system("activity", f::activity)?;
     frame.system("eligibility", crate::system::control::eligibility)?;
+    // 退场门：先找 Hub 那一面，再在够条件退场时让它结清；结清之后才进 settling。
+    frame.system("settle.open", f::gate_open)?;
     frame.system("settle", f::settle)?;
-    frame.system("retention.close", crate::system::app::retention::closing)?;
     frame.system("idle", f::idle)?;
     frame.system("deadline", f::deadline)?;
     frame.system("ruin.rest", crate::system::control::ruin_rest)?;
-    frame.system("retention.sweep", crate::system::app::retention::sweep)?;
-    frame.system("device.settle", crate::system::app::device::settle)?;
     frame.system("done", f::done)?;
     frame.system("bound", f::bound)?;
     frame.system("stopping.bound", f::stopping_bound)?;
@@ -117,6 +115,8 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
 }
 pub fn shutdown() -> Result<Plan<Fail>, BuildError> {
     let mut stop = Schedule::sequence();
+    // **关闭顺序**：退场门（`policy::settle`）已经让 Hub 把全部 DMA 绑定结清，
+    // 之后才撤镜像/供给/命名空间或走通用任务终止；不能先杀驱动器（那会把未确认的持有丢掉）。
     stop.plan("loader.close", crate::system::loader::shutdown()?)?;
     let mut supplies = Schedule::sequence();
     supplies.system("close", crate::system::app::supplies::shutdown)?;
@@ -134,7 +134,6 @@ pub fn shutdown() -> Result<Plan<Fail>, BuildError> {
         "control.namespace",
         resources.build()?.map_error(|_| Fail::Dead),
     )?;
-    stop.system("retention.reclaim", crate::system::app::retention::reclaim)?;
     stop.system("stopping", crate::system::app::life::stopping)?;
     stop.system("join", crate::system::app::life::join)?;
     stop.build()

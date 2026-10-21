@@ -184,7 +184,7 @@ pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
 
 /// Create a one-way ask hole: local STORE capability and the peer's FETCH seed.
 pub fn give_at(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), EstablishFail> {
-    let hole = pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| EstablishFail::NoHole)?;
+    let hole = env::hole::unseal(mark, env::HoleLimits::default()).map_err(|_| EstablishFail::NoHole)?;
     let remote = match port::ship(hole, to, Access::FETCH | Access::STORE, Policy::NONE) {
         Ok(at) => at.seed(),
         Err(_) => {
@@ -242,7 +242,7 @@ pub fn claim(of: TaskId, mark: Mark, wait: Wait) -> Result<PieToken, DiscoveryFa
 /// 生我者，故它交出来的孔先落在生我者表里，再由生我者转授——板那条路就是这么接上的）
 /// 不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对，看上去像"对面坏了"
 fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), EstablishFail> {
-    let hole = pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| EstablishFail::NoHole)?;
+    let hole = env::hole::unseal(mark, env::HoleLimits::default()).map_err(|_| EstablishFail::NoHole)?;
     match port::ship(hole, to, Access::FETCH | Access::STORE, Policy::VEST) {
         Ok(at) => Ok((hole, at.seed())),
         Err(_) => {
@@ -258,7 +258,7 @@ fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), Establi
 /// **借一枚回信孔过去、但先不推**：返 `(本端那一枚, 对端表里那一枚)`
 pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()> {
     let host = opened_by(entry).ok_or(())?;
-    let back = pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| ())?;
+    let back = env::hole::unseal(mark, env::HoleLimits::default()).map_err(|_| ())?;
     match port::ship(back, host, Access::STORE, Policy::NONE) {
         Ok(to) => Ok((back, to.seed())),
         Err(_) => {

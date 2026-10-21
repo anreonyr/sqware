@@ -57,19 +57,30 @@ pub fn ranges() {
 }
 
 pub fn retained_snapshot() {
+    use crate::core::work::pend::{Geometry, IndependentHold};
+
     let flat = Flat::acquire(Allocation::new(2, PAGE_SIZE).unwrap()).unwrap();
     let whole = flat.whole();
     let source =
         SourceAuthorization::new(whole.clone(), Access::all(), env::TaskId::new(91)).unwrap();
     let table = HoldTable::new();
     let insert = || {
+        // 独立持有 = 物理保留 + 它在来源记录上的登记：登记位先备，两者一起生。
+        source.reserve_retention().unwrap();
+        let window = Geometry::new(PageOffset::ZERO, whole.page_count()).unwrap();
+        let residency = whole.reside().unwrap();
         table
             .insert(
                 source.clone(),
                 PageOffset::ZERO,
                 whole.page_count(),
                 Access::READ,
-                Some(whole.reside().unwrap()),
+                Some(IndependentHold::new(
+                    &source,
+                    window,
+                    residency,
+                    env::TaskId::new(91),
+                )),
                 None,
             )
             .unwrap()

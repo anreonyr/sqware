@@ -42,10 +42,14 @@ fn main() -> Report<'static> {
         .expect("member: unbound");
     let p = initial.current.principal;
     let c0 = org
-        .found(Wait::AtMost(MS))
+        .found(system_api::identity::FoundId { value: 1 }, Wait::AtMost(MS))
         .expect("member: found c0 failed");
+    assert_eq!(
+        org.found(system_api::identity::FoundId { value: 1 }, Wait::AtMost(MS)),
+        Ok(c0),
+    );
     let c1 = org
-        .found(Wait::AtMost(MS))
+        .found(system_api::identity::FoundId { value: 2 }, Wait::AtMost(MS))
         .expect("member: found c1 failed");
     assert_eq!(c0.authority, authority);
     assert_eq!(c1.authority, authority);

@@ -194,15 +194,17 @@ impl Fixture {
     }
     pub(crate) fn settle(&mut self) {
         self.resources
-            .write::<crate::system::app::policy::Flow>()
+            .write::<crate::system::app::policy::Settle>()
             .unwrap()
+            .flow
             .settling = true;
     }
     pub(crate) fn supervise(&mut self) -> Result<(), Fail> {
         while !self
             .resources
-            .read::<crate::system::app::policy::Flow>()
+            .read::<crate::system::app::policy::Settle>()
             .map_err(|_| Fail::Room)?
+            .flow
             .done
         {
             if self.plans[2]

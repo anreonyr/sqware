@@ -1,7 +1,7 @@
 use alloc::sync::{Arc, Weak};
 use core::time::Duration;
 
-use env::{AwaitReply, MailFail, PieToken};
+use env::{PieToken, ToleAwaitReply, ToleFail};
 
 use crate::core::work::pend;
 use crate::core::work::room::messenger::{self, WakeKey};
@@ -42,15 +42,15 @@ impl AwaitWait {
         }
     }
 
-    pub fn watch(&self) -> Result<(), MailFail> {
-        let actor = self.actor.upgrade().ok_or(MailFail::Denied)?;
+    pub fn watch(&self) -> Result<(), ToleFail> {
+        let actor = self.actor.upgrade().ok_or(ToleFail::Denied)?;
         messenger::forward(
             inspect_key(&actor, self.token),
             actor.life(),
             self.group.id,
             self.group.life(),
         )
-        .map_err(|_| MailFail::OoM)
+        .map_err(|_| ToleFail::OoM)
     }
 
     pub fn unwatch(&self) {
@@ -67,17 +67,25 @@ impl AwaitWait {
         self.group.life()
     }
 
-    pub fn poll(&self) -> Result<AwaitReply, MailFail> {
-        let actor = self.actor.upgrade().ok_or(MailFail::Denied)?;
-        let pie = pend::accede(&actor, self.token, pend::Need::Fetch)
-            .map_err(crate::core::work::mail::mail_fail)?;
-        pend::available(&pie)?;
+    pub fn poll(&self) -> Result<ToleAwaitReply, ToleFail> {
+        let actor = self.actor.upgrade().ok_or(ToleFail::Denied)?;
+        let pie =
+            pend::accede(&actor, self.token, pend::Need::Fetch).map_err(super::codec::pie_fail)?;
+        pend::available(&pie).map_err(super::codec::pie_fail)?;
         self.group.poll(&actor)
     }
 
     pub fn write(
+        &self,
         frame: &mut crate::machine::switcher::context::TrapContext,
-        result: Result<AwaitReply, MailFail>,
+        result: Result<ToleAwaitReply, ToleFail>,
+    ) {
+        Self::write_result(frame, result);
+    }
+
+    pub fn write_result(
+        frame: &mut crate::machine::switcher::context::TrapContext,
+        result: Result<ToleAwaitReply, ToleFail>,
     ) {
         use crate::machine::switcher::context::Gprs;
         let words = match result {

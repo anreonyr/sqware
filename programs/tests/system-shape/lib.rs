@@ -138,6 +138,78 @@ mod boundaries {
     use std::{fs, path::Path};
     use syn::visit::{self, Visit};
     #[test]
+    fn driver_retention_uses_the_same_supply_acquisition_as_service_installation() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
+        let supplies = fs::read_to_string(src.join("system/app/supplies.rs")).unwrap();
+        assert!(supplies.contains("let (lease, delivery) = self.acquire(task, binding)?"));
+        assert_eq!(supplies.matches(".source.acquire(").count(), 1);
+        // 设备路径只走既有声明供给：System 里不再有第二套启动/收据/生命周期路径。
+        // （不拿“某个旧路径不存在”当证据：下面直接核**真实文件里的边界**。）
+        let iommu_dir = src.join("driver/iommu");
+        let mut driver_files: Vec<String> = fs::read_dir(&iommu_dir)
+            .unwrap()
+            .filter_map(|entry| {
+                let path = entry.unwrap().path();
+                (path.extension().is_some_and(|ext| ext == "rs"))
+                    .then(|| path.file_name().unwrap().to_string_lossy().into_owned())
+            })
+            .collect();
+        driver_files.sort();
+        let mut expected = vec![
+            "api.rs", "binding.rs", "bindings.rs", "context.rs", "core.rs", "fence.rs",
+            "handshake.rs", "main.rs", "mod.rs", "order.rs", "outstanding.rs", "pages.rs",
+            "phase.rs", "program.rs", "queue.rs", "references.rs", "regs.rs", "serve.rs",
+            "settled.rs", "table.rs",
+        ];
+        expected.sort();
+        assert_eq!(
+            driver_files, expected,
+            "the production IOMMU keeps exactly one bin and no scene variants"
+        );
+        // 五手就是那五手（不多不少）；持有账是本域真正的账（hold 被生产核心使用）。
+        let core = fs::read_to_string(iommu_dir.join("core.rs")).unwrap();
+        for step in ["pub fn acquire", "pub fn publish", "pub fn invalidate", "pub fn quiesce", "pub fn release"] {
+            assert!(core.contains(step), "missing step {step}");
+        }
+        assert!(core.contains("Holds::new()"));
+        assert!(core.contains("holds.register("));
+        assert!(core.contains("holds.retry("));
+        // Hub 那一本账：主人死亡只转收场（不空格、不重绑）；观察兄弟不用 join 当已停。
+        let bindings = fs::read_to_string(src.join("service/hub/core/bindings.rs")).unwrap();
+        assert!(bindings.contains("pub fn owner_gone"));
+        assert!(bindings.contains("Fail::Taken"));
+        assert!(!bindings.contains("Cell::Vacant"));
+        let dma = fs::read_to_string(src.join("service/hub/serve/dma.rs")).unwrap();
+        assert!(!dma.contains("join_task("));
+        // 认领走设备门牌与类联盟（不自报设备号、不开放设备清单）。
+        assert!(dma.contains("device_by_door("));
+        assert!(!dma.contains("claim.requester"));
+        assert!(dma.contains("peers.registered(\"pci\""));
+        let claim_frame = fs::read_to_string(src.join("service/hub/api/src/frame/dma.rs")).unwrap();
+        assert!(!claim_frame.contains("pub requester: u32,\n    pub sensor"));
+    }
+    #[test]
+    fn static_pause_and_resume_target_the_same_whole_team() {
+        let control = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system/control");
+        let pause = fs::read_to_string(control.join("lifecycle/debark.rs")).unwrap();
+        assert!(pause.contains("team: Some(team)"));
+        assert!(pause.contains("env::unit::debark_team(team)"));
+        assert!(!pause.contains("debark_task("));
+        assert!(pause.contains("env::UnitFail::Busy"));
+        assert!(pause.contains("Ok(Progress::Pending)"));
+        let source = fs::read_to_string(control.join("unit/mod.rs")).unwrap();
+        let resume = source
+            .split("fn resume(")
+            .nth(1)
+            .unwrap()
+            .split("pub(crate) fn task(")
+            .next()
+            .unwrap();
+        assert!(resume.contains("team: Some(team)"));
+        assert!(resume.contains("env::unit::embark_team(team)"));
+        assert!(!resume.contains("embark_task("));
+    }
+    #[test]
     fn control_state_is_private_and_assembly_owns_operation_queue() {
         let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
         for (path, name) in [

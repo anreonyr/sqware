@@ -20,7 +20,7 @@
 //!
 //! # 映射与撤图
 //!
-//! `open` / `shut` 就是 `PieCall::Open` / `Shut`，**本层不加新动词**——多出来的只有一件事：
+//! `open` / `shut` 对应 `PoleCall::Open` / `Shut`；本层增加映射的持有责任：
 //! 把"起点 + 长度"成对地带回来。于是"一段不知道多长的内存"在类型上不存在。
 //!
 //! # `View::size` 报的是**映射的那一段**
@@ -33,7 +33,7 @@
 //! `shut` 只撤图，**不 `release` 门闩**——与 `Port::shut` 同一条理由：门闩的收尾是策略，
 //! 不进结构。
 
-use env::{PieResult, PieToken};
+use env::{PoleResult, PieToken};
 
 use crate::raw;
 
@@ -79,7 +79,7 @@ impl Dock {
     /// - `Dead`   — 资源已封印
     /// - `HandedOver`  — 这一枚被我交出去了（`ONLY` 资源的锚还在、接收方手里那枚还活着）
     /// - `OoM`    — 本域空间备不出这么长的一段
-    pub fn open(pie: PieToken) -> PieResult<Dock> {
+    pub fn open(pie: PieToken) -> PoleResult<Dock> {
         let (base, size) = raw::open(pie)?;
         Ok(Dock {
             pie,
@@ -106,7 +106,7 @@ impl Dock {
     /// **`Dead` 不在其列，这是刻意的**：撤图撤的是**调用方自己那张 PTE**，故 `shut`
     /// 不过存活闸（`envcall/pie.rs` 的 `shut` 只 `locate` + 判权 + 判锚）——资源封印之后，
     /// 已经借进来的那段映射仍然撤得掉。与 `Release`「你总得能放下手里的东西」同一条口径。
-    pub fn shut(self) -> PieResult<()> {
-        env::pie::shut(self.pie)
+    pub fn shut(self) -> PoleResult<()> {
+        env::pole::shut(self.pie)
     }
 }

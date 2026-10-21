@@ -226,6 +226,9 @@ mod tests {
                 line: 1,
                 page: PieToken::mint(20),
                 door: PieToken::mint(21),
+                dma: false,
+                requester: 0,
+                pci: TaskId::new(0),
             })
             .unwrap();
         ledger

@@ -80,7 +80,7 @@ fn main() -> Report<'static> {
         .derive(p, Wait::AtMost(MS))
         .expect("probe-rule: no sub identity");
     let c = coal
-        .found(Wait::AtMost(MS))
+        .found(system_api::identity::FoundId { value: 1 }, Wait::AtMost(MS))
         .expect("probe-rule: no coalition id");
     coal.admit(c, p, Wait::AtMost(MS))
         .expect("probe-rule: manager admit failed");
@@ -173,9 +173,10 @@ fn main() -> Report<'static> {
     // Bound 以 `q` 再问一遍，只判有没有绑定，不判是不是 p。
     // `mine` 那一格只被用来量「改」那一轴（下面的 `keep`），"用"那一轴没人问过它。
     let mine_sub = look(&tree, service, &rule_road, MINE, Wait::AtMost(MS));
-    let forged = pie::unseal(env::UnsealArgs::hole(
+    let forged = env::hole::unseal(
         system_api::operator::entry::AUTH_ENTRY,
-    ))
+        env::HoleLimits::default(),
+    )
     .unwrap();
     assert!(matches!(
         operator::Capability::direct(tree.host(), forged),
@@ -292,7 +293,7 @@ fn main() -> Report<'static> {
 fn plate(capability: &system_client::operator::Capability, name: &str, permit: Permit) -> Binding {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     let anchor = capability.anchor().unwrap();
-    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("rule-entry"))).unwrap();
+    let entry = env::hole::unseal(env::Mark::of("rule-entry"), env::HoleLimits::default()).unwrap();
     let view = operator_api::ResourceView::new(env::Access::STORE).unwrap();
     capability
         .bind(

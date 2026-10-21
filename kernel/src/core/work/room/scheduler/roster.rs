@@ -87,6 +87,23 @@ pub(crate) fn roster_live_ids() -> (usize, [usize; 8]) {
     (more, out)
 }
 
+pub(crate) fn after(mut id: usize) -> Option<Arc<Task>> {
+    loop {
+        let (next, task) = {
+            let roster = roster_table().lock();
+            let (next, task) = roster
+                .iter()
+                .filter(|(key, _)| key.get() > id)
+                .min_by_key(|(key, _)| key.get())?;
+            (next.get(), task.as_weak().clone())
+        };
+        if let Some(task) = task.upgrade() {
+            return Some(task);
+        }
+        id = next;
+    }
+}
+
 pub(crate) fn roster() -> Vec<TaskWeak> {
     let g = roster_table().lock();
     let mut out: Vec<TaskWeak> = Vec::new();

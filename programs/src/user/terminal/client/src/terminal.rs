@@ -3,7 +3,7 @@ use ::resource::{
     raw::{Hole, reserve},
 };
 use env::wire::Span as _;
-use env::{MailCondition, Permission, PieToken, TaskId, Wait, pie};
+use env::{HoleCondition, Permission, PieToken, TaskId, Wait, pie};
 use system_client::operator::Face;
 use terminal_api::frame::{self, Command, Input, Reply};
 use wire::message::Message;
@@ -37,7 +37,7 @@ impl Terminal {
         Ok(Self { entry, host })
     }
     fn call(&self, mut command: Command) -> Result<Reply, ()> {
-        let back = pie::unseal(env::UnsealArgs::hole(frame::BACK)).map_err(|_| ())?;
+        let back = env::hole::unseal(frame::BACK, env::HoleLimits::default()).map_err(|_| ())?;
         let result = (|| {
             command.back =
                 pie::accord(back, self.host, Permission::STORE, frame::BACK).map_err(|_| ())?;
@@ -78,7 +78,7 @@ pub struct Connection {
 }
 impl Connection {
     pub fn open(terminal: Terminal) -> Result<Self, ()> {
-        let root = env::pie::unseal(env::UnsealArgs::Tole { shared: false }).map_err(|_| ())?;
+        let root = env::tole::unseal(false).map_err(|_| ())?;
         let mut connection = Self {
             terminal,
             root,
@@ -233,15 +233,15 @@ impl Io {
             pile,
         };
         io.pile
-            .attach(env::Source::Mail {
-                pie: input,
-                condition: MailCondition::Pull,
+            .attach(env::ToleEventSource::Hole {
+                token: input,
+                condition: HoleCondition::Pull,
             })
             .map_err(|_| ())?;
         io.pile
-            .attach(env::Source::Mail {
-                pie: control,
-                condition: MailCondition::Pull,
+            .attach(env::ToleEventSource::Hole {
+                token: control,
+                condition: HoleCondition::Pull,
             })
             .map_err(|_| ())?;
         Ok(io)
@@ -310,7 +310,7 @@ impl Io {
     }
     pub fn drain(&self) -> Result<(), ()> {
         Hole::from_raw(self.output)
-            .wait(MailCondition::Empty, MS)
+            .wait(env::HoleCondition::Empty, MS)
             .map_err(|_| ())?
             .then_some(())
             .ok_or(())

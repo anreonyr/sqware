@@ -19,7 +19,7 @@ impl Drop for Issuer {
 }
 
 pub(crate) fn deliver(child: TaskId, system: TaskId) -> Result<Issuer, ()> {
-    let token = env::pie::unseal(env::UnsealArgs::hole(MARK)).map_err(|_| ())?;
+    let token = env::hole::unseal(MARK, env::HoleLimits::default()).map_err(|_| ())?;
     let issuer = Issuer(token);
     let info = inspect(token).map_err(|_| ())?;
     let login = env::unit::self_id();

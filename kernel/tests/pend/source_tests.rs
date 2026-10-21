@@ -88,7 +88,8 @@ fn committed_claim_cannot_restore_consumed_creation() {
 
 #[test]
 fn retained_source_and_live_record_cannot_extend_creation_qualification() {
-    let root = source(TaskId::new(101));
+    let owner = TaskId::new(101);
+    let root = source(owner);
     let table = HoldTable::new();
     let live_record = (Arc::new(crate::memory::nest::View), root.clone());
     let count = PageCount::new(8).unwrap();
@@ -108,7 +109,11 @@ fn retained_source_and_live_record_cannot_extend_creation_qualification() {
             PageOffset::ZERO,
             count,
             Access::READ,
-            root.own_range().map(|range| range.reside().unwrap()),
+            root.own_range().map(|range| {
+                root.reserve_retention().unwrap();
+                let window = crate::pend::Geometry::new(PageOffset::ZERO, count).unwrap();
+                crate::pend::IndependentHold::new(&root, window, range.reside().unwrap(), owner)
+            }),
             None,
         )
         .unwrap();

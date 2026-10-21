@@ -12,6 +12,8 @@ pub mod rack;
 
 pub mod hierarchy;
 pub mod system_fault;
+pub mod device_ruin;
+pub mod device_confirmation;
 
 pub mod memory_transfer;
 

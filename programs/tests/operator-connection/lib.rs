@@ -3,7 +3,10 @@ extern crate alloc;
 extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
-pub use abi::{AwaitReply, Source, MailCondition, MailFail, Mark, PieResult, PieToken, TaskId, Wait};
+pub use abi::{
+    HoleCondition, HoleFail, Mark, PieToken, TaskId, ToleAwaitReply, ToleEventSource, ToleResult,
+    Wait,
+};
 pub mod wire {
     pub use abi::wire::Field;
 }
@@ -25,7 +28,7 @@ struct Backend {
     waits: Vec<Wait>,
     tip_busy: bool,
     reply_busy: bool,
-    attachments: Vec<(PieToken, MailCondition)>,
+    attachments: Vec<(PieToken, HoleCondition)>,
 }
 thread_local! { static BACKEND: RefCell<Backend> = RefCell::new(Backend { next: 100, ..Backend::default() }); }
 fn token(value: usize) -> PieToken {
@@ -61,7 +64,7 @@ pub mod support {
 }
 #[derive(Debug)]
 pub struct Error {
-    pub source: MailFail,
+    pub source: HoleFail,
 }
 pub mod raw {
     use super::*;
@@ -99,7 +102,7 @@ pub mod raw {
                 b.waits.push(wait);
                 if b.reply_busy {
                     return Err(Error {
-                        source: MailFail::Busy,
+                        source: HoleFail::Busy,
                     });
                 }
                 b.offers.push(self.0.get());
@@ -113,13 +116,13 @@ pub mod raw {
                 let queue = b.inbox.entry(self.0.get()).or_default();
                 if queue.is_empty() {
                     return Err(Error {
-                        source: MailFail::Busy,
+                        source: HoleFail::Busy,
                     });
                 }
                 let (frame, from) = queue.remove(0);
                 if frame.len() > bytes.len() {
                     return Err(Error {
-                        source: MailFail::Denied,
+                        source: HoleFail::Denied,
                     });
                 }
                 bytes[..frame.len()].copy_from_slice(&frame);
@@ -192,7 +195,7 @@ pub mod session {
 }
 pub mod hand {
     pub enum SendFail {
-        Mail(crate::MailFail),
+        Mail(crate::HoleFail),
     }
     pub struct Sender<T>(core::marker::PhantomData<T>);
     impl Sender<system_api::operator::Tip> {
@@ -208,7 +211,7 @@ pub mod hand {
                 let mut b = b.borrow_mut();
                 b.waits.push(wait);
                 if b.tip_busy {
-                    return Err(SendFail::Mail(crate::MailFail::Busy));
+                    return Err(SendFail::Mail(crate::HoleFail::Busy));
                 }
                 if let system_api::operator::Tip::Guest { who, reply, ask } = tip {
                     b.guests.push((who, reply, ask));
@@ -222,44 +225,53 @@ pub mod pile {
     use super::*;
     pub struct Pile;
     impl Pile {
-        pub fn unseal(_: bool) -> crate::PieResult<Self> {
+        pub fn unseal(_: bool) -> ToleResult<Self> {
             Ok(Self)
         }
-        pub fn attach(&self, source: Source) -> Result<(), ()> {
-            let Source::Mail { pie: token, condition: direction } = source else { return Err(()) };
-            BACKEND.with(|b| b.borrow_mut().attachments.push((token, direction)));
+        pub fn attach(&self, source: ToleEventSource) -> ToleResult<()> {
+            let ToleEventSource::Hole { token, condition } = source else {
+                return Err(abi::make_fail(abi::ToleFail::Denied));
+            };
+            BACKEND.with(|b| b.borrow_mut().attachments.push((token, condition)));
             Ok(())
         }
-        pub fn detach(&self, source: Source) -> Result<(), ()> {
-            let Source::Mail { pie: token, condition: direction } = source else { return Err(()) };
+        pub fn detach(&self, source: ToleEventSource) -> ToleResult<()> {
+            let ToleEventSource::Hole { token, condition } = source else {
+                return Err(abi::make_fail(abi::ToleFail::Denied));
+            };
             BACKEND.with(|b| {
                 b.borrow_mut()
                     .attachments
-                    .retain(|entry| *entry != (token, direction))
+                    .retain(|entry| *entry != (token, condition))
             });
             Ok(())
         }
-        pub fn await_(&self, wait: Wait) -> Result<AwaitReply, ()> {
+        pub fn await_(&self, wait: Wait) -> ToleResult<ToleAwaitReply> {
             BACKEND.with(|b| {
                 let mut b = b.borrow_mut();
                 let event =
                     b.attachments
                         .iter()
                         .copied()
-                        .find(|(token, direction)| match direction {
-                            MailCondition::Pull => {
+                        .find(|(token, condition)| match condition {
+                            HoleCondition::Pull => {
                                 b.inbox.get(&token.get()).is_some_and(|q| !q.is_empty())
                             }
-                            MailCondition::Empty if token.get() == 50 => !b.tip_busy,
-                            MailCondition::Empty => !b.reply_busy,
-                            MailCondition::Push | MailCondition::Signal(_) => false,
+                            HoleCondition::Empty if token.get() == 50 => !b.tip_busy,
+                            HoleCondition::Empty => !b.reply_busy,
+                            HoleCondition::Push | HoleCondition::Signal => false,
                         });
                 if event.is_none() {
                     if let Wait::AtMost(ms) = wait {
                         b.now += ms as u64 * 1_000_000;
                     }
                 }
-                Ok(event.map_or(AwaitReply::Pending, |(pie, condition)| AwaitReply::Source { source: Source::Mail { pie, condition }, fail: None }))
+                Ok(event.map_or(ToleAwaitReply::Pending, |(token, condition)| {
+                    ToleAwaitReply::Source {
+                        source: ToleEventSource::Hole { token, condition },
+                        fail: None,
+                    }
+                }))
             })
         }
     }
@@ -377,7 +389,7 @@ mod tests {
         BACKEND.with(|b| b.borrow_mut().tip_busy = true);
         book.maintain(address()).unwrap();
         let interests: Vec<_> = book.interests(address()).collect();
-        assert_eq!(interests, vec![(token(50), MailCondition::Empty)]);
+        assert_eq!(interests, vec![(token(50), HoleCondition::Empty)]);
         let mut wait = waiting::Waiting::new().unwrap();
         assert!(wait.apply((&[], &[token(50)]), &[]));
         BACKEND.with(|b| b.borrow_mut().tip_busy = false);
@@ -400,7 +412,7 @@ mod tests {
         book.maintain(address()).unwrap();
         assert_eq!(
             book.interests(address()).collect::<Vec<_>>(),
-            vec![(token(2), MailCondition::Empty)]
+            vec![(token(2), HoleCondition::Empty)]
         );
         let mut wait = waiting::Waiting::new().unwrap();
         assert!(wait.apply((&[], &[token(2)]), &[]));
@@ -410,13 +422,13 @@ mod tests {
         let rx = BACKEND.with(|b| token(b.borrow().receivers[&2]));
         assert_eq!(
             book.interests(address()).collect::<Vec<_>>(),
-            vec![(rx, MailCondition::Pull)]
+            vec![(rx, HoleCondition::Pull)]
         );
         assert!(wait.apply((&[rx], &[]), &[]));
         BACKEND.with(|b| {
             let b = b.borrow();
             assert_eq!(b.now, 0);
-            assert_eq!(b.attachments, vec![(rx, MailCondition::Pull)]);
+            assert_eq!(b.attachments, vec![(rx, HoleCondition::Pull)]);
         });
     }
     #[test]

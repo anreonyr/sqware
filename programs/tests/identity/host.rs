@@ -11,10 +11,42 @@ pub mod system {
         pub use grant::Grant;
     }
 }
-#[path = "../serve/answer.rs"]
+#[path = "../../src/system/identity/service/answer.rs"]
 pub mod answer;
-#[path = "mod.rs"]
+#[path = "../../src/system/identity/book/mod.rs"]
 pub mod book;
+
+#[test]
+fn found_replays_a_lost_reply_through_the_production_wire_and_service() {
+    use env::{PieToken, TaskId};
+    use system::identity::*;
+    let installer = TaskId::new(1);
+    let caller = TaskId::new(3);
+    let authority = TaskId::new(2);
+    let mut book = book::IdentityBook::new(authority, installer).unwrap();
+    let principal = book.root();
+    book.bind(installer, crate::book::BindingRequest {
+        task: caller,
+        install: Install::Authorized(Subject::new(principal, &[]).unwrap()),
+    }).unwrap();
+    let mut bytes = [0; MAX_FRAME];
+    let mut first = None;
+    for back in [11u64, 12, 13] {
+        let len = Wire::Found(FoundId { value: 7 })
+            .store(PieToken::from_bytes(&back.to_le_bytes()).unwrap(), &mut bytes).unwrap();
+        let (wire, _) = Wire::take(&bytes[..len]).unwrap();
+        let response = answer::answer(&mut book, answer::Request {
+            context: answer::Context { from: caller, endpoint: PieToken::mint(1), grant: Grant::Found },
+            wire,
+        });
+        match first {
+            None => first = Some(response),
+            Some(expected) => assert_eq!(response, expected),
+        }
+    }
+    assert_eq!(first, Some(Reply::Coalition(CoalitionId::new(authority, 0))));
+    assert_eq!(book.found(caller, FoundId { value: 8 }).unwrap().slot, 1);
+}
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -186,9 +218,10 @@ fn allocation_failures_leave_the_authority_unchanged() {
         },
     )
     .unwrap();
-    assert_eq!(without_allocating(|| book.found(task)), Err(Fail::Full));
-    let c = book.found(task).unwrap();
+    assert_eq!(without_allocating(|| book.found(task, FoundId { value: 1 })), Err(Fail::Full));
+    let c = book.found(task, FoundId { value: 1 }).unwrap();
     assert_eq!(c.slot, 0);
+    assert_eq!(without_allocating(|| book.found(task, FoundId { value: 1 })), Ok(c));
     assert_eq!(
         without_allocating(|| book.admit(
             task,
@@ -248,7 +281,7 @@ fn all_identity_faces_reject_every_other_action_without_mutation() {
         },
     )
     .unwrap();
-    let c = book.found(task).unwrap();
+    let c = book.found(task, FoundId { value: 1 }).unwrap();
     let actions = [
         Wire::Resolve(task),
         Wire::Matches(task, Selector::Exact(p)),
@@ -262,7 +295,7 @@ fn all_identity_faces_reject_every_other_action_without_mutation() {
         Wire::Waive,
         Wire::Restrict(subject),
         Wire::Derive(p),
-        Wire::Found,
+        Wire::Found(FoundId { value: 1 }),
         Wire::Admit(c, p),
         Wire::Expel(c, p),
         Wire::Bind(task, Install::Authorized(subject)),

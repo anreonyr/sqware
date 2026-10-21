@@ -50,7 +50,7 @@ pub fn acceptance() {
 // Exercise Await's deadline through real suspension and unrelated group changes.
 fn waiting() {
     use ::resource::pile::Pile;
-    use env::{AwaitReply, Bit, MailCondition, Source};
+    use env::{Bit, HoleCondition, ToleAwaitReply, ToleEventSource};
     let owner = unit::self_id();
     let mark = Mark::of("copy-wait-group");
     let group = Pile::unseal(true).unwrap();
@@ -58,10 +58,10 @@ fn waiting() {
     let worker = execution::unit::task::spawn(move || {
         let token = ipc::session::establish::claim(owner, mark, Wait::AtMost(2000)).unwrap();
         let group = Pile::from_raw(token);
-        let hole = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
-        let source = Source::Mail {
-            pie: hole,
-            condition: MailCondition::Pull,
+        let hole = env::hole::unseal(Mark::NONE, env::HoleLimits::default()).unwrap();
+        let source = ToleEventSource::Hole {
+            token: hole,
+            condition: HoleCondition::Pull,
         };
         env::room::park(20).unwrap();
         group.attach(source).unwrap();
@@ -76,35 +76,38 @@ fn waiting() {
         mark,
     )
     .unwrap();
-    let first = Source::Mail {
-        pie: page,
-        condition: MailCondition::Signal(Bit::FIRST),
+    let first = ToleEventSource::Pole {
+        token: page,
+        bit: Bit::FIRST,
     };
-    let second = Source::Mail {
-        pie: page,
-        condition: MailCondition::Signal(Bit::wrap(1)),
+    let second = ToleEventSource::Pole {
+        token: page,
+        bit: Bit::wrap(1),
     };
     group.attach(first).unwrap();
     group.attach(second).unwrap();
     let start = env::chrono::clock();
-    assert_eq!(group.await_(Wait::AtMost(80)).unwrap(), AwaitReply::Pending);
+    assert_eq!(
+        group.await_(Wait::AtMost(80)).unwrap(),
+        ToleAwaitReply::Pending
+    );
     assert!(
         env::chrono::clock() - start >= 80_000_000,
         "copy: ordinary wake shortened Await deadline"
     );
     worker.join();
-    env::mail::ring(page, Bit::FIRST).unwrap();
-    env::mail::ring(page, Bit::FIRST).unwrap();
-    env::mail::ring(page, Bit::wrap(1)).unwrap();
+    env::pole::ring(page, Bit::FIRST).unwrap();
+    env::pole::ring(page, Bit::FIRST).unwrap();
+    env::pole::ring(page, Bit::wrap(1)).unwrap();
     assert!(matches!(
         group.await_(Wait::POLL).unwrap(),
-        AwaitReply::Source { fail: None, .. }
+        ToleAwaitReply::Source { fail: None, .. }
     ));
-    env::mail::hush(page, Bit::FIRST).unwrap();
-    env::mail::hush(page, Bit::FIRST).unwrap();
+    env::pole::hush(page, Bit::FIRST).unwrap();
+    env::pole::hush(page, Bit::FIRST).unwrap();
     assert_eq!(
         group.await_(Wait::POLL).unwrap(),
-        AwaitReply::Source {
+        ToleAwaitReply::Source {
             source: second,
             fail: None
         }
@@ -112,9 +115,9 @@ fn waiting() {
     pie::release(page, env::ReleaseMode::Revoke).unwrap();
     assert_eq!(
         group.await_(Wait::POLL).unwrap(),
-        AwaitReply::Source {
+        ToleAwaitReply::Source {
             source: first,
-            fail: Some(env::MailFail::Denied)
+            fail: Some(env::ToleEventFail::Denied)
         }
     );
     group.detach(first).unwrap();
@@ -124,19 +127,19 @@ fn waiting() {
 
 fn calls() {
     use env::{
-        HoleLimits, MailCondition, MailFail, Oversize, Permission, PieInfo, PieKind, PullOutcome,
-        ReleaseMode, UnsealArgs, VirtAddr,
+        HoleCondition, HoleFail, HoleLimits, Oversize, Permission, PieInfo, PieKind, PullOutcome,
+        ReleaseMode, VirtAddr,
     };
     let owner = unit::self_id();
     let mark = Mark::new(u64::MAX);
-    let token = pie::unseal(UnsealArgs::Hole {
+    let token = env::hole::unseal(
         mark,
-        limits: HoleLimits {
+        HoleLimits {
             max_len: 8,
             max_messages: 3,
             max_bytes: 12,
         },
-    })
+    )
     .unwrap();
     let info = ::resource::raw::inspect(token).unwrap();
     assert_eq!(
@@ -146,25 +149,25 @@ fn calls() {
     let hole = Hole::from_raw(token);
     hole.push(&[1; 8], Wait::POLL).unwrap();
     hole.push(&[2; 4], Wait::POLL).unwrap();
-    assert!(!hole.wait(MailCondition::Push, Wait::POLL).unwrap());
-    assert!(!hole.wait(MailCondition::Empty, Wait::POLL).unwrap());
+    assert!(!hole.wait(HoleCondition::Push, Wait::POLL).unwrap());
+    assert!(!hole.wait(HoleCondition::Empty, Wait::POLL).unwrap());
     assert!(
         hole.push(&[0; 9], Wait::POLL)
-            .is_err_and(|e| e.source == MailFail::Denied)
+            .is_err_and(|e| e.source == HoleFail::Denied)
     );
     assert!(
         hole.push(&[0], Wait::POLL)
-            .is_err_and(|e| e.source == MailFail::Busy)
+            .is_err_and(|e| e.source == HoleFail::Busy)
     );
     let mut bytes = [0; 4];
     assert!(
         hole.pull(&mut bytes, Wait::POLL)
-            .is_err_and(|e| e.source == MailFail::Denied)
+            .is_err_and(|e| e.source == HoleFail::Denied)
     );
     assert_eq!(hole.peek().unwrap(), (8, owner, 2));
     assert!(
-        env::mail::pull(token, VirtAddr::new(0), 4, Oversize::Discard)
-            .is_err_and(|e| e.source == MailFail::Denied)
+        env::hole::pull(token, VirtAddr::new(0), 4, Oversize::Discard)
+            .is_err_and(|e| e.source == HoleFail::Denied)
     );
     assert_eq!(hole.peek().unwrap(), (8, owner, 2));
     assert_eq!(
@@ -176,98 +179,110 @@ fn calls() {
         }
     );
     assert_eq!(hole.peek().unwrap(), (4, owner, 1));
-    assert!(hole.wait(MailCondition::Push, Wait::POLL).unwrap());
-    assert!(!hole.wait(MailCondition::Empty, Wait::POLL).unwrap());
+    assert!(hole.wait(HoleCondition::Push, Wait::POLL).unwrap());
+    assert!(!hole.wait(HoleCondition::Empty, Wait::POLL).unwrap());
     let read_only = pie::accord(token, owner, Permission::FETCH, Mark::NONE).unwrap();
     let write_only = pie::accord(token, owner, Permission::STORE, Mark::NONE).unwrap();
     assert!(
-        env::mail::wait(read_only, MailCondition::Push, Wait::POLL)
-            .is_err_and(|e| e.source == MailFail::Denied)
+        env::hole::wait(read_only, HoleCondition::Push, Wait::POLL)
+            .is_err_and(|e| e.source == HoleFail::Denied)
     );
     assert!(
-        env::mail::wait(read_only, MailCondition::Empty, Wait::POLL)
-            .is_err_and(|e| e.source == MailFail::Denied)
+        env::hole::wait(read_only, HoleCondition::Empty, Wait::POLL)
+            .is_err_and(|e| e.source == HoleFail::Denied)
     );
     assert!(
-        env::mail::pull(
+        env::hole::pull(
             write_only,
             VirtAddr::new(bytes.as_mut_ptr() as usize),
             4,
             Oversize::Discard
         )
-        .is_err_and(|e| e.source == MailFail::Denied)
+        .is_err_and(|e| e.source == HoleFail::Denied)
     );
     assert_eq!(hole.peek().unwrap(), (4, owner, 1));
     let group = ::resource::pile::Pile::unseal(false).unwrap();
     assert!(
         group
-            .attach(env::Source::Mail {
-                pie: read_only,
-                condition: MailCondition::Push
+            .attach(env::ToleEventSource::Hole {
+                token: read_only,
+                condition: HoleCondition::Push
             })
             .is_err()
     );
     group
-        .attach(env::Source::Mail {
-            pie: write_only,
-            condition: MailCondition::Push,
+        .attach(env::ToleEventSource::Hole {
+            token: write_only,
+            condition: HoleCondition::Push,
         })
         .unwrap();
     assert!(matches!(
-        group.await_(Wait::POLL).unwrap().mail(),
-        Some((_, MailCondition::Push))
+        group.await_(Wait::POLL).unwrap(),
+        env::ToleAwaitReply::Source {
+            source: env::ToleEventSource::Hole {
+                condition: HoleCondition::Push,
+                ..
+            },
+            fail: None,
+        }
     ));
     group
-        .detach(env::Source::Mail {
-            pie: write_only,
-            condition: MailCondition::Push,
+        .detach(env::ToleEventSource::Hole {
+            token: write_only,
+            condition: HoleCondition::Push,
         })
         .unwrap();
     group
-        .attach(env::Source::Mail {
-            pie: read_only,
-            condition: MailCondition::Pull,
+        .attach(env::ToleEventSource::Hole {
+            token: read_only,
+            condition: HoleCondition::Pull,
         })
         .unwrap();
     assert!(matches!(
-        group.await_(Wait::POLL).unwrap().mail(),
-        Some((_, MailCondition::Pull))
+        group.await_(Wait::POLL).unwrap(),
+        env::ToleAwaitReply::Source {
+            source: env::ToleEventSource::Hole {
+                condition: HoleCondition::Pull,
+                ..
+            },
+            fail: None,
+        }
     ));
     group
-        .detach(env::Source::Mail {
-            pie: read_only,
-            condition: MailCondition::Pull,
+        .detach(env::ToleEventSource::Hole {
+            token: read_only,
+            condition: HoleCondition::Pull,
         })
         .unwrap();
     group
-        .attach(env::Source::Mail {
-            pie: write_only,
-            condition: MailCondition::Empty,
+        .attach(env::ToleEventSource::Hole {
+            token: write_only,
+            condition: HoleCondition::Empty,
         })
         .unwrap();
     assert!(group.await_(Wait::POLL).unwrap().is_none());
     assert!(
         group
-            .attach(env::Source::Mail {
-                pie: group.token(),
-                condition: MailCondition::Pull
+            .attach(env::ToleEventSource::Hole {
+                token: group.token(),
+                condition: HoleCondition::Pull
             })
             .is_err()
     );
-    let bell = pie::unseal(UnsealArgs::Nole).unwrap();
+    let bell = env::nole::unseal().unwrap();
     assert!(
         group
-            .attach(env::Source::Mail {
-                pie: bell,
-                condition: MailCondition::Push
+            .attach(env::ToleEventSource::Hole {
+                token: bell,
+                condition: HoleCondition::Push
             })
             .is_err()
     );
     assert!(
         group
-            .attach(env::Source::Mail {
-                pie: bell,
-                condition: MailCondition::Empty
+            .attach(env::ToleEventSource::Hole {
+                token: bell,
+                condition: HoleCondition::Empty
             })
             .is_err()
     );
@@ -281,10 +296,16 @@ fn calls() {
     );
     assert_eq!(bytes, [2; 4]);
     assert!(matches!(
-        group.await_(Wait::POLL).unwrap().mail(),
-        Some((_, MailCondition::Empty))
+        group.await_(Wait::POLL).unwrap(),
+        env::ToleAwaitReply::Source {
+            source: env::ToleEventSource::Hole {
+                condition: HoleCondition::Empty,
+                ..
+            },
+            fail: None,
+        }
     ));
-    pie::seal(token).unwrap();
+    env::hole::seal(token).unwrap();
     let closed = ::resource::raw::inspect(token).unwrap();
     assert!(!closed.alive);
     assert_eq!((closed.owner, closed.mark), (owner, mark));
@@ -296,7 +317,7 @@ fn calls() {
 
     let mut noles = Vec::new();
     for _ in 0..20 {
-        noles.push(pie::unseal(UnsealArgs::Nole).unwrap());
+        noles.push(env::nole::unseal().unwrap());
     }
     let mut words = [0; PieInfo::WORDS * 4];
     let buf = VirtAddr::new(words.as_mut_ptr() as usize);
@@ -334,7 +355,7 @@ fn calls() {
 
 fn queued() {
     let owner = unit::self_id();
-    let entry = pie::unseal(env::UnsealArgs::hole(Mark::of("copy-queued"))).unwrap();
+    let entry = env::hole::unseal(Mark::of("copy-queued"), env::HoleLimits::default()).unwrap();
     let raw_owner = owner.get();
     let writer = execution::unit::task::spawn(move || {
         let entry = ipc::session::establish::claim(
@@ -374,31 +395,31 @@ fn queued() {
     }
     let hole = Hole::from_raw(entry);
     for cycle in 0..16u8 {
-        assert!(hole.wait(env::MailCondition::Empty, Wait::POLL).unwrap());
-        assert!(!hole.wait(env::MailCondition::Pull, Wait::POLL).unwrap());
+        assert!(hole.wait(env::HoleCondition::Empty, Wait::POLL).unwrap());
+        assert!(!hole.wait(env::HoleCondition::Pull, Wait::POLL).unwrap());
         for _ in 0..4 {
-            env::mail::ring(entry, env::Bit::FIRST).unwrap();
+            env::hole::ring(entry).unwrap();
         }
-        assert!(env::mail::ring(entry, env::Bit::FIRST).is_err());
-        assert!(hole.wait(env::MailCondition::Pull, Wait::POLL).unwrap());
-        assert!(!hole.wait(env::MailCondition::Empty, Wait::POLL).unwrap());
+        assert!(env::hole::ring(entry).is_err());
+        assert!(hole.wait(env::HoleCondition::Pull, Wait::POLL).unwrap());
+        assert!(!hole.wait(env::HoleCondition::Empty, Wait::POLL).unwrap());
         assert!(hole.push(&[cycle], Wait::POLL).is_err());
         for _ in 0..4 {
-            env::mail::hush(entry, env::Bit::FIRST).unwrap();
+            env::hole::hush(entry).unwrap();
         }
-        assert!(env::mail::hush(entry, env::Bit::FIRST).is_err());
-        assert!(hole.wait(env::MailCondition::Empty, Wait::POLL).unwrap());
+        assert!(env::hole::hush(entry).is_err());
+        assert!(hole.wait(env::HoleCondition::Empty, Wait::POLL).unwrap());
         hole.push(&[cycle], Wait::POLL).unwrap();
         assert_eq!(hole.pull(&mut bytes, Wait::POLL).unwrap(), (1, owner));
         assert_eq!(bytes[0], cycle);
     }
-    pie::seal(entry).unwrap();
+    env::hole::seal(entry).unwrap();
     pie::release(entry, env::ReleaseMode::Revoke).unwrap();
 }
 
 fn concurrent() {
     let owner = unit::self_id();
-    let entry = pie::unseal(env::UnsealArgs::hole(Mark::of("copy-concurrent"))).unwrap();
+    let entry = env::hole::unseal(Mark::of("copy-concurrent"), env::HoleLimits::default()).unwrap();
     let mut workers = Vec::new();
     for producer in 0..4u8 {
         let worker = execution::unit::task::spawn(move || {
@@ -434,7 +455,7 @@ fn concurrent() {
     for worker in workers {
         worker.join();
     }
-    pie::seal(entry).unwrap();
+    env::hole::seal(entry).unwrap();
     pie::release(entry, env::ReleaseMode::Revoke).unwrap();
     programs::debug::put(
         "copy: four concurrent producers delivered 128 frames in producer FIFO order",
@@ -515,7 +536,7 @@ fn elf() {
         .is_err(),
         "copy: shared source can be widened"
     );
-    env::pie::shut(page).unwrap();
+    env::pole::shut(page).unwrap();
     pie::release(view, env::ReleaseMode::Revoke).unwrap();
     drop(
         loader
@@ -642,7 +663,7 @@ fn elf() {
     );
     env::room::doom(task).unwrap();
     assert!(unit::join_task(task, Wait::AtMost(2000)).unwrap());
-    unit::oust(team).unwrap();
+    super::lifecycle::oust(team);
 }
 
 fn cache_limits() {
@@ -688,7 +709,7 @@ fn cache_limits() {
     let task = held.spawn(&[], 0).unwrap();
     env::room::doom(task).unwrap();
     assert!(unit::join_task(task, Wait::AtMost(2000)).unwrap());
-    unit::oust(team).unwrap();
+    super::lifecycle::oust(team);
     drop(loader);
     assert_eq!(tokens(), before, "copy: cache eviction leaked roots");
 }

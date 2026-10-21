@@ -3,7 +3,9 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use env::{MailCondition, MailFail, Mark, PieFail, PieToken, TaskId};
+use env::{
+    HoleCondition, Mark, PieFail, PieToken, TaskId, ToleEventSource, ToleFail,
+};
 
 use crate::core::work::mail::Mail;
 use crate::core::work::mail::tole::{Cell, Watch};
@@ -82,11 +84,13 @@ fn cell(watch: Watch, key: WakeKey, life: alloc::sync::Weak<Life>) -> Cell {
 pub fn members() {
     let group = tole::ToleMeta::new(TaskId::new(0));
     let h = hole::HoleMeta::new(TaskId::new(0));
-    let watch = Watch::Mail {
-        pie: PieToken::mint(123),
-        condition: MailCondition::Pull,
+    let watch = Watch::Resource {
+        source: ToleEventSource::Hole {
+            token: PieToken::mint(123),
+            condition: HoleCondition::Pull,
+        },
     };
-    let key = hole::key(&h, MailCondition::Pull);
+    let key = hole::key(&h, HoleCondition::Pull);
     tole::attach(&group, cell(watch.clone(), key, h.life())).unwrap();
     tole::attach(&group, cell(watch.clone(), key, h.life())).unwrap();
     crate::expect!(group.cells_len() == 1, "重复登记幂等");
@@ -98,10 +102,12 @@ pub fn members() {
 }
 pub fn fanout() {
     let h = hole::HoleMeta::new(TaskId::new(0));
-    let key = hole::key(&h, MailCondition::Pull);
-    let watch = Watch::Mail {
-        pie: PieToken::mint(124),
-        condition: MailCondition::Pull,
+    let key = hole::key(&h, HoleCondition::Pull);
+    let watch = Watch::Resource {
+        source: ToleEventSource::Hole {
+            token: PieToken::mint(124),
+            condition: HoleCondition::Pull,
+        },
     };
     let mut groups = Vec::new();
     for _ in 0..FWD_MAX {
@@ -113,7 +119,7 @@ pub fn fanout() {
     crate::expect!(
         matches!(
             tole::attach(&extra, cell(watch.clone(), key, h.life())),
-            Err(MailFail::OoM)
+            Err(ToleFail::OoM)
         ),
         "转发满额显式失败"
     );
@@ -329,8 +335,8 @@ pub fn badge() {
 }
 
 pub fn references() {
-    use crate::entry::call::tole::cell as registration;
-    use env::{AwaitReply, Source, Wait};
+    use crate::entry::call::tole::typed_cell as registration;
+    use env::{ToleAwaitReply as AwaitReply, ToleEventFail, ToleEventSource as Source, Wait};
     let space = SpaceBuilder::user().build().unwrap();
     space
         .nest
@@ -370,7 +376,7 @@ pub fn references() {
         token: child,
     };
     crate::expect!(
-        matches!(registration(&stranger, source), Err(MailFail::Denied)),
+        matches!(registration(&stranger, source), Err(ToleFail::Denied)),
         "不能靠知道目标编号观察无关引用"
     );
     tole::attach(&group, registration(&caller, source).unwrap()).unwrap();
@@ -383,7 +389,7 @@ pub fn references() {
         group.poll(&caller).unwrap()
             == AwaitReply::Source {
                 source,
-                fail: Some(MailFail::Denied)
+                fail: Some(ToleEventFail::Denied)
             },
         "丢失登记时所需访问权必须报告具体来源"
     );
@@ -392,7 +398,7 @@ pub fn references() {
         group.poll(&caller).unwrap()
             == AwaitReply::Source {
                 source,
-                fail: Some(MailFail::Denied)
+                fail: Some(ToleEventFail::Denied)
             },
         "主动 Release 被检测，任务和资源仍存活"
     );
@@ -426,13 +432,13 @@ pub fn references() {
     );
     pend::release(&caller, page_token).unwrap();
     drop(page);
-    let local = Source::Mail {
-        pie: root_token,
-        condition: MailCondition::Pull,
+    let local = Source::Hole {
+        token: root_token,
+        condition: HoleCondition::Pull,
     };
     tole::attach(&group, registration(&caller, local).unwrap()).unwrap();
     crate::expect!(
-        matches!(group.poll(&stranger), Err(MailFail::Denied)),
+        matches!(group.poll(&stranger), Err(ToleFail::Denied)),
         "共享组不转授登记者观察权"
     );
     let other_meta = hole::HoleMeta::new(stranger.ident.id);
@@ -445,9 +451,9 @@ pub fn references() {
     .expect("pie allocation");
     let other_token = other.token();
     stranger.pend.pies.lock().push(other);
-    let other_source = Source::Mail {
-        pie: other_token,
-        condition: MailCondition::Pull,
+    let other_source = Source::Hole {
+        token: other_token,
+        condition: HoleCondition::Pull,
     };
     tole::attach(&group, registration(&stranger, other_source).unwrap()).unwrap();
     crate::expect!(
@@ -497,7 +503,7 @@ pub fn references() {
         group.poll(&caller).unwrap()
             == AwaitReply::Source {
                 source,
-                fail: Some(MailFail::Dead)
+                fail: Some(ToleEventFail::Dead)
             },
         "封印和归还具有不同的来源状态"
     );

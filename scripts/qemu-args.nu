@@ -31,11 +31,17 @@
 # `--serial <后端>` = 换掉串口那一格（默认 `stdio`）。整机用例要把串口搬到一条**能喂输入**
 # 的通道上（`cargo-qtest` 把 QEMU 的 stdin 钉成 null），见 [`qtest.nu`](qtest.nu) 的头注；
 # **串口这一格因此只有一个出处**——`-serial` 不是"后者胜"，写两次会多出一枚串口（实测踩过）。
-export def args [elf?: path, --board-only, --serial: string, --iommu, --endpoint: string] {
+export def args [elf?: path, --board-only, --serial: string, --iommu, --endpoint: string, --endpoint-hold: string, --qtest-socket: string] {
+  if not ($endpoint_hold | is-empty) and ($endpoint | is-empty) {
+    error make {msg: "--endpoint-hold 需要 --endpoint 指定夹具磁盘"}
+  }
   let root = ($env.FILE_PWD | path dirname)
   let elf = if ($elf | is-empty) { null } else { ($elf | path expand) }
   let extra = ($env.QEMU_EXTRA_ARGS? | default "" | split row -r '\s+' | where { |s| $s != "" })
   let gdb = if ($env.QEMU_GDB? == "1") { ["-s", "-S"] } else { [] }
+  let qtest = if ($qtest_socket | is-empty) { [] } else {
+    ["-qtest" $"unix:($qtest_socket),server=on,wait=off"]
+  }
 
   let semi_requested = ($env.QEMU_SEMI? | default "0") == "1"
   let feats_initial = ($env.QEMU_FEATURES? | default "" | split row -r '\s+' | where { |s| $s != "" })
@@ -89,8 +95,13 @@ export def args [elf?: path, --board-only, --serial: string, --iommu, --endpoint
   let endpoint = if ($endpoint | is-empty) {
       []
   } else {
+      let drive = if ($endpoint_hold | is-empty) {
+          $"file=($endpoint),format=raw,if=none,readonly=on,id=iommu-dma"
+      } else {
+          $"file.driver=nbd,file.server.type=unix,file.server.path=($endpoint_hold),format=raw,if=none,readonly=on,id=iommu-dma"
+      }
       [
-          "-drive" $"file=($endpoint),format=raw,if=none,readonly=on,id=iommu-dma"
+          "-drive" $drive
           "-device" "virtio-blk-pci,drive=iommu-dma,iommu_platform=on,disable-legacy=on"
       ]
   }
@@ -111,11 +122,12 @@ export def args [elf?: path, --board-only, --serial: string, --iommu, --endpoint
     ...$initrd_arg
     ...$endpoint
     ...$gdb
+    ...$qtest
     ...$extra
   ]
 }
 
 # 给外壳消费者用：一行一个参数（`qtest.nu` 靠它拼 `--qemu-arg=`）。
-def main [elf?: path, --board-only, --serial: string, --iommu, --endpoint: string] {
-  for a in (args $elf --board-only=$board_only --serial=$serial --iommu=$iommu --endpoint=$endpoint) { print $a }
+def main [elf?: path, --board-only, --serial: string, --iommu, --endpoint: string, --endpoint-hold: string, --qtest-socket: string] {
+  for a in (args $elf --board-only=$board_only --serial=$serial --iommu=$iommu --endpoint=$endpoint --endpoint-hold=$endpoint_hold --qtest-socket=$qtest_socket) { print $a }
 }

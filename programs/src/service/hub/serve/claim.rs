@@ -39,7 +39,7 @@ pub(super) fn claim(
 }
 
 /// 接入只接受实际发件人直接转授的报活孔。
-fn sensor_from(from: TaskId, sensor: PieToken) -> bool {
+pub(super) fn sensor_from(from: TaskId, sensor: PieToken) -> bool {
     ::resource::raw::alive(sensor)
         && matches!(::resource::raw::reserve(sensor), Ok((giver, owner, mark))
             if giver == from && owner == from && mark == hub::ALIVE_MARK)

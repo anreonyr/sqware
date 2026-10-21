@@ -6,7 +6,7 @@ use ::resource::raw::Hole;
 use ::schedule::{Progress, Res, ResMut};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use env::{MailCondition, PieToken, TaskId, Wait};
+use env::{HoleCondition, PieToken, TaskId, Wait};
 use ipc::rpc::request::Receiver;
 use system_api::operator as api;
 use system_api::operator::entry;
@@ -759,7 +759,7 @@ fn grant(call: &mut Call<'_>, request: entry::Request) -> entry::Response {
             };
             let local = entrance.token();
             if tree.set_entrance(grant_ref, local).is_err() {
-                let _ = env::pie::seal(local);
+                let _ = env::hole::seal(local);
                 let _ = env::pie::release(local, env::ReleaseMode::Revoke);
                 let _ = tree.revoke_grant(grant_ref);
                 let _ = tree.grant_closed(grant_ref);
@@ -780,9 +780,9 @@ fn grant(call: &mut Call<'_>, request: entry::Request) -> entry::Response {
         .is_some_and(|progress| progress.0)
     {
         if pile
-            .attach(env::Source::Mail {
-                pie: local,
-                condition: MailCondition::Pull,
+            .attach(env::ToleEventSource::Hole {
+                token: local,
+                condition: HoleCondition::Pull,
             })
             .is_err()
             || tree.grant_attached(grant_key).is_err()
@@ -878,9 +878,9 @@ fn revoke(call: &mut Call<'_>, id: api::GrantId) -> entry::Response {
             if !detached {
                 if attached
                     && pile
-                        .detach(env::Source::Mail {
-                            pie: token,
-                            condition: MailCondition::Pull,
+                        .detach(env::ToleEventSource::Hole {
+                            token,
+                            condition: HoleCondition::Pull,
                         })
                         .is_err()
                 {
@@ -891,7 +891,7 @@ fn revoke(call: &mut Call<'_>, id: api::GrantId) -> entry::Response {
                 }
             }
             if !sealed {
-                if env::pie::seal(token).is_err() {
+                if env::hole::seal(token).is_err() {
                     return entry::Response::fail(api::Fail::Dead);
                 }
                 if tree.cleanup_step(grant_key, 1).is_err() {

@@ -11,3 +11,6 @@ path = "lib.rs"
 
 [dev-dependencies]
 env = { path = "../../../crates/env" }
+hub-api = { path = "../../src/service/hub/api" }
+system-api = { path = "../../src/system/api" }
+wire = { path = "../../../crates/wire" }

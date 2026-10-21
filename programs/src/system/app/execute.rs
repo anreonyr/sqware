@@ -17,8 +17,14 @@ pub fn run() -> Result<(), env::Reason> {
         .write::<crate::system::control::Startup>()
         .map_err(|_| start::E_TABLE)?
         .configure(list);
+    supervise(resources, schedule::frame().map_err(|_| start::E_TABLE)?)
+}
+
+pub(crate) fn supervise(
+    resources: ::schedule::Resources<'static>,
+    mut frame: ::schedule::Plan<super::Fault>,
+) -> Result<(), env::Reason> {
     let mut startup = schedule::startup().map_err(|_| start::E_TABLE)?;
-    let mut frame = schedule::frame().map_err(|_| start::E_TABLE)?;
     let mut shutdown = schedule::shutdown().map_err(|_| start::E_TABLE)?;
     startup.prepare(&resources);
     frame.prepare(&resources);
@@ -34,8 +40,9 @@ pub fn run() -> Result<(), env::Reason> {
                     start::E_TABLE
                 })?;
             if resources
-                .read::<frame::Flow>()
+                .read::<frame::Settle>()
                 .map_err(|_| start::E_TABLE)?
+                .flow
                 .done
             {
                 break;

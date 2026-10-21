@@ -3,7 +3,7 @@
 
 use core::marker::PhantomData;
 
-use env::{MailCondition, MailFail, MailResult, PieToken, Wait};
+use env::{HoleCondition, HoleFail, HoleResult, PieToken, Wait};
 
 use ::resource::raw::Hole;
 use wire::Message;
@@ -111,14 +111,14 @@ impl<M: Message> Sender<M> {
     ///
     /// **队列化之后这一手等的仍是"空"**（不是"有位"）：单推的一只孔上，队列空 ⟺ 我推出去的
     /// 那几手全下线了。要"有位"用 [`Sender::send_bytes`] 那一档（满了答 `Busy`，不睡）。
-    pub fn reclaim(&mut self) -> MailResult<()> {
+    pub fn reclaim(&mut self) -> HoleResult<()> {
         let Some(hole) = self.hole else {
             return Ok(());
         };
         if self.outstanding == 0 {
             return Ok(());
         }
-        let r = Hole::from_raw(hole).wait(MailCondition::Empty, Wait::Forever);
+        let r = Hole::from_raw(hole).wait(HoleCondition::Empty, Wait::Forever);
         if let Err(e) = &r {
             if cfg!(debug_assertions) {
                 crate::debug::put(&alloc::format!(
@@ -164,10 +164,10 @@ impl<M: Message> Drop for Sender<M> {
 /// 类型被写错时才到得了——不 `panic`、如实报）
 /// - SendFail::Unbound = **没有写端**（对端那一枚还没认到）
 /// - SendFail::Mail = **搬不动**，原样的域词汇（`Busy` / `Dead` / `Denied` / `Gone`）
-/// **不另造一套码**：Mail 域的词表是它的失败域，这一层只把"哪一步失败"说清，不换词
+/// **不另造一套码**：Hole 域的词表是它的失败域，这一层只把"哪一步失败"说清，不换词
 #[derive(Debug)]
 pub enum SendFail {
     Unbound,
     TooLong,
-    Mail(MailFail),
+    Mail(HoleFail),
 }

@@ -7,7 +7,7 @@
 
 use core::marker::PhantomData;
 
-use env::{MailFail, PieToken, Wait};
+use env::{HoleFail, PieToken, Wait};
 
 use ::resource::raw::Hole;
 use wire::Message;
@@ -80,7 +80,7 @@ impl<M: Message> Receiver<M> {
 /// **带那一条读到了几字节**。**它不属于载体那一层**：搬字节的那一手不做解码，故"读不懂"在
 #[derive(Debug)]
 pub enum RecvFail {
-    Mail(MailFail),
+    Mail(HoleFail),
     /// 收到了 `len` 字节，解不动（`buffer` 前 `len` 字节就是那一条原始帧）
     Unread(usize),
 }

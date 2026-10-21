@@ -22,7 +22,7 @@ impl Manifest {
             );
             core::ptr::copy_nonoverlapping(bytes.as_ptr(), (address + 8) as *mut u8, bytes.len());
         }
-        env::pie::shut(token).map_err(|_| "manifest unmap")?;
+        env::pole::shut(token).map_err(|_| "manifest unmap")?;
         env::pie::narrow(token, env::Permission::FETCH | env::Permission::VEST)
             .map_err(|_| "manifest freeze")?;
         env::pie::accord(token, task, env::Permission::FETCH, shell_api::MARK)

@@ -12,7 +12,6 @@ use system_client::operator::Face;
 use crate::unit::Died;
 
 use crate::driver::shared::fail::Fail;
-use env::pie;
 
 /// 它是**声明**（`const` 可造：三格全是字面量 / 枚举），各驱动写在**自己那一域**里——装配表
 #[derive(Clone, Copy)]
@@ -67,7 +66,7 @@ impl Hub {
             died,
             ms,
         )?;
-        let sensor = pie::unseal(env::UnsealArgs::hole(hub::ALIVE_MARK))
+        let sensor = env::hole::unseal(hub::ALIVE_MARK, env::HoleLimits::default())
             .map_err(|_| Fail::at(died, "hub"))?;
         Ok(Hub { bond, list, sensor })
     }

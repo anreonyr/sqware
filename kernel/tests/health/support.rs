@@ -336,14 +336,13 @@ pub(crate) fn source_reference(
     let view_id = view.identity();
     // 这段关系可能已由新 `Attach` 登过（那它就是控制记录的事实）：
     // 直接**复用那份来源授权**，不再第二次 claim 同一个号（否则 Busy）。
-    let authorization = match space.views.locate(view_id) {
+    let authorization = match space.views.registered(view_id) {
         Some(entry) => entry.source.clone(),
         None => {
             let range = view.source();
             let authorization =
                 SourceAuthorization::new(range.clone(), Access::all(), task.ident.id)
                     .expect("source");
-            authorization.remember_space(space).expect("space");
             space
                 .views
                 .claim(
@@ -385,7 +384,7 @@ pub(crate) fn source_pole(
     shared: bool,
 ) -> (env::PieToken, Arc<crate::core::work::mail::pole::PoleMeta>) {
     let reference = source_reference(task, space, view);
-    let token = crate::entry::call::pie::create_pole(task, reference, shared).expect("source Pole");
+    let token = crate::entry::call::pole::create_pole(task, reference, shared).expect("source Pole");
     task.pend
         .references
         .remove(reference.get())

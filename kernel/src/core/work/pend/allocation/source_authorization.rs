@@ -17,11 +17,14 @@ use crate::core::memory::flat::FlatRange;
 use crate::core::memory::nest::Access;
 use crate::core::work::grant::Grant;
 use crate::core::work::mail::pole::PoleMeta;
-use crate::core::work::unit::space::Space;
+use crate::core::work::unit::space::{Space, ViewBinding};
 use crate::machine::sync::SpinLock;
 use env::{Permission, PieFail, PieToken, TaskId};
 
 use super::creation::Creation;
+use super::derivation::Derivation;
+use super::geometry::Geometry;
+use super::lineage::Lineage;
 use super::source_phase::Phase;
 
 pub(crate) struct SourceAuthorization {
@@ -33,12 +36,32 @@ pub(crate) struct SourceAuthorization {
     qualification: Creation,
     /// 还活着的普通引用份数（成员资格，不是 `Arc` 强计数）。
     holds: AtomicUsize,
-    /// **在途发布**的关系号：闸门下登记，撤销方看到它就不结清。
-    inflight: SpinLock<Vec<usize>>,
+    /// **在途发布**的键：闸门下登记，撤销方看到它就不结清。
+    ///
+    /// 键来自两个分配器（关系号那一域与移交那一域），各自只保证**域内**唯一；
+    /// 带窗口的那一档（移交）还把“这一段已经核过、别的发表不得插进来”一并记下。
+    /// 两张域靠键自带的那一位分开，故同号不会互删。
+    inflight: SpinLock<Vec<(usize, Option<Arc<Geometry>>)>>,
     /// 发布与撤销的共同闸门。
     revoked: SpinLock<bool>,
-    /// 这份来源登记过关系的那些目标空间（撤销方据此把名下关系收回去关）。
-    spaces: SpinLock<Vec<Weak<Space>>>,
+    /// 未结 CPU 关系：包含显式 Attach 控制与资源 Open 映射。
+    ///
+    /// 成员与 Registry 项是同一个 `Arc<ViewBinding>`，所以“还欠着谁”只有这一份
+    /// 事实：只有显式结清（`Space::retire_view` / `reap_views`）才撒下成员，
+    /// 不靠 `Weak` 升不上或 Drop 替它做主。撤销方也按它把名下关系收回去关。
+    bindings: SpinLock<Vec<Arc<ViewBinding>>>,
+    /// 这份来源自己分出的子段：几何、历史分支索引与子记录弱引用。
+    ///
+    /// 子记录丢了也不摘：未知只占它那一段精确范围，不误报空闲，也不封整个父段。
+    derivations: SpinLock<Vec<Derivation>>,
+    /// 仍压着这一段的**独立持有**：窗口与持有人。
+    ///
+    /// 这是“这一段不空闲”的显式事实：由 `IndependentHold` 在同一 `commit` 段里登记，
+    /// 随物理保留结束而撤。不看 `is_pinned`、不数 `Arc`、也不靠 `Weak` 生存。
+    /// 持有人只用于自检读口，不参与判据：豁免按**这一份登记的身份**认，不按任务。
+    retentions: SpinLock<Vec<(Arc<Geometry>, TaskId)>>,
+    /// 派生记录的出生证明；独立根一条也没有。
+    lineage: Option<Lineage>,
     phase: SpinLock<Phase>,
 }
 
@@ -67,8 +90,44 @@ impl SourceAuthorization {
             holds: AtomicUsize::new(0),
             inflight: SpinLock::new(Vec::new()),
             revoked: SpinLock::new(false),
-            spaces: SpinLock::new(Vec::new()),
+            bindings: SpinLock::new(Vec::new()),
+            derivations: SpinLock::new(Vec::new()),
+            retentions: SpinLock::new(Vec::new()),
+            lineage: None,
             phase: SpinLock::new(Phase::Private),
+        })
+        .map_err(|_| PieFail::OoM)
+    }
+
+    /// 派生记录：生来就在根相位。
+    ///
+    /// 它没有私有阶段，也就发不出任何私有创建资格（`private_owner` 恒假）；
+    /// 段内的真实范围归它自己那一枚 Pole，父侧只据几何记住这一段已分出去。
+    pub(crate) fn derived(
+        meta: &Arc<PoleMeta>,
+        token: PieToken,
+        grant: Arc<Grant>,
+        ceiling: Access,
+        owner: TaskId,
+        lineage: Lineage,
+    ) -> Result<Arc<Self>, PieFail> {
+        Arc::try_new(Self {
+            range: SpinLock::new(None),
+            ceiling,
+            owner,
+            qualification: Creation::new(),
+            holds: AtomicUsize::new(0),
+            inflight: SpinLock::new(Vec::new()),
+            revoked: SpinLock::new(false),
+            bindings: SpinLock::new(Vec::new()),
+            derivations: SpinLock::new(Vec::new()),
+            retentions: SpinLock::new(Vec::new()),
+            lineage: Some(lineage),
+            phase: SpinLock::new(Phase::Root {
+                meta: Arc::downgrade(meta),
+                token,
+                grant,
+            }),
         })
         .map_err(|_| PieFail::OoM)
     }
@@ -136,7 +195,10 @@ impl SourceAuthorization {
     }
 
     fn branch_permits(&self, branch: Option<&Grant>, access: Access) -> bool {
-        let alive = match &*self.phase.lock() {
+        // 先把相位拷出来放锁，再升弱引用：临时 `Arc` 可能是最后一份强持，
+        // 它的析构会走到 `retire_view` / `settle` 再回本文件取锁。同 `manages`。
+        let phase = Phase::clone(&self.phase.lock());
+        let alive = match phase {
             Phase::Private => true,
             Phase::Root { meta, .. } => meta.upgrade().is_some_and(|meta| meta.alive()),
         };
@@ -150,10 +212,32 @@ impl SourceAuthorization {
         permission.is_some_and(|p| covers(p, access))
     }
 
-    /// 在途登记（闸门下的短临界区）：还没被撤销才收下这个号。
+    /// 在途登记（闸门下的短临界区）：还没被撤销才收下这个键。
     pub(crate) fn enter_publish(
         &self,
         id: usize,
+        branch: Option<&Grant>,
+        access: Access,
+    ) -> Result<(), PieFail> {
+        self.enter_flight(id, None, branch, access)
+    }
+
+    /// 同一条在途登记，但这次发表**占住了**这一段窗口：
+    ///
+    /// 别的发表（派生 / Open / Accord / Attach）在这笔在途结束前不得插进这一段
+    /// （见 `check_publish`）；撤销方与不带窗口的那一档一样看待它。
+    pub(crate) fn enter_publish_range(
+        &self,
+        id: usize,
+        window: Arc<Geometry>,
+    ) -> Result<(), PieFail> {
+        self.enter_flight(id, Some(window), None, Access::READ)
+    }
+
+    fn enter_flight(
+        &self,
+        id: usize,
+        window: Option<Arc<Geometry>>,
         branch: Option<&Grant>,
         access: Access,
     ) -> Result<(), PieFail> {
@@ -163,7 +247,7 @@ impl SourceAuthorization {
         }
         let mut inflight = self.inflight.lock();
         inflight.try_reserve(1).map_err(|_| PieFail::OoM)?;
-        inflight.push(id);
+        inflight.push((id, window));
         Ok(())
     }
 
@@ -193,32 +277,333 @@ impl SourceAuthorization {
         }
     }
 
-    /// 在途登记失效（提交或回滚都走这一步）。
-    pub(crate) fn leave_publish(&self, id: usize) {
-        self.inflight.lock().retain(|held| *held != id);
+    /// 在途登记失效（提交或回滚都走这一步）：同一笔键的两条一次撤完。
+    pub(crate) fn leave_publish(self: &Arc<Self>, id: usize) {
+        let empty = {
+            let mut inflight = self.inflight.lock();
+            inflight.retain(|(held, _)| *held != id);
+            inflight.is_empty()
+        };
+        if empty {
+            self.settle();
+        }
     }
 
-    /// 记下这份来源登记过关系的一个目标空间（去重，容量须在发布前备好）。
-    pub(crate) fn remember_space(&self, space: &Arc<Space>) -> Result<(), PieFail> {
-        let mut spaces = self.spaces.lock();
-        if spaces
-            .iter()
-            .any(|held| held.upgrade().is_some_and(|held| Arc::ptr_eq(&held, space)))
-        {
-            return Ok(());
+    /// 备下一条成员的位置（可失败的准备；调用方在同一提交段里紧接着写入）。
+    pub(crate) fn reserve_binding(&self) -> Result<(), PieFail> {
+        let mut members = self.bindings.lock();
+        members.try_reserve(1).map_err(|_| PieFail::OoM)
+    }
+
+    /// 写入一条成员：容量已在同一提交段备好，这一步只推入。
+    pub(crate) fn register_binding(&self, binding: Arc<ViewBinding>) {
+        self.bindings.lock().push(binding);
+    }
+
+    /// 撒下一条成员：这份绑定已结清（`Space::retire_view` / `reap_views` 的唯一收尾）。
+    ///
+    /// 最后一条成员撤下就是显式的“结清”事件：来源不再占着任何东西时顺带向上收尾，
+    /// 不在 `Drop` 里猜。
+    pub(crate) fn release_binding(self: &Arc<Self>, binding: &Arc<ViewBinding>) {
+        let empty = {
+            let mut members = self.bindings.lock();
+            members.retain(|held| !Arc::ptr_eq(held, binding));
+            members.is_empty()
+        };
+        if empty {
+            self.settle();
         }
-        spaces.try_reserve(1).map_err(|_| PieFail::OoM)?;
-        spaces.push(Arc::downgrade(space));
+    }
+
+    /// 备下一条子段分配的位置（可失败的准备；调用方在同一提交段里紧接着发表）。
+    pub(crate) fn reserve_derivation(&self) -> Result<(), PieFail> {
+        self.derivations
+            .lock()
+            .try_reserve(1)
+            .map_err(|_| PieFail::OoM)
+    }
+
+    /// 发表一条子段分配：容量已在同一提交段备好，这一步只推入。
+    pub(crate) fn publish_derivation(&self, derivation: Derivation) {
+        self.derivations.lock().push(derivation);
+    }
+
+    /// 备下一条独立持有登记的位置（可失败的准备；与物理保留同在一个提交段）。
+    pub(crate) fn reserve_retention(&self) -> Result<(), PieFail> {
+        self.retentions
+            .lock()
+            .try_reserve(1)
+            .map_err(|_| PieFail::OoM)
+    }
+
+    /// 写入一条独立持有登记：容量已在同一提交段备好，这一步只推入。
+    pub(crate) fn register_retention(&self, window: Arc<Geometry>, holder: TaskId) {
+        self.retentions.lock().push((window, holder));
+    }
+
+    /// 撤下一条独立持有登记：按窗口身份认这一条，不当授权、也不动别的条。
+    ///
+    /// 这是显式的“这一段不再被独立持有”事件：这一份来源自己不再占着任何东西时，
+    /// 顺带从父分配槽里向上收尾（否则父侧那一槽要等到子记录消失才无主可依）。
+    pub(crate) fn release_retention(self: &Arc<Self>, window: &Arc<Geometry>) {
+        self.retentions
+            .lock()
+            .retain(|(held, _)| !Arc::ptr_eq(held, window));
+        self.settle();
+    }
+
+    /// 子段占用判据：这一段已经作为另一份资源交出去了，**任何形式**的再用都不许。
+    ///
+    /// 取得又一份持有（`Acquire` 四个来源都算）只走这一条：Residency 不是互斥授权，
+    /// 同一份合法来源上再落一份保留并不把这一段交出去。
+    ///
+    /// 调用方必须**在同一 `commit` 段里**把它与发表一起做：本函数只读当场事实，
+    /// 不自己取提交锁——单拿谓词去判、再在段外发表，中间会有人插进一条新占用。
+    /// 已可靠结束的分配槽在这一步里顺带收掉（摘槽也取提交段，见 `settle`）。
+    pub(crate) fn check_use(&self, offset: PageOffset, count: PageCount) -> Result<(), PieFail> {
+        #[cfg(debug_assertions)]
+        crate::core::work::assert_held();
+        self.reap_derivations();
+        if self
+            .derivations
+            .lock()
+            .iter()
+            .any(|slot| slot.overlaps(offset, count))
+        {
+            return Err(PieFail::Busy);
+        }
         Ok(())
     }
 
-    /// 这份来源登记过关系的目标空间（撤销方在锁外逐个收）。
+    /// 发表准入：在子段占用之外，**别人的**独立持有与**在途已占的那一段**也挡。
+    ///
+    /// 派生 / Open / Accord 是新授权，Attach / Transfer 是新映射，两者都算发表；
+    /// `own` 是这次发表自己那条独立持有的窗口——只有它自己那一份登记不挡
+    /// （持有人就靠这条引用拿帧）。带窗口的在途登记是别人已经核过的移动范围，
+    /// 一律不得插进去（持有人自己那份不含在内，它不占范围）。
+    pub(crate) fn check_publish(
+        &self,
+        offset: PageOffset,
+        count: PageCount,
+        own: Option<&Arc<Geometry>>,
+    ) -> Result<(), PieFail> {
+        self.check_use(offset, count)?;
+        let held = self.retentions.lock().iter().any(|(window, _)| {
+            !own.is_some_and(|own| Arc::ptr_eq(own, window)) && window.overlaps(offset, count)
+        });
+        let claimed = self.inflight.lock().iter().any(|(_, window)| {
+            window
+                .as_ref()
+                .is_some_and(|window| window.overlaps(offset, count))
+        });
+        if held || claimed {
+            return Err(PieFail::Busy);
+        }
+        Ok(())
+    }
+
+    /// 只收槽、不判准入：收掉**可证明结束**的分配槽，不可证明的留在原地。
+    ///
+    /// 由准入与显式结清事件（最后一条成员、最后一枚授权、显式 Seal、
+    /// 独立持有结束）调用。它取提交段：新授权（`accord` 的登记）与新关系的发表
+    /// 都在各自的段里做，“末份判定 → 摘槽”必须与它们互斥，否则判定读到空、
+    /// 随后又落下一枚新授权或新成员，父槽已经摘了。
+    pub(crate) fn reap_derivations(&self) {
+        let _commit = crate::core::work::commit();
+        let mut slots = self.derivations.lock();
+        let mut index = 0;
+        while index < slots.len() {
+            if self.derivation_done(&slots[index]) {
+                slots.remove(index);
+                continue;
+            }
+            index += 1;
+        }
+    }
+
+    /// 这一条子段是不是**可证明地**结束了：子记录还在，且它自己不再占着任何东西。
+    ///
+    /// 升不上就是未知：未知照旧占住它那一段，既不按空闲处理，也不封整个父段。
+    /// 子记录自己那份独立持有也是它占着这一段的事实（见 `finished`）：
+    /// 帧仍被独立持有时，父侧那一槽不摘，父段也不许再分出去。
+    fn derivation_done(&self, slot: &Derivation) -> bool {
+        slot.child().upgrade().is_some_and(|child| child.finished())
+    }
+
+    /// 授权、CPU 关系、子段、保留及在途发表均已结束；普通引用的存在不参与结清。
+    fn finished(&self) -> bool {
+        let empty = {
+            let bindings = self.bindings.lock();
+            let derivations = self.derivations.lock();
+            let retentions = self.retentions.lock();
+            let inflight = self.inflight.lock();
+            bindings.is_empty()
+                && derivations.is_empty()
+                && retentions.is_empty()
+                && inflight.is_empty()
+        };
+        empty && !self.holds_authority()
+    }
+
+    /// 还有没有可用授权：取这一份来源自己那枚 Pole 的活状态与它名下的授权记录，
+    /// 不看相位里那一枚 root Grant（Seal 之后死 token 不该永久占位）。
+    fn holds_authority(&self) -> bool {
+        // 同 `manages`：相位拷出来先放锁，升弱引用（可能拿到最后一份强持）
+        // 与它的析构都不在相位锁里做，否则析构会反锁同一把。
+        let phase = Phase::clone(&self.phase.lock());
+        match phase {
+            Phase::Private => true,
+            Phase::Root { meta, .. } => meta.upgrade().is_some_and(|meta| meta.authorizing()),
+        }
+    }
+
+    /// 派生记录的出生证明：父记录与同一份几何。独立根为 `None`。
+    pub(crate) fn lineage(&self) -> Option<(Arc<SourceAuthorization>, Arc<Geometry>)> {
+        self.lineage
+            .as_ref()
+            .map(|lineage| (lineage.parent().clone(), lineage.geometry().clone()))
+    }
+
+    /// 由**显式事件**发起的向上收尾：这一份来源真的不再占着任何东西时，从父分配槽里
+    /// 摘掉自己，再沿同一条链逐代向上。迭代而不递归，不在长链上同时持多把锁。
+    ///
+    /// 它取提交段，与“新授权 / 新成员 / 新关系发表”互斥：末份判定与摘槽必须原子，
+    /// 否则判定读到空、随后又落下一枚新授权或新成员，而父槽已经摘了。析构路径上走它
+    /// 也安全：`Pie`/`Hold` 的掉落点要么在顶层，要么本就持着这一把（`pend` 串行锁是
+    /// 豁免级，不参与锁序）；`Space::retire_view` 那条本就已持提交段。
+    pub(crate) fn settle(self: &Arc<Self>) {
+        let _commit = crate::core::work::commit();
+        let mut node = self.clone();
+        loop {
+            if !node.finished() {
+                return;
+            }
+            let Some((parent, geometry)) = node.lineage() else {
+                return;
+            };
+            parent.release_derivation(&geometry);
+            node = parent;
+        }
+    }
+
+    /// 按几何身份摘掉一条子段分配：不当授权，也不动别的槽。
+    fn release_derivation(&self, geometry: &Arc<Geometry>) {
+        self.derivations
+            .lock()
+            .retain(|slot| !Arc::ptr_eq(slot.geometry(), geometry));
+    }
+
+    /// Forget 改指：这一份来源里以 `forgotten` 为分支索引的分配槽与显式控制记录
+    /// 一并换成新父分支。权限仍是创建时的快照，不重算、也不部分复制。
+    pub(crate) fn retarget_branch(
+        self: &Arc<Self>,
+        forgotten: PieToken,
+        parent: PieToken,
+    ) -> Result<(), PieFail> {
+        // 可失败的准备在前：目标空间快照备不下就整条不动。
+        let spaces = self.spaces()?;
+        for slot in self.derivations.lock().iter_mut() {
+            slot.retarget(forgotten, parent);
+        }
+        for space in spaces {
+            space.views.retarget_branch(self, forgotten, parent);
+        }
+        Ok(())
+    }
+
+    /// 这份来源名下未结的独立持有条数（自检读口）。
+    #[cfg(debug_assertions)]
+    pub(crate) fn retention_count(&self) -> usize {
+        self.retentions.lock().len()
+    }
+
+    /// 这份来源名下未结的子段分配数（自检读口）。
+    #[cfg(debug_assertions)]
+    pub(crate) fn derivation_count(&self) -> usize {
+        self.derivations.lock().len()
+    }
+
+    /// 这份来源的子段表里有没有这一份几何（自检读口：两边是不是同一个 `Arc`）。
+    #[cfg(debug_assertions)]
+    pub(crate) fn owns_geometry(&self, geometry: &Arc<Geometry>) -> bool {
+        self.derivations
+            .lock()
+            .iter()
+            .any(|slot| Arc::ptr_eq(slot.geometry(), geometry))
+    }
+
+    /// 这一份几何槽里记的历史分支索引（自检读口）。
+    #[cfg(debug_assertions)]
+    pub(crate) fn derivation_token(&self, geometry: &Arc<Geometry>) -> Option<PieToken> {
+        self.derivations
+            .lock()
+            .iter()
+            .find(|slot| Arc::ptr_eq(slot.geometry(), geometry))
+            .map(Derivation::token)
+    }
+
+    /// 未结 CPU 身份的快照；不复制关系或物理持有。
+    pub(crate) fn bindings(&self) -> Result<Vec<Arc<ViewBinding>>, PieFail> {
+        let held = self.bindings.lock();
+        let mut members = Vec::new();
+        members.try_reserve(held.len()).map_err(|_| PieFail::OoM)?;
+        members.extend(held.iter().cloned());
+        Ok(members)
+    }
+
+    /// 仍可追溯的派生记录；槽在而记录丢失时不能宣称子图已关。
+    pub(crate) fn children(&self) -> Result<Vec<Arc<Self>>, PieFail> {
+        let mut children = Vec::new();
+        {
+            let slots = self.derivations.lock();
+            children
+                .try_reserve(slots.len())
+                .map_err(|_| PieFail::OoM)?;
+            for slot in slots.iter() {
+                children.push(slot.child().upgrade().ok_or(PieFail::Busy)?);
+            }
+        }
+        Ok(children)
+    }
+
+    /// 已失活来源仍须保留补关入口的义务。
+    pub(crate) fn pending_close(&self) -> bool {
+        !self.bindings.lock().is_empty()
+            || !self.derivations.lock().is_empty()
+            || !self.inflight.lock().is_empty()
+    }
+
+    /// 这份来源登过关系的目标空间：由成员快照派生并去重。
+    ///
+    /// 先在源锁下克隆成员再放锁升级：最后一份 `Space` 强引用不在源锁里析构。
     pub(crate) fn spaces(&self) -> Result<Vec<Arc<Space>>, PieFail> {
-        let spaces = self.spaces.lock();
-        let mut result = Vec::new();
-        result.try_reserve(spaces.len()).map_err(|_| PieFail::OoM)?;
-        result.extend(spaces.iter().filter_map(Weak::upgrade));
-        Ok(result)
+        let members = self.bindings()?;
+        let mut spaces = Vec::new();
+        spaces
+            .try_reserve(members.len())
+            .map_err(|_| PieFail::OoM)?;
+        for binding in &members {
+            if let Some(space) = binding.space().upgrade()
+                && !spaces.iter().any(|held| Arc::ptr_eq(held, &space))
+            {
+                spaces.push(space);
+            }
+        }
+        Ok(spaces)
+    }
+
+    /// 这份来源名下**未结**成员数（自检读口；不另存计数）。
+    #[cfg(debug_assertions)]
+    pub(crate) fn binding_count(&self) -> usize {
+        self.bindings.lock().len()
+    }
+
+    /// 这份来源名下是否仍有这一份未结绑定。
+    pub(crate) fn owns_binding(&self, binding: &Arc<ViewBinding>) -> bool {
+        self.bindings
+            .lock()
+            .iter()
+            .any(|held| Arc::ptr_eq(held, binding))
     }
 
     /// 撤销这份来源：在途发布未结清时返回 `Busy`，由调用方重试。

@@ -4,7 +4,7 @@
 //! 在非负路径调用 `<T as FromPair>::from_pair(v0, v1)`。错误路径由
 //! 各域的**词表读法**（生成的入口里那一格）接管，故此处只见成功值。
 //!
-//! **宽返回那一格**（`#[ret3(T)]`，`MailCall::Pull` 与 `MailCall::Peek`）走
+//! **宽返回那一格**（`#[ret3(T)]`，`HoleCall::Pull` 与 `HoleCall::Peek`）走
 //! [`FromTriple`]：两格寄存器装不下它那几件事实，故读 `a0..a2`。两条路的分工是**线宽**，
 //! 不是语义——能用一对说完的仍走 [`FromPair`]（三十格），别为了省一次改写把两件事挤进一格。
 //!
@@ -157,14 +157,5 @@ impl FromPair for TeamId {
 impl FromPair for VirtAddr {
     fn from_pair(v0: usize, _v1: usize) -> Self {
         VirtAddr(v0)
-    }
-}
-
-impl FromPair for (PieToken, crate::MailCondition) {
-    fn from_pair(token: usize, condition: usize) -> Self {
-        (
-            PieToken::new(token),
-            crate::MailCondition::of(condition).expect("invalid Await condition"),
-        )
     }
 }

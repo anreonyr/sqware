@@ -7,7 +7,7 @@
 
 use ::resource::port;
 use alloc::string::String;
-use env::{Access, MailCondition, PieKind, PieToken, Policy, TaskId, Wait};
+use env::{Access, HoleCondition, PieKind, PieToken, Policy, TaskId, Wait};
 
 use ipc::hand::{Receiver, RecvFail};
 use ipc::session::establish;
@@ -112,7 +112,7 @@ impl Face {
         let mut ask = S::EMPTY;
         let Some(n) = with(seed).store(ask.as_mut()) else {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-            let _ = pie::seal(back);
+            let _ = env::hole::seal(back);
             let _ = pie::release(back, env::ReleaseMode::Revoke);
             report("encode");
             return Err(Fail::Bad);
@@ -120,7 +120,7 @@ impl Face {
         let door = Hole::from_raw(self.entry);
         if door.push(&ask.as_ref()[..n], Wait::Forever).is_err() {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-            let _ = pie::seal(back);
+            let _ = env::hole::seal(back);
             let _ = pie::release(back, env::ReleaseMode::Revoke);
             report("push");
             return Err(Fail::Dead);
@@ -128,7 +128,7 @@ impl Face {
         let mut said = R::EMPTY;
         let got = match Receiver::<R>::from_raw(back).recv(said.as_mut(), wait) {
             Ok(one) => Ok(one),
-            Err(RecvFail::Mail(e)) if !matches!(e, env::MailFail::Dead | env::MailFail::Denied) => {
+            Err(RecvFail::Mail(e)) if !matches!(e, env::HoleFail::Dead | env::HoleFail::Denied) => {
                 report("recv");
                 Err(Fail::Bad)
             }
@@ -141,9 +141,9 @@ impl Face {
                 Err(Fail::Bad)
             }
         };
-        let _ = door.wait(MailCondition::Empty, Wait::Forever);
+        let _ = door.wait(HoleCondition::Empty, Wait::Forever);
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = pie::seal(back);
+        let _ = env::hole::seal(back);
         let _ = pie::release(back, env::ReleaseMode::Revoke);
         got
     }

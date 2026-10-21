@@ -98,16 +98,16 @@ impl Pump {
     }
     pub fn demand(&self) -> bool {
         matches!(
-            env::mail::wait(
+            env::pole::wait(
                 self.port.token(),
-                env::MailCondition::Signal(pipe_api::DEMAND_BIT),
+                env::PoleCondition::Signal(pipe_api::DEMAND_BIT),
                 env::Wait::POLL
             ),
             Ok(true)
         )
     }
     pub fn hush_demand(&self) {
-        let _ = env::mail::hush(self.port.token(), pipe_api::DEMAND_BIT);
+        let _ = env::pole::hush(self.port.token(), pipe_api::DEMAND_BIT);
     }
     pub fn source_step(
         &mut self,

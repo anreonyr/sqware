@@ -4,9 +4,9 @@ use alloc::boxed::Box;
 
 use crate::machine::sync::OnceLock;
 
-use super::error::Error;
 #[cfg(debug_assertions)]
 use super::block_kinds::{BLOCK_KIND_SHIFT, block_kind_at, note_block_kind};
+use super::error::Error;
 #[cfg(debug_assertions)]
 use super::frame_kinds::{frame_kind_at, note_frame_kind};
 #[cfg(debug_assertions)]
@@ -121,12 +121,10 @@ pub(crate) fn record_spare_total(total: usize) {
     records(|s| s.spare_total.store(total, Ordering::Relaxed));
 }
 
-#[cfg(debug_assertions)]
 pub fn frame_occupied() -> usize {
     stats().frame_occupied.load(Ordering::Relaxed)
 }
 
-#[cfg(debug_assertions)]
 pub fn block_occupied() -> usize {
     stats().block_occupied.load(Ordering::Relaxed)
 }

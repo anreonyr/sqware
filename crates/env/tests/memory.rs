@@ -1,24 +1,25 @@
 use env::{
-    AcquireSource, Allocation, Decode, FlatReference, FromPair, MemoryCall, PieCall, PieToken,
-    Placement, PlacementAt, ReferenceRange, TeamId, UnsealArgs, ViewControl, ViewId, ViewSelection,
-    VirtAddr, Wire,
+    AcquireSource, Allocation, Decode, FlatReference, FromPair, MemoryCall, PieToken, Placement,
+    PlacementAt, PoleCall, ReferenceRange, TeamId, ViewControl, ViewId, ViewSelection, VirtAddr,
+    Wire,
 };
 
 #[test]
 fn pole_creation_takes_a_complete_source_reference() {
     for shared in [false, true] {
         let reference = reference_of(0x4100);
-        let call = PieCall::Unseal {
-            args: UnsealArgs::Pole { reference, shared },
-        };
-        assert_eq!(call.pack(), [1, 0x4100, 0, 0, shared as usize, 0]);
-        assert_eq!(PieCall::from_wire(call.slot(), &call.pack()).unwrap(), call);
+        let call = PoleCall::Unseal { reference, shared };
+        assert_eq!(call.pack(), [0x4100, shared as usize, 0, 0, 0, 0]);
+        assert_eq!(
+            PoleCall::from_wire(call.slot(), &call.pack()).unwrap(),
+            call
+        );
         let mut words = call.pack();
-        words[3] = 2;
-        assert!(PieCall::from_wire(call.slot(), &words).is_err());
+        words[0] = usize::MAX;
+        assert!(PoleCall::from_wire(call.slot(), &words).is_err());
         words = call.pack();
-        words[4] = 2;
-        assert!(PieCall::from_wire(call.slot(), &words).is_err());
+        words[1] = 2;
+        assert!(PoleCall::from_wire(call.slot(), &words).is_err());
     }
 }
 

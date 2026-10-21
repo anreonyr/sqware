@@ -38,9 +38,9 @@ impl Startup {
 pub fn startup(
     mut startup: ResMut<Startup>,
     mut operations: ResMut<crate::system::assembly::Jobs>,
-    flow: Res<crate::system::app::policy::Flow>,
+    settle: Res<crate::system::app::policy::Settle>,
 ) -> Result<Progress, Fail> {
-    if flow.settling || startup.plan.next == startup.plan.units.len() {
+    if settle.flow.settling || startup.plan.next == startup.plan.units.len() {
         return Ok(Progress::Done);
     }
     if let Some(id) = startup.waiting {

@@ -91,7 +91,7 @@ impl Loading {
             }
         };
         if target_size < image.length {
-            let _ = env::pie::shut(root);
+            let _ = env::pole::shut(root);
             let _ = resource::raw::release(root);
             let _ = source_dock.shut();
             return Err("image snapshot bounds".into());
@@ -105,11 +105,11 @@ impl Loading {
             );
         }
         if let Err(error) = source_dock.shut() {
-            let _ = env::pie::shut(root);
+            let _ = env::pole::shut(root);
             let _ = resource::raw::release(root);
             return Err(format!("image source unmap: {error:?}"));
         }
-        if let Err(error) = env::pie::shut(root) {
+        if let Err(error) = env::pole::shut(root) {
             let _ = resource::raw::release(root);
             return Err(format!("image snapshot unmap: {error:?}"));
         }
@@ -166,7 +166,7 @@ impl Loading {
         })
     }
 
-    pub fn source(&self) -> Option<env::Source> {
+    pub fn source(&self) -> Option<env::ToleEventSource> {
         match &self.phase {
             Phase::Build(p) | Phase::Inspect(p) => Some(p.source()),
             Phase::Cancel(p) => Some(p.source()),

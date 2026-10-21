@@ -68,7 +68,7 @@ pub fn answer(book: &mut IdentityBook, request: Request) -> Reply {
             )
             .map(|()| Reply::Unit),
         Wire::Derive(p) => book.derive(from, p).map(|p| Reply::Principal(Some(p))),
-        Wire::Found => book.found(from).map(Reply::Coalition),
+        Wire::Found(id) => book.found(from, id).map(Reply::Coalition),
         Wire::Admit(c, p) => book
             .admit(
                 from,

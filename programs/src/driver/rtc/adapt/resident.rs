@@ -6,7 +6,7 @@ use ::resource::pile::Pile;
 use ::resource::raw::Hole;
 use env::PAGE_SIZE;
 use env::pie;
-use env::{MailCondition, Wait};
+use env::{HoleCondition, Wait};
 use ipc::hand::Sender;
 use programs::debug;
 use programs::driver::rtc::core::frame::Time;
@@ -32,15 +32,15 @@ pub fn run(
     let entry_hole = Hole::from_raw(entry);
     let lane = held.hole().map_err(|_| Fail::at(E_RTC, "line"))?;
     if pile
-        .attach(env::Source::Mail {
-            pie: entry_hole.token(),
-            condition: MailCondition::Pull,
+        .attach(env::ToleEventSource::Hole {
+            token: entry_hole.token(),
+            condition: HoleCondition::Pull,
         })
         .is_err()
         || pile
-            .attach(env::Source::Mail {
-                pie: lane,
-                condition: MailCondition::Pull,
+            .attach(env::ToleEventSource::Hole {
+                token: lane,
+                condition: HoleCondition::Pull,
             })
             .is_err()
     {

@@ -208,7 +208,7 @@ mod tests {
         assert_eq!(router_api::frame::BACK_MARK, router_api::LINE_BACK);
         assert_eq!(router_api::frame::LANE, router_api::LANE);
 
-        assert_eq!(hub_api::PUBLICATIONS, ["bond", "list", "claim"]);
+        assert_eq!(hub_api::PUBLICATIONS, ["bond", "list", "claim", "dma"]);
         assert_eq!(terminal_api::PUBLICATIONS, ["attach"]);
         assert_eq!(router_api::PUBLICATIONS, ["router"]);
 

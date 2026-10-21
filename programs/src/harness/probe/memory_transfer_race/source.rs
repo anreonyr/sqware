@@ -1,7 +1,7 @@
 //! 本景那两份私有来源：**迁移来源**与**共享控制页**。
 //!
 //! 两份都是普通私有分配（属主就是管理端），各自铸成一个**共享根**
-//! （`UnsealArgs::Pole { shared: true }`）——于是可以各授一枚子分支给对端，
+//! （`PoleCall::Unseal { shared: true, .. }`）——于是可以各授一枚子分支给对端，
 //! 而对端在**自己那个空间**里把子分支 `open` 成一条压着同一批帧的关系。
 //!
 //! 两份来源各有各的寿命：控制页到本景收尾才关，迁移来源在被移交动过之后也一直
@@ -21,7 +21,6 @@ use env::Placement;
 use env::ReleaseMode;
 use env::TaskId;
 use env::TeamId;
-use env::UnsealArgs;
 use env::ViewControl;
 use env::VirtAddr;
 use execution::memory::Reference;
@@ -74,10 +73,7 @@ impl Source {
         let handle = reference
             .handle()
             .expect("memory-transfer-race: source handle");
-        let root = env::pie::unseal(UnsealArgs::Pole {
-            reference: handle,
-            shared: true,
-        })
+        let root = env::pole::unseal(handle, true)
         .unwrap_or_else(|error| panic!("race: source root: {:?}", error.source));
         let end = AcquireSource::Source {
             token: root,

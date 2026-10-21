@@ -1,5 +1,4 @@
-//! 一台（Entry）· 它的主人（Owner）· 一格（Cell）·
-//! 册本身（Ledger）与册上那几手（收 / 认领 / 空出 / 取窗 / 落格要的那几件）。
+//! Device inventory, class admission, execution and binding responsibilities.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -7,58 +6,21 @@ use alloc::vec::Vec;
 use env::{PieToken, TaskId};
 use hub_api::{Fail, INVENTORY_MAX, LIST_MAX, Window};
 
-use super::league::League;
+use super::{Cell, Entry, Owner, league::League};
 
-/// **一台设备在 hub 账上是什么**：名（树上的坐标）、类（认领的口子）、线（区→线那条权威在
-/// hub）、**那一页**（认领时授出去的门闩）、**那一枚孔**（hub 为这一台铸的、挂在 `/dev` 那一
-/// 格上的那一份）
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Entry {
-    pub name: String,
-    pub class: String,
-    pub line: u32,
-    /// 那一页（装配者交过来的设备门闩）——认领成功时授给主人的就是它
-    pub page: PieToken,
-    /// hub 为这一台铸的那一枚孔——**就是你 `find` 到的那一格上挂的那一份**
-    /// 「哪一台」由"哪一枚孔响了"回答（Ledger::claim 收的正是它）
-    pub door: PieToken,
-}
-
-/// **这台的主人**：号 ＋ **主人那一枚**（他铸的报活孔）
-/// 内核那一问（UnitCall::Join）只许同队或父域，hub 与驱动是兄弟 ⇒ 探活只能问主人自己交来的
-/// 那一枚（mail::reserve，与线路由者那条同一手）
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Owner {
-    pub task: TaskId,
-    pub sensor: PieToken,
-}
-
-/// **一格**：空着，或有主
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Cell {
-    /// 没主（随时可认）
-    Vacant(Entry),
-    /// 有主
-    Held { entry: Entry, owner: Owner },
-}
-
-impl Cell {
-    pub fn entry(&self) -> &Entry {
-        match self {
-            Cell::Vacant(entry) => entry,
-            Cell::Held { entry, .. } => entry,
-        }
-    }
-
-    pub fn held(&self) -> bool {
-        matches!(self, Cell::Held { .. })
-    }
-}
-
-/// 设备那一本账
+/// 设备那一本账：普通设备的格子 ＋ 每类那枚盟 ＋ **DMA 安全绑定的协调记录**
+/// （不新增第二本设备账：设备、认领记录与绑定进度同住这一本）。
 pub struct Ledger {
-    cells: Vec<Cell>,
+    pub(super) cells: Vec<Cell>,
     pub(super) leagues: Vec<League>,
+    /// DMA 安全绑定：一笔一条，序号不复用。
+    pub(super) bindings: Vec<super::binding::Binding>,
+    pub(super) executions: Vec<super::Execution>,
+    /// 绑定编号的游标（从 1 起，不复用）。
+    pub(super) serial: u64,
+    /// 本册那一台（绑定编号里的 `hub` 那一格）。
+    pub(super) hub: TaskId,
+    pub(super) settling: bool,
 }
 
 impl Ledger {
@@ -67,7 +29,18 @@ impl Ledger {
         Ledger {
             cells: Vec::new(),
             leagues: Vec::new(),
+            bindings: Vec::new(),
+            executions: Vec::new(),
+            serial: 0,
+            hub: TaskId::new(0),
+            settling: false,
         }
+    }
+
+    /// 本册那一台是谁（绑定编号要用）。
+    pub fn with_hub(mut self, hub: TaskId) -> Self {
+        self.hub = hub;
+        self
     }
 
     /// 册 · 写：收一台。**撞名即拒**（名是这一台的坐标，两处写同一个名＝自述坏了）
@@ -91,7 +64,7 @@ impl Ledger {
         alive: impl Fn(PieToken) -> bool,
         deliver: impl FnOnce(&Entry) -> Result<T, Fail>,
     ) -> Result<(Entry, T), Fail> {
-        let Some(at) = self.cells.iter().position(|c| c.entry().door == door) else {
+        let Some(at) = self.cells.iter().position(|c| c.ready() && c.entry().door == door) else {
             return Err(Fail::Unknown);
         };
         if let Cell::Held { owner: held, .. } = &self.cells[at] {
@@ -133,7 +106,7 @@ impl Ledger {
         for (i, cell) in self
             .cells
             .iter()
-            .filter(|c| c.entry().class == class)
+            .filter(|c| c.ready() && c.entry().class == class)
             .enumerate()
         {
             if (i as u32) < from {
@@ -157,7 +130,7 @@ impl Ledger {
     pub fn doors(&self, class: String) -> impl Iterator<Item = (&String, PieToken)> + '_ {
         self.cells
             .iter()
-            .filter(move |c| c.entry().class == class)
+            .filter(move |c| c.ready() && c.entry().class == class)
             .map(|c| (&c.entry().name, c.entry().door))
     }
 

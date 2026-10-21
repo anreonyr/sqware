@@ -1,6 +1,9 @@
 mod accessor;
+mod delegate;
 mod effects;
 mod platform;
+
+pub use delegate::accept as delegated;
 
 use super::super::retention_core::{DeviceRange, Failure, Holds, Registration, Scope};
 use super::{Caller, KVirt, PAGE_SIZE, pend};
@@ -26,7 +29,7 @@ pub fn accept() {
         active: Cell::new(false),
         timeout: Cell::new(false),
     });
-    let root = crate::entry::call::pie::create_pole(&driver.task, source, true).unwrap();
+    let root = crate::entry::call::pole::create_pole(&driver.task, source, true).unwrap();
     assert_eq!(
         driver.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
         0

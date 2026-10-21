@@ -5,6 +5,7 @@ use super::{
     lifecycle,
 };
 use crate::system::app::Fault as Fail;
+use crate::system::app::policy::Settle;
 use ::schedule::{BuildError, Plan, Progress, Res, ResMut, Schedule};
 use env::Wait;
 pub(crate) fn poll() -> Result<Plan<Fail>, BuildError> {
@@ -49,12 +50,14 @@ pub fn retire_completed(
 
 pub fn ruin_rest(
     control: Res<Control>,
-    flow: Res<crate::system::app::policy::Flow>,
+    settle: Res<Settle>,
     mut operations: ResMut<crate::system::assembly::Jobs>,
 ) -> Result<Progress, Fail> {
     // Dynamic tasks may hold resources from any static provider. Their retire
     // hooks reclaim the teams before static services begin to relinquish them.
-    if flow.settling && control.instances().all(|item| item.team.is_none()) {
+    // 退场门在 `policy::settle` 那一侧：只有 Hub 把全部 DMA 绑定结清之后 settling 才为真，
+    // 故这里递的 Ruin 不会抢在恢复责任结清之前拆掉恢复侧。
+    if settle.flow.settling && control.instances().all(|item| item.team.is_none()) {
         for name in control.closing_service_names() {
             if !operations.contains(name) {
                 operations

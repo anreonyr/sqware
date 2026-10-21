@@ -6,14 +6,14 @@
 //! （`Buf` / `EMPTY` / `store` / `fetch`），但**不共用类型**：失败域不同（`Full` 对 `Unbound`）。
 //!
 //! **一具架只有一枚 Pie**：那枚页上带着"有事"这一位（`Ring`/`Hush`/`Wait` 都认它，见
-//! `env::abi::call` 的 `MailCall` 与 `kernel::work::mail::pole`）——**页上那一位就是它的铃**，
+//! `env::abi::call` 的 `PoleCall` 与 `kernel::work::mail::pole`）——**页上那一位就是它的铃**，
 //! 故树上一格门牌（一格一枚 Pie）挂得下的正是一具完整的架。
 //!
 //! # 这一层的四个文件（缓冲与通知正交，两端各自把它们拼起来）
 //! ```text
 //! mod.rs    契约：Mode · Rack · open/writer/reader/ship/slot（本文）
 //! ring.rs   缓冲：页布局、两只游标、四个计数 —— 只借 View，不发系统调用、不分配
-//! bell.rs   通知：**页上那一位**的三拍（响 / 等 / 应）—— 只发 Mail 三拍，不碰页里的字节
+//! bell.rs   通知：**页上那一位**的三拍（响 / 等 / 应）—— 只发 Pole 三拍，不碰页里的字节
 //! writer.rs 写端 ┐ 把 ring 与 bell 拼成一端；"满了丢哪头"与"取空了应铃"这两条协议住这里
 //! reader.rs 读端 ┘
 //! ```
@@ -42,7 +42,7 @@ pub mod writer;
 use core::marker::PhantomData;
 
 use ::resource::dock::Dock;
-use env::{PieResult, PieToken};
+use env::{PoleResult, PieToken};
 
 use wire::Message;
 
@@ -80,8 +80,8 @@ impl<M: Message> Rack<M> {
     /// 开一具架：**一枚清过零的共享页**（页上那一位从"没响"起），`mode` 定满了丢哪一头。
     ///
     /// # Errors
-    /// 页解封不出来 / 映不进来（`PieFail`）——起手那一步没材料，调用方按"这一档用不了"处置。
-    pub fn open(mode: Mode) -> PieResult<Self> {
+    /// 页解封不出来 / 映不进来（`PoleFail`）——起手那一步没材料，调用方按"这一档用不了"处置。
+    pub fn open(mode: Mode) -> PoleResult<Self> {
         ring::exact::<M>();
         // **起手那一步报一行（release 也看得见）**：`debug!` 在 release 是空操作，
         // 而"页解不出来"是这一档用不了的直接成因。
@@ -95,6 +95,8 @@ impl<M: Message> Rack<M> {
         let dock = match Dock::open(pie) {
             Ok(dock) => dock,
             Err(fail) => {
+                // 释放失败时，Pole 仍由本任务的能力表持有。
+                let _ = ::resource::raw::release(pie);
                 crate::debug::put(&alloc::format!("rack: no view {:?}", fail));
                 return Err(fail);
             }

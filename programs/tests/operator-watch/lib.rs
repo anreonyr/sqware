@@ -3,7 +3,9 @@ extern crate alloc;
 extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
-pub use abi::{MailFail, Mark, Permission, PieToken, ReleaseMode, TaskId, UnsealArgs, Wait};
+pub use abi::{
+    HoleFail, HoleLimits, HoleResult, Mark, Permission, PieToken, ReleaseMode, TaskId, Wait,
+};
 pub type PieResult<T> = Result<T, ()>;
 use std::{cell::RefCell, collections::HashMap};
 use wire::Message;
@@ -21,21 +23,14 @@ struct Native {
     calls: usize,
 }
 thread_local! { static NATIVE: RefCell<Native> = RefCell::default(); }
-pub mod pie {
-    pub fn unseal(args: crate::UnsealArgs) -> PieResult<PieToken> {
-        match args {
-            crate::UnsealArgs::Hole { mark, .. } => hole_token(mark),
-            _ => unreachable!(),
-        }
-    }
-
+pub mod hole {
     use super::*;
-    fn hole_token(mark: Mark) -> PieResult<PieToken> {
+    pub fn unseal(mark: Mark, _: HoleLimits) -> HoleResult<PieToken> {
         assert_eq!(mark, operator::WATCH_MARK);
         NATIVE.with(|cell| {
             let mut n = cell.borrow_mut();
             if n.allocation_fail {
-                return Err(());
+                return Err(abi::make_fail(HoleFail::OoM));
             }
             n.next += 1;
             let token = PieToken::mint(n.next);
@@ -43,7 +38,7 @@ pub mod pie {
             Ok(token)
         })
     }
-    pub fn seal(token: PieToken) -> PieResult<()> {
+    pub fn seal(token: PieToken) -> HoleResult<()> {
         NATIVE.with(|cell| {
             let mut n = cell.borrow_mut();
             n.roots.get_mut(&token).unwrap().0 = false;
@@ -51,6 +46,9 @@ pub mod pie {
         });
         Ok(())
     }
+}
+pub mod pie {
+    use super::*;
     pub fn release(token: PieToken, _mode: crate::ReleaseMode) -> PieResult<()> {
         NATIVE.with(|cell| {
             let mut n = cell.borrow_mut();
@@ -62,6 +60,16 @@ pub mod pie {
         Ok(())
     }
     pub fn accord(_: PieToken, _: TaskId, _: Permission, _: Mark) -> PieResult<PieToken> {
+        unreachable!()
+    }
+    pub fn accord_window(
+        _: PieToken,
+        _: TaskId,
+        _: Permission,
+        _: Mark,
+        _: usize,
+        _: usize,
+    ) -> PieResult<PieToken> {
         unreachable!()
     }
     pub fn revoke(_: TaskId, _: PieToken) -> PieResult<()> {
@@ -105,7 +113,7 @@ pub mod port {
 pub mod hand {
     use super::*;
     pub enum RecvFail {
-        Mail(MailFail),
+        Mail(HoleFail),
     }
     pub enum SourceFail {
         Receive(RecvFail),
@@ -116,7 +124,7 @@ pub mod hand {
             Self(token, core::marker::PhantomData)
         }
         pub fn recv_from(&mut self, _: TaskId, _: &mut [u8], _: Wait) -> Result<M::In, SourceFail> {
-            Err(SourceFail::Receive(RecvFail::Mail(MailFail::Busy)))
+            Err(SourceFail::Receive(RecvFail::Mail(HoleFail::Busy)))
         }
     }
 }

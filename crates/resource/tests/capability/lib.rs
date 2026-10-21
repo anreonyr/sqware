@@ -1,9 +1,9 @@
 extern crate self as env;
 
 pub use abi::{
-    AcquireSource, Allocation, Bit, FlatReference, MailCondition, MailFail, MailResult, Mark,
+    AcquireSource, Allocation, Bit, FlatReference, HoleCondition, HoleFail, HoleResult, HoleLimits, Mark,
     MemoryFail, MemoryResult, Oversize, PAGE_SIZE, Permission, PieFail, PieInfo, PieKind,
-    PieResult, PieToken, PullOutcome, ReleaseMode, Source, TaskId, UnsealArgs, VirtAddr, Wait,
+    PieResult, PieToken, PoleFail, PoleResult, PullOutcome, ReleaseMode, ToleEventSource, TaskId, VirtAddr, Wait,
     make_fail,
 };
 
@@ -19,51 +19,16 @@ pub mod room {
 }
 
 pub mod pie {
-    pub fn unseal(args: crate::UnsealArgs) -> PieResult<PieToken> {
-        match args {
-            crate::UnsealArgs::Hole { mark, .. } => hole_token(mark),
-            crate::UnsealArgs::Pole { reference, shared } => {
-                let token = token();
-                record(Event::Pole(reference.get(), shared, token));
-                if crate::test_backend::fail(Op::Unseal) {
-                    Err(make_fail(PieFail::Denied))
-                } else {
-                    Ok(token)
-                }
-            }
-            _ => unreachable!(),
-        }
-    }
-
     use crate::{
         Mark, Permission, PieFail, PieResult, PieToken, TaskId, VirtAddr, make_fail,
         test_backend::{Event, Op, record, token},
     };
-
-    fn hole_token(mark: Mark) -> PieResult<PieToken> {
-        let token = token();
-        record(Event::Unseal(token, mark));
-        if crate::test_backend::fail(Op::Unseal) {
-            Err(make_fail(PieFail::Denied))
-        } else {
-            Ok(token)
-        }
-    }
 
     pub fn release(token: PieToken, _mode: crate::ReleaseMode) -> PieResult<()> {
         record(Event::Release(token));
         if crate::test_backend::busy(Op::Release) {
             Err(make_fail(PieFail::Busy))
         } else if crate::test_backend::fail(Op::Release) {
-            Err(make_fail(PieFail::Denied))
-        } else {
-            Ok(())
-        }
-    }
-
-    pub fn seal(token: PieToken) -> PieResult<()> {
-        record(Event::Seal(token));
-        if crate::test_backend::fail(Op::Seal) {
             Err(make_fail(PieFail::Denied))
         } else {
             Ok(())
@@ -134,25 +99,62 @@ pub mod pie {
     pub fn collect(_: PieToken, _: VirtAddr, _: usize) -> PieResult<usize> {
         Ok(0)
     }
-    pub fn open(_: PieToken) -> PieResult<(VirtAddr, usize)> {
+}
+
+pub mod pole {
+    use crate::{FlatReference, PieToken, PoleFail, PoleResult, VirtAddr, make_fail};
+    use crate::test_backend::{Event, Op, record, token};
+
+    pub fn unseal(reference: FlatReference, shared: bool) -> PoleResult<PieToken> {
+        let token = token();
+        record(Event::Pole(reference.get(), shared, token));
+        if crate::test_backend::fail(Op::Unseal) {
+            Err(make_fail(PoleFail::Denied))
+        } else {
+            Ok(token)
+        }
+    }
+
+    pub fn open(_: PieToken) -> PoleResult<(VirtAddr, usize)> {
         Ok((VirtAddr::new(0), 0))
     }
 }
 
-pub mod mail {
+pub mod hole {
+    pub(crate) use crate::hole_handle::Hole;
     use crate::{
-        MailCondition, MailFail, MailResult, PieToken, TaskId, VirtAddr, Wait, make_fail,
-        test_backend::{Event, pop_message, record},
+        HoleCondition, HoleFail, HoleResult, HoleLimits, Mark, PieToken, TaskId, VirtAddr, Wait, make_fail,
+        test_backend::{Event, Op, pop_message, record, token},
     };
+
+    pub fn unseal(mark: Mark, limits: HoleLimits) -> HoleResult<PieToken> {
+        assert_eq!(limits, HoleLimits::default());
+        let token = token();
+        record(Event::Unseal(token, mark));
+        if crate::test_backend::fail(Op::Unseal) {
+            Err(make_fail(HoleFail::Denied))
+        } else {
+            Ok(token)
+        }
+    }
+
+    pub fn seal(token: PieToken) -> HoleResult<()> {
+        record(Event::Seal(token));
+        if crate::test_backend::fail(Op::Seal) {
+            Err(make_fail(HoleFail::Denied))
+        } else {
+            Ok(())
+        }
+    }
 
     pub fn pull(
         token: PieToken,
         buf: VirtAddr,
         max: usize,
         oversize: crate::Oversize,
-    ) -> MailResult<crate::PullOutcome> {
+    ) -> HoleResult<crate::PullOutcome> {
         record(Event::Pull(token));
-        let (bytes, from) = pop_message().ok_or_else(|| make_fail(MailFail::Busy))?;
+        let (bytes, from) = pop_message().ok_or_else(|| make_fail(HoleFail::Busy))?;
         if bytes.len() > max {
             return if oversize == crate::Oversize::Discard {
                 Ok(crate::PullOutcome::Discarded {
@@ -161,7 +163,7 @@ pub mod mail {
                 })
             } else {
                 crate::test_backend::return_message(bytes, from);
-                Err(make_fail(MailFail::Denied))
+                Err(make_fail(HoleFail::Denied))
             };
         }
         unsafe {
@@ -173,23 +175,23 @@ pub mod mail {
         })
     }
 
-    pub fn push(_: PieToken, _: VirtAddr, _: usize) -> MailResult<()> {
+    pub fn push(_: PieToken, _: VirtAddr, _: usize) -> HoleResult<()> {
         Ok(())
     }
-    pub fn peek(_: PieToken) -> MailResult<(usize, TaskId, usize)> {
-        Err(make_fail(MailFail::Busy))
+    pub fn peek(_: PieToken) -> HoleResult<(usize, TaskId, usize)> {
+        Err(make_fail(HoleFail::Busy))
     }
-    pub fn wait(token: PieToken, condition: MailCondition, within: Wait) -> MailResult<bool> {
+    pub fn wait(token: PieToken, condition: HoleCondition, within: Wait) -> HoleResult<bool> {
         record(Event::Wait(token, condition, within));
         if let Wait::AtMost(ms) = within {
             crate::test_backend::advance(ms as u64 * 1_000_000);
         }
         Ok(false)
     }
-    pub fn ring(_: PieToken, _: crate::Bit) -> MailResult<()> {
+    pub fn ring(_: PieToken) -> HoleResult<()> {
         Ok(())
     }
-    pub fn hush(_: PieToken, _: crate::Bit) -> MailResult<()> {
+    pub fn hush(_: PieToken) -> HoleResult<()> {
         Ok(())
     }
 }
@@ -216,7 +218,7 @@ pub mod memory {
 }
 
 pub mod test_backend {
-    use abi::{MailCondition, Mark, Permission, PieToken, TaskId, Wait};
+    use abi::{HoleCondition, Mark, Permission, PieToken, TaskId, Wait};
     use std::cell::RefCell;
     use std::collections::VecDeque;
 
@@ -243,7 +245,7 @@ pub mod test_backend {
         AccordWindow(PieToken, TaskId, Permission, Mark, usize, usize, PieToken),
         Revoke(TaskId, PieToken),
         Pull(PieToken),
-        Wait(PieToken, MailCondition, Wait),
+        Wait(PieToken, HoleCondition, Wait),
     }
 
     #[derive(Default)]
@@ -331,7 +333,7 @@ pub mod test_backend {
 pub mod capability;
 #[path = "../../src/hole.rs"]
 #[allow(dead_code)]
-pub(crate) mod hole;
+pub(crate) mod hole_handle;
 #[path = "../../src/raw.rs"]
 pub mod raw;
 #[path = "../../src/reply.rs"]

@@ -1,13 +1,10 @@
-use alloc::sync::Arc;
-
-use env::TaskId;
+use alloc::sync::{Arc, Weak};
 
 use crate::core::memory::nest::{NestError, SpaceKind};
 use crate::core::work::unit::space::{Space, SpaceBuilder};
 use crate::core::work::unit::task::TaskWeak;
 
 use super::Team;
-use super::TeamPhase;
 use super::construct::make_team;
 
 /// 造一座团队：空间给定，家长位可选。
@@ -47,26 +44,12 @@ impl TeamBuilder {
     }
 
     pub fn spawn(self) -> Result<Arc<Team>, NestError> {
-        let parent = self.sire.upgrade().map(|t| t.ident.team.life.clone());
-        let owner = self.sire.upgrade().map_or(TaskId::new(0), |t| t.ident.id);
+        let sire = match self.sire.upgrade() {
+            Some(task) => Some(task),
+            None if self.sire.as_weak().ptr_eq(&Weak::new()) => None,
+            None => return Err(NestError::NoRegion),
+        };
         let space = Arc::try_new(self.space).map_err(|_| NestError::OutOfMemory)?;
-        let team = make_team(space, self.sire, parent, owner, self.constructing)?;
-        if let Some(sire) = team.sire.upgrade() {
-            if sire.adopt(team.clone()).is_err() {
-                team.state.lock().phase = TeamPhase::Ousted;
-                if let Some(parent) = &team.life.parent {
-                    parent
-                        .children
-                        .lock()
-                        .retain(|node| !Arc::ptr_eq(node, &team.life));
-                }
-                return Err(if sire.dead() {
-                    NestError::NoRegion
-                } else {
-                    NestError::OutOfMemory
-                });
-            }
-        }
-        Ok(team)
+        make_team(space, sire, self.constructing)
     }
 }

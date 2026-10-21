@@ -3,6 +3,29 @@ use crate::core::work::room::{deadline, halt, interrupt, messenger, scheduler};
 use crate::core::work::unit::tally;
 use crate::machine::clock;
 use crate::putln;
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+static FRAME_BASELINE: AtomicUsize = AtomicUsize::new(usize::MAX);
+
+pub(crate) fn arm() {
+    if crate::testing() {
+        // The ASID bitmap is permanent kernel metadata, allocated on its first use.
+        let asid = crate::core::memory::nest::identity::Asid::try_allocate()
+            .expect("frame baseline: ASID allocator");
+        crate::core::memory::nest::identity::Asid::release_unpublished(asid);
+        FRAME_BASELINE.store(frame_allocations(), Ordering::Release);
+        #[cfg(debug_assertions)]
+        putln!(
+            "memory: baseline kinds {}",
+            crate::core::memory::flat::allocator::statistics::kinds()
+        );
+    }
+}
+
+fn frame_allocations() -> usize {
+    use crate::core::memory::flat::allocator::statistics;
+    statistics::frame_occupied() - statistics::block_occupied()
+}
 
 pub(crate) fn waiting() {
     let (arrived, total) = halt::barrier();
@@ -42,6 +65,18 @@ pub(crate) fn report() {
 pub(crate) fn verdict() {
     if !crate::testing() {
         return;
+    }
+    let before = FRAME_BASELINE.load(Ordering::Acquire);
+    let after = frame_allocations();
+    putln!("memory: frame_allocations before={before} after={after}");
+    #[cfg(debug_assertions)]
+    putln!(
+        "memory: final kinds {}",
+        crate::core::memory::flat::allocator::statistics::kinds()
+    );
+    if before == usize::MAX || before != after {
+        putln!("[verdict] physical frame allocations did not return to baseline");
+        semihosting::process::exit(101)
     }
     #[cfg(feature = "semihosting")]
     if !super::export::complete() {

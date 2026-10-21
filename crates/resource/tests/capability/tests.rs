@@ -1,5 +1,5 @@
 use crate::{
-    MailFail, Mark, Permission, PieToken, TaskId, Wait,
+    HoleFail, Mark, Permission, PieToken, TaskId, Wait,
     capability::Capability,
     raw::Hole,
     reply::{Reply, ReplyError},
@@ -200,7 +200,7 @@ fn native_receive_denial_is_distinct_from_wrong_source() {
     test_backend::queue_message(b"oversized", peer());
     assert_eq!(
         reply.pull(&mut [0; 1], Wait::POLL),
-        Err(ReplyError::Mail(MailFail::Denied))
+        Err(ReplyError::Mail(HoleFail::Denied))
     );
 }
 
@@ -279,7 +279,7 @@ fn wait_budget_includes_the_first_kernel_wait() {
     let token = crate::test_backend::token();
     assert!(
         !crate::raw::Hole::from_raw(token)
-            .wait(crate::MailCondition::Pull, crate::Wait::AtMost(25))
+            .wait(crate::HoleCondition::Pull, crate::Wait::AtMost(25))
             .unwrap()
     );
     assert_eq!(crate::test_backend::now(), 25_000_000);
@@ -287,7 +287,7 @@ fn wait_budget_includes_the_first_kernel_wait() {
         crate::test_backend::events(),
         [crate::test_backend::Event::Wait(
             token,
-            crate::MailCondition::Pull,
+            crate::HoleCondition::Pull,
             crate::Wait::AtMost(25)
         )]
     );
@@ -304,7 +304,7 @@ fn receive_policy_keeps_or_discards_only_the_oversized_head() {
     let mut buf = [0; 2];
     assert!(
         hole.pull(&mut buf, crate::Wait::POLL)
-            .is_err_and(|e| e.source == crate::MailFail::Denied)
+            .is_err_and(|e| e.source == crate::HoleFail::Denied)
     );
     assert_eq!(
         hole.pull_with(&mut buf, crate::Wait::POLL, crate::Oversize::Discard)
@@ -337,7 +337,7 @@ fn pole_creation_hands_over_the_source_and_releases_its_reference() {
 fn failed_pole_creation_releases_only_its_source_reference() {
     test_backend::reset();
     test_backend::fail_next(Op::Unseal);
-    assert!(crate::raw::pole(crate::PAGE_SIZE, false).is_err());
+    assert!(crate::raw::pole(crate::PAGE_SIZE, false).is_err_and(|e| e.source == crate::PoleFail::Denied));
     let events = test_backend::events();
     assert!(matches!(events[1], Event::Pole(7, false, _)));
     assert_eq!(&events[2..], [Event::ReleaseReference(7),]);
@@ -347,10 +347,33 @@ fn failed_pole_creation_releases_only_its_source_reference() {
 fn pole_allocation_failure_and_invalid_sizes_create_no_capability() {
     test_backend::reset();
     test_backend::fail_next(Op::Acquire);
-    assert!(crate::raw::pole(crate::PAGE_SIZE, true).is_err());
+    assert!(crate::raw::pole(crate::PAGE_SIZE, true).is_err_and(|e| e.source == crate::PoleFail::OoM));
     assert_eq!(test_backend::events(), [Event::Acquire(crate::PAGE_SIZE)]);
     test_backend::reset();
-    assert!(crate::raw::pole(0, true).is_err());
-    assert!(crate::raw::pole(crate::PAGE_SIZE - 1, true).is_err());
+    assert!(crate::raw::pole(0, true).is_err_and(|e| e.source == crate::PoleFail::NotAligned));
+    assert!(crate::raw::pole(crate::PAGE_SIZE - 1, true).is_err_and(|e| e.source == crate::PoleFail::NotAligned));
     assert!(test_backend::events().is_empty());
+}
+
+#[test]
+fn hole_creation_failure_preserves_its_domain_without_cleanup() {
+    test_backend::reset();
+    test_backend::fail_next(Op::Unseal);
+    assert!(Capability::unseal_hole(Mark::of("failed"))
+        .is_err_and(|e| e.source == HoleFail::Denied));
+    assert!(matches!(test_backend::events().as_slice(), [Event::Unseal(_, mark)] if *mark == Mark::of("failed")));
+}
+
+#[test]
+fn nole_wait_rechecks_early_wakes_with_the_remaining_budget() {
+    test_backend::reset();
+    let mut waits = Vec::new();
+    let result: abi::NoleResult<bool> = crate::raw::wait_for(Wait::AtMost(25), |step| {
+        waits.push(step);
+        test_backend::advance(5_000_000);
+        Ok(waits.len() == 2)
+    });
+    assert_eq!(result.unwrap(), true);
+    assert_eq!(waits, [Wait::AtMost(25), Wait::AtMost(20)]);
+    assert_eq!(test_backend::now(), 10_000_000);
 }

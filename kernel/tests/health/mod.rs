@@ -23,9 +23,13 @@ pub use crate::core::work::mail::hole::tests as hole;
 pub use crate::core::work::room::conductor::tests::acceptance as scheduler;
 pub use crate::entry::boot::error::accept as boot_errors;
 
+pub mod attach_rollback;
 pub mod backtrace;
 pub mod boot_devices;
+pub mod closed_transfer;
 pub mod depend;
+#[cfg(feature = "dma-confirmation-scene")]
+pub mod dma_confirmation;
 pub mod fault;
 pub mod flat;
 pub mod frame;
@@ -36,6 +40,7 @@ pub mod hart;
 pub mod large_pages;
 pub mod memory;
 pub mod nest;
+pub mod nest_exit;
 pub mod nest_failure;
 pub mod pagetable;
 pub mod permit;
@@ -44,12 +49,14 @@ pub mod pole;
 pub mod race_scene;
 pub mod residency;
 #[allow(dead_code)]
-#[path = "../../../programs/src/system/supply/retention/mod.rs"]
+#[path = "../../../programs/src/driver/iommu/hold/mod.rs"]
 pub(crate) mod retention_core;
 pub mod shell;
+pub mod source_binding;
 pub mod source_views;
 pub mod spare;
 pub mod stress;
+pub mod sub_pole;
 mod support;
 pub mod syscall;
 pub mod task;

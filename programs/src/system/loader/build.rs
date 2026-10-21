@@ -33,9 +33,9 @@ pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {
             .map_err(|_| frame::Fail::Full)?;
         bytes.resize(len, 0);
         let copy =
-            pie::unseal(env::UnsealArgs::hole(env::Mark::NONE)).map_err(|_| frame::Fail::Full)?;
+            env::hole::unseal(env::Mark::NONE, env::HoleLimits::default()).map_err(|_| frame::Fail::Full)?;
         let result = (|| {
-            env::mail::push(copy, VirtAddr::new(at + offset), len)
+            env::hole::push(copy, VirtAddr::new(at + offset), len)
                 .map_err(|_| frame::Fail::BadImage)?;
             let (n, _) = Hole::from_raw(copy)
                 .pull(&mut bytes, Wait::POLL)
@@ -48,7 +48,7 @@ pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {
         let _ = pie::release(copy, env::ReleaseMode::Revoke);
         result
     })();
-    let _ = pie::shut(page);
+    let _ = env::pole::shut(page);
     result
 }
 

@@ -28,7 +28,7 @@ use crate::machine::sync::SpinLock;
 
 #[path = "retention/mod.rs"]
 mod external_retention;
-pub use external_retention::accept as external_retention;
+pub use external_retention::{accept as external_retention, delegated as retention_delegation};
 
 struct Caller {
     team: Arc<Team>,
@@ -115,6 +115,10 @@ impl Caller {
             EnvCall::Debug(call) => (call.slot(), call.pack()),
             EnvCall::Control(call) => (call.slot(), call.pack()),
             EnvCall::Pie(call) => (call.slot(), call.pack()),
+            EnvCall::Hole(call) => (call.slot(), call.pack()),
+            EnvCall::Pole(call) => (call.slot(), call.pack()),
+            EnvCall::Nole(call) => (call.slot(), call.pack()),
+            EnvCall::Tole(call) => (call.slot(), call.pack()),
             _ => unreachable!(),
         };
         self.raw(slot, regs)
@@ -124,6 +128,7 @@ impl Caller {
     fn pair(&self, call: EnvCall) -> (isize, usize) {
         let (slot, regs) = match call {
             EnvCall::Memory(call) => (call.slot(), call.pack()),
+            EnvCall::Pole(call) => (call.slot(), call.pack()),
             _ => unreachable!(),
         };
         let frame = unsafe { &mut *(self.task.ident.frame_pa.as_usize() as *mut TrapContext) };
@@ -1014,8 +1019,7 @@ pub fn traverse_pages() {
         "the answers are those very frames, not a fresh set"
     );
 
-    // 别的一枚 cap（属主是别人）不能替它开门。
-    let foreign = {
+    let delegated = {
         let pie = pend::Pie::try_new(
             Mail::Nole(NoleMeta::mint_retention(env::TaskId::new(0x1234)).expect("cap")),
             Mark::NONE,
@@ -1029,13 +1033,23 @@ pub fn traverse_pages() {
     };
     assert_eq!(
         user.call(EnvCall::Memory(MemoryCall::Traverse {
-            retention: foreign,
+            retention: delegated,
+            range: VirtAddr::new(scratch),
+            out: VirtAddr::new(scratch + 64),
+        })),
+        0,
+        "a kernel-minted cap held in this task's own account authorizes"
+    );
+    assert_eq!(
+        user.call(EnvCall::Memory(MemoryCall::Traverse {
+            retention: PieToken::mint(0xdead_beef),
             range: VirtAddr::new(scratch),
             out: VirtAddr::new(scratch + 64),
         })),
         MemoryFail::Denied.code(),
-        "the cap must be the calling task's own"
+        "a token this task does not hold authorizes nothing"
     );
+    assert_eq!(pend::release(&user.task, delegated).unwrap(), 1);
 
     // 输出跑到末尾未映射的那一页：整段先验后拷，前缀哨兵不动。
     let edge = scratch + PAGE_SIZE - 4;
@@ -1306,7 +1320,7 @@ pub fn lifecycle() {
     );
     assert!(data > 0, "the private owner can reacquire data");
     assert_eq!(
-        crate::entry::call::pie::create_pole(task, reference(data as usize), true),
+        crate::entry::call::pole::create_pole(task, reference(data as usize), true),
         Err(env::PieFail::Denied),
         "a live View cannot revive the ended creation qualification"
     );
@@ -1509,7 +1523,7 @@ pub fn branches_and_retention() {
         let frames = view.frames_in(KVirt::wrap(source_at), PAGE_SIZE).unwrap();
         Arc::downgrade(&frames[0].1)
     };
-    let root = crate::entry::call::pie::create_pole(&owner.task, source, true).unwrap();
+    let root = crate::entry::call::pole::create_pole(&owner.task, source, true).unwrap();
     assert_eq!(
         owner.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
         0
@@ -1601,8 +1615,9 @@ pub fn branches_and_retention() {
             .is_some()
     );
     source.leave_publish(id);
-    left.team.space.views.cancel(id);
     left.team.space.nest.release_reservation(pending).unwrap();
+    // 结清只有一条规则：登记与源侧成员一起撤。
+    left.team.space.retire_view(id);
     pend::release(&left.task, left_token).unwrap();
     assert!(
         left.team
@@ -1990,7 +2005,10 @@ pub fn attach_detach_access() {
         .views
         .locate(id as usize)
         .expect("registered view");
-    assert_eq!(entry.controller, user.task.ident.id);
+    assert_eq!(
+        entry.control.as_ref().unwrap().control().0,
+        user.task.ident.id
+    );
 
     // 收窄到只读：写不再放行，读仍在。
     assert_eq!(
@@ -2102,13 +2120,13 @@ pub fn gate_interleaving() {
     assert_eq!(again, MemoryFail::Denied.code());
 
     // 收尾：已发布的关系由撤销方锁外关，号一并收回。
-    for (held, entry) in owned {
+    for entry in owned {
         user.team
             .space
             .nest
             .dispose(entry.view().expect("published").clone())
             .expect("dispose");
-        user.team.space.views.retire(held);
+        user.team.space.retire_view(entry.binding.id());
     }
     assert!(
         user.team
@@ -2119,6 +2137,338 @@ pub fn gate_interleaving() {
             .is_empty()
     );
     let _ = ViewSelection::Whole;
+}
+
+pub fn resource_domains() {
+    use crate::core::memory::flat::allocator::statistics::{block_occupied, frame_occupied};
+    use crate::core::memory::nest::table::TABLE_LIVE;
+    use crate::core::work::room::{messenger, scheduler};
+    use env::{
+        HoleCall, HoleCondition, NoleCall, PoleCall, PoleCondition, ToleAwaitReply, ToleCall,
+        ToleEventFail, ToleEventSource, Wait,
+    };
+
+    scheduler::init().unwrap();
+    let seed = Asid::try_allocate().unwrap();
+    Asid::release_unpublished(seed);
+    let sites = messenger::site_count();
+    let tables = TABLE_LIVE.load(Ordering::Relaxed);
+    let frames = frame_occupied() - block_occupied();
+    let caller = Caller::new(false);
+    with_running(caller.task.clone(), || {
+        let raw = caller.call(EnvCall::Hole(HoleCall::Unseal {
+            mark: env::Mark::of("typed-hole"),
+            limits: env::HoleLimits::default(),
+        }));
+        assert!(raw > 0);
+        let hole_token = env::PieToken::mint(raw as usize);
+        let raw = caller.call(EnvCall::Nole(NoleCall::Unseal));
+        assert!(raw > 0);
+        let nole_token = env::PieToken::mint(raw as usize);
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Ring { token: nole_token })),
+            env::HoleFail::Denied.code()
+        );
+        assert_eq!(
+            caller.call(EnvCall::Nole(NoleCall::Ring { token: hole_token })),
+            env::NoleFail::Denied.code()
+        );
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Seal { token: nole_token })),
+            env::HoleFail::Denied.code()
+        );
+        assert_eq!(
+            caller.call(EnvCall::Nole(NoleCall::Ring { token: nole_token })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Nole(NoleCall::Wait {
+                token: nole_token,
+                millis: Wait::POLL,
+            })),
+            1
+        );
+        assert_eq!(
+            caller.call(EnvCall::Nole(NoleCall::Hush { token: nole_token })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Nole(NoleCall::Wait {
+                token: nole_token,
+                millis: Wait::POLL,
+            })),
+            0
+        );
+
+        let scratch = caller.scratch_page();
+        caller.write_words(scratch, &[0x1234]);
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Push {
+                token: hole_token,
+                msg: VirtAddr::new(scratch),
+                len: 8,
+            })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Wait {
+                token: hole_token,
+                condition: HoleCondition::Signal,
+                millis: Wait::POLL,
+            })),
+            0,
+            "queued data is not a counted notification"
+        );
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Peek { token: hole_token })),
+            8
+        );
+        let frame = unsafe { &*(caller.task.ident.frame_pa.as_usize() as *const TrapContext) };
+        assert_eq!(frame.gpr.x(Gprs::A1), caller.task.ident.id.get());
+        assert_eq!(frame.gpr.x(Gprs::A2), 1);
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Pull {
+                token: hole_token,
+                buf: VirtAddr::new(scratch + 16),
+                max: 8,
+                oversize: env::Oversize::Keep,
+            })),
+            8
+        );
+        let frame = unsafe { &*(caller.task.ident.frame_pa.as_usize() as *const TrapContext) };
+        assert_eq!(frame.gpr.x(Gprs::A1), caller.task.ident.id.get());
+        assert_eq!(frame.gpr.x(Gprs::A2), 0);
+        let mut bytes = [0u8; 8];
+        assert!(
+            caller
+                .team
+                .space
+                .copy_in(&mut bytes, KVirt::wrap(scratch + 16))
+        );
+        assert_eq!(usize::from_ne_bytes(bytes), 0x1234);
+
+        let raw = caller.call(EnvCall::Tole(ToleCall::Unseal { shared: true }));
+        assert!(raw > 0);
+        let tole_token = env::PieToken::mint(raw as usize);
+        let event = ToleEventSource::Hole {
+            token: hole_token,
+            condition: HoleCondition::Signal,
+        };
+        assert_eq!(
+            caller.call(EnvCall::Tole(ToleCall::Seal { token: hole_token })),
+            env::ToleFail::Denied.code()
+        );
+        assert_eq!(
+            caller.call(EnvCall::Tole(ToleCall::Attach {
+                tole: tole_token,
+                source: event,
+            })),
+            0
+        );
+        let await_event = || {
+            let tag = caller.call(EnvCall::Tole(ToleCall::Await {
+                tole: tole_token,
+                millis: Wait::POLL,
+            }));
+            assert!(tag >= 0);
+            let frame = unsafe { &*(caller.task.ident.frame_pa.as_usize() as *const TrapContext) };
+            ToleAwaitReply::of([tag as usize, frame.gpr.x(Gprs::A1), frame.gpr.x(Gprs::A2)])
+                .unwrap()
+        };
+        assert_eq!(await_event(), ToleAwaitReply::Pending);
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Ring { token: hole_token })),
+            0
+        );
+        assert_eq!(
+            await_event(),
+            ToleAwaitReply::Source {
+                source: event,
+                fail: None,
+            }
+        );
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Wait {
+                token: hole_token,
+                condition: HoleCondition::Signal,
+                millis: Wait::POLL,
+            })),
+            1
+        );
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Hush { token: hole_token })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Wait {
+                token: hole_token,
+                condition: HoleCondition::Signal,
+                millis: Wait::POLL,
+            })),
+            0
+        );
+
+        let meta = pend::locate(&caller.task, hole_token)
+            .unwrap()
+            .mail()
+            .hole()
+            .unwrap();
+        let key = hole::key(&meta, HoleCondition::Signal);
+        let life = meta.life();
+        let watcher = 0xf00d;
+        messenger::forward(key, life.clone(), watcher, life.clone()).unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                caller.call(EnvCall::Hole(HoleCall::Ring { token: hole_token })),
+                0
+            );
+        }
+        assert!(matches!(
+            messenger::wait::<env::RoomFail>(
+                messenger::WakeKey::Tole { id: watcher },
+                life.clone(),
+                core::time::Duration::MAX,
+            ),
+            Ok(messenger::Handoff::Resume(()))
+        ));
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Hush { token: hole_token })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Wait {
+                token: hole_token,
+                condition: HoleCondition::Signal,
+                millis: Wait::POLL,
+            })),
+            1,
+            "one acknowledgement must not erase the second event"
+        );
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Hush { token: hole_token })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Wait {
+                token: hole_token,
+                condition: HoleCondition::Signal,
+                millis: Wait::POLL,
+            })),
+            0
+        );
+
+        let handle = caller.call(EnvCall::Memory(MemoryCall::Acquire {
+            source: env::AcquireSource::Allocation(
+                env::Allocation::new(PAGE_SIZE, PAGE_SIZE).unwrap(),
+            ),
+            retention: env::PieToken::NONE,
+        }));
+        assert!(handle > 0);
+        let source = reference(handle as usize);
+        let raw = caller.call(EnvCall::Pole(PoleCall::Unseal {
+            reference: source,
+            shared: true,
+        }));
+        assert!(raw > 0);
+        let pole_token = env::PieToken::mint(raw as usize);
+        assert_eq!(
+            caller.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
+            0
+        );
+        let (address, size) = caller.pair(EnvCall::Pole(PoleCall::Open { token: pole_token }));
+        assert!(address > 0);
+        assert_eq!(size, PAGE_SIZE);
+        let bit = env::Bit::of(2).unwrap();
+        assert_eq!(
+            caller.call(EnvCall::Pole(PoleCall::Ring {
+                token: pole_token,
+                bit
+            })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Pole(PoleCall::Wait {
+                token: pole_token,
+                condition: PoleCondition::Signal(bit),
+                millis: Wait::POLL,
+            })),
+            1
+        );
+        assert_eq!(
+            caller.call(EnvCall::Pole(PoleCall::Hush {
+                token: pole_token,
+                bit
+            })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Pole(PoleCall::Shut { token: pole_token })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Pole(PoleCall::Seal { token: pole_token })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Seal { token: hole_token })),
+            0
+        );
+        assert_eq!(
+            await_event(),
+            ToleAwaitReply::Source {
+                source: event,
+                fail: Some(ToleEventFail::Dead),
+            }
+        );
+        assert_eq!(
+            caller.call(EnvCall::Tole(ToleCall::Detach {
+                tole: tole_token,
+                source: event,
+            })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Tole(ToleCall::Seal { token: tole_token })),
+            0
+        );
+        assert_eq!(
+            caller.call(EnvCall::Tole(ToleCall::Await {
+                tole: tole_token,
+                millis: Wait::POLL,
+            })),
+            env::ToleFail::Dead.code()
+        );
+        assert!(matches!(
+            messenger::wait::<env::RoomFail>(
+                messenger::WakeKey::Tole { id: watcher },
+                life.clone(),
+                core::time::Duration::MAX,
+            ),
+            Ok(messenger::Handoff::Resume(()))
+        ));
+        assert_eq!(
+            caller.call(EnvCall::Hole(HoleCall::Wait {
+                token: hole_token,
+                condition: HoleCondition::Signal,
+                millis: Wait::POLL,
+            })),
+            env::HoleFail::Dead.code()
+        );
+        messenger::unforward(key, watcher);
+        assert_eq!(
+            caller.call(EnvCall::Nole(NoleCall::Seal { token: nole_token })),
+            0
+        );
+        for token in [hole_token, nole_token, pole_token, tole_token] {
+            assert!(!pend::locate(&caller.task, token).unwrap().alive());
+            pend::release(&caller.task, token).unwrap();
+        }
+    });
+    drop(caller);
+    scheduler::roster::prune_dead();
+    assert_eq!(messenger::site_count(), sites);
+    assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), tables);
+    assert_eq!(frame_occupied() - block_occupied(), frames);
 }
 
 pub fn capability() {
@@ -2154,7 +2504,7 @@ pub fn capability() {
         Err(env::PieFail::Dead)
     ));
     let (_, _, reference) = user.attach_alloc_reference(PAGE_SIZE, 6);
-    let token = crate::entry::call::pie::create_pole(&user.task, reference, true).unwrap();
+    let token = crate::entry::call::pole::create_pole(&user.task, reference, true).unwrap();
     assert_eq!(
         user.call(EnvCall::Memory(MemoryCall::Release { reference })),
         0
@@ -2197,13 +2547,15 @@ pub fn capability() {
 ///
 /// 装载器的真实次序是「先 shut 掉 token 的全部 View，再从 Pole 来源 Mmap」，
 /// 所以这里按同一次序验证，不靠任何 keeper / canonical 关系。
-/// 带窗口的分支：精确子窗口只能**单调收窄**，且 acquire / open / 建根 / 撤销都守它。
+/// 带窗口的分支：精确子窗口只能**单调收窄**，且 acquire / open / 派生 / 撤销都守它。
+///
+/// 派生那一格现在会交出一枚**独立子资源**：它正好是分支窗口那一段，不是整段来源。
 ///
 /// 窗口用**相对来源起点的绝对页偏移**说（不是相对父分支的偏移），故嵌套派生不会叠加两层。
 /// 每一段都走真实调用面（`EnvCall::Pie` / `EnvCall::Memory`），不是直接调内部函数。
 pub fn branch_window() {
-    use crate::entry::call::pie::create_pole;
-    use env::{AcquireSource, MemoryFail, PieCall, PieFail, PieToken, UnsealArgs};
+    use crate::entry::call::pole::create_pole;
+    use env::{AcquireSource, MemoryFail, PieCall, PieFail, PieToken, PoleCall};
 
     crate::core::work::room::scheduler::init().expect("scheduler init");
     let owner = Caller::new(false);
@@ -2217,13 +2569,11 @@ pub fn branch_window() {
     };
     // 一份 4 页私有来源 → 根（整段，无窗口）。
     let (_, _, source_reference) = owner.attach_alloc_reference(4 * PAGE_SIZE, 6);
-    let root = token(pie_call(
+    let root = token(pole_call(
         &owner,
-        PieCall::Unseal {
-            args: UnsealArgs::Pole {
-                reference: source_reference,
-                shared: true,
-            },
+        PoleCall::Unseal {
+            reference: source_reference,
+            shared: true,
         },
     ));
     assert_eq!(
@@ -2392,10 +2742,26 @@ pub fn branch_window() {
     let inside = acquire(1, 2);
     assert!(inside > 0, "acquire inside the window: {inside}");
 
-    // 带窗口的分支不能建独立根。
-    assert_eq!(
-        create_pole(&peer.task, reference(inside as usize), true).unwrap_err(),
-        PieFail::Denied
+    // 带窗口的分支交出的是一枚**独立子资源**：范围正好是窗口那一段，不是整段来源。
+    let derived = create_pole(&peer.task, reference(inside as usize), true)
+        .expect("a windowed branch derives a sub-resource");
+    let root_meta = pend::locate(&owner.task, root)
+        .unwrap()
+        .mail()
+        .pole()
+        .unwrap();
+    let window_range = root_meta
+        .source()
+        .range(PageOffset::new(1), PageCount::new(2).unwrap())
+        .unwrap();
+    let derived_meta = pend::locate(&peer.task, derived)
+        .unwrap()
+        .mail()
+        .pole()
+        .unwrap();
+    assert!(
+        derived_meta.source().same_range(&window_range),
+        "the sub-resource is exactly the branch's window on the parent source"
     );
 
     // 撤销令这一枚与它的 Views 一起失效（窗口不另开一条命）。
@@ -2410,17 +2776,15 @@ pub fn branch_window() {
             .is_none(),
         "revoking the branch closes the view it opened"
     );
-    assert_eq!(open_pair(&peer, child).0, PieFail::Denied.code());
+    assert_eq!(open_pair(&peer, child).0, env::PoleFail::Denied.code());
 
     // 旧 Accord 不变：不带窗口的派生拿到的是整段。
     let (_, _, plain) = owner.attach_alloc_reference(4 * PAGE_SIZE, 6);
-    let other = token(pie_call(
+    let other = token(pole_call(
         &owner,
-        PieCall::Unseal {
-            args: UnsealArgs::Pole {
-                reference: plain,
-                shared: true,
-            },
+        PoleCall::Unseal {
+            reference: plain,
+            shared: true,
         },
     ));
     assert_eq!(
@@ -2448,10 +2812,11 @@ pub fn branch_window() {
 ///
 /// 这一条原先没有判据——把 `effective_window` 的“不请求就继承”改成 `Ok(None)`（于是旧
 /// `Accord` 把整段来源交出去）全量测试照绿。故这里三样都量：子枚的 `window()`、
-/// `Open` 的长度与首 PA、窗外 `Acquire` 仍拒；再经一层旧 `Accord` 与一层收窄之后仍不放大。
+/// `Open` 的长度与首 PA、窗外 `Acquire` 仍拒；再经一层旧 `Accord` 与一层收窄之后仍不放大，
+/// 继承来的那一枚派生出的子资源也正好是那段窗口。
 pub fn window_inheritance() {
-    use crate::entry::call::pie::create_pole;
-    use env::{AcquireSource, MemoryFail, PieCall, PieFail, PieToken, UnsealArgs};
+    use crate::entry::call::pole::create_pole;
+    use env::{AcquireSource, MemoryFail, PieCall, PieToken, PoleCall};
 
     crate::core::work::room::scheduler::init().expect("scheduler init");
     let owner = Caller::new(false);
@@ -2464,13 +2829,11 @@ pub fn window_inheritance() {
         PieToken::mint(code as usize)
     };
     let (_, _, source_reference) = owner.attach_alloc_reference(4 * PAGE_SIZE, 6);
-    let root = token(pie_call(
+    let root = token(pole_call(
         &owner,
-        PieCall::Unseal {
-            args: UnsealArgs::Pole {
-                reference: source_reference,
-                shared: true,
-            },
+        PoleCall::Unseal {
+            reference: source_reference,
+            shared: true,
         },
     ));
     assert_eq!(
@@ -2605,16 +2968,34 @@ pub fn window_inheritance() {
         "the narrowed branch stays narrowed after inheriting"
     );
 
-    // 继承出来的那一枚仍然不能建独立根（窗口的规矩跟的是分支，不是哪一次派生）。
-    assert_eq!(
-        create_pole(&peer.task, reference(acquire(again, 1, 2) as usize), true).unwrap_err(),
-        PieFail::Denied
+    // 继承出来的那一枚交出的仍只是**那一段窗口**：独立子资源正好是它，不是整段来源
+    // （窗口的规矩跟的是分支，不是哪一次派生）。
+    let derived = create_pole(&peer.task, reference(acquire(again, 1, 2) as usize), true)
+        .expect("an inherited window derives its own sub-resource");
+    let root_meta = pend::locate(&owner.task, root)
+        .unwrap()
+        .mail()
+        .pole()
+        .unwrap();
+    let window_range = root_meta
+        .source()
+        .range(PageOffset::new(1), PageCount::new(2).unwrap())
+        .unwrap();
+    let derived_meta = pend::locate(&peer.task, derived)
+        .unwrap()
+        .mail()
+        .pole()
+        .unwrap();
+    assert!(
+        derived_meta.source().same_range(&window_range),
+        "the sub-resource is exactly the inherited window"
     );
 }
 
-/// 一次 `Open` 的两个返回值（地址与长度）——`pair` 只认 Memory 域。
+/// 一次 `Open` 的两个返回值（地址与长度）：`Open` 的调用者取自运行槽，
+/// 故这里自己把任务放上运行槽，不等同 `Caller::pair` 的那一手。
 fn open_pair(caller: &Caller, token: env::PieToken) -> (isize, usize) {
-    let EnvCall::Pie(call) = EnvCall::Pie(env::PieCall::Open { token }) else {
+    let EnvCall::Pole(call) = EnvCall::Pole(env::PoleCall::Open { token }) else {
         unreachable!()
     };
     let (slot, regs) = (call.slot(), call.pack());
@@ -2635,9 +3016,14 @@ fn pie_call(caller: &Caller, call: env::PieCall) -> isize {
     with_running(caller.task.clone(), || caller.call(EnvCall::Pie(call)))
 }
 
+/// class 10 同理：Pole 域的每一格也从运行槽取调用者。
+fn pole_call(caller: &Caller, call: env::PoleCall) -> isize {
+    with_running(caller.task.clone(), || caller.call(EnvCall::Pole(call)))
+}
+
 pub fn memory_pole() {
     use crate::core::memory::flat::Frame;
-    use crate::entry::call::pie::create_pole;
+    use crate::entry::call::pole::create_pole;
     use env::{MemoryFail, TeamId};
 
     crate::core::work::room::scheduler::init().expect("scheduler init");
@@ -2817,7 +3203,6 @@ pub fn resource_registration() {
         held > 0,
         "the trusted controller's own cap authorizes: {held}"
     );
-    // 同一枚 cap 转到别人手里也不授权：保留只认铸给谁的那一个 owner。
     let shared = PieToken::mint(
         pend::accord(
             &system.task,
@@ -2832,15 +3217,30 @@ pub fn resource_registration() {
     let service_source = acquire(&service, allocation(), env::PieToken::NONE);
     assert!(service_source > 0);
     let window = env::ReferenceRange::new(reference(service_source as usize), 0, 1).unwrap();
+    let delegated = acquire(&service, env::AcquireSource::Reference(window), shared);
+    assert!(
+        delegated > 0,
+        "the delegated child authorizes its holder: {delegated}"
+    );
+    assert_eq!(
+        acquire(&service, env::AcquireSource::Reference(window), cap.token()),
+        env::MemoryFail::Denied.code(),
+        "the parent cap is not in this account"
+    );
+    assert_eq!(
+        pend::revoke(&system.task, &Arc::downgrade(&service.task), shared).unwrap(),
+        1
+    );
     assert_eq!(
         acquire(&service, env::AcquireSource::Reference(window), shared),
         env::MemoryFail::Denied.code(),
-        "a handed-on retention cap is not the holder's own"
+        "a revoked child authorizes no new retention"
     );
     for (caller, handle) in [
         (&system, source),
         (&system, held),
         (&service, service_source),
+        (&service, delegated),
     ] {
         assert_eq!(
             caller.call(EnvCall::Memory(MemoryCall::Release {
@@ -3072,7 +3472,7 @@ pub fn transfer_relations() {
 
     let d = Caller::new(false);
     let (_, _, reference) = a.attach_alloc_reference(PAGE_SIZE, 6);
-    let memory = crate::entry::call::pie::create_pole(&a.task, reference, true).unwrap();
+    let memory = crate::entry::call::pole::create_pole(&a.task, reference, true).unwrap();
     assert_eq!(
         a.call(EnvCall::Memory(MemoryCall::Release { reference })),
         0
@@ -3313,7 +3713,7 @@ fn grant_pair(giver: &Caller, me: &Caller, pages: usize) -> (env::PieToken, env:
     let source = acquire_fresh(giver, pages);
     assert!(source > 0, "giver source: {source}");
     materialize_page(giver, source as usize, 0);
-    let root = crate::entry::call::pie::create_pole(&giver.task, reference(source as usize), true)
+    let root = crate::entry::call::pole::create_pole(&giver.task, reference(source as usize), true)
         .expect("the giver's root grant");
     assert_eq!(
         giver.call(EnvCall::Memory(MemoryCall::Release {
@@ -3474,7 +3874,7 @@ pub fn transfer_pages() {
     let root_pa = slot_at(&window_of(&user, root_source as usize), 0);
     fill_pattern(PhysAddr::from_raw(root_pa));
     let root =
-        crate::entry::call::pie::create_pole(&user.task, reference(root_source as usize), true)
+        crate::entry::call::pole::create_pole(&user.task, reference(root_source as usize), true)
             .expect("a private whole source becomes a root grant");
     assert_eq!(
         user.call(EnvCall::Memory(MemoryCall::Release {
@@ -3512,7 +3912,7 @@ pub fn transfer_pages() {
     materialize_page(&user, narrow_source as usize, 0);
     let narrow_pa = slot_at(&window_of(&user, narrow_source as usize), 0);
     let narrow_root =
-        crate::entry::call::pie::create_pole(&user.task, reference(narrow_source as usize), true)
+        crate::entry::call::pole::create_pole(&user.task, reference(narrow_source as usize), true)
             .expect("a private whole source becomes a root grant");
     assert_eq!(
         user.call(EnvCall::Memory(MemoryCall::Release {
@@ -3695,7 +4095,7 @@ pub fn transfer_refusals() {
     let exclusive = acquire_fresh(&user, 2);
     materialize_page(&user, exclusive as usize, 0);
     let only =
-        crate::entry::call::pie::create_pole(&user.task, reference(exclusive as usize), false)
+        crate::entry::call::pole::create_pole(&user.task, reference(exclusive as usize), false)
             .expect("an exclusive root");
     assert_eq!(
         user.call(EnvCall::Memory(MemoryCall::Release {
@@ -3743,7 +4143,7 @@ pub fn transfer_refusals() {
     let sealed_source = acquire_fresh(&user, 2);
     materialize_page(&user, sealed_source as usize, 0);
     let sealed_root =
-        crate::entry::call::pie::create_pole(&user.task, reference(sealed_source as usize), true)
+        crate::entry::call::pole::create_pole(&user.task, reference(sealed_source as usize), true)
             .expect("a private whole source becomes a root grant");
     assert_eq!(
         user.call(EnvCall::Memory(MemoryCall::Release {
@@ -4164,29 +4564,29 @@ pub fn sync_failure() {
     }
 }
 
-// ---- 封印与撤销（class 7 的 slot 3 / slot 6）：真实解码派发，调用者来自运行槽 ----
+// ---- 封印与撤销（Pole 的 `Seal` / class 7 的 `Revoke`）：真实解码派发，调用者来自运行槽 ----
 //
 // `Seal` / `Revoke` 的调用者取自 `current().running_task()`，不是派发时那个
 // `ident`。故每一下都经 `with_running` 把被测任务真正放上本核运行槽，再走
 // `EnvCall` 解码派发（`Caller.raw` 是服务派发，刻意绕过 `trap::envcall`）。
 
-/// 真实 `PieCall::Seal` 的管理面：成功、主人不符，与两种明确的 `Busy`。
+/// 真实 `PoleCall::Seal` 的管理面：成功、主人不符，与两种明确的 `Busy`。
 pub fn pole_seal_authority() {
-    use env::{PieCall, PieFail, PieToken};
+    use env::{PieToken, PoleCall, PoleFail};
 
     crate::core::work::room::scheduler::init().expect("scheduler init");
     let me = Caller::new(false);
     let lord = Caller::new(false);
     let seal = |token| {
         with_running(me.task.clone(), || {
-            me.call(EnvCall::Pie(PieCall::Seal { token }))
+            me.call(EnvCall::Pole(PoleCall::Seal { token }))
         })
     };
 
     // 本任务自己的私有整段来源铸出来的根：这段 Pole 的主人就是本任务；创建时那段
     // 关系（Input）就是它名下的图。
     let (_, at, source) = me.attach_alloc_reference(2 * PAGE_SIZE, 6);
-    let root = crate::entry::call::pie::create_pole(&me.task, source, true).expect("root");
+    let root = crate::entry::call::pole::create_pole(&me.task, source, true).expect("root");
     assert_eq!(
         me.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
         0
@@ -4205,7 +4605,7 @@ pub fn pole_seal_authority() {
         .mail()
         .pole()
         .expect("a pole");
-    assert_eq!(seal(child), PieFail::Denied.code());
+    assert_eq!(seal(child), PoleFail::Denied.code());
     assert!(
         lord_meta.alive(),
         "a refused seal must not deactivate the Pole"
@@ -4213,12 +4613,12 @@ pub fn pole_seal_authority() {
     assert!(pend::locate(&me.task, child).expect("child pie").alive());
 
     // 手里没这一枚：当场拒。
-    assert_eq!(seal(PieToken::mint(0x5eed)), PieFail::Denied.code());
+    assert_eq!(seal(PieToken::mint(0x5eed)), PoleFail::Denied.code());
 
     // 资源本身还活、这一枚的 Grant 已经不答话（授权失效那一档，不是补关）：原属主
     // 也不行，且不许把资源失活。Grant 用生产 API 作废，token 仍留在表里。
     let (_, at2, source2) = me.attach_alloc_reference(PAGE_SIZE, 6);
-    let root2 = crate::entry::call::pie::create_pole(&me.task, source2, true).expect("root");
+    let root2 = crate::entry::call::pole::create_pole(&me.task, source2, true).expect("root");
     assert_eq!(
         me.call(EnvCall::Memory(MemoryCall::Release { reference: source2 })),
         0
@@ -4237,7 +4637,7 @@ pub fn pole_seal_authority() {
         !pend::locate(&me.task, root2).expect("root pie").alive(),
         "its Grant answers nothing"
     );
-    assert_eq!(seal(root2), PieFail::Denied.code());
+    assert_eq!(seal(root2), PoleFail::Denied.code());
     assert!(
         meta2.alive(),
         "a refused seal must not deactivate the resource"
@@ -4267,7 +4667,7 @@ pub fn pole_seal_authority() {
         "stage the relation under another team"
     );
     assert_ne!(meta.reserved(), 0);
-    assert_eq!(seal(root), PieFail::Busy.code());
+    assert_eq!(seal(root), PoleFail::Busy.code());
     assert!(meta.alive(), "a Busy seal must not deactivate the Pole");
     assert!(
         me.team.space.nest.translate(KVirt::wrap(at)).is_some(),
@@ -4278,7 +4678,7 @@ pub fn pole_seal_authority() {
 
     // Pole 自己的操作租约被占：同样明确 Busy。
     let operation = pole::PoleOperation::acquire(&meta).expect("the Pole operation lease");
-    assert_eq!(seal(root), PieFail::Busy.code());
+    assert_eq!(seal(root), PoleFail::Busy.code());
     assert!(meta.alive());
     assert!(me.team.space.nest.translate(KVirt::wrap(at)).is_some());
     drop(operation);
@@ -4298,7 +4698,7 @@ pub fn pole_seal_authority() {
     pend::release(&me.task, root).unwrap();
 }
 
-/// 真实 `PieCall::Seal` 之后：这段 Pole 当场不再是管理者。
+/// 真实 `PoleCall::Seal` 之后：这段 Pole 当场不再是管理者。
 ///
 /// 口径是**管理拒绝先于物理资格**，不是“Seal 把一次成功变成拒绝”：两端都用带独立
 /// 保留的窗口，那份保留自己就压着源页，故 Seal **之前**同一次迁移本来就答 `Busy`
@@ -4310,12 +4710,12 @@ pub fn pole_seal_authority() {
 /// Seal 完成后，逐项比对被拒前后的整页读数与帧账。
 pub fn pole_seal_refuses_transfer() {
     use crate::core::memory::flat::allocator::statistics::{block_occupied, frame_occupied};
-    use env::{AcquireSource, MemoryFail, PieCall, ReferenceRange};
+    use env::{AcquireSource, MemoryFail, PoleCall, ReferenceRange};
 
     crate::core::work::room::scheduler::init().expect("scheduler init");
     let me = Caller::new(false);
     let (_, _, source) = me.attach_alloc_reference(2 * PAGE_SIZE, 6);
-    let root = crate::entry::call::pie::create_pole(&me.task, source, true).expect("root");
+    let root = crate::entry::call::pole::create_pole(&me.task, source, true).expect("root");
     assert_eq!(
         me.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
         0
@@ -4327,7 +4727,7 @@ pub fn pole_seal_refuses_transfer() {
         .expect("a pole");
     let seal_root = || {
         with_running(me.task.clone(), || {
-            me.call(EnvCall::Pie(PieCall::Seal { token: root }))
+            me.call(EnvCall::Pole(PoleCall::Seal { token: root }))
         })
     };
     let held = me.call(EnvCall::Memory(MemoryCall::Acquire {
@@ -4394,7 +4794,7 @@ pub fn pole_seal_refuses_transfer() {
     me.team.space.nest.audit();
 }
 
-/// 真实 `PieCall::Seal` 只关**自己名下**的关系：已经交进目标槽的整页照旧在。
+/// 真实 `PoleCall::Seal` 只关**自己名下**的关系：已经交进目标槽的整页照旧在。
 ///
 /// 从这条 Pole 的窗口里把一页交进本任务一份**私有**空窗口：承载与整页内容一起落到
 /// 目标槽，且移动不新分配任何帧。Seal 之后，Pole 自己那条关系关掉，别的普通映射
@@ -4405,14 +4805,14 @@ pub fn pole_seal_refuses_transfer() {
 pub fn pole_seal_keeps_transferred_page() {
     use super::transfer::{fill_pattern, pattern_holds};
     use crate::core::memory::flat::allocator::statistics::{block_occupied, frame_occupied};
-    use env::{AcquireSource, PieCall};
+    use env::{AcquireSource, PoleCall};
 
     crate::core::work::room::scheduler::init().expect("scheduler init");
     let me = Caller::new(false);
     // 一段与这条 Pole 无关的普通映射：Seal 不许动它。
     let (_, spare) = me.attach_alloc(PAGE_SIZE, 6);
     let (_, at, source) = me.attach_alloc_reference(2 * PAGE_SIZE, 6);
-    let root = crate::entry::call::pie::create_pole(&me.task, source, true).expect("root");
+    let root = crate::entry::call::pole::create_pole(&me.task, source, true).expect("root");
     assert_eq!(
         me.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
         0
@@ -4466,7 +4866,7 @@ pub fn pole_seal_keeps_transferred_page() {
 
     // 真实 Seal：它自己那条关系关掉，别的照旧回话；交出去的整页留在目标槽。
     let sealed = with_running(me.task.clone(), || {
-        me.call(EnvCall::Pie(PieCall::Seal { token: root }))
+        me.call(EnvCall::Pole(PoleCall::Seal { token: root }))
     });
     assert_eq!(sealed, 0);
     assert!(!meta.alive());
@@ -4490,7 +4890,7 @@ pub fn pole_seal_keeps_transferred_page() {
     me.team.space.nest.audit();
 }
 
-/// 真实 `PieCall::Seal` 部分失败与**补关**：首次失活落地但关图同步失败时，原属主可以
+/// 真实 `PoleCall::Seal` 部分失败与**补关**：首次失活落地但关图同步失败时，原属主可以
 /// 对同一枚仍在表里的 token 重发 Seal 把关闭补完。
 ///
 /// ① 注入一次撤页确认失败（`close_maps` 里的同步），Seal 当场拒 `Busy`：失活已落地、
@@ -4504,13 +4904,13 @@ pub fn pole_seal_keeps_transferred_page() {
 pub fn pole_seal_partial_failure() {
     use crate::core::memory::nest::identity::fail_next_shootdown;
     use crate::core::work::room::identity::Identity;
-    use env::{AcquireSource, Mark, Permission, PieCall, PieFail, PieToken};
+    use env::{AcquireSource, Mark, Permission, PieToken, PoleCall, PoleFail};
 
     crate::core::work::room::scheduler::init().expect("scheduler init");
     let me = Caller::new(false);
     let stranger = Caller::new(false);
     let (_, at, source) = me.attach_alloc_reference(2 * PAGE_SIZE, 6);
-    let root = crate::entry::call::pie::create_pole(&me.task, source, true).expect("root");
+    let root = crate::entry::call::pole::create_pole(&me.task, source, true).expect("root");
     assert_eq!(
         me.call(EnvCall::Memory(MemoryCall::Release { reference: source })),
         0
@@ -4523,7 +4923,7 @@ pub fn pole_seal_partial_failure() {
     assert!(me.team.space.nest.translate(KVirt::wrap(at)).is_some());
     let seal = || {
         with_running(me.task.clone(), || {
-            me.call(EnvCall::Pie(PieCall::Seal { token: root }))
+            me.call(EnvCall::Pole(PoleCall::Seal { token: root }))
         })
     };
     // 补关只认原属主：同一枚 Pole 的另一枚 token 落在别的任务手里（`accord` 要给
@@ -4572,7 +4972,7 @@ pub fn pole_seal_partial_failure() {
     fail_next_shootdown(me.team.space.nest.asid());
     assert_eq!(
         seal(),
-        PieFail::Busy.code(),
+        PoleFail::Busy.code(),
         "an unconfirmed close is retryable"
     );
     // 失活已经落地，不回滚。
@@ -4595,12 +4995,12 @@ pub fn pole_seal_partial_failure() {
     // ② 非属主捧着同一枚 Pole 的另一枚 token：照旧拒，不动原处。
     let stranger_seal = || {
         with_running(stranger.task.clone(), || {
-            stranger.call(EnvCall::Pie(PieCall::Seal { token: outsider }))
+            stranger.call(EnvCall::Pole(PoleCall::Seal { token: outsider }))
         })
     };
     assert_eq!(
         stranger_seal(),
-        PieFail::Denied.code(),
+        PoleFail::Denied.code(),
         "a non-owner cannot finish someone else's close"
     );
     assert!(meta.has_maps() && me.team.space.nest.has_pending_invalidation());
@@ -4608,7 +5008,7 @@ pub fn pole_seal_partial_failure() {
     // ③ 真入口重试（原属主）：先结清待结的失效、按真长度推过 `c.ebreak`，再派发。
     let frame_pa = me.task.ident.frame_pa.as_usize();
     {
-        let slot = PieCall::Seal { token: root }.slot();
+        let slot = PoleCall::Seal { token: root }.slot();
         let frame = unsafe { &mut *(frame_pa as *mut TrapContext) };
         frame.sepc = KVirt::wrap(code);
         frame.gpr.set_x(Gprs::A7, slot);
@@ -4638,7 +5038,11 @@ pub fn pole_seal_partial_failure() {
     assert!(me.team.space.nest.translate(KVirt::wrap(at)).is_none());
 
     // ④ 关完之后再发一次：既定精确返回是 `Dead`。
-    assert_eq!(seal(), PieFail::Dead.code(), "a finished seal answers Dead");
+    assert_eq!(
+        seal(),
+        PoleFail::Dead.code(),
+        "a finished seal answers Dead"
+    );
 
     // ⑤ 失活没被撤销、管理权没回来；Grant 跟看这一枚 Pie 自己的命，`Seal` 不动它。
     assert!(!meta.alive() && !pend::locate(&me.task, root).expect("root pie").alive());
@@ -4980,7 +5384,7 @@ fn across_spaces(lord: &Caller, peer: &Caller, pages: usize) -> AcrossSpaces {
     for page in 0..pages {
         materialize_page(lord, source as usize, page);
     }
-    let root = crate::entry::call::pie::create_pole(&lord.task, reference(source as usize), true)
+    let root = crate::entry::call::pole::create_pole(&lord.task, reference(source as usize), true)
         .expect("the manager's root grant");
     assert_eq!(
         lord.call(EnvCall::Memory(MemoryCall::Release {
@@ -5067,7 +5471,7 @@ fn retire(caller: &Caller) {
 ///
 /// 清单里的那两条关系都要到消费者手里：调用者自己那条与**别人空间**里那条。
 fn a_manager_takes_the_foreign_page_out(lord: &Caller, peer: &Caller) {
-    use env::{MemoryFail, PieCall};
+    use env::{MemoryFail, PoleCall};
     let pair = across_spaces(lord, peer, 2);
     let window = pair.lord_window(&lord);
     let pa = slot_at(&window, 0);
@@ -5144,7 +5548,7 @@ fn a_manager_takes_the_foreign_page_out(lord: &Caller, peer: &Caller) {
     );
     assert_eq!(
         with_running(peer.task.clone(), || {
-            peer.call(EnvCall::Pie(PieCall::Shut { token: pair.child }))
+            peer.call(EnvCall::Pole(PoleCall::Shut { token: pair.child }))
         }),
         0,
         "the holder closes its own window"

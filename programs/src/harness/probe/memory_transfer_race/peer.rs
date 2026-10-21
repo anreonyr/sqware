@@ -83,7 +83,7 @@ pub fn run() {
         "race: the control page is not at the scene's fixed address"
     );
     // 来源那条子分支盖两页：第 0 页要搬、第 1 页是目标空槽。
-    let (source_at, size) = env::pie::open(source)
+    let (source_at, size) = env::pole::open(source)
         .unwrap_or_else(|error| panic!("race: open source: {:?}", error.source));
     assert_eq!(
         size,

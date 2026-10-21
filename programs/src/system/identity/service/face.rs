@@ -8,7 +8,7 @@ use ::resource::{
 use ::schedule::{Dispatch, Invocation, Progress, Res, ResMut};
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use env::pie;
-use env::{MailCondition, PieToken, Wait};
+use env::{HoleCondition, PieToken, Wait};
 use ipc::rpc;
 use system_api::identity as api;
 use system_api::identity::Call as Contract;
@@ -49,9 +49,9 @@ pub(super) fn faces(
             Policy::VEST,
         )
         .map_err(|_| Fail::Tree)?;
-        pile.attach(env::Source::Mail {
-            pie: token,
-            condition: MailCondition::Pull,
+        pile.attach(env::ToleEventSource::Hole {
+            token,
+            condition: HoleCondition::Pull,
         })
         .map_err(|_| Fail::Desk)?;
         faces.0.push((token, grant));
@@ -63,11 +63,16 @@ pub(super) fn wait(
     faces: Res<Faces>,
     mut ready: ResMut<Ready>,
 ) -> Result<Progress, Fail> {
-    ready.0 = pile
+    let event = pile
         .await_(Wait::AtMost(100))
-        .map_err(|_| Fail::Dead)?
-        .mail()
-        .and_then(|(entry, _)| faces.0.iter().find(|(token, _)| *token == entry).copied());
+        .map_err(|_| Fail::Dead)?;
+    ready.0 = match event {
+        env::ToleAwaitReply::Source {
+            source: env::ToleEventSource::Hole { token: entry, .. },
+            ..
+        } => faces.0.iter().find(|(token, _)| *token == entry).copied(),
+        _ => None,
+    };
     Ok(Progress::Done)
 }
 pub(super) fn receive(
@@ -145,11 +150,11 @@ pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progres
 }
 pub(super) fn close(faces: Res<Faces>, pile: Res<Pile>) -> Result<Progress, Fail> {
     for (entry, _) in &faces.0 {
-        let _ = pile.detach(env::Source::Mail {
-            pie: *entry,
-            condition: MailCondition::Pull,
+        let _ = pile.detach(env::ToleEventSource::Hole {
+            token: *entry,
+            condition: HoleCondition::Pull,
         });
-        let _ = pie::seal(*entry);
+        let _ = env::hole::seal(*entry);
         let _ = pie::release(*entry, env::ReleaseMode::Revoke);
     }
     Ok(Progress::Done)

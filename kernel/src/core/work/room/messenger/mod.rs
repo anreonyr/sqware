@@ -64,10 +64,10 @@ pub(crate) const EXIT_CASCADE: usize = 0xFFFF_FFFD;
 
 pub(crate) use doom::{branch_stats, cull, doom, slay, take_doomed};
 pub(crate) use handoff::Handoff;
-pub(crate) use reap::{hook, quit};
-pub(crate) use wait::holder::Ticket;
+pub(crate) use reap::{bury, hook, quit};
 #[cfg(debug_assertions)]
 pub(crate) use wait::fwd::FWD_MAX;
+pub(crate) use wait::holder::Ticket;
 pub(crate) use wait::key::WakeKey;
 #[cfg(all(debug_assertions, any(feature = "fresh-scene", feature = "race-scene")))]
 pub(crate) use wait::queued;

@@ -21,11 +21,38 @@ impl WaitFail for env::UnitFail {
     }
 }
 
-impl WaitFail for env::MailFail {
+impl WaitFail for env::HoleFail {
     fn busy() -> Self {
-        env::MailFail::Busy
+        env::HoleFail::Busy
     }
     fn oom() -> Self {
-        env::MailFail::OoM
+        env::HoleFail::OoM
+    }
+}
+
+impl WaitFail for env::NoleFail {
+    fn busy() -> Self {
+        env::NoleFail::Busy
+    }
+    fn oom() -> Self {
+        env::NoleFail::OoM
+    }
+}
+
+impl WaitFail for env::PoleFail {
+    fn busy() -> Self {
+        env::PoleFail::Busy
+    }
+    fn oom() -> Self {
+        env::PoleFail::OoM
+    }
+}
+
+impl WaitFail for env::ToleFail {
+    fn busy() -> Self {
+        env::ToleFail::Busy
+    }
+    fn oom() -> Self {
+        env::ToleFail::OoM
     }
 }

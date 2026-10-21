@@ -24,25 +24,14 @@ pub enum PieFail {
 /// `PieFail` 的结果别名。
 pub type PieResult<T> = Result<T, erra::Error<PieFail>>;
 
-pub use super::pie_types::{HoleLimits, PieInfo, ReleaseMode, UnsealArgs};
+pub use super::pie_info::PieInfo;
+pub use super::release_mode::ReleaseMode;
 
-/// Capability creation, transfer, queries and release.
+/// Capability transfer, queries and release.
 #[derive(Envcall)]
 #[call(class = 7, fail = PieFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PieCall {
-    #[slot(0)]
-    #[ret(PieToken)]
-    Unseal { args: UnsealArgs },
-    #[slot(1)]
-    #[ret((VirtAddr, usize))]
-    Open { token: PieToken },
-    #[slot(2)]
-    #[ret(())]
-    Shut { token: PieToken },
-    #[slot(3)]
-    #[ret(())]
-    Seal { token: PieToken },
     #[slot(4)]
     #[ret(PieToken)]
     Accord {

@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-//! Publish a resource with real Task ownership, then exit.
+//! Verify declared retention supply, publish a Task-owned resource, then exit.
 
 extern crate alloc;
 extern crate programs;
@@ -16,7 +16,6 @@ use system_client::operator;
 use system_client::operator::Face;
 
 use ::resource::raw::reserve;
-use env::pie;
 use env::unit;
 
 const MS: usize = 1000;
@@ -28,14 +27,20 @@ const E_TRIP: usize = 1;
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-lease: landed, leaving";
 
+mod retention;
+
 #[programs::entry]
 fn main() -> Report<'static> {
+    retention::check();
     let sire = unit::sire();
+    ipc::session::establish::lend(sire, programs::unit::READY_MARK)
+        .expect("probe-lease: ready signal");
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-lease: no tree link");
     };
     let tree = Face::of(session);
-    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("lease-entry"))).unwrap();
+    let entry =
+        env::hole::unseal(env::Mark::of("lease-entry"), env::HoleLimits::default()).unwrap();
     let capability =
         system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS)).unwrap();
     let anchor = capability.anchor().unwrap();

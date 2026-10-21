@@ -17,21 +17,27 @@ impl Cleanup {
     pub(crate) fn finish(self) -> usize {
         #[cfg(all(debug_assertions, feature = "race-scene"))]
         super::pause::visit(&self.removed);
-        let count = self.removed.len();
-        for pie in self.removed {
-            for task in &self.tasks {
-                super::notify(*task, pie.token());
-            }
-            if let (Some(token), Some(parent)) = (pie.sire(), pie.lord().upgrade()) {
-                super::notify(parent.ident.id, token);
-            }
-            if let Some(p) = pie.snapshot().mail().pole() {
-                p.withdraw(pie.token());
-            }
-            drop(pie);
+        let Cleanup { removed, tasks } = self;
+        let count = removed.len();
+        for pie in removed {
+            settle(&tasks, pie);
         }
         count
     }
+}
+
+/// 在 pend、commit 与 PoleOperation 锁外通知并释放已摘取的 Pie。
+fn settle(tasks: &[TaskId], pie: Pie) {
+    for task in tasks {
+        super::notify(*task, pie.token());
+    }
+    if let (Some(token), Some(parent)) = (pie.sire(), pie.lord().upgrade()) {
+        super::notify(parent.ident.id, token);
+    }
+    if let Some(p) = pie.mail().pole() {
+        p.withdraw(pie.token());
+    }
+    drop(pie);
 }
 
 #[allow(clippy::type_complexity)]
@@ -245,8 +251,62 @@ pub(super) fn cull(
     Err(PieFail::Busy)
 }
 
+/// 同一提交边界内摘取无父、无后代且无映射的本地根；其他结构返回 None。
+/// 其他 Nest 的退休票继续持帧，不以本 Pole 的映射账为空证明全局结清。
+fn reap(task: &Arc<Task>, token: PieToken) -> Result<Option<Pie>, PieFail> {
+    let _pend = task.pend.lock();
+    let _commit = crate::core::work::commit();
+    let Some(pie) = super::locate(task, token) else {
+        return Ok(None);
+    };
+    if pie.sire().is_some() || pie.heir().is_some() {
+        return Ok(None);
+    }
+    if task
+        .pend
+        .heirs
+        .lock()
+        .iter()
+        .any(|(source, _, _)| *source == token)
+    {
+        return Ok(None);
+    }
+    let pole = pie.mail().pole();
+    let _operation = match &pole {
+        Some(meta) => {
+            let operation = PoleOperation::acquire(meta).ok_or(PieFail::Busy)?;
+            if meta.reserved() != 0 {
+                return Err(PieFail::Busy);
+            }
+            // PoleOperation 阻止并发发布修改映射账。
+            if meta.has_maps() {
+                return Ok(None);
+            }
+            Some(operation)
+        }
+        None => None,
+    };
+    let authorization = pole.as_ref().and_then(|meta| meta.authorization());
+    let _publication = authorization
+        .as_ref()
+        .map(|source| source.begin_withdraw())
+        .transpose()?;
+    Ok(Some(take(task, token).ok_or(PieFail::Denied)?))
+}
+
 pub(crate) fn release(task: &Arc<Task>, token: PieToken) -> Result<usize, PieFail> {
-    cull(task, token, None, false).map(|cleanup| cleanup.finish())
+    for _ in 0..super::RETRIES {
+        match reap(task, token) {
+            Ok(Some(pie)) => {
+                settle(&[task.ident.id], pie);
+                return Ok(1);
+            }
+            Ok(None) => return cull(task, token, None, false).map(|cleanup| cleanup.finish()),
+            Err(PieFail::Busy) => core::hint::spin_loop(),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(PieFail::Busy)
 }
 
 pub(crate) fn revoke(
@@ -273,7 +333,8 @@ pub(crate) fn doom(task: &Arc<Task>) {
         }
         tokens
     };
-    task.close_controls();
+    // 退场只推进控制清理，不保证结清；HUSKS 的再次 retire 才负责重试未结项。
+    let _ = task.close_controls();
     seal_owned(task);
     for token in tokens {
         loop {

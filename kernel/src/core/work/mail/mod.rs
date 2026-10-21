@@ -6,12 +6,10 @@ pub mod tole;
 
 use alloc::sync::{Arc, Weak};
 use core::sync::atomic::{AtomicUsize, Ordering};
-use core::time::Duration;
 
-use env::{Bit, MailCondition, MailFail, Permission, PieFail, PieKind, PieToken, TaskId};
+use env::{Permission, PieFail, PieKind, PieToken, TaskId};
 
 use crate::core::work::grant::Grant;
-use crate::core::work::room::messenger::{Handoff, WakeKey};
 use crate::core::work::unit::life::Life;
 
 pub(crate) use hole::HoleMeta;
@@ -88,66 +86,6 @@ impl Mail {
         }
     }
 
-    pub(crate) fn ring(&self, bit: Bit) -> Result<(), MailFail> {
-        match (self, bit) {
-            (Mail::Hole(meta), Bit::FIRST) => hole::ring(meta),
-            (Mail::Nole(meta), Bit::FIRST) => nole::ring(meta),
-            (Mail::Pole(meta), bit) => pole::ring(meta, bit),
-            _ => Err(MailFail::Denied),
-        }
-    }
-
-    pub(crate) fn hush(&self, bit: Bit) -> Result<(), MailFail> {
-        match (self, bit) {
-            (Mail::Hole(meta), Bit::FIRST) => hole::hush(meta),
-            (Mail::Nole(meta), Bit::FIRST) => nole::hush(meta),
-            (Mail::Pole(meta), bit) => pole::hush(meta, bit),
-            _ => Err(MailFail::Denied),
-        }
-    }
-
-    pub(crate) fn wait(
-        &self,
-        condition: MailCondition,
-        dur: Duration,
-    ) -> Result<Handoff<bool>, MailFail> {
-        match (self, condition) {
-            (
-                Mail::Hole(meta),
-                MailCondition::Pull | MailCondition::Push | MailCondition::Empty,
-            ) => hole::wait(meta, condition, dur),
-            (Mail::Nole(meta), MailCondition::Pull) => nole::wait(meta, dur),
-            (Mail::Pole(meta), MailCondition::Signal(bit)) => pole::wait(meta, bit, dur),
-            _ => Err(MailFail::Denied),
-        }
-    }
-
-    pub(crate) fn ready(&self, condition: MailCondition) -> bool {
-        match (self, condition) {
-            (
-                Mail::Hole(meta),
-                MailCondition::Pull | MailCondition::Push | MailCondition::Empty,
-            ) => meta.ready(condition),
-            (Mail::Nole(meta), MailCondition::Pull) => meta.ready(),
-            (Mail::Pole(meta), MailCondition::Signal(bit)) => meta.ready(bit),
-            _ => false,
-        }
-    }
-
-    pub(crate) fn key(&self, condition: MailCondition) -> Option<(WakeKey, Weak<Life>)> {
-        match (self, condition) {
-            (
-                Mail::Hole(meta),
-                MailCondition::Pull | MailCondition::Push | MailCondition::Empty,
-            ) => Some((hole::key(meta, condition), meta.life())),
-            (Mail::Nole(meta), MailCondition::Pull) => Some((nole::key(meta), meta.life())),
-            (Mail::Pole(meta), MailCondition::Signal(bit)) => {
-                Some((pole::key(meta, bit), meta.life()))
-            }
-            _ => None,
-        }
-    }
-
     pub(crate) fn hole(&self) -> Option<Arc<HoleMeta>> {
         match self {
             Mail::Hole(meta) => Some(meta.clone()),
@@ -158,6 +96,13 @@ impl Mail {
     pub(crate) fn pole(&self) -> Option<Arc<PoleMeta>> {
         match self {
             Mail::Pole(meta) => Some(meta.clone()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn nole(&self) -> Option<Arc<NoleMeta>> {
+        match self {
+            Mail::Nole(meta) => Some(meta.clone()),
             _ => None,
         }
     }
@@ -183,7 +128,10 @@ impl Mail {
         &self,
         permission: Permission,
         token: PieToken,
-        window: Option<(crate::core::memory::address::PageOffset, crate::core::memory::address::PageCount)>,
+        window: Option<(
+            crate::core::memory::address::PageOffset,
+            crate::core::memory::address::PageCount,
+        )>,
     ) -> Result<Arc<Grant>, PieFail> {
         let grant = Grant::try_new_window(permission, window)?;
         if let Mail::Pole(meta) = self {
@@ -196,16 +144,5 @@ impl Mail {
         if let Mail::Pole(meta) = self {
             meta.release_grant(token);
         }
-    }
-}
-
-pub(crate) fn mail_fail(error: env::PieFail) -> env::MailFail {
-    match error {
-        env::PieFail::Denied => env::MailFail::Denied,
-        env::PieFail::Dead => env::MailFail::Dead,
-        env::PieFail::OoM => env::MailFail::OoM,
-        env::PieFail::NotAligned => env::MailFail::Denied,
-        env::PieFail::HandedOver => env::MailFail::HandedOver,
-        env::PieFail::Busy => env::MailFail::Busy,
     }
 }

@@ -18,7 +18,7 @@
 
 use alloc::string::String;
 
-use env::{MailFail, Wait};
+use env::{HoleFail, Wait};
 
 use ::resource::port::{self, Access, Policy};
 
@@ -153,12 +153,12 @@ impl<'a> Watch<'a> {
                         return Ok(ev);
                     }
                 }
-                Err(SourceFail::Receive(RecvFail::Mail(MailFail::Busy))) => {}
+                Err(SourceFail::Receive(RecvFail::Mail(HoleFail::Busy))) => {}
                 Err(error) => return Err(error),
             }
             let remain = ipc::time::remain(until);
             if remain == Wait::POLL {
-                return Err(SourceFail::Receive(RecvFail::Mail(MailFail::Busy)));
+                return Err(SourceFail::Receive(RecvFail::Mail(HoleFail::Busy)));
             }
             let ev = self
                 .read
@@ -180,7 +180,7 @@ impl<'a> Watch<'a> {
                     Some(ev) => return Ok(Some(ev)),
                     None => continue,
                 },
-                Err(SourceFail::Receive(RecvFail::Mail(MailFail::Busy))) => return Ok(None),
+                Err(SourceFail::Receive(RecvFail::Mail(HoleFail::Busy))) => return Ok(None),
                 Err(e) => return Err(e),
             }
         }

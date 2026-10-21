@@ -3,9 +3,10 @@ use alloc::sync::{Arc, Weak};
 use crate::core::memory::address::VirtAddr;
 use crate::core::memory::nest::{Access, Nest, NestError, SpaceKind, View, ViewRange};
 use crate::core::work::room::messenger::{self, WakeKey};
+use crate::core::work::room::scheduler::roster;
 use crate::core::work::unit::life::Life;
 
-use super::ViewRegistry;
+use super::{ViewEntry, ViewRegistry};
 
 /// 一个团队的地址空间：CPU 翻译（`Nest`）加一条生命周期线。
 ///
@@ -19,25 +20,56 @@ pub struct Space {
 }
 
 impl Space {
-    fn release_controller(id: usize, entry: &super::ViewEntry) {
-        if entry.scope == env::ViewControl::Caller
-            && let Some(task) = crate::core::work::room::scheduler::roster::muster(entry.controller)
-                .and_then(|task| task.upgrade())
+    /// 关闭同步成功后结清关系登记；ASID 归还失败仍保留号与根表供本入口重试。
+    /// 已退休后不得再次 wipe，避免影响复用此 ASID 的空间。
+    pub(crate) fn retire(&self) -> Result<(), NestError> {
+        if self.nest.retired() {
+            self.reap_views();
+            return Ok(());
+        }
+        self.nest.close()?;
+        messenger::wipe_space(self.nest.asid());
+        self.reap_views();
+        self.nest.retire()?;
+        self.reap_views();
+        Ok(())
+    }
+
+    /// 一段登记结清后的**唯一收尾**：源侧成员与 Registry 项一起撤，
+    /// 最后按登记身份放掉 controller；取出的 entry 在 Registry 锁外放掉它
+    /// 持有的关系与来源授权。
+    fn settle(entry: ViewEntry) {
+        let id = entry.binding.id();
+        entry.source.release_binding(&entry.binding);
+        if let Some(control) = &entry.control
+            && control.scope() == env::ViewControl::Caller
         {
-            task.release_control(id);
+            let (controller, _) = control.control();
+            if let Some(task) = roster::muster(controller).and_then(|task| task.upgrade()) {
+                task.release_control(id);
+            }
         }
     }
 
+    /// 一段已结清登记的收尾入口：在途（未提交）与已提交同样适用。
+    ///
+    /// Registry 项与源侧成员在同一个 work 提交段里一起撤；没结清就什么都不撤，
+    /// 留给既有重试。
     pub(crate) fn retire_view(&self, id: usize) {
-        if let Some(entry) = self.views.locate(id) {
-            self.views.retire(id);
-            Self::release_controller(id, &entry);
+        let _commit = crate::core::work::commit();
+        if !self.nest.settled(id) {
+            return;
+        }
+        if let Some(entry) = self.views.retire(id) {
+            Self::settle(entry);
         }
     }
 
+    /// 把一个空间里已结清的登记都收掉；同样一条收尾，不再重复一份解除动作。
     pub(crate) fn reap_views(&self) {
-        while let Some((id, entry)) = self.views.take_settled(&self.nest) {
-            Self::release_controller(id, &entry);
+        let _commit = crate::core::work::commit();
+        while let Some(entry) = self.views.take_settled(&self.nest) {
+            Self::settle(entry);
         }
     }
 
@@ -122,3 +154,11 @@ impl Space {
 
 unsafe impl Send for Space {}
 unsafe impl Sync for Space {}
+
+impl Drop for Space {
+    fn drop(&mut self) {
+        if !self.nest.retired() {
+            messenger::wipe_space(self.nest.asid());
+        }
+    }
+}

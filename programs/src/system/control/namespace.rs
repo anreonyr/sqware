@@ -142,7 +142,7 @@ impl Endpoints {
 
 fn root(slot: &mut PieToken, mark: env::Mark) -> Result<PieToken, &'static str> {
     let token =
-        env::pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| "Control endpoint Hole")?;
+        env::hole::unseal(mark, env::HoleLimits::default()).map_err(|_| "Control endpoint Hole")?;
     *slot = token;
     validate_root(token, mark)?;
     Ok(token)

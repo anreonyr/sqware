@@ -33,7 +33,6 @@ use programs::boot::{Accounts, Catalog};
 use ::resource::pile::Pile;
 use ::resource::port::{self, Access, Policy};
 use ::resource::raw::Hole;
-use env::pie;
 use env::room;
 use env::unit;
 use env::{PieToken, TaskId};
@@ -165,7 +164,7 @@ pub fn run() -> Reason {
     };
     let group = pile.token();
     // ② 成员：一枚孔（用户态铸的孔不带 `ONLY` ⇒ 也可复制）。
-    let Ok(member) = pie::unseal(env::UnsealArgs::hole(Mark::of("member"))) else {
+    let Ok(member) = env::hole::unseal(Mark::of("member"), env::HoleLimits::default()) else {
         return die("group: member hole");
     };
     let member = Hole::from_raw(member);
@@ -173,7 +172,7 @@ pub fn run() -> Reason {
     //    不是被测对象）。
     let mut report = [PieToken::NONE; WAITERS];
     for slot in report.iter_mut() {
-        let Ok(tok) = pie::unseal(env::UnsealArgs::hole(Mark::of("report"))) else {
+        let Ok(tok) = env::hole::unseal(Mark::of("report"), env::HoleLimits::default()) else {
             return die("group: report hole");
         };
         *slot = tok;

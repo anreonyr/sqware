@@ -13,12 +13,32 @@ mod tests {
     }
 
     #[test]
+    fn iova_windows_cover_positive_sv39_without_reuse_or_overflow() {
+        use hub_api::{BINDING_MAX, IOVA_BASE, IOVA_LIMIT, IOVA_SPAN, iova_base};
+        assert_eq!(IOVA_LIMIT, 1 << 38);
+        assert_eq!(BINDING_MAX, (IOVA_LIMIT - IOVA_BASE) / IOVA_SPAN);
+        assert_eq!(iova_base(0), None);
+        assert_eq!(iova_base(BINDING_MAX), None);
+        assert_eq!(iova_base(u64::MAX), None);
+        for serial in 1..BINDING_MAX {
+            let base = iova_base(serial).unwrap();
+            assert_eq!(base, IOVA_BASE + serial * IOVA_SPAN);
+            assert!(base.is_multiple_of(IOVA_SPAN));
+            assert!(base + IOVA_SPAN <= IOVA_LIMIT);
+        }
+        assert_eq!(iova_base(BINDING_MAX - 1).unwrap() + IOVA_SPAN, IOVA_LIMIT);
+        assert!(iova_base(64).is_some());
+        assert_ne!(iova_base(511).unwrap() >> 30, iova_base(512).unwrap() >> 30);
+    }
+
+    #[test]
     fn marks_grants_and_actions_keep_their_fixed_values() {
         assert_eq!([frame::BOND, frame::LIST, frame::CLAIM], [1, 2, 3]);
-        assert_eq!(Grant::ALL.map(Grant::at), [1, 2, 3]);
-        assert_eq!(Grant::ALL.map(Grant::name), ["bond", "list", "claim"]);
+        assert_eq!(Grant::ALL.map(Grant::at), [1, 2, 3, 4]);
+        assert_eq!(Grant::ALL.map(Grant::name), ["bond", "list", "claim", "dma"]);
         assert_eq!(Grant::ALL.map(Grant::mark), [
             Mark::of("hub-entry-bond"), Mark::of("hub-entry-list"), Mark::of("hub-entry-claim"),
+            Mark::of("hub-entry-dma"),
         ]);
         assert_eq!(hub_api::marks::DECLARATIONS.len(), 2);
         assert_eq!(env::marks::conflict(hub_api::REGISTRY), None);

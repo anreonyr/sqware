@@ -4,7 +4,7 @@ extern crate self as env;
 extern crate self as resource;
 
 pub use abi::{
-    Bit, MailCondition, MailFail, MailResult, PieFail, PieResult, PieToken, Source, TaskId, Wait,
+    Bit, PoleFail, PoleResult, PieFail, PieToken, ToleEventSource, TaskId, Wait,
     make_fail,
 };
 
@@ -15,7 +15,7 @@ pub mod chrono {
 }
 
 pub mod dock {
-    use crate::{PieResult, PieToken};
+    use crate::{PoleResult, PieToken};
 
     #[derive(Clone, Copy)]
     pub struct View(usize);
@@ -30,7 +30,7 @@ pub mod dock {
 
     pub struct Dock(View);
     impl Dock {
-        pub fn open(_: PieToken) -> PieResult<Self> {
+        pub fn open(_: PieToken) -> PoleResult<Self> {
             Ok(Self(View::new(0)))
         }
         pub fn view(&self) -> View {
@@ -90,7 +90,7 @@ mod test_backend {
 }
 
 mod bell {
-    use crate::{Bit, MailResult, PieToken, Source, Wait, test_backend};
+    use crate::{Bit, PoleResult, PieToken, ToleEventSource, Wait, test_backend};
 
     pub(crate) struct Bell;
     impl Bell {
@@ -100,19 +100,19 @@ mod bell {
         pub(crate) fn token(&self) -> PieToken {
             PieToken::NONE
         }
-        pub(crate) fn source(&self) -> Source {
-            Source::Mail {
-                pie: PieToken::NONE,
-                condition: crate::MailCondition::Signal(Bit::FIRST),
+        pub(crate) fn source(&self) -> ToleEventSource {
+            ToleEventSource::Pole {
+                token: PieToken::NONE,
+                bit: Bit::FIRST,
             }
         }
-        pub(crate) fn ring(&self) -> MailResult<()> {
+        pub(crate) fn ring(&self) -> PoleResult<()> {
             Ok(())
         }
-        pub(crate) fn hush(&self) -> MailResult<()> {
+        pub(crate) fn hush(&self) -> PoleResult<()> {
             Ok(())
         }
-        pub(crate) fn wait(&self, wait: Wait) -> MailResult<bool> {
+        pub(crate) fn wait(&self, wait: Wait) -> PoleResult<bool> {
             Ok(test_backend::wait(wait))
         }
     }

@@ -1,5 +1,7 @@
 //! Scene membership and startup are selected independently from UnitFile declarations.
 
+use super::DeploymentSelectionError;
+
 #[derive(Clone, Copy)]
 pub struct Deployment {
     pub name: &'static str,
@@ -39,28 +41,102 @@ pub enum Dependency {
 
 pub const SCENE: &str = "scene";
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DeploymentSelectionError {
-    Missing,
-    Ambiguous,
-}
-
 pub fn select(
-    mut contains_image: impl FnMut(&str) -> bool,
+    name: &str,
+    entry: env::ledger::manifest::Entry<'_>,
 ) -> Result<&'static Deployment, DeploymentSelectionError> {
-    let mut selected = None;
-    for deployment in DEPLOYMENTS {
-        if deployment.entry_image().is_some_and(&mut contains_image) {
-            if selected.is_some() {
-                return Err(DeploymentSelectionError::Ambiguous);
-            }
-            selected = Some(deployment);
-        }
+    let deployment = Deployment::find(name).ok_or(DeploymentSelectionError::Unknown)?;
+    let program = super::PROGRAMS.iter()
+        .find(|program| program.name() == deployment.entry)
+        .ok_or(DeploymentSelectionError::EntryMismatch)?;
+    if entry.name != program.loader.image || entry.kind != program.loader.space {
+        return Err(DeploymentSelectionError::EntryMismatch);
     }
-    selected.ok_or(DeploymentSelectionError::Missing)
+    Ok(deployment)
 }
 
 pub const DEPLOYMENTS: &[Deployment] = &[
+    Deployment {
+        name: "iommu-soak-long",
+        entry: "system",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-soak-long"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-soak-long"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-fail-fence",
+        entry: "system",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-fault"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-fault"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-fail-reference",
+        entry: "iommu-confirmation",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-fail-invalidate",
+        entry: "iommu-confirmation",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-fail-reset",
+        entry: "iommu-confirmation",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-fail-release",
+        entry: "iommu-confirmation",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-soak",
+        entry: "system",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-soak"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-soak"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-forced",
+        entry: "system",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-forced"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-forced"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-ruin",
+        entry: "iommu-ruin",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-ruin"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-ruin"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
     Deployment {
         name: "accept",
         entry: "accept-system",
@@ -138,84 +214,145 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         start: &[
             "hub", "pipe", "account", "terminal", "login", "router", "uart", "rtc",
         ],
-        resources: &[
-            "shell",
-            "cat",
-            "emit",
-            "upper",
-            "fail",
-            "spin",
-            "workers",
-            "system-dma",
-        ],
+        resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers"],
         targets: &[scene_target(&[
             "hub", "pipe", "account", "terminal", "router", "uart", "rtc",
+        ])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-product",
+        entry: "system",
+        start: &[
+            "hub",
+            "pipe",
+            "account",
+            "terminal",
+            "login",
+            "router",
+            "uart",
+            "rtc",
+            "pci",
+            "iommu",
+            "recovery",
+            "device-ctl",
+        ],
+        resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers"],
+        targets: &[scene_target(&[
+            "hub",
+            "pipe",
+            "account",
+            "terminal",
+            "router",
+            "uart",
+            "rtc",
+            "pci",
+            "iommu",
+            "recovery",
+            "device-ctl",
         ])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
         sources: &[],
     },
     Deployment {
         name: "iommu-product-fault",
-        entry: "system-fault-dma",
+        entry: "system",
         start: &[
-            "hub", "pipe", "account", "terminal", "login", "router", "uart", "rtc",
+            "hub",
+            "pipe",
+            "account",
+            "terminal",
+            "login",
+            "router",
+            "uart",
+            "rtc",
+            "pci",
+            "iommu",
+            "recovery",
+            "device-ctl-fault",
         ],
-        resources: &[
-            "shell",
-            "cat",
-            "emit",
-            "upper",
-            "fail",
-            "spin",
-            "workers",
-            "system-dma",
-        ],
+        resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers"],
         targets: &[scene_target(&[
-            "hub", "pipe", "account", "terminal", "router", "uart", "rtc",
+            "hub",
+            "pipe",
+            "account",
+            "terminal",
+            "router",
+            "uart",
+            "rtc",
+            "pci",
+            "iommu",
+            "recovery",
+            "device-ctl-fault",
         ])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
         sources: &[],
     },
     Deployment {
-        name: "iommu-product-start-before",
-        entry: "system-start-before-dma",
+        name: "iommu-product-before",
+        entry: "system",
         start: &[
-            "hub", "pipe", "account", "terminal", "login", "router", "uart", "rtc",
+            "hub",
+            "pipe",
+            "account",
+            "terminal",
+            "login",
+            "router",
+            "uart",
+            "rtc",
+            "pci",
+            "iommu",
+            "recovery",
+            "device-ctl-before",
         ],
-        resources: &[
-            "shell",
-            "cat",
-            "emit",
-            "upper",
-            "fail",
-            "spin",
-            "workers",
-            "system-dma",
-        ],
+        resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers"],
         targets: &[scene_target(&[
-            "hub", "pipe", "account", "terminal", "router", "uart", "rtc",
+            "hub",
+            "pipe",
+            "account",
+            "terminal",
+            "router",
+            "uart",
+            "rtc",
+            "pci",
+            "iommu",
+            "recovery",
+            "device-ctl-before",
         ])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
         sources: &[],
     },
     Deployment {
-        name: "iommu-product-start-after",
-        entry: "system-start-after-dma",
+        name: "iommu-product-after",
+        entry: "system",
         start: &[
-            "hub", "pipe", "account", "terminal", "login", "router", "uart", "rtc",
+            "hub",
+            "pipe",
+            "account",
+            "terminal",
+            "login",
+            "router",
+            "uart",
+            "rtc",
+            "pci",
+            "iommu",
+            "recovery",
+            "device-ctl-after",
         ],
-        resources: &[
-            "shell",
-            "cat",
-            "emit",
-            "upper",
-            "fail",
-            "spin",
-            "workers",
-            "system-dma",
-        ],
+        resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers"],
         targets: &[scene_target(&[
-            "hub", "pipe", "account", "terminal", "router", "uart", "rtc",
+            "hub",
+            "pipe",
+            "account",
+            "terminal",
+            "router",
+            "uart",
+            "rtc",
+            "pci",
+            "iommu",
+            "recovery",
+            "device-ctl-after",
         ])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
         sources: &[],

@@ -17,7 +17,7 @@ pub struct PieToken(pub usize);
 pub struct Mark(pub usize);
 impl Mark { pub const NONE: Self = Self(0); }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MailFail { Busy, Dead }
+pub enum HoleFail { Busy, Dead }
 
 pub mod chrono {
     use std::cell::Cell;
@@ -48,7 +48,7 @@ impl Message for Number {
 }
 
 pub mod raw {
-    use super::{MailFail, PieToken, TaskId, Wait};
+    use super::{HoleFail, PieToken, TaskId, Wait};
     use std::{cell::RefCell, collections::VecDeque};
     #[derive(Clone)] struct Frame(Vec<u8>, TaskId);
     thread_local! {
@@ -78,17 +78,17 @@ pub mod raw {
             QUEUE.with(|q| {
                 let f = {
                     let mut q = q.borrow_mut();
-                    let pos = q.iter().position(|(token, _)| *token == self.0).ok_or(PullError { source: MailFail::Busy })?;
+                    let pos = q.iter().position(|(token, _)| *token == self.0).ok_or(PullError { source: HoleFail::Busy })?;
                     q.remove(pos).unwrap().1
                 };
-                if f.0.len() > buf.len() { return Err(PullError { source: MailFail::Busy }); }
+                if f.0.len() > buf.len() { return Err(PullError { source: HoleFail::Busy }); }
                 buf[..f.0.len()].copy_from_slice(&f.0);
                 Ok((f.0.len(), f.1))
             })
         }
         pub fn push(&self, bytes: &[u8], _wait: Wait) -> Result<(), PushError> {
             LAST_PUSH.with(|p| *p.borrow_mut() = Some(self.0));
-            if PUSH_FAIL.with(|v| v.replace(false)) { return Err(PushError { source: MailFail::Dead }); }
+            if PUSH_FAIL.with(|v| v.replace(false)) { return Err(PushError { source: HoleFail::Dead }); }
             PUSHES.with(|n| *n.borrow_mut() += 1);
             let _ = bytes;
             super::chrono::advance(PUSH_ADVANCE.with(|v| v.replace(0)));
@@ -99,12 +99,12 @@ pub mod raw {
             Ok(())
         }
         pub fn depth(&self) -> Result<usize, PullError> {
-            if DEPTH_FAIL.with(|v| v.replace(false)) { return Err(PullError { source: MailFail::Dead }); }
+            if DEPTH_FAIL.with(|v| v.replace(false)) { return Err(PullError { source: HoleFail::Dead }); }
             Ok(QUEUE.with(|q| q.borrow().iter().filter(|(token, _)| *token == self.0).count()))
         }
     }
-    #[derive(Debug)] pub struct PullError { pub source: MailFail }
-    #[derive(Debug)] pub struct PushError { pub source: MailFail }
+    #[derive(Debug)] pub struct PullError { pub source: HoleFail }
+    #[derive(Debug)] pub struct PushError { pub source: HoleFail }
     pub fn enqueue(bytes: Vec<u8>, from: TaskId) { enqueue_to(PieToken(1), bytes, from); }
     pub fn enqueue_to(token: PieToken, bytes: Vec<u8>, from: TaskId) { QUEUE.with(|q| q.borrow_mut().push_back((token, Frame(bytes, from)))); }
     pub fn reply_on_next_push(bytes: Vec<u8>, from: TaskId) { NEXT_REPLY.with(|v| *v.borrow_mut() = Some((bytes, from))); }
@@ -143,13 +143,17 @@ pub mod raw {
     pub fn fail_next_depth() { DEPTH_FAIL.with(|v| *v.borrow_mut() = true); }
 }
 pub mod unit { use crate::TaskId; pub fn self_id() -> TaskId { TaskId(1) } }
-pub mod pie { pub use crate::raw::{alive, seal}; }
+pub mod hole {
+    pub fn seal(token: crate::PieToken) -> Result<(), crate::raw::PullError> {
+        crate::raw::seal(token).map_err(|_| crate::raw::PullError { source: crate::HoleFail::Dead })
+    }
+}
 
 #[path = "../../src/hand/receiver.rs"]
 pub mod receiver;
 
 pub mod hand {
-    use crate::{MailFail, Message, PieToken, Wait};
+    use crate::{HoleFail, Message, PieToken, Wait};
     pub use crate::receiver::{Receiver, RecvFail, SourceFail};
     pub struct Sender<M: Message>(Option<PieToken>, core::marker::PhantomData<M>);
     impl<M: Message> Sender<M> {
@@ -162,7 +166,7 @@ pub mod hand {
             crate::raw::Hole::from_raw(token).push(&buf.as_ref()[..n], wait).map_err(|e| SendFail::Mail(e.source))
         }
     }
-    #[derive(Debug)] pub enum SendFail { Unbound, TooLong, Mail(MailFail) }
+    #[derive(Debug)] pub enum SendFail { Unbound, TooLong, Mail(HoleFail) }
 }
 
 #[path = "../../src/time.rs"]
@@ -238,7 +242,7 @@ mod tests {
     #[test]
     fn send_failure_never_receives_or_retries() {
         raw::reset(); raw::fail_next_push();
-        assert!(matches!(exchange::call::<ContractNum>(&session(Some(PieToken(1))), Number(4), Wait::POLL), Err(CallFail::Send(hand::SendFail::Mail(MailFail::Dead)))));
+        assert!(matches!(exchange::call::<ContractNum>(&session(Some(PieToken(1))), Number(4), Wait::POLL), Err(CallFail::Send(hand::SendFail::Mail(HoleFail::Dead)))));
         assert_eq!(raw::pull_count(), 0);
     }
     #[test]

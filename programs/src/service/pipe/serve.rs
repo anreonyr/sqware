@@ -56,12 +56,12 @@ impl Root {
             Direction::Read => pipe_api::WRITE_BIT,
             Direction::Write => pipe_api::READ_BIT,
         };
-        let _ = env::mail::ring(self.token, bit);
+        let _ = env::pole::ring(self.token, bit);
     }
 }
 impl Drop for Root {
     fn drop(&mut self) {
-        let _ = env::pie::shut(self.token);
+        let _ = env::pole::shut(self.token);
         let _ = env::pie::release(self.token, env::ReleaseMode::Revoke);
         let _ = env::pie::release(self.owner_lease, env::ReleaseMode::Revoke);
     }
@@ -93,7 +93,7 @@ fn process(
         match Root::create(id, capacity, request.lease) {
             Ok(root) => {
                 if pile
-                    .attach(env::Source::Inspect {
+                    .attach(env::ToleEventSource::Inspect {
                         task: env::unit::self_id(),
                         token: root.owner_lease,
                     })
@@ -146,7 +146,7 @@ fn process(
                     pipe_api::DATA,
                 )
                 .map_err(|_| Fail::Denied)?;
-                let source = env::Source::Inspect {
+                let source = env::ToleEventSource::Inspect {
                     task: request.target,
                     token: seed,
                 };
@@ -204,20 +204,20 @@ fn process(
 }
 impl Root {
     fn detach(&self, pile: &Pile) {
-        let _ = pile.detach(env::Source::Inspect {
+        let _ = pile.detach(env::ToleEventSource::Inspect {
             task: env::unit::self_id(),
             token: self.owner_lease,
         });
         for grant in [&self.read, &self.write].into_iter().flatten() {
-            let _ = pile.detach(env::Source::Inspect {
+            let _ = pile.detach(env::ToleEventSource::Inspect {
                 task: grant.target,
                 token: grant.seed,
             });
         }
     }
 }
-fn ended(ledger: &mut Ledger, roots: &mut Vec<Root>, pile: &Pile, source: env::Source) {
-    let env::Source::Inspect { task, token } = source else {
+fn ended(ledger: &mut Ledger, roots: &mut Vec<Root>, pile: &Pile, source: env::ToleEventSource) {
+    let env::ToleEventSource::Inspect { task, token } = source else {
         return;
     };
     let mut at = 0;
@@ -269,7 +269,7 @@ pub fn run() -> Result<(), &'static str> {
     let _session = ipc::session::Session::open(sire, system_client::operator::BERTH, WAIT)
         .map_err(|_| "pipe operator session")?;
     let entry =
-        env::pie::unseal(env::UnsealArgs::hole(pipe_api::ENTRY)).map_err(|_| "pipe entry")?;
+        env::hole::unseal(pipe_api::ENTRY, env::HoleLimits::default()).map_err(|_| "pipe entry")?;
     let capability = system_client::operator::Capability::injected(0, sire, WAIT)
         .map_err(|_| "pipe namespace capability")?;
     let anchor = capability.anchor().map_err(|_| "pipe namespace anchor")?;
@@ -294,9 +294,9 @@ pub fn run() -> Result<(), &'static str> {
         pipe_api::Call::back,
     );
     let pile = Pile::unseal(false).map_err(|_| "pipe wait group")?;
-    pile.attach(env::Source::Mail {
-        pie: entry,
-        condition: env::MailCondition::Pull,
+    pile.attach(env::ToleEventSource::Hole {
+        token: entry,
+        condition: env::HoleCondition::Pull,
     })
     .map_err(|_| "pipe request wait")?;
     let mut ledger = Ledger::default();
@@ -304,20 +304,20 @@ pub fn run() -> Result<(), &'static str> {
     let mut bytes = Request::EMPTY;
     loop {
         match pile.await_(Wait::Forever).map_err(|_| "pipe wait")? {
-            env::AwaitReply::Source {
-                source: env::Source::Inspect { task, token },
+            env::ToleAwaitReply::Source {
+                source: env::ToleEventSource::Inspect { task, token },
                 ..
             } => {
                 ended(
                     &mut ledger,
                     &mut roots,
                     &pile,
-                    env::Source::Inspect { task, token },
+                    env::ToleEventSource::Inspect { task, token },
                 );
                 continue;
             }
-            env::AwaitReply::Source { fail: Some(_), .. } => return Err("pipe entry lost"),
-            env::AwaitReply::Pending => continue,
+            env::ToleAwaitReply::Source { fail: Some(_), .. } => return Err("pipe entry lost"),
+            env::ToleAwaitReply::Pending => continue,
             _ => {}
         }
         let incoming = match receiver.receive(&mut bytes, Wait::POLL) {

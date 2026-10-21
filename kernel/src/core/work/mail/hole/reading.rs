@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
-use env::{MailCondition, MailFail, TaskId};
+use env::{HoleCondition, HoleFail, TaskId};
 
 use super::pending::Pending;
 use super::slot::Slot;
@@ -31,17 +31,17 @@ impl Drop for Reading<'_> {
     }
 }
 
-pub(crate) fn read(meta: &HoleMeta) -> Result<Reading<'_>, MailFail> {
+pub(crate) fn read(meta: &HoleMeta) -> Result<Reading<'_>, HoleFail> {
     let mut pending = meta.pending.lock();
     let queue = match &mut *pending {
         Pending::Queue(queue) => queue,
-        Pending::Dead => return Err(MailFail::Dead),
-        _ => return Err(MailFail::Busy),
+        Pending::Dead => return Err(HoleFail::Dead),
+        _ => return Err(HoleFail::Busy),
     };
     if queue.taking {
-        return Err(MailFail::Busy);
+        return Err(HoleFail::Busy);
     }
-    let head = queue.head().ok_or(MailFail::Busy)?;
+    let head = queue.head().ok_or(HoleFail::Busy)?;
     let reading = Reading {
         meta,
         from: head.from,
@@ -52,9 +52,9 @@ pub(crate) fn read(meta: &HoleMeta) -> Result<Reading<'_>, MailFail> {
     Ok(reading)
 }
 
-pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId, usize), MailFail> {
+pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId, usize), HoleFail> {
     if !meta.alive() {
-        return Err(MailFail::Dead);
+        return Err(HoleFail::Dead);
     }
     let pending = meta.pending.lock();
     match &*pending {
@@ -64,9 +64,9 @@ pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId, usize), MailFail> 
                 hand.from,
                 q.hands.iter().filter_map(Slot::hand).count(),
             )),
-            None => Err(MailFail::Busy),
+            None => Err(HoleFail::Busy),
         },
-        _ => Err(MailFail::Busy),
+        _ => Err(HoleFail::Busy),
     }
 }
 
@@ -95,9 +95,9 @@ pub(super) fn taken(meta: &HoleMeta) {
         HANDS_LIVE.fetch_sub(1, Ordering::Relaxed);
         note_hand_off(meta, hand.from, len, hand.at);
     }
-    let _ = messenger::wake(key(meta, MailCondition::Empty), &meta.life());
-    let _ = messenger::wake(key(meta, MailCondition::Push), &meta.life());
-    let _ = messenger::wake(key(meta, MailCondition::Pull), &meta.life());
+    let _ = messenger::wake(key(meta, HoleCondition::Empty), &meta.life());
+    let _ = messenger::wake(key(meta, HoleCondition::Push), &meta.life());
+    let _ = messenger::wake(key(meta, HoleCondition::Pull), &meta.life());
 }
 
 pub(super) fn back(meta: &HoleMeta) {
@@ -107,5 +107,5 @@ pub(super) fn back(meta: &HoleMeta) {
             q.taking = false;
         }
     }
-    let _ = messenger::wake(key(meta, MailCondition::Pull), &meta.life());
+    let _ = messenger::wake(key(meta, HoleCondition::Pull), &meta.life());
 }

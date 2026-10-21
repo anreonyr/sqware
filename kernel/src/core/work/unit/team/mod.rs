@@ -182,12 +182,10 @@ impl Team {
         while let Some(item) = staged.items.last() {
             self.space.nest.retry_invalidation()?;
             let id = item.view.identity();
-            if self.space.nest.contains_reservation(id) {
+            if !self.space.nest.settled(id) {
                 self.space.withdraw(item.view.whole())?;
             }
-            if !self.space.nest.contains_reservation(id) {
-                self.space.retire_view(id);
-            }
+            self.space.retire_view(id);
             item.meta.detach_staging(item.token, self.id);
             let owner = item.meta.owner();
             let token = item.token;
@@ -195,6 +193,34 @@ impl Team {
             crate::core::work::pend::notify(owner, token);
         }
         Ok(())
+    }
+
+    pub(crate) fn retire(&self) -> Result<(), NestError> {
+        let _operation = self.operation().ok_or(NestError::NoRegion)?;
+        {
+            let _commit = commit();
+            if !self.all_reaped() {
+                return Err(NestError::NoRegion);
+            }
+            self.life.visit(&mut |node| {
+                let mut state = node.state.lock();
+                if !state.terminal() {
+                    state.phase = TeamPhase::Doomed;
+                }
+            });
+        }
+        let mut after = 0;
+        while let Some(task) = scheduler::roster::after(after) {
+            after = task.ident.id.get();
+            if task.ident.team.id == self.id {
+                if !task.reaped() {
+                    return Err(NestError::NoRegion);
+                }
+                task.retire()?;
+            }
+        }
+        self.cancel_staging()?;
+        self.space.retire()
     }
 
     pub(crate) fn prune_tasks(&self) {

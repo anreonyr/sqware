@@ -1,6 +1,6 @@
 use env::{
-    AwaitReply, Bit, EnvCall, MailCall, MailCondition, MailFail, PieToken, Source, TaskId,
-    UnitTarget, Wait, Wire,
+    Bit, EnvCall, HoleCondition, PieToken, PoleCall, PoleCondition, TaskId, ToleAwaitReply,
+    ToleCall, ToleEventFail, ToleEventSource, UnitTarget, Wait,
 };
 fn token(n: u64) -> PieToken {
     PieToken::from_bytes(&n.to_le_bytes()).unwrap()
@@ -9,80 +9,96 @@ fn token(n: u64) -> PieToken {
 fn independent_notifications_reject_invalid_indices_and_roundtrip() {
     for index in 0..usize::BITS as usize {
         let bit = Bit::wrap(index);
-        let condition = MailCondition::Signal(bit);
-        assert_eq!(MailCondition::of(condition.wire()), Some(condition));
+        let wait = PoleCall::Wait {
+            token: token(1),
+            condition: PoleCondition::Signal(bit),
+            millis: Wait::POLL,
+        };
+        assert_eq!(PoleCall::from_wire(wait.slot(), &wait.pack()), Ok(wait));
         for call in [
-            MailCall::Ring {
+            PoleCall::Ring {
                 token: token(1),
                 bit,
             },
-            MailCall::Hush {
+            PoleCall::Hush {
                 token: token(1),
                 bit,
             },
         ] {
             assert_eq!(
-                MailCall::from_wire(call.slot(), &call.pack()).unwrap(),
+                PoleCall::from_wire(call.slot(), &call.pack()).unwrap(),
                 call
             );
             let mut words = call.pack();
             words[1] = usize::BITS as usize;
-            assert!(MailCall::from_wire(call.slot(), &words).is_err());
+            assert!(PoleCall::from_wire(call.slot(), &words).is_err());
         }
     }
     assert!(Bit::of(usize::BITS as usize).is_none());
-    assert!(MailCondition::of(usize::MAX).is_none());
+    let call = PoleCall::Wait {
+        token: token(1),
+        condition: PoleCondition::Signal(Bit::FIRST),
+        millis: Wait::POLL,
+    };
+    let mut words = call.pack();
+    words[1] = usize::MAX;
+    assert!(PoleCall::from_wire(call.slot(), &words).is_err());
 }
 #[test]
-fn source_identity_roundtrip_preserves_mail_join_and_exact_reference() {
+fn source_identity_roundtrip_preserves_resource_join_and_exact_reference() {
     for source in [
-        Source::Mail {
-            pie: token(1),
-            condition: MailCondition::Signal(Bit::wrap(63)),
+        ToleEventSource::Hole {
+            token: token(1),
+            condition: HoleCondition::Signal,
         },
-        Source::Join {
+        ToleEventSource::Pole {
+            token: token(1),
+            bit: Bit::of(usize::BITS as usize - 1).unwrap(),
+        },
+        ToleEventSource::Nole { token: token(1) },
+        ToleEventSource::Join {
             target: UnitTarget::Task(TaskId::new(2)),
         },
-        Source::Join {
+        ToleEventSource::Join {
             target: UnitTarget::Team(env::TeamId::new(3)),
         },
-        Source::Inspect {
+        ToleEventSource::Inspect {
             task: TaskId::new(4),
             token: token(5),
         },
     ] {
         for call in [
-            MailCall::Attach {
+            ToleCall::Attach {
                 tole: token(6),
                 source,
             },
-            MailCall::Detach {
+            ToleCall::Detach {
                 tole: token(6),
                 source,
             },
         ] {
             assert_eq!(
-                MailCall::from_wire(call.slot(), &call.pack()).unwrap(),
+                ToleCall::from_wire(call.slot(), &call.pack()).unwrap(),
                 call
             );
         }
         for fail in [
             None,
-            Some(MailFail::Denied),
-            Some(MailFail::Dead),
-            Some(MailFail::Busy),
-            Some(MailFail::OoM),
-            Some(MailFail::HandedOver),
-            Some(MailFail::Gone),
+            Some(ToleEventFail::Denied),
+            Some(ToleEventFail::Dead),
+            Some(ToleEventFail::Busy),
+            Some(ToleEventFail::OoM),
+            Some(ToleEventFail::HandedOver),
+            Some(ToleEventFail::Gone),
         ] {
-            let reply = AwaitReply::Source { source, fail };
-            assert_eq!(AwaitReply::of(reply.words()), Some(reply));
+            let reply = ToleAwaitReply::Source { source, fail };
+            assert_eq!(ToleAwaitReply::of(reply.words()), Some(reply));
         }
     }
-    assert_eq!(AwaitReply::of([0; 3]), Some(AwaitReply::Pending));
+    assert_eq!(ToleAwaitReply::of([0; 3]), Some(ToleAwaitReply::Pending));
     for invalid in [
         [0, 1, 0],
-        [5, 1, 0],
+        [7, 1, 0],
         [1, 0, 0],
         [2, 1, 1],
         [3, 1, 1],
@@ -90,24 +106,25 @@ fn source_identity_roundtrip_preserves_mail_join_and_exact_reference() {
         [0x701, 1, 0],
         [1, 1, usize::MAX],
     ] {
-        assert!(AwaitReply::of(invalid).is_none());
-        assert!(Source::of(invalid).is_none());
+        assert!(ToleAwaitReply::of(invalid).is_none());
+        assert!(ToleEventSource::of(invalid).is_none());
     }
 }
 #[test]
 fn retired_mail_and_tole_slots_are_rejected() {
-    for class in [5, 9] {
-        for slot in 0..32 {
-            assert!(EnvCall::from_wire((class << 32) | slot, &[0; 6]).is_err());
-        }
+    for slot in 8..=40 {
+        assert!(EnvCall::from_wire((5usize << 32) | slot, &[0; 6]).is_err());
     }
-    let call = MailCall::Await {
+    for slot in 0..64 {
+        assert!(EnvCall::from_wire((9usize << 32) | slot, &[0; 6]).is_err());
+    }
+    let call = ToleCall::Await {
         tole: token(1),
         millis: Wait::POLL,
     };
-    assert_eq!(call.slot(), (5usize << 32) | 40);
+    assert_eq!(call.slot(), (12usize << 32) | 4);
     assert_eq!(
         EnvCall::from_wire(call.slot(), &call.pack()),
-        Ok(EnvCall::Mail(call))
+        Ok(EnvCall::Tole(call))
     );
 }

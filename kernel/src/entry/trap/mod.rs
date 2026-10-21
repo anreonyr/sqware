@@ -136,6 +136,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             {
                 return quit(ident, reason);
             }
+            drop(ident);
             if from_task {
                 run() as *mut TrapContext
             } else if persist(frame) {
@@ -153,6 +154,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             {
                 return quit(ident, reason);
             }
+            drop(ident);
             if from_task {
                 run() as *mut TrapContext
             } else {

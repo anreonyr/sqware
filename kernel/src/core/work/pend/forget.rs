@@ -19,14 +19,36 @@ pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
             }
             let parent = pie.sire().ok_or(PieFail::Denied)?;
             let lord = pie.lord().upgrade().ok_or(PieFail::Denied)?;
-            if super::locate(&lord, parent).is_none() {
+            let replacement = super::locate(&lord, parent).ok_or(PieFail::Denied)?;
+            if !super::live(&lord) || !replacement.mail().same(pie.mail()) {
                 return Err(PieFail::Denied);
             }
+            // 已封闭资源只移除引用；保留的后代不会因此恢复可用授权。
+            if pie.mail().alive() {
+                if !replacement.alive() {
+                    return Err(PieFail::Denied);
+                }
+                for (holder, child_token) in nodes.iter().skip(1) {
+                    let child = super::locate(holder, *child_token).ok_or(PieFail::Denied)?;
+                    if !replacement.permission().contains(child.permission()) {
+                        return Err(PieFail::Denied);
+                    }
+                }
+            }
+            // 可失败的准备全部在首写之前：heirs 容量先备，再取来源侧那次快照。
+            // 两处任一失败都还没写过任何索引或父子对，整条忘了这条路可以原样重试。
             lord.pend
                 .heirs
                 .lock()
                 .try_reserve(nodes.len() - 1)
                 .map_err(|_| PieFail::OoM)?;
+            // 历史来源槽与显式控制记录里的分支索引在同一事务里改指：
+            // 权限仍是创建时的快照，不重算、也不部分复制。
+            if let Some(meta) = pie.mail().pole()
+                && let Some(authorization) = meta.authorization()
+            {
+                authorization.retarget_branch(token, parent)?;
+            }
             for (child, child_token) in nodes.iter().skip(1) {
                 let mut pies = child.pend.pies.lock();
                 let pie = pies

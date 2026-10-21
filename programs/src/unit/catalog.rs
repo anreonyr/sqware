@@ -18,6 +18,12 @@ pub mod beat;
 pub mod busy;
 #[path = "../harness/bench/again/churn/program.rs"]
 pub mod churn;
+#[path = "../harness/device/programs.rs"]
+pub mod device;
+#[path = "../harness/probe/device_ruin/program.rs"]
+pub mod device_ruin;
+#[path = "../harness/probe/device_confirmation/program.rs"]
+pub mod device_confirmation;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
 /// 测具那 29 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
@@ -28,6 +34,8 @@ pub mod guest;
 pub mod hang;
 #[path = "../service/hub/program.rs"]
 pub mod hub;
+#[path = "../driver/iommu/program.rs"]
+pub mod iommu;
 #[path = "../harness/probe/iommu/dma/program.rs"]
 pub mod iommu_dma;
 #[path = "../harness/probe/iommu/program.rs"]
@@ -52,6 +60,8 @@ pub mod memory_transfer_tlb;
 pub mod park;
 #[path = "../harness/guest/passer/program.rs"]
 pub mod passer;
+#[path = "../driver/pci/program.rs"]
+pub mod pci;
 #[path = "../service/pipe/program.rs"]
 pub mod pipe;
 #[path = "../harness/probe/probe_bound/program.rs"]
@@ -90,6 +100,8 @@ pub mod probe_watch_after;
 pub mod probe_watch_gone;
 #[path = "../harness/bench/rig/rig/program.rs"]
 pub mod rig;
+#[path = "../driver/recovery/program.rs"]
+pub mod recovery;
 #[path = "../driver/router/program.rs"]
 pub mod router;
 #[path = "../driver/rtc/program.rs"]
@@ -102,16 +114,8 @@ pub mod sleeper;
 pub mod subject;
 #[path = "../system/program.rs"]
 pub mod system;
-#[path = "../service/dma/program.rs"]
-pub mod system_dma;
 #[path = "../harness/probe/system_fault/program.rs"]
 pub mod system_fault;
-#[path = "../system/fault_program.rs"]
-pub mod system_fault_dma;
-#[path = "../system/start_after_program.rs"]
-pub mod system_start_after_dma;
-#[path = "../system/start_before_program.rs"]
-pub mod system_start_before_dma;
 #[path = "../user/terminal/program.rs"]
 pub mod terminal;
 #[path = "../driver/uart/program.rs"]
@@ -148,16 +152,26 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &system_fault::FAULT_UNIT,
     &system_fault::DEPENDENT,
     &system_fault::CHILD,
-    // 产品那一侧的端点服务：由 System 的设备管理者按需建 Team、按需起它，
-    // 故它**不在任何景的静态启动单上**，只由镜像把它带进去。
-    &system_dma::PROGRAM,
-    // 故障注入景那一台 System：与 `system` 同一身子、不同镜像，
-    // 只有它的景才会在第二轮装一次 `Pending` 注入。
-    &system_fault_dma::PROGRAM,
-    // 起手受控失败那两景的 System：同样与 `system` 同一身子、不同镜像，
-    // 只有各自那一景才会在那个受控点停一次（景名就是那张图上的事实）。
-    &system_start_before_dma::PROGRAM,
-    &system_start_after_dma::PROGRAM,
+    // 产品那一侧那三台：**常驻驱动**（PCI／IOMMU／设备恢复），各自独立 Task/Space，
+    // 由各景的启动单静态起；它们不在普通设备库存里拿平台窗，两扇/三扇窗都由声明供给定向交到。
+    &iommu::PROGRAM,
+    &pci::PROGRAM,
+    &recovery::PROGRAM,
+    // 场景工作负载与控制器。
+    &device::WORK,
+    &device::WORK_BEFORE,
+    &device::WORK_AFTER,
+    &device::CONTROL,
+    &device::CONTROL_FAULT,
+    &device::CONTROL_BEFORE,
+    &device::CONTROL_AFTER,
+    &device::CONTROL_RUIN,
+    &device::CONTROL_FORCED,
+    &device::CONTROL_SOAK,
+    &device::CONTROL_SOAK_LONG,
+    &device::CONTROL_CONFIRMATION,
+    &device_ruin::PROGRAM,
+    &device_confirmation::PROGRAM,
     // 真实 Task 等待那一景：**装载者 ＋ 控制单元**两台——控制单元要真的被装载（有 sire），
     // 故它那一 Team 的成员带着收据；真实等待链本身在控制单元里（见 `probe/memory_transfer`）。
     &memory_transfer::ENTRY,

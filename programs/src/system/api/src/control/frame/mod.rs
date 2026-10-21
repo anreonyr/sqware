@@ -8,7 +8,7 @@
 //! 不该各起一套词（同 operator 那一族的纪律）。
 
 use alloc::string::String;
-use env::{Mark, PieToken, TaskId};
+use env::{Mark, PieToken, TaskId, TeamId};
 
 use env::wire::Span as _;
 use wire::message::Message;
@@ -51,6 +51,8 @@ pub struct Said {
     pub completed: bool,
     /// **那一条的身子**（`embark` 与 `task` 填它；其余答话是 [`TaskId::new(0)`]）
     pub task: TaskId,
+    /// 实例状态查询的真实所属执行域；未登记或已回收时为零。
+    pub team: TeamId,
 }
 
 impl Message for Said {
@@ -201,6 +203,7 @@ pub const fn said_status(status: u8) -> Said {
         status,
         a: 0,
         task: TaskId::new(0),
+        team: TeamId::new(0),
     }
 }
 
@@ -212,6 +215,7 @@ pub const fn said_state(state: State) -> Said {
         status: OK,
         a: state.code(),
         task: TaskId::new(0),
+        team: TeamId::new(0),
     }
 }
 
@@ -223,6 +227,7 @@ pub const fn said_task(task: TaskId) -> Said {
         status: OK,
         a: 0,
         task,
+        team: TeamId::new(0),
     }
 }
 
@@ -234,4 +239,6 @@ const _: () = assert!(BACK.get() != Mark::NONE.get());
 
 // **答话那一形的宽度钉在编译期**：三格之和（状态 1 ＋ 答案 1 ＋ 身子那一格）。
 
-const _: () = assert!(Said::LEN == 11 + <TaskId as env::wire::Field>::WIDTH);
+const _: () = assert!(
+    Said::LEN == 11 + <TaskId as env::wire::Field>::WIDTH + <TeamId as env::wire::Field>::WIDTH
+);

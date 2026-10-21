@@ -6,7 +6,7 @@ extern crate alloc;
 extern crate programs;
 
 use env::wire::Field;
-use env::{MailCondition, PieToken, TaskId, Wait, unit};
+use env::{PieToken, TaskId, Wait, unit};
 use ipc::session::{Endpoint, Session};
 use programs::Report;
 use programs::debug;
@@ -192,7 +192,7 @@ fn junk_trip(
 ) -> (bool, bool, bool) {
     let door = Hole::from_raw(hedge);
     let pushed = door.push(junk, Wait::AtMost(MS)).is_ok()
-        && matches!(door.wait(MailCondition::Empty, Wait::AtMost(MS)), Ok(true));
+        && matches!(door.wait(env::HoleCondition::Empty, Wait::AtMost(MS)), Ok(true));
 
     let mut back = [0u8; 8];
     let pulled = Hole::from_raw(tree.rx())

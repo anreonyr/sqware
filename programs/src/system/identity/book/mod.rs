@@ -10,13 +10,14 @@ use system_api::identity::{
 };
 
 mod coalition;
+mod coalition_node;
 mod limits;
 mod membership;
 mod principal;
 mod reference;
 mod roster;
 
-use coalition::CoalitionNode;
+use coalition_node::CoalitionNode;
 use principal::PrincipalNode;
 pub use roster::Anchor;
 use roster::BindingRow;

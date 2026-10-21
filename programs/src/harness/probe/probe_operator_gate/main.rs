@@ -49,9 +49,10 @@ fn main() -> Report<'static> {
             Err(Fail::Unknown)
         );
     }
-    let forged = pie::unseal(env::UnsealArgs::hole(
+    let forged = env::hole::unseal(
         system_api::operator::entry::AUTH_ENTRY,
-    ))
+        env::HoleLimits::default(),
+    )
     .unwrap();
     assert!(matches!(
         operator::Capability::direct(tree.host(), forged),
@@ -139,7 +140,7 @@ fn independent_sessions() {
 
 /// A valid transferred Hole is not a Watch endpoint unless its declared role matches.
 fn reject_wrong_watch_role(session: &Session) {
-    let local = pie::unseal(env::UnsealArgs::hole(env::Mark::NONE)).unwrap();
+    let local = env::hole::unseal(env::Mark::NONE, env::HoleLimits::default()).unwrap();
     let borrowed =
         ::resource::port::ship(local, session.host(), env::Access::STORE, env::Policy::NONE)
             .unwrap();

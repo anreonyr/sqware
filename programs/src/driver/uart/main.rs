@@ -16,7 +16,7 @@ mod dev;
 
 use crate::dev::uart as device;
 use ::resource::pile::Pile;
-use env::{MailCondition, Wait};
+use env::{HoleCondition, Wait};
 use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, DRAIN_MAX};
 use programs::unit::uart::E_UART;
@@ -33,16 +33,16 @@ fn main() -> Result<(), Fail> {
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_UART, "desk"))?;
     let lane = desk.line.hole().map_err(|_| Fail::at(E_UART, "line"))?;
     if pile
-        .attach(env::Source::Mail {
-            pie: desk.tx.ship(),
-            condition: MailCondition::Signal(env::Bit::FIRST),
+        .attach(env::ToleEventSource::Pole {
+            token: desk.tx.ship(),
+            bit: env::Bit::FIRST,
         })
         .is_err()
         || pile.attach(desk.rx_w.source()).is_err()
         || pile
-            .attach(env::Source::Mail {
-                pie: lane,
-                condition: MailCondition::Pull,
+            .attach(env::ToleEventSource::Hole {
+                token: lane,
+                condition: HoleCondition::Pull,
             })
             .is_err()
     {

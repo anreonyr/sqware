@@ -13,9 +13,8 @@ use ::resource::pile::Pile;
 use ::resource::raw::Hole;
 use alloc::vec::Vec;
 use env::PAGE_SIZE;
-use env::pie;
 use env::unit;
-use env::{Access, MailCondition, PieKind, Policy, Wait};
+use env::{Access, HoleCondition, PieKind, Policy, Wait};
 use hub_api as hcall;
 use programs::debug;
 use programs::driver::shared::context::{Context, Step};
@@ -68,7 +67,7 @@ pub struct Up {
 /// 起手
 pub fn up() -> Result<Up, Fail> {
     // **起手第一件：入系统**（服务入口 → 上板 ＋ 开会话 → 上树落门牌）。
-    let entry = pie::unseal(env::UnsealArgs::hole(router_api::ENTRY_MARK))
+    let entry = env::hole::unseal(router_api::ENTRY_MARK, env::HoleLimits::default())
         .map_err(|_| Fail::at(E_ROUTER, "desk"))?;
     let sire = unit::sire();
     let ctx = Context::open(sire, Wait::AtMost(QUAY_MS)).map_err(|s| {
@@ -121,15 +120,14 @@ pub fn up() -> Result<Up, Fail> {
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_ROUTER, "bell"))?;
     let entry_hole = Hole::from_raw(entry);
     if pile
-        .attach(env::Source::Mail {
-            pie: irq_deed.token,
-            condition: MailCondition::Pull,
+        .attach(env::ToleEventSource::Nole {
+            token: irq_deed.token,
         })
         .is_err()
         || pile
-            .attach(env::Source::Mail {
-                pie: entry_hole.token(),
-                condition: MailCondition::Pull,
+            .attach(env::ToleEventSource::Hole {
+                token: entry_hole.token(),
+                condition: HoleCondition::Pull,
             })
             .is_err()
     {

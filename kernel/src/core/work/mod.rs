@@ -9,4 +9,4 @@ pub mod unit;
 pub(crate) use commit::commit;
 
 #[cfg(debug_assertions)]
-pub(crate) use commit::assert_unlocked;
+pub(crate) use commit::{assert_held, assert_unlocked};

@@ -21,7 +21,7 @@ fn request_value(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<u
     struct Back(PieToken);
     impl Drop for Back {
         fn drop(&mut self) {
-            let _ = pie::seal(self.0);
+            let _ = env::hole::seal(self.0);
             let _ = pie::release(self.0, env::ReleaseMode::Revoke);
         }
     }
@@ -167,7 +167,7 @@ impl Tree {
     }
     pub(crate) fn connection_interests(
         &self,
-    ) -> impl Iterator<Item = (PieToken, env::MailCondition)> + '_ {
+    ) -> impl Iterator<Item = (PieToken, env::HoleCondition)> + '_ {
         self.connections.interests((
             self.host.unwrap_or(TaskId::new(0)),
             self.tip.unwrap_or(PieToken::NONE),

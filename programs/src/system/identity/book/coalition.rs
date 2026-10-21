@@ -1,13 +1,9 @@
 use env::TaskId;
 use system_api::identity::CoalitionId;
 use system_api::identity::Fail;
-use system_api::identity::PrincipalId;
+use system_api::identity::FoundId;
 
-use super::{IdentityBook, limits};
-
-pub(super) struct CoalitionNode {
-    pub(super) manager: PrincipalId,
-}
+use super::{CoalitionNode, IdentityBook, limits};
 
 impl IdentityBook {
     pub(super) fn coalition(&self, id: CoalitionId) -> Result<usize, Fail> {
@@ -21,8 +17,19 @@ impl IdentityBook {
         Ok(index)
     }
 
-    pub fn found(&mut self, from: TaskId) -> Result<CoalitionId, Fail> {
+    pub fn found(&mut self, from: TaskId, id: FoundId) -> Result<CoalitionId, Fail> {
+        if id.value == 0 {
+            return Err(Fail::Bad);
+        }
         let manager = self.resolve(from).ok_or(Fail::Denied)?.current.principal;
+        if let Some((slot, node)) = self.coalitions.iter().enumerate()
+            .find(|(_, node)| node.caller == from && node.creation == id)
+        {
+            if node.manager != manager {
+                return Err(Fail::Changed);
+            }
+            return Ok(CoalitionId::new(self.authority, slot as u64));
+        }
         if self.coalitions.len() >= limits::MAX_COALITIONS
             || self
                 .coalitions
@@ -36,7 +43,7 @@ impl IdentityBook {
         let slot = u64::try_from(self.coalitions.len()).map_err(|_| Fail::Full)?;
         slot.checked_add(1).ok_or(Fail::Full)?;
         self.coalitions.try_reserve(1).map_err(|_| Fail::Full)?;
-        self.coalitions.push(CoalitionNode { manager });
+        self.coalitions.push(CoalitionNode { manager, caller: from, creation: id });
         Ok(CoalitionId::new(self.authority, slot))
     }
 }

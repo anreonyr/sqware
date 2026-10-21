@@ -1,0 +1,14 @@
+[package]
+name = "iommu-pages-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dev-dependencies]
+abi = { package = "env", path = "../../../crates/env" }
+hub-api = { path = "../../src/service/hub/api" }

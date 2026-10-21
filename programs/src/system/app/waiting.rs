@@ -1,28 +1,28 @@
 use ::resource::pile::Pile;
 use alloc::vec::Vec;
-use env::{MailCondition, PieToken, Source};
+use env::{HoleCondition, PieToken, ToleEventSource};
 
 pub(crate) struct Waiting {
     pile: Pile,
-    sources: Vec<Source>,
+    sources: Vec<ToleEventSource>,
 }
 impl Waiting {
-    pub(crate) fn new() -> env::PieResult<Self> {
+    pub(crate) fn new() -> env::ToleResult<Self> {
         Ok(Self {
             pile: Pile::unseal(false)?,
             sources: Vec::new(),
         })
     }
     pub(crate) fn detach(&self, token: PieToken) {
-        let _ = self.pile.detach(Source::Mail {
-            pie: token,
-            condition: MailCondition::Pull,
+        let _ = self.pile.detach(ToleEventSource::Hole {
+            token,
+            condition: HoleCondition::Pull,
         });
     }
     pub(super) fn await_(&self, wait: env::Wait) -> Result<(), ()> {
         self.pile.await_(wait).map(|_| ()).map_err(|_| ())
     }
-    pub fn apply(&mut self, interests: (&[PieToken], &[PieToken]), subs: &[Source]) -> bool {
+    pub fn apply(&mut self, interests: (&[PieToken], &[PieToken]), subs: &[ToleEventSource]) -> bool {
         let (reads, writes) = interests;
         if self
             .sources
@@ -31,15 +31,15 @@ impl Waiting {
         {
             return false;
         }
-        let wanted = |source: &Source| match source {
-            Source::Mail {
-                pie,
-                condition: MailCondition::Pull,
-            } if reads.contains(pie) => true,
-            Source::Mail {
-                pie,
-                condition: MailCondition::Empty,
-            } if writes.contains(pie) => true,
+        let wanted = |source: &ToleEventSource| match source {
+            ToleEventSource::Hole {
+                token,
+                condition: HoleCondition::Pull,
+            } if reads.contains(token) => true,
+            ToleEventSource::Hole {
+                token,
+                condition: HoleCondition::Empty,
+            } if writes.contains(token) => true,
             _ => subs.contains(source),
         };
         let mut at = 0;
@@ -53,13 +53,13 @@ impl Waiting {
         }
         let sources = reads
             .iter()
-            .map(|&pie| Source::Mail {
-                pie,
-                condition: MailCondition::Pull,
+            .map(|&token| ToleEventSource::Hole {
+                token,
+                condition: HoleCondition::Pull,
             })
-            .chain(writes.iter().map(|&pie| Source::Mail {
-                pie,
-                condition: MailCondition::Empty,
+            .chain(writes.iter().map(|&token| ToleEventSource::Hole {
+                token,
+                condition: HoleCondition::Empty,
             }))
             .chain(subs.iter().copied());
         for source in sources {

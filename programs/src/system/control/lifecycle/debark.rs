@@ -1,6 +1,9 @@
 use super::super::unit::Control;
 use super::Active;
-use crate::system::control::unit::{table::State, verdict::Fail};
+use crate::system::control::unit::{
+    table::{Slot, State},
+    verdict::Fail,
+};
 use ::schedule::{Progress, Res, ResMut};
 
 pub fn pre(mut active: ResMut<Active>, control: Res<Control>) -> Result<Progress, Fail> {
@@ -18,14 +21,20 @@ pub fn pre(mut active: ResMut<Active>, control: Res<Control>) -> Result<Progress
 }
 pub fn run(active: Res<Active>, control: Res<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
-    if control
+    let row = control
         .table
         .find(&job.key.request.name)
-        .is_some_and(|r| r.state == State::Debarked)
-    {
+        .ok_or(Fail::Unknown)?;
+    if row.state == State::Debarked {
         return Ok(Progress::Done);
     }
-    match env::unit::debark_task(job.progress.execution.task.ok_or(Fail::Unknown)?) {
+    let Slot::Live {
+        team: Some(team), ..
+    } = row.slot
+    else {
+        return Err(Fail::Unknown);
+    };
+    match env::unit::debark_team(team) {
         Ok(()) => Ok(Progress::Done),
         Err(e)
             if matches!(e.source, env::UnitFail::Busy)

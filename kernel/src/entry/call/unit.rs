@@ -164,6 +164,9 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 Err(error) => return Outcome::fail(frame, error),
             };
             let join = JoinWait::new(selected, ident.id, receive, millis);
+            let caller = ident.id;
+            drop(me);
+            drop(ident);
             match messenger::unit_join(join) {
                 Ok(Handoff::Resume(reply)) => JoinWait::write(frame, Ok(reply)),
                 Ok(Handoff::Switch(pa)) => return Outcome::Switch(pa as *mut TrapContext),
@@ -171,11 +174,13 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             }
             {
                 let _commit = crate::core::work::commit();
-                ident.team.life.prune();
-                let mut at = 0;
-                while let Some(root) = me.heir_node(at) {
-                    root.life.prune();
-                    at += 1;
+                if let Some(me) = muster(caller).and_then(|w| w.upgrade()) {
+                    me.ident.team.life.prune();
+                    let mut at = 0;
+                    while let Some(root) = me.heir_node(at) {
+                        root.life.prune();
+                        at += 1;
+                    }
                 }
             }
         }
@@ -189,6 +194,8 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 id: ident.id,
                 life: me.life(),
             };
+            drop(me);
+            drop(ident);
             match messenger::fall::<UnitFail>(mine, millis.into_duration()) {
                 Ok(Handoff::Resume(landed)) => frame.gpr.set_x(Gprs::A0, landed as usize),
                 Ok(Handoff::Switch(pa)) => return Outcome::Switch(pa as *mut TrapContext),
@@ -210,6 +217,9 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                         UnitCall::Debark { .. } => {
                             let result = Task::debark(&task);
                             if id == ident.id && matches!(result, Err(UnitFail::Busy)) {
+                                drop(task);
+                                drop(me);
+                                drop(ident);
                                 return Outcome::Switch(
                                     crate::core::work::room::conductor::run::run()
                                         as *mut TrapContext,
@@ -220,6 +230,9 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                         UnitCall::Slay { .. } => {
                             messenger::slay(&task);
                             if id == ident.id {
+                                drop(task);
+                                drop(me);
+                                drop(ident);
                                 return Outcome::Switch(messenger::quit() as *mut TrapContext);
                             }
                             Ok(())

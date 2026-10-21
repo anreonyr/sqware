@@ -10,10 +10,12 @@ use alloc::{
 };
 use env::{TaskId, Wait};
 
+mod reclamation;
 mod service;
 pub use service::Service;
 mod wait;
 pub struct Control {
+    pub(in crate::system::control) reclaimed_at: u64,
     pub(in crate::system::control) status: Arc<Status>,
     pub(in crate::system::control) targets: &'static [crate::unit::Target],
     pub(in crate::system::control) table: Table,
@@ -30,6 +32,7 @@ pub(crate) struct Pending {
 impl Control {
     pub fn new(status: Arc<Status>, targets: &'static [crate::unit::Target]) -> Self {
         Self {
+            reclaimed_at: 0,
             status,
             targets,
             table: Table::new(),
@@ -85,15 +88,17 @@ impl Control {
     }
 
     pub(in crate::system::control) fn resume(&mut self, name: &str) -> Result<(), Fail> {
-        let task = self.task(name).ok_or(Fail::Unknown)?;
-        if self
-            .table
-            .find(name)
-            .is_none_or(|r| r.state != State::Debarked)
-        {
+        let row = self.table.find(name).ok_or(Fail::Unknown)?;
+        if row.state != State::Debarked {
             return Err(Fail::NotReady);
         }
-        env::unit::embark_task(task).map_err(|_| Fail::NotReady)?;
+        let Slot::Live {
+            team: Some(team), ..
+        } = row.slot
+        else {
+            return Err(Fail::Unknown);
+        };
+        env::unit::embark_team(team).map_err(|_| Fail::NotReady)?;
         self.table.set_state(name, State::Ready);
         Ok(())
     }

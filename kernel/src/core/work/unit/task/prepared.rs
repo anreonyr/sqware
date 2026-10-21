@@ -67,6 +67,10 @@ impl PreparedTask {
         })
         .map_err(|_| NestError::OutOfMemory)?;
         scheduler::roster::reserve_publication().map_err(|_| NestError::OutOfMemory)?;
+        // 下面的提交段在 `NoAllocation` 下并持几把锁：这里自己四把（提交锁、成员表、
+        // 暂扣表、名册），回调里还会取它自己那几把。依赖栈容量按「自己四把 + 四把
+        // 余量」先在这里备好：提交段里惰性扩容就是一次分配，回调再取锁就只剩溢出。
+        crate::machine::sync::reserve_depend(8).map_err(|_| NestError::OutOfMemory)?;
         {
             let mut tasks = team.tasks.members.lock();
             if tasks.len() >= MAX_MEMBERS {

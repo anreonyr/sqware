@@ -19,7 +19,7 @@ impl Drop for Source {
 pub(super) fn initialize(bytes: &[u8], region: &elf::Region) -> UnitResult<Source> {
     let private = region.flags & 4 != 0;
     let token = ::resource::raw::pole(region.data_size, !private).map_err(|e| {
-        if matches!(e.source, env::PieFail::OoM) {
+        if matches!(e.source, env::PoleFail::OoM) {
             fail(UnitFail::OoM)
         } else {
             fail(UnitFail::Denied)
@@ -29,7 +29,7 @@ pub(super) fn initialize(bytes: &[u8], region: &elf::Region) -> UnitResult<Sourc
         token,
         mapping: None,
     };
-    pie::shut(token).map_err(|_| fail(UnitFail::Denied))?;
+    env::pole::shut(token).map_err(|_| fail(UnitFail::Denied))?;
     let view = execution::memory::map(
         TeamId::new(0),
         0,

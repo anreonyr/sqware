@@ -9,12 +9,16 @@ use crate::machine::switcher::context::{Gprs, TrapContext};
 mod chrono;
 mod control;
 mod debug;
-pub(crate) mod mail;
+mod gate;
+mod hole;
 pub(in crate::entry) mod memory;
+mod nole;
 mod outcome;
-pub(crate) mod pie;
+mod pie;
+pub(crate) mod pole;
 pub(crate) mod resources;
 mod room;
+mod seal;
 pub(crate) mod tole;
 mod unit;
 
@@ -56,7 +60,10 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Option<*mut T
             chrono::dispatch(frame, call);
             Outcome::Resume
         }
-        EnvCall::Mail(call) => mail::dispatch(frame, call, ident),
+        EnvCall::Hole(call) => hole::dispatch(frame, call, ident),
+        EnvCall::Nole(call) => nole::dispatch(frame, call, ident),
+        EnvCall::Pole(call) => pole::dispatch(frame, call, ident),
+        EnvCall::Tole(call) => tole::dispatch(frame, call, ident),
         EnvCall::Control(call) => {
             control::dispatch(frame, call, &ident);
             Outcome::Resume

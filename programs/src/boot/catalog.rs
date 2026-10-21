@@ -12,14 +12,24 @@ pub struct Catalog<'a> {
 }
 
 impl<'a> Catalog<'a> {
-    /// 拿一块字节当清单。`None` = 清单头非法（条数为零 / 超上限 / 装不下）
+    /// 校验部署头和全部镜像记录；非法清单不提供部分查找结果。
     pub fn new(view: &'a [u8]) -> Option<Catalog<'a>> {
-        manifest::Entries::new(view)?;
+        for entry in manifest::Entries::new(view)? {
+            entry.ok()?;
+        }
         Some(Catalog { view })
     }
 
     pub fn of_boot(accounts: &Accounts) -> Option<Catalog<'static>> {
         Catalog::new(accounts.view())
+    }
+
+    pub fn deployment(&self) -> &'a str {
+        self.programs().deployment()
+    }
+
+    pub fn entry(&self) -> manifest::Entry<'a> {
+        self.programs().entry().expect("引导项已在 new 时验过")
     }
 
     /// 从清单里挑出这个程序
@@ -35,6 +45,6 @@ impl<'a> Catalog<'a> {
     }
 
     fn programs(&self) -> manifest::Entries<'a> {
-        manifest::Entries::new(self.view).expect("清单头已在 new 时验过")
+        manifest::Entries::new(self.view).expect("部署头已在 new 时验过")
     }
 }

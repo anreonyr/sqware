@@ -1,5 +1,7 @@
 mod builder;
 mod space;
+mod view_binding;
+mod view_control_record;
 mod view_entry;
 mod views;
 
@@ -7,5 +9,7 @@ mod views;
 pub use crate::core::memory::nest::SpaceKind;
 pub use builder::SpaceBuilder;
 pub use space::Space;
+pub(crate) use view_binding::ViewBinding;
+pub(crate) use view_control_record::ViewControlRecord;
 pub(crate) use view_entry::ViewEntry;
 pub(crate) use views::ViewRegistry;

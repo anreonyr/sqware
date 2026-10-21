@@ -169,6 +169,64 @@ pub fn preparation() {
     assert_eq!(tally::counts(), counts);
 }
 
+pub fn publication() {
+    use crate::core::memory::nest::table::TABLE_LIVE;
+    use crate::core::work::room::scheduler::roster;
+    use crate::core::work::unit::copies::Origin;
+    use crate::core::work::unit::task::TaskWeak;
+    use crate::core::work::unit::team::TeamPhase;
+    use ::core::sync::atomic::Ordering;
+
+    let before = TABLE_LIVE.load(Ordering::Relaxed);
+    let parent = TeamBuilder::new(SpaceBuilder::user().build().unwrap())
+        .spawn()
+        .unwrap();
+    let task = parent.task().hold().unwrap();
+    let tables = TABLE_LIVE.load(Ordering::Relaxed);
+    let child = TeamBuilder::new(SpaceBuilder::user().build().unwrap())
+        .sire(TaskWeak::stored(Arc::downgrade(&task), Origin::Sire))
+        .spawn()
+        .unwrap();
+    assert_eq!(child.life.owner, task.ident.id);
+    assert!(Arc::ptr_eq(
+        child.life.parent.as_ref().unwrap(),
+        &parent.life
+    ));
+    assert!(Arc::ptr_eq(&task.heir(child.id).unwrap(), &child));
+    assert!(
+        parent
+            .life
+            .children
+            .lock()
+            .iter()
+            .any(|node| Arc::ptr_eq(node, &child.life))
+    );
+    let id = child.id;
+    drop(child);
+    drop(task.oust(id));
+    assert!(parent.life.children.lock().is_empty());
+    assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), tables);
+
+    let pending = TeamBuilder::new(SpaceBuilder::user().build().unwrap())
+        .sire(TaskWeak::stored(Arc::downgrade(&task), Origin::Sire));
+    parent.state.lock().phase = TeamPhase::Doomed;
+    assert!(matches!(pending.spawn(), Err(NestError::NoRegion)));
+    assert!(task.heir_node(0).is_none());
+    assert!(parent.life.children.lock().is_empty());
+    assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), tables);
+
+    let expired = TaskWeak::stored(Arc::downgrade(&task), Origin::Sire);
+    assert!(parent.release_held(&task));
+    drop(task);
+    assert!(expired.upgrade().is_none());
+    let pending = TeamBuilder::new(SpaceBuilder::user().build().unwrap()).sire(expired);
+    assert!(matches!(pending.spawn(), Err(NestError::NoRegion)));
+    assert!(parent.life.children.lock().is_empty());
+    drop(parent);
+    roster::prune_dead();
+    assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), before);
+}
+
 pub fn construction() {
     use crate::core::memory::PAGE_SIZE;
     use crate::core::memory::nest::table::PteFlags;
@@ -192,10 +250,12 @@ pub fn construction() {
     let caller = parent.task().hold().unwrap();
     let child = crate::core::work::unit::team::TeamBuilder::build(
         crate::core::work::unit::space::SpaceKind::User,
-        crate::core::work::unit::task::TaskWeak::empty(),
+        crate::core::work::unit::task::TaskWeak::stored(
+            Arc::downgrade(&caller),
+            crate::core::work::unit::copies::Origin::Sire,
+        ),
     )
     .unwrap();
-    caller.adopt(child.clone()).unwrap();
     child
         .space
         .nest
@@ -353,8 +413,9 @@ pub fn construction() {
     }
     for view in &stage_maps {
         let entry = child.space.views.locate(view.identity()).unwrap();
-        assert_eq!(entry.controller, task.ident.id);
-        assert!(entry.branch.is_none());
+        let (controller, branch) = entry.control.as_ref().unwrap().control();
+        assert_eq!(controller, task.ident.id);
+        assert!(branch.is_none());
         assert!(entry.source.own_range().is_none());
         assert!(!entry.source.branch_check(None, Access::READ));
         assert_eq!(
@@ -426,10 +487,12 @@ pub fn cancellation() {
     let caller = parent.task().hold().unwrap();
     let child = crate::core::work::unit::team::TeamBuilder::build(
         crate::core::work::unit::space::SpaceKind::User,
-        crate::core::work::unit::task::TaskWeak::empty(),
+        crate::core::work::unit::task::TaskWeak::stored(
+            Arc::downgrade(&caller),
+            crate::core::work::unit::copies::Origin::Sire,
+        ),
     )
     .unwrap();
-    caller.adopt(child.clone()).unwrap();
     child
         .space
         .nest

@@ -1,19 +1,18 @@
-use alloc::sync::{Arc, Weak};
-use env::{PieToken, TaskId, ViewControl};
+use alloc::sync::Arc;
 
 use crate::core::memory::nest::View;
 use crate::core::work::pend::SourceAuthorization;
 
-use super::Space;
+use super::{ViewBinding, ViewControlRecord};
 
 #[derive(Clone)]
 pub(crate) struct ViewEntry {
-    pub(crate) space: Weak<Space>,
+    /// 与来源名下那条成员**同一个** `Arc`：控制身份与结清都只有这一处。
+    pub(crate) binding: Arc<ViewBinding>,
+    /// 资源映射没有 Memory 控制记录，不能凭关系号取得额外操作权。
+    pub(crate) control: Option<Arc<ViewControlRecord>>,
     pub(crate) view: Option<Arc<View>>,
-    pub(crate) scope: ViewControl,
-    pub(crate) controller: TaskId,
     pub(crate) source: Arc<SourceAuthorization>,
-    pub(crate) branch: Option<PieToken>,
 }
 
 impl ViewEntry {

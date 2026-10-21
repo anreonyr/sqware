@@ -125,7 +125,7 @@ pub fn run() -> Result<(), &'static str> {
     }
     let state = system_client::control::Face::of(state_entry).map_err(|_| "Account task query")?;
     let entry =
-        env::pie::unseal(env::UnsealArgs::hole(account_api::ENTRY)).map_err(|_| "Account entry")?;
+        env::hole::unseal(account_api::ENTRY, env::HoleLimits::default()).map_err(|_| "Account entry")?;
     let anchor = namespace.anchor().map_err(|_| "Account namespace anchor")?;
     let view = system_api::operator::ResourceView::new(env::Access::STORE)
         .ok_or("Account endpoint view")?;

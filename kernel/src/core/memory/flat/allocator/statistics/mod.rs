@@ -38,8 +38,9 @@ pub(crate) use kinds::Kinds;
 pub(crate) use mark::mark;
 #[cfg(debug_assertions)]
 pub(crate) use stats::kinds;
+pub use stats::{block_occupied, frame_occupied};
 #[cfg(debug_assertions)]
-pub use stats::{block_occupied, frame_occupied, spare_available, spare_occupied};
+pub use stats::{spare_available, spare_occupied};
 
 #[cfg(not(debug_assertions))]
 pub(crate) fn install_frame_kinds(_frames: usize) -> Result<(), super::InitError> {

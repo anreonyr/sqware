@@ -150,8 +150,10 @@ pub fn acceptance() {
     note(&format!(
         "iommu-dma: endpoint requester={requester} bar={bar_index} probe={probe:?}"
     ));
-    let endpoint = Endpoint::claim(&scan, bar_index, (APERTURE_BASE, APERTURE_SIZE))
+    let endpoint = Endpoint::place(&scan, bar_index, (APERTURE_BASE, APERTURE_SIZE))
         .unwrap_or_else(|fail| panic!("{fail}"));
+    // 探针自己把 bus-master 打开（产品那一侧这一步归 IOMMU 驱动在帧持有与约束就绪之后做）。
+    scan.command_or(ecam::COMMAND_MASTER);
     note(&format!(
         "iommu-dma: endpoint address={:#x} size={:#x} window={:#x}..{:#x}",
         endpoint.address(),
@@ -194,7 +196,10 @@ pub fn acceptance() {
     HANDOFF.used.store(iova(USED) as usize, Ordering::Relaxed);
 
     // ⑤ 保留，再发布：这一段窗是本域对每一页的强持，设备地址从 `traverse` 出口取。
-    let pages = Pages::take(retention, PAGES).expect("iommu-dma: retained pages");
+    let mut pages = Pages::default();
+    pages
+        .take(retention, PAGES)
+        .expect("iommu-dma: retained pages");
     HANDOFF
         .used_at
         .store(pages.at(USED, 2) as usize, Ordering::Relaxed);

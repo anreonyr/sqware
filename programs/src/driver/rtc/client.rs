@@ -5,7 +5,7 @@
 //! 两形各是一张实现了报文约定的表，见 super::core::frame）。
 //! Alarm 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
-use env::{MailCondition, PieToken, Wait};
+use env::{HoleCondition, PieToken, Wait};
 use ipc::hand::Receiver;
 use ipc::session::establish;
 use programs::debug;
@@ -27,16 +27,16 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     let mut frame = [0u8; Now::LEN];
     let Some(n) = Now::of(seed).store_at(&mut frame, 0) else {
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = pie::seal(back);
+        let _ = env::hole::seal(back);
         let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     };
     let door = Hole::from_raw(entry);
     if door.push(&frame[..n], Wait::Forever).is_err()
-        || !matches!(door.wait(MailCondition::Empty, Wait::Forever), Ok(true))
+        || !matches!(door.wait(HoleCondition::Empty, Wait::Forever), Ok(true))
     {
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = pie::seal(back);
+        let _ = env::hole::seal(back);
         let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     }
@@ -46,7 +46,7 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
         .recv(buf.as_mut(), millis)
         .map_err(|_| Fail::Denied);
     // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-    let _ = pie::seal(back);
+    let _ = env::hole::seal(back);
     let _ = pie::release(back, env::ReleaseMode::Revoke);
     answer
 }
@@ -66,7 +66,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     let Some(n) = Arm::of(seed, after_ns).store_at(&mut frame, 0) else {
         why("store", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = pie::seal(back);
+        let _ = env::hole::seal(back);
         let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     };
@@ -74,14 +74,14 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     if door.push(&frame[..n], Wait::Forever).is_err() {
         why("push", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = pie::seal(back);
+        let _ = env::hole::seal(back);
         let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     }
-    if !matches!(door.wait(MailCondition::Empty, Wait::Forever), Ok(true)) {
+    if !matches!(door.wait(HoleCondition::Empty, Wait::Forever), Ok(true)) {
         why("take", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = pie::seal(back);
+        let _ = env::hole::seal(back);
         let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     }
@@ -101,7 +101,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
                 }
             }
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-            let _ = pie::seal(back);
+            let _ = env::hole::seal(back);
             let _ = pie::release(back, env::ReleaseMode::Revoke);
             return Err(Fail::Denied);
         }
@@ -113,7 +113,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
         });
     }
     // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-    let _ = pie::seal(back);
+    let _ = env::hole::seal(back);
     let _ = pie::release(back, env::ReleaseMode::Revoke);
     why("code", 0, &alloc::format!("got={code}"));
     Err(frame::code_to_fail(code).unwrap_or(Fail::Denied))

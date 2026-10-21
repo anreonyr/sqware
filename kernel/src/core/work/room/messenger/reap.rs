@@ -12,7 +12,7 @@ use crate::core::work::unit::tally;
 use crate::core::work::unit::task::{Task, TaskExitCause, TaskState};
 use crate::machine::sync::{Level, OnceLock, SpinLock};
 
-use super::{WakeKey, wipe, wipe_space};
+use super::{WakeKey, wipe};
 
 pub(super) static HUSKS: SpinLock<Husks> = SpinLock::new_level(Level::L3, Husks::new());
 
@@ -112,7 +112,6 @@ pub fn quit() -> usize {
     };
     ledger::note(tid, reason, text, owner);
     reap(exited, TaskExitCause::Reap, reason);
-    bury();
     crate::core::work::room::conductor::run::run()
 }
 
@@ -150,7 +149,7 @@ fn note_out<'a>(
     }
 }
 
-fn bury() {
+pub(crate) fn bury() {
     loop {
         let z = {
             let mut husks = HUSKS.lock();
@@ -159,7 +158,7 @@ fn bury() {
             };
             z
         };
-        if z.ident.retire().is_err() {
+        if z.retire().is_err() {
             HUSKS.lock().push(z);
             break;
         }
@@ -168,9 +167,6 @@ fn bury() {
         }));
         wipe(WakeKey::Task { id: z.ident.id });
         wipe(WakeKey::Pies { task: z.ident.id });
-        if Arc::strong_count(&z.ident.team.space) == 1 {
-            wipe_space(z.ident.team.space.nest.asid());
-        }
         z.ident.team.prune_tasks();
         let _pruned = crate::core::work::room::scheduler::roster::prune_dead();
         drop(z);

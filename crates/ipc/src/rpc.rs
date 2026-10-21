@@ -1,7 +1,7 @@
 //! Typed one-request, one-reply exchanges over a service entry.
 
 use core::marker::PhantomData;
-use env::{MailFail, Mark, PieFail, PieToken, TaskId, Wait};
+use env::{HoleFail, Mark, PieFail, PieToken, TaskId, Wait};
 use resource::{
     port::{Reply, ReplyError, Sender as PortSender},
     raw,
@@ -17,11 +17,12 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
     Open(PieFail),
+    Create(HoleFail),
     Grant(PieFail),
     Encode,
     Decode,
-    Send(MailFail),
-    Receive(MailFail),
+    Send(HoleFail),
+    Receive(HoleFail),
     Untrusted,
     WrongSource,
 }
@@ -59,7 +60,7 @@ pub mod request {
             build: impl FnOnce(PieToken) -> C::Request,
         ) -> Result<Pending<C>, Fail> {
             let mut reply =
-                Reply::open(self.peer(), self.back).map_err(|error| Fail::Open(error.source))?;
+                Reply::open(self.peer(), self.back).map_err(|error| Fail::Create(error.source))?;
             let remote = reply.grant().map_err(|error| Fail::Grant(error.source))?;
             let request = build(remote);
             let mut buffer = C::Request::EMPTY;
@@ -85,7 +86,7 @@ pub mod request {
             build: impl FnOnce(PieToken) -> C::Request,
         ) -> Result<super::reply::Receiver<C::Response>, Fail> {
             let mut reply =
-                Reply::open(self.peer(), self.back).map_err(|error| Fail::Open(error.source))?;
+                Reply::open(self.peer(), self.back).map_err(|error| Fail::Create(error.source))?;
             let remote = reply.grant().map_err(|error| Fail::Grant(error.source))?;
             let request = build(remote);
             let mut buffer = C::Request::EMPTY;
@@ -117,7 +118,7 @@ pub mod request {
         done: bool,
     }
     impl<C: Contract> Pending<C> {
-        pub fn source(&self) -> env::Source {
+        pub fn source(&self) -> env::ToleEventSource {
             if self.sent {
                 self.reply.source()
             } else {
@@ -325,7 +326,7 @@ pub mod reply {
             }
         }
 
-        pub fn source(&self) -> env::Source {
+        pub fn source(&self) -> env::ToleEventSource {
             self.reply.source()
         }
 

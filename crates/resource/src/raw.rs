@@ -4,7 +4,7 @@
 //! 管理指定对端的派生授予；这些入口用于协议、硬件和测具边界。
 
 use env::{
-    MailCondition, MailFail, MailResult, Mark, Oversize, PieInfo, PieKind, PieResult, PieToken,
+    HoleCondition, HoleFail, HoleResult, Mark, Oversize, PieInfo, PieKind, PieResult, PieToken,
     PullOutcome, TaskId, VirtAddr, Wait,
 };
 
@@ -52,8 +52,8 @@ fn remains(within: Wait, deadline: u64) -> Wait {
 }
 
 /// 只手递上去（`len ≥ 1`）。**内核那一格的一次尝试**，成不成看孔上有没有手。
-fn put(token: PieToken, msg: &[u8]) -> MailResult<()> {
-    env::mail::push(token, VirtAddr::new(msg.as_ptr() as usize), msg.len())
+fn put(token: PieToken, msg: &[u8]) -> HoleResult<()> {
+    env::hole::push(token, VirtAddr::new(msg.as_ptr() as usize), msg.len())
 }
 
 /// Hole 门闩用户态句柄——**数据面那一枚**。
@@ -63,9 +63,9 @@ pub struct Hole {
 
 impl Hole {
     /// 解封 Hole：**记号必填**（`mark` = 这枚孔干什么用的）。
-    pub fn unseal(mark: Mark) -> PieResult<Self> {
+    pub fn unseal(mark: Mark) -> HoleResult<Self> {
         Ok(Self {
-            token: env::pie::unseal(env::UnsealArgs::hole(mark))?,
+            token: env::hole::unseal(mark, env::HoleLimits::default())?,
         })
     }
 
@@ -83,7 +83,7 @@ impl Hole {
     /// Copy one message into the kernel queue, retrying until space or the deadline.
     /// Success means queued. Wait(Empty) observes a drained queue, not completed processing.
     /// Push readiness does not promise that a particular message fits the byte budget.
-    pub fn push(&self, msg: &[u8], within: Wait) -> MailResult<()> {
+    pub fn push(&self, msg: &[u8], within: Wait) -> HoleResult<()> {
         if matches!(within, Wait::AtMost(0)) {
             return put(self.token, msg);
         }
@@ -94,7 +94,7 @@ impl Hole {
                 Err(e) if e.source.is_busy() => {
                     // 到点 ⇒ 把最后一次尝试的结果原样交出去（`Busy` 也是答案）。
                     if now_ns() >= deadline
-                        || !self.wait(MailCondition::Push, remains(within, deadline))?
+                        || !self.wait(HoleCondition::Push, remains(within, deadline))?
                     {
                         return put(self.token, msg);
                     }
@@ -107,14 +107,14 @@ impl Hole {
     /// **取走一只手**：把内核队列里的字节复制进 `buf`，返 `(实际长度, 发送者)`。
     ///
     /// `within` = **手上没东西时**允许等多久：`Wait::POLL` = 只试一次（手上没东西 ⇒ `Busy`）；
-    /// `AtMost(n)` / `Forever` = 等到**有东西**（`Wait{MailCondition::Pull}` 就绪）。
+    /// `AtMost(n)` / `Forever` = 等到**有东西**（`Wait{HoleCondition::Pull}` 就绪）。
     ///
     /// 装不下（`len > buf.len()`）返 `Denied`，**手原样留在孔上**——换够大的缓冲再来取，不丢消息。
     /// 要问长度用 [`Hole::peek`]。
     ///
     /// **发送者由内核在 `Push` 时盖章**——身份不可伪造，不必再从报文里猜；「有界等」与「认来源」
     /// 是同一次收的两个事实，分成两趟取会把竞态留在中间，故这一手一并返回来。
-    pub fn pull(&self, buf: &mut [u8], within: Wait) -> MailResult<(usize, TaskId)> {
+    pub fn pull(&self, buf: &mut [u8], within: Wait) -> HoleResult<(usize, TaskId)> {
         match self.pull_with(buf, within, Oversize::Keep)? {
             PullOutcome::Received { len, sender } => Ok((len, sender)),
             PullOutcome::Discarded { .. } => unreachable!("Keep cannot discard"),
@@ -123,7 +123,7 @@ impl Hole {
 
     /// Wait for Pull (readable), Push (space available), or Empty (queue drained).
     /// Unrelated wakeups recheck the condition using the original deadline.
-    pub fn wait(&self, dir: MailCondition, within: Wait) -> MailResult<bool> {
+    pub fn wait(&self, dir: HoleCondition, within: Wait) -> HoleResult<bool> {
         wait(self.token, dir, within)
     }
 
@@ -133,8 +133,8 @@ impl Hole {
     /// [`Hole::pull`]，够不够由 `buf.len()` 判。它的读者是"等之前先看一眼"那一格
     /// （`harness` 的 waiter：多个等待者挂在同一只组键上，要**非破坏性**地判"有货"）。
     /// 手上没东西 → `Err(Busy)`（没有可取之事，与 `pull` 同一个码）。
-    pub fn peek(&self) -> MailResult<(usize, TaskId, usize)> {
-        env::mail::peek(self.token)
+    pub fn peek(&self) -> HoleResult<(usize, TaskId, usize)> {
+        env::hole::peek(self.token)
     }
 
     /// Receive one message with an explicit policy for an oversized head.
@@ -143,14 +143,14 @@ impl Hole {
         buf: &mut [u8],
         within: Wait,
         oversize: Oversize,
-    ) -> MailResult<PullOutcome> {
+    ) -> HoleResult<PullOutcome> {
         let deadline = if within == Wait::POLL {
             0
         } else {
             deadline_of(within)
         };
         loop {
-            let attempt = env::mail::pull(
+            let attempt = env::hole::pull(
                 self.token,
                 VirtAddr::new(buf.as_mut_ptr() as usize),
                 buf.len(),
@@ -160,7 +160,7 @@ impl Hole {
                 Err(ref error)
                     if error.source.is_busy() && within != Wait::POLL && now_ns() < deadline =>
                 {
-                    if !self.wait(MailCondition::Pull, remains(within, deadline))? {
+                    if !self.wait(HoleCondition::Pull, remains(within, deadline))? {
                         return attempt;
                     }
                 }
@@ -173,25 +173,25 @@ impl Hole {
     /// 至多 `QUEUE_CAP` 只手，故"我那只手被取走了没有"由这个数说。
     ///
     /// **空孔答 0**（不是错误）：一只都没排是写者要的那条事实。孔没了才答 `Dead`。
-    pub fn depth(&self) -> MailResult<usize> {
-        match env::mail::peek(self.token) {
+    pub fn depth(&self) -> HoleResult<usize> {
+        match env::hole::peek(self.token) {
             Ok((_, _, depth)) => Ok(depth),
-            Err(e) if e.source == MailFail::Busy => Ok(0),
+            Err(e) if e.source == HoleFail::Busy => Ok(0),
             Err(e) => Err(e),
         }
     }
 
     /// **响这一位**：置"有待取之事"并唤醒听者。已响 → `Busy`。
-    pub fn ring(&self) -> MailResult<()> {
-        env::mail::ring(self.token, env::Bit::FIRST)
+    pub fn ring(&self) -> HoleResult<()> {
+        env::hole::ring(self.token)
     }
 
     /// **应这一位**：清掉"有待取之事"，内核随即重开本 hart 的中断闸门。
     ///
     /// `wait` 不清、要显式 `hush`：清必须与"取完"同一刻——醒来之后还要处理、处理完才轮得到
     /// "没有待取之事"。
-    pub fn hush(&self) -> MailResult<()> {
-        env::mail::hush(self.token, env::Bit::FIRST)
+    pub fn hush(&self) -> HoleResult<()> {
+        env::hole::hush(self.token)
     }
 }
 
@@ -281,13 +281,20 @@ pub fn alive(token: PieToken) -> bool {
 }
 
 /// 等资源就绪；无关唤醒后继续使用剩余预算。
-pub(crate) fn wait(token: PieToken, dir: MailCondition, within: Wait) -> MailResult<bool> {
+pub(crate) fn wait(token: PieToken, dir: HoleCondition, within: Wait) -> HoleResult<bool> {
+    wait_for(within, |step| env::hole::wait(token, dir, step))
+}
+
+pub(crate) fn wait_for<E>(
+    within: Wait,
+    mut ready: impl FnMut(Wait) -> Result<bool, E>,
+) -> Result<bool, E> {
     let deadline = if within == Wait::POLL {
         0
     } else {
         deadline_of(within)
     };
-    if env::mail::wait(token, dir, within)? {
+    if ready(within)? {
         return Ok(true);
     }
     if matches!(within, Wait::AtMost(0)) {
@@ -298,37 +305,44 @@ pub(crate) fn wait(token: PieToken, dir: MailCondition, within: Wait) -> MailRes
             return Ok(false);
         }
         let step = remains(within, deadline);
-        if env::mail::wait(token, dir, step)? {
+        if ready(step)? {
             return Ok(true);
         }
     }
 }
 
 /// Allocate a whole source and hand it to a Pole.
-pub fn pole(size: usize, shared: bool) -> PieResult<PieToken> {
+pub fn pole(size: usize, shared: bool) -> env::PoleResult<PieToken> {
     if size == 0 || !size.is_multiple_of(env::PAGE_SIZE) {
-        return Err(env::make_fail(env::PieFail::NotAligned));
+        return Err(env::make_fail(env::PoleFail::NotAligned));
     }
     let allocation = env::Allocation::new(size, env::PAGE_SIZE)
-        .ok_or_else(|| env::make_fail(env::PieFail::NotAligned))?;
+        .ok_or_else(|| env::make_fail(env::PoleFail::NotAligned))?;
     let reference = env::memory::acquire(
         env::AcquireSource::Allocation(allocation),
         env::PieToken::NONE,
     )
     .map_err(|error| {
         env::make_fail(match error.source {
-            env::MemoryFail::OoM => env::PieFail::OoM,
-            env::MemoryFail::Busy => env::PieFail::Busy,
-            _ => env::PieFail::Denied,
+            env::MemoryFail::OoM => env::PoleFail::OoM,
+            env::MemoryFail::Busy => env::PoleFail::Busy,
+            env::MemoryFail::NotAligned => env::PoleFail::NotAligned,
+            env::MemoryFail::Denied
+            | env::MemoryFail::NoRegion
+            | env::MemoryFail::AlreadyMapped
+            | env::MemoryFail::WidenDenied
+            | env::MemoryFail::SourceEmpty
+            | env::MemoryFail::DestinationOccupied
+            | env::MemoryFail::NotTransferable => env::PoleFail::Denied,
         })
     })?;
-    let handed = env::pie::unseal(env::UnsealArgs::Pole { reference, shared });
+    let handed = env::pole::unseal(reference, shared);
     // Pole 已接手这一份来源；无论成败，调用方手里这一份引用都在此结清。
     env::memory::release(reference).expect("fresh caller reference cleanup");
     handed
 }
 
 /// 借映共享页，返回映射起点与长度。
-pub fn open(token: PieToken) -> PieResult<(usize, usize)> {
-    env::pie::open(token).map(|(va, size)| (va.get(), size))
+pub fn open(token: PieToken) -> env::PoleResult<(usize, usize)> {
+    env::pole::open(token).map(|(va, size)| (va.get(), size))
 }

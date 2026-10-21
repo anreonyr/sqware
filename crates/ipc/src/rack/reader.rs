@@ -23,7 +23,7 @@
 use core::marker::PhantomData;
 
 use ::resource::dock::{Dock, View};
-use env::{MailFail, PieToken, Wait};
+use env::{PoleFail, PieToken, Wait};
 
 use super::bell::Bell;
 use super::ring::{Ring, SLOT, cursor, exact, lost, pop, ring};
@@ -91,7 +91,7 @@ impl<M: Message> Reader<M> {
             }
             Ok(None) => Ok(None),
             // 这一格被别的读者拿走了（一页一端，不该发生）：如实报，不猜。
-            Err(0) => Err(RecvFail::Mail(MailFail::Busy)),
+            Err(0) => Err(RecvFail::Mail(PoleFail::Busy)),
             Err(n) => Err(RecvFail::Unread(n)),
         }
     }
@@ -159,7 +159,7 @@ impl<M: Message> Reader<M> {
     }
 
     /// 本端那一枚铃的号。
-    pub fn source(&self) -> env::Source {
+    pub fn source(&self) -> env::ToleEventSource {
         self.bell.source()
     }
 
@@ -173,8 +173,8 @@ impl<M: Message> Reader<M> {
 pub enum RecvFail {
     /// 期限内没有可取之事（`Wait::POLL` 那一档就是"探测一次"）。
     Empty,
-    /// 载体那一层搬不动（`Busy` / `Dead` / `Denied` / `Gone`）。
-    Mail(MailFail),
+    /// Pole 映射或通知失败，保留原失败码。
+    Mail(PoleFail),
     /// 收到了 `len` 字节，解不动（或那一格放不下它——这两种都由 `M` 那一族自己判）。
     Unread(usize),
 }

@@ -195,22 +195,6 @@ impl Task {
         }
     }
 
-    pub(crate) fn adopt(&self, child: Arc<Team>) -> Result<(), ()> {
-        {
-            self.heir.lock().try_reserve(1).map_err(|_| ())?;
-        }
-        let _commit = commit();
-        if self.dead() {
-            return Err(());
-        }
-        let mut g = self.heir.lock();
-        if g.len() == g.capacity() {
-            return Err(());
-        }
-        g.push(child);
-        Ok(())
-    }
-
     pub(crate) fn oust(&self, team: TeamId) -> Option<Arc<Team>> {
         let _commit = commit();
         let child = {
@@ -226,6 +210,17 @@ impl Task {
         }
         root.prune();
         Some(child)
+    }
+
+    pub(crate) fn retire(&self) -> Result<(), crate::core::memory::nest::NestError> {
+        let mut at = 0;
+        while let Some(child) = self.heir_node(at) {
+            child.retire()?;
+            at += 1;
+        }
+        // 子空间先完成退休，才可解除本任务留在其中的控制；未结时仍保留任务重试。
+        self.close_controls()?;
+        self.ident.retire()
     }
 
     pub(crate) fn heir_node(&self, at: usize) -> Option<Arc<Team>> {

@@ -17,10 +17,11 @@ fn main() -> Report<'static> {
     let session = Session::open(env::unit::sire(), operator::BERTH, MS)
         .unwrap_or_else(|_| panic!("no Operator session"));
     let face = Face::of(session);
-    let source = pie::unseal(env::UnsealArgs::hole(Mark::of("publication-test"))).unwrap();
-    let forged = pie::unseal(env::UnsealArgs::hole(
+    let source = env::hole::unseal(Mark::of("publication-test"), env::HoleLimits::default()).unwrap();
+    let forged = env::hole::unseal(
         system_api::operator::entry::AUTH_ENTRY,
-    ))
+        env::HoleLimits::default(),
+    )
     .unwrap();
     assert!(matches!(
         operator::Capability::direct(face.host(), forged),
@@ -119,7 +120,7 @@ fn main() -> Report<'static> {
             .entry_id(),
         first.entry_id()
     );
-    let other = pie::unseal(env::UnsealArgs::hole(Mark::of("publication-test"))).unwrap();
+    let other = env::hole::unseal(Mark::of("publication-test"), env::HoleLimits::default()).unwrap();
     assert_eq!(
         client
             .bind(

@@ -871,16 +871,21 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
   于是没有“第一个来问的就给它”这条路；`retention::ENTRIES = 1` 明写进账本尺寸。
   任务号在 `hold()` 后才存在，因此这一项在普通 `Frozen::grant` 后铸造；
   `ledger::write` 对全部账目统一检查 `Entry::valid()`。
-- `require_retention` 的判据不变：内核铸的 `retains()` 对象 + 活的 Pie + `VEST` +
+- PR6 当时 `require_retention` 的判据：内核铸的 `retains()` 对象 + 活的 Pie + `VEST` +
   **owner 就是调用者**。普通自造 Nole、`Mark`、任务数字、只有 `FETCH/STORE/VEST`
   都造不出授权；同一枚 cap 转给别人之后，别人也过不了 owner 那一关。
+  这是历史检查点；当前已批准的委托合同改为核调用者表内活 Pie、VEST 与内核铸保留类，
+  不以历史 owner 限定唯一使用者。源范围/源权限、资源归属及 Seal 规则不随之放宽。
 
-### System 侧（`programs/src/system/supply/retention/`）
+### 持有账（`programs/src/driver/iommu/hold/`）
 
-`Supplies.retention` 唯一拥有设备范围及其引用，不是独立的 `Resources` 项，
-没有 `Supplies.held → Registry` 移交。`Scope` 保存真实设备隔离范围的
-`DeviceRange`（基址、长度）、控制者 Task、可信组成安装的平台控制对象、
-阶段与该范围全部 `FlatReference`。不存旧 IOVA / 传输进度。
+它原先住在 System（`system/supply/retention/`），现随迁移住 **IOMMU 驱动自己的功能域**：
+只有那一台驱动持有它（生产调用方只此一台，故不升成公共库 API）。
+
+`Holds` 唯一拥有设备范围及其引用，不是独立的 `Resources` 项。
+`Scope` 保存真实设备隔离范围的 `DeviceRange`（基址、长度）、使用者 Task、
+驱动自己装的平台控制对象（`IommuPlatform`，只持本域 VA）、阶段与该范围全部 `FlatReference`。
+不存旧 IOVA / 传输进度。
 
 | 操作 | 单一效果 |
 |---|---|
@@ -889,7 +894,7 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
 | `publish` | 只能发布已登记引用；执行回调前先保守标记可能可达，部分失败进入故障关闭 |
 | `offline` | 立即关闭该控制者所有范围的发布闸；**不宣告设备已停** |
 | `close(Normal)` | 关闸，要求可信平台完成正常同步、失效及在途访问排空 |
-| `close(Fault)` | 关闸，要求 System 独立平台入口完成整个范围的隔离及停止确认 |
+| `close(Fault)` | 关闸，要求驱动自己的平台入口完成整个范围的隔离及停止确认 |
 | `retry` | 平台确认后才 Release；释放失败只重试释放，不重复隔离、不重开业务 |
 
 `Platform` 的两个停止入口都是有界进展步骤。`Pending`、隔离超时或其他错误
@@ -900,21 +905,18 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
 仅写软件状态都不构成设备停止证明。平台实现属于可信组成，不接受设备服务
 提交一个布尔值或伪造确认。本阶段只提供实际有状态模拟实现，真实寄存器实现属 PR7。
 
-### 接进真实 System 的那几手
+### 接进真实产品链的那几手（迁移后）
 
-- `Supplies::retain_memory` 从本 Task 的引导账取得保留 cap，在硬件范围内登记
-  任意经过来源授权的页窗口；数据、描述符、DDT、页表、三类队列共用这一条规则，
-  不按设备清单条数限制一个范围的工作内存数量。
-- 删除旧候选对 `machine/inventory` 描述页的重复 pin，描述符交付不冒充硬件发布。
-  PR7 的真实硬件建立处必须经 `register → publish`，本阶段没有启用 DMA。
-- `control/unit/reap.rs`：设备服务自然退出时**先离线**（不再接受新发布）。
-- `control/lifecycle/ruin.rs`：新增 `retention` 一步，**排在 `supply` / `identity` 之后、
-  `reclaim` 之前**；`pre` 在停止 Task 前先离线。独立持有不随普通供给/身份清理提前结清；
-  这一手不向已经走了的服务要任何东西，独立平台没确认就保留并报告占用。
-- 帧计划：`retention.close`（`settling` 起关闸）与 `retention.sweep`（控制者已经走了的
-  那些由 System 自己隔离/结清，下一帧接着来）。
-- 关闭计划：`retention.reclaim`。仍有占用时 yield 并返回 `Pending`，保持 System 存活；
-  不允许退出 System 后被 pend 清理越过设备停止判据。
+- System 只做装配：从引导账取保留 cap 与三段窗，**逐枚 Accord 交进驱动自己的表**
+  （保留要带 `VEST`——`require_retention` 的判据），再把收据推进孔里、放开 held 的驱动。
+  驱动自己用那份 cap 在硬件范围内登记任意经过来源授权的页窗口；数据、描述符、DDT、
+  页表、三类队列共用这一条规则。
+- 帧持有、IOMMU 编程、端点排空与停止确认全在驱动自己的 Task/Space 里；System 不再有
+  `retention.close` / `retention.sweep` / `retention.reclaim` 三步，也不读寄存器。
+- 使用者（端点服务）死亡：驱动是它的 sire，自己看见并走 `close(Fault)`；
+  正常收场由 System 发关闭请求、驱动确认后回终端结果。
+- 关闭计划：System 先 `device.close`（发关闭请求、等成功回执、join/回收驱动），
+  之后才撤镜像/供给/命名空间或走通用任务终止；没收到成功回执就不报已停。
 
 ### 实际验证
 
@@ -952,8 +954,9 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
 ### 内核侧的反向与保留证据
 
 - `resource_registration_and_revocation`：
-  引导那一枚 cap 只对**铸给它的那张表**授权（`Acquire{Reference, retention=cap}` 成功），
-  同一枚 cap `accord` 给别人之后别人 `Denied`；本用例取过的每一份引用逐格结清。
+  PR6 验证引导 cap 仅对铸给它的表授权，同一枚 cap `accord` 给别人之后别人 `Denied`；
+  本用例取过的每一份引用逐格结清。该委托拒绝预期由当前获批合同替代：
+  合法子授权应成功，非本表 token、伪造对象、缺 VEST 及撤销仍拒绝新增保留。
 - `memory_branch_revocation_and_retention`：来源那一枚被摘掉之后，**独立保留仍持同一批帧**；
   对已经不在表里的来源再做一次 release 报 `Denied`（重复/迟到的通知不动保留）。
 - `memory_retention`：普通自造 Nole 不授权；内核铸的那一枚才授权，且保留自己强持范围。
@@ -967,8 +970,9 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
 - PR7 必须安装独立平台控制者，把真实数据/描述符/表/队列逐段登记后才发布。
   IOMMU Off + busy 的数据隔离与 CQ/FQ/PQ 各自 on/busy 的控制页停用分别确认；
   仅清 CPU PTE、仅屏蔽 IRQ、仅写 Offline、切 Bare 都不能满足 `Platform` 合同。
-- 保留 cap 是**按收件任务铸的**（owner 判据）：System 不能把它转授给第二位控制者当作
-  保留权用；这是合同要的“只给明确可信控制者”，不是当前实现的缺口。
+- PR6 原合同按收件任务的 owner 判据限制保留 cap，System 当时不能转授保留权；
+  当前已批准允许沿既有 Accord/Grant 链委托，仅实际持有合法活授权者可新取保留。
+  本节保留历史验收事实；本轮实现与运行结果记入 `system-next-refactor-plan.md`。
 - 多 hart 交错、真实撤销与在途发布的整机竞态仍不在本轮证据里。
 
 ### 同组独立审查与范围保留
@@ -1057,7 +1061,7 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 与 `execution::memory::map(team, at, size, pole, offset, …)` 都按页偏移在**本任务**的
 授权里取子窗口。交给**别的**任务时只有整段：`PrivateRoot::derive/Accord`
 （`programs/src/system/supply/lease.rs`）只带权限子集、不带 offset/size；
-`create_pole`（`kernel/src/entry/call/pie.rs`）明确要求「整段来源 + 私有阶段 +
+`create_pole`（`kernel/src/entry/call/pole.rs`）明确要求「整段来源 + 私有阶段 +
 一次性资格」（`offset == 0 && count == source.page_count()`、`private_owner`、
 `hold.branch().is_none()`），且设备区在引导期已 `adopt` 到根 Grant，故从它铸不出新根。
 ⇒ 把 PCI aperture 交给某个驱动只能是**整段**，这与「只给必需 BAR」冲突。
@@ -1180,26 +1184,30 @@ exit tid=1 reason=0x0 note: iommu-probe: acceptance passed
 ABI 槽号及安全验收门见 [实施计划](memory-transfer-traverse.md)。
 这不把原 PR7 的真实硬件接线或产品验收自动标记为完成。
 
-## 当前交付状态：产品链已接（代码封存 `6d9ecf68`；上一封存 `7237712b`）
+## 当前交付状态：产品链的持有与停止已迁进 IOMMU 驱动（待父线程封存；上一封存 `6d9ecf68`）
 
 本节记的是**当前**产品链的交付状态与可复跑的验收命令；前面各 PR 段落的执行记录
 仍作各方当时的基线保留，与本节不一致处以本节为准。
 
 ### 产品链（已验证的形状）
 
-System 起一个**跨 Team** 的端点服务（镜像 `system-dma`），把**精确到那一根 BAR** 的窗口
-（实测 4 页 / 16KiB）经 `RootAssignment.window` + `NativePieEffects` 交给它；服务手里没有
-任何裸 VA，只有那一枚窗口与几个 IOVA。内存那一半（DDT / DC / Sv39 表 / 三类队列 /
-描述符 / 数据，共 13 页）由 System 保留并发布，`Holds` 是唯一的收口权威。
+IOMMU 驱动（镜像 `iommu` 一族，自己的 Task/Space）起一台**跨 Team** 的端点服务
+（镜像 `system-dma`，sire 就是它），把**精确到那一根 BAR** 的窗口
+（实测 4 页 / 16KiB）经 `accord_window` 交给它；服务手里没有任何裸 VA，只有那一枚窗口与几个 IOVA。
+内存那一半（DDT / DC / Sv39 表 / 三类队列 / 描述符 / 数据，共 13 页）由 IOMMU 驱动保留并发布，
+驱动自己的持有账是唯一的收口权威。
 
-- **正证**：真 `virtio-blk` 读 512B —— `system-dma: served used=1 len=513 status=0 written_ok=true sector_ok=true`。
-- **正常收口**：显式 `Close::Normal` → `system-dma: confirmed and released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true`。
-- **故障收口**：杀掉服务 → `service doomed doom=Ok(()) slay=Some(Ok(()))`，
-  第一次停住答 `Pending` 时保留全部（`NOT released holds=1 phase=Closing(Fault) failure=Some(Pending)`），
+- **正证**：真 `virtio-blk` 读 512B —— `iommu: served used=1 len=513 status=0 written_ok=true sector_ok=true`。
+- **正常收口**：System 发关闭请求 → `iommu: confirmed and released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 master=0x0 status=0 queue_enable=0 stopped=true`，
+  驱动回成功结果后才报 `system: device closed (driver confirmed)`。
+- **故障收口**：杀掉服务 → `iommu: service doomed doom=Ok(()) slay=Some(Ok(()))`，
+  第一次停住答 `Pending` 时保留全部（`iommu: NOT released holds=1 phase=Closing(Fault) failure=Some(Pending)`），
   恢复真确认后才释放（同一行 `stopped=true`）。
-- **起手受控失败**（两档各自的景）：`spawn` 后·发布前读 `master=0x4 … stopped=false`（设备从未接上，
-  停机链不走）；发布后读 `stopped=true`（平台真把设备停了才释放）。两档都报 `child reclaimed`
-  （`join_task` 看见子任务真被回收才计数）与 `range close=Ok(())`。
+- **起手受控失败**（两档各自的景）：落位后·发布前读 `bus-master off=0x0 … stopped=true`（设备从未接上，
+  停机链不走）；发布与授权都过了之后才失败那一档读 `stopped=true`（平台真把设备停了才释放）。
+  两档都报 `child reclaimed`（`join_task` 看见子任务真被回收才计数）与 `range close=Ok(())`。
+- **授权与落位分开**：进配置先核 `bus-master off=0x0`，帧持有/登记/IOMMU 约束就绪之后才
+  `bus-master on=0x4`；交出去的三段窗在 System 侧再 `Dock::open` 得 `handed over`（负证）。
 
 ### 停止依据与它的边界
 
@@ -1212,9 +1220,9 @@ System 起一个**跨 Team** 的端点服务（镜像 `system-dma`），把**精
 
 ### 受控注入与自然超时分得开
 
-两个起手故障点是**装配的注入**（由景名给出 `Dma::Path`，生产无数常开的后门），它自己报
-`startup fault injected …`；**自然超时**走的是同一个驱动层期限（`regs::Handshake`），
-报的是 `system-dma: stop pending at …`。两者不是同一件事，不能互相代替。
+两个起手故障点是**镜像变体的注入**（同一身子、不同镜像，景名选哪一张写在 `Deployment.resources`；
+生产无数常开的后门），它自己报 `startup fault injected …`；**自然超时**走的是同一个驱动层期限
+（`regs::Handshake`），报的是 `iommu: stop pending at …`。两者不是同一件事，不能互相代替。
 
 ### 验收命令与读数
 

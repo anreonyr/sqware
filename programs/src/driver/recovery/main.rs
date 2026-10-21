@@ -1,0 +1,14 @@
+#![no_std]
+#![no_main]
+
+//! 设备恢复那一台的引导镜像：身子在 `..` 的 `serve`。
+
+extern crate programs;
+
+#[programs::entry]
+fn main() -> programs::Report<'static> {
+    match programs::driver::recovery::serve::serve() {
+        Ok(()) => programs::Report::note(env::EXIT_OK, "recovery: done"),
+        Err(why) => programs::Report::note(env::EXIT_FAULT, why),
+    }
+}

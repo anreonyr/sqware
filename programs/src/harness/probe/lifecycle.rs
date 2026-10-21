@@ -18,6 +18,14 @@ fn debark(task: env::TaskId) {
     });
 }
 
+pub(super) fn oust(team: env::TeamId) {
+    until(|| match unit::oust(team) {
+        Ok(()) => true,
+        Err(e) if e.source == env::UnitFail::Busy => false,
+        Err(e) => panic!("lifecycle: oust {team:?}: {e:?}"),
+    });
+}
+
 pub fn acceptance() {
     let count = Arc::new(AtomicUsize::new(0));
     let sibling = Arc::new(AtomicUsize::new(0));
