@@ -1,16 +1,13 @@
 //! The real `NativePieEffects` dispatch driven against a host stand-in for `env::pie`.
 //!
-//! `supply/lease.rs` is compiled through `#[path]`. Its two neighbours are the real
-//! ones (`resource::raw` and `system_api::supply`); the single thing replaced is the
-//! `env::pie` surface, so that *which* accord the adapter takes - and *what range the
-//! derived token would open* - can be observed instead of ecalled. `resource` is only
-//! there so the two paths resolve: the adapter's `accord` never reaches it.
+//! `supply/lease.rs` is compiled through `#[path]`. Its neighbours are the real ones
+//! (`resource::raw` and `system_api::supply`) plus the real `Derivation`; the single thing
+//! replaced is the `env::pie` surface, so that *which operation* the adapter takes - and
+//! *what range the derived token would open* - can be observed instead of ecalled.
 //!
-//! Why this exists: in the product the manager hands `RootAssignment.window` a pair of
-//! coordinates that its own parent is **already** narrowed to, so passing them is
-//! redundant and a scenario that flips them to `None` still passes. The adapter's
-//! `Some`-branch dispatch is therefore only load-bearing when the parent is *not*
-//! pre-narrowed, which is what `tests.rs` sets up.
+//! Why this exists: a local derived root must take `env::pie::derive` with exactly the
+//! assigned page range, while a cross-task delivery takes plain `env::pie::accord` and
+//! inherits the parent's range. The parent is deliberately *not* pre-narrowed here.
 //!
 //! Run it with the host target spelled out:
 //!
@@ -26,7 +23,10 @@
 extern crate alloc;
 extern crate self as env;
 
-pub use abi::{Mark, Permission, PieInfo, PieKind, PieResult, PieToken, TaskId};
+pub use abi::{GrantRange, Mark, Permission, PieInfo, PieKind, PieResult, PieToken, TaskId};
+
+#[path = "../../src/system/supply/derivation.rs"]
+mod derivation;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -34,10 +34,10 @@ use std::collections::HashMap;
 /// One call the adapter made, in order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Call {
-    /// Plain inheritance: the child keeps the parent's window.
+    /// Cross-task delivery: the child keeps the parent's window.
     Accord(PieToken),
-    /// An explicit window: `(offset, count)` pages from the parent's origin.
-    Window(PieToken, usize, usize),
+    /// A local derivation with exactly this page range.
+    Derive(PieToken, GrantRange),
 }
 
 #[derive(Default)]
@@ -91,37 +91,34 @@ fn issue(parent: PieToken, window: Option<(usize, usize)>) -> PieToken {
 
 pub mod pie {
     use super::{Call, STATE, issue};
-    use crate::{Mark, Permission, PieResult, PieToken, TaskId};
+    use crate::{GrantRange, Mark, Permission, PieResult, PieToken};
 
-    /// Inheritance: no window asked for, the child keeps the parent's.
+    /// Cross-task delivery: no separate range, the child keeps the parent's.
     pub fn accord(
         source: PieToken,
-        target: TaskId,
-        permission: Permission,
-        mark: Mark,
+        _target: crate::TaskId,
+        _permission: Permission,
+        _mark: Mark,
     ) -> PieResult<PieToken> {
-        let _ = (target, permission, mark);
         STATE.with(|state| state.borrow_mut().calls.push(Call::Accord(source)));
         Ok(issue(source, None))
     }
 
-    /// An explicit window: exactly `(offset, count)` pages from the parent's origin.
-    pub fn accord_window(
+    /// Local derivation: exactly the requested range, or the parent's when inheriting.
+    pub fn derive(
         source: PieToken,
-        target: TaskId,
-        permission: Permission,
-        mark: Mark,
-        offset: usize,
-        count: usize,
+        _permission: Permission,
+        _mark: Mark,
+        range: GrantRange,
     ) -> PieResult<PieToken> {
-        let _ = (target, permission, mark);
+        let window = match range {
+            GrantRange::Inherit => None,
+            GrantRange::Pages { offset, count } => Some((offset, count)),
+        };
         STATE.with(|state| {
-            state
-                .borrow_mut()
-                .calls
-                .push(Call::Window(source, offset, count));
+            state.borrow_mut().calls.push(Call::Derive(source, range));
         });
-        Ok(issue(source, Some((offset, count))))
+        Ok(issue(source, window))
     }
 }
 

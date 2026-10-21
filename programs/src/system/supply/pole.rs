@@ -1,5 +1,5 @@
 use alloc::vec;
-use env::{Permission, PieKind, PieToken};
+use env::{GrantRange, Permission, PieKind, PieToken};
 use system_api::supply::{self, Fail, Key};
 
 use super::{LeaseRequest, Provision, ProvisionError, Resource, RootAssignment};
@@ -265,7 +265,7 @@ where
                 shared: self.root,
                 index: 0,
                 // 这一枚就是本资源自己那段：整段交出，不另外请求窗口。
-                window: None,
+                range: GrantRange::Inherit,
             })
             .map_err(ProvisionError::new)?;
         Provision::new(

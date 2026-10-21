@@ -1,5 +1,5 @@
 use crate::{
-    HoleFail, Mark, Permission, PieToken, TaskId, Wait,
+    GrantRange, HoleFail, Mark, Permission, PieToken, TaskId, Wait,
     capability::Capability,
     raw::Hole,
     reply::{Reply, ReplyError},
@@ -54,33 +54,61 @@ fn dropping_loan_revokes_only_its_remote_capability() {
 }
 
 #[test]
-fn windowed_loan_grant_is_recorded_and_revoked_alone() {
+fn derived_capability_grants_its_own_token_with_an_explicit_range() {
     test_backend::reset();
-    let capability = Capability::unseal_hole(Mark::of("aperture")).unwrap();
-    let source = capability.token();
-    let loan = capability
-        .grant_window(peer(), Permission::STORE, Mark::of("bar"), 4, 4)
+    let source = PieToken::mint(9);
+    let range = GrantRange::Pages {
+        offset: 4,
+        count: 4,
+    };
+    let derived = Capability::derive(
+        source,
+        Permission::FETCH | Permission::STORE | Permission::VEST,
+        Mark::of("child"),
+        range,
+    )
+    .unwrap();
+    let child = derived.token();
+    assert_eq!(
+        test_backend::events()[0],
+        Event::Derive(
+            source,
+            Permission::FETCH | Permission::STORE | Permission::VEST,
+            Mark::of("child"),
+            range,
+            child
+        )
+    );
+    let loan = derived
+        .grant(peer(), Permission::STORE, Mark::of("bar"))
         .unwrap();
     let remote = loan.remote();
     assert_eq!(
         test_backend::events()[1],
-        Event::AccordWindow(
-            source,
-            peer(),
-            Permission::STORE,
-            Mark::of("bar"),
-            4,
-            4,
-            remote
-        )
+        Event::Accord(child, peer(), Permission::STORE, Mark::of("bar"), remote)
     );
     drop(loan);
     assert_eq!(
         test_backend::events().last(),
         Some(&Event::Revoke(peer(), remote))
     );
-    drop(capability);
-    assert_eq!(test_backend::events().last(), Some(&Event::Release(source)));
+    drop(derived);
+    assert_eq!(test_backend::events().last(), Some(&Event::Release(child)));
+}
+
+#[test]
+fn failed_derivation_never_releases_the_borrowed_source() {
+    test_backend::reset();
+    let source = PieToken::mint(9);
+    test_backend::fail_next(Op::Derive);
+    assert!(Capability::derive(source, Permission::FETCH, Mark::NONE, GrantRange::Inherit).is_err());
+    assert!(matches!(test_backend::events().as_slice(), [Event::Derive(..)]));
+    let derived = Capability::derive(source, Permission::FETCH, Mark::NONE, GrantRange::Inherit)
+        .unwrap();
+    let child = derived.token();
+    drop(derived);
+    assert_eq!(test_backend::events().last(), Some(&Event::Release(child)));
+    assert!(!test_backend::events().contains(&Event::Release(source)));
 }
 
 #[test]
@@ -118,36 +146,78 @@ fn borrowed_loan_is_revoked_before_source_release() {
 }
 
 #[test]
-fn explicit_cleanup_errors_are_returned_without_retry() {
+fn failed_explicit_cleanup_retries_on_the_same_handle() {
     test_backend::reset();
-    let capability = Capability::unseal_hole(Mark::of("source")).unwrap();
+    let mut capability = Capability::unseal_hole(Mark::of("source")).unwrap();
     let source = capability.token();
     test_backend::fail_next(Op::Release);
     assert!(capability.release().is_err());
-    assert_eq!(
-        test_backend::events()
-            .iter()
-            .filter(|e| **e == Event::Release(source))
-            .count(),
-        1
-    );
+    capability.release().unwrap();
+    capability.release().unwrap();
+    drop(capability);
+    let releases = test_backend::events()
+        .into_iter()
+        .filter(|event| *event == Event::Release(source))
+        .count();
+    assert_eq!(releases, 2, "failure then success, with no drop retry");
 
     test_backend::reset();
     let capability = Capability::unseal_hole(Mark::of("source")).unwrap();
-    let loan = capability
+    let mut loan = capability
         .grant(peer(), Permission::STORE, Mark::NONE)
         .unwrap();
     let remote = loan.remote();
     test_backend::fail_next(Op::Revoke);
     assert!(loan.revoke().is_err());
-    drop(capability);
+    loan.revoke().unwrap();
+    loan.revoke().unwrap();
+    drop(loan);
     let events = test_backend::events();
     assert_eq!(
         events
             .iter()
-            .filter(|e| **e == Event::Revoke(peer(), remote))
+            .filter(|event| **event == Event::Revoke(peer(), remote))
             .count(),
-        1
+        2,
+        "failure then success on the same peer and token"
+    );
+    drop(capability);
+}
+
+#[test]
+fn failed_cleanup_leaves_drop_responsibility() {
+    test_backend::reset();
+    let mut capability = Capability::unseal_hole(Mark::of("source")).unwrap();
+    let source = capability.token();
+    test_backend::fail_next(Op::Release);
+    assert!(capability.release().is_err());
+    drop(capability);
+    assert_eq!(
+        test_backend::events()
+            .iter()
+            .filter(|event| **event == Event::Release(source))
+            .count(),
+        2,
+        "drop retries the retained token"
+    );
+
+    test_backend::reset();
+    let capability = Capability::unseal_hole(Mark::of("source")).unwrap();
+    let mut loan = capability
+        .grant(peer(), Permission::STORE, Mark::NONE)
+        .unwrap();
+    let remote = loan.remote();
+    test_backend::fail_next(Op::Revoke);
+    assert!(loan.revoke().is_err());
+    drop(loan);
+    drop(capability);
+    assert_eq!(
+        test_backend::events()
+            .iter()
+            .filter(|event| **event == Event::Revoke(peer(), remote))
+            .count(),
+        2,
+        "drop retries the retained peer and token"
     );
 }
 

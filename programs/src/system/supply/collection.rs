@@ -1,5 +1,5 @@
 use alloc::vec::Vec;
-use env::{Mark, Permission, PieKind, PieToken};
+use env::{GrantRange, Mark, Permission, PieKind, PieToken};
 use system_api::supply::{Fail, Key};
 
 use super::{
@@ -146,7 +146,7 @@ where
                     shared: item.shared,
                     index,
                     // 合集里的每一项就是它自己那一段：不另外请求窗口，继承来源那一段。
-                    window: None,
+                    range: GrantRange::Inherit,
                 },
                 RootRequest {
                     id: request.id,

@@ -8,7 +8,8 @@ use env::{
     PullOutcome, TaskId, VirtAddr, Wait,
 };
 
-pub use crate::capability::{Capability, Loan};
+pub use crate::capability::Capability;
+pub use crate::loan::Loan;
 
 /// Complete cleanup despite temporary contention, yielding between attempts.
 pub fn release(token: PieToken) -> PieResult<()> {

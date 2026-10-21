@@ -4,7 +4,8 @@ extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
 pub use abi::{
-    HoleFail, HoleLimits, HoleResult, Mark, Permission, PieToken, ReleaseMode, TaskId, Wait,
+    GrantRange, HoleFail, HoleLimits, HoleResult, Mark, Permission, PieToken, ReleaseMode, TaskId,
+    Wait,
 };
 pub type PieResult<T> = Result<T, ()>;
 use std::{cell::RefCell, collections::HashMap};
@@ -62,13 +63,11 @@ pub mod pie {
     pub fn accord(_: PieToken, _: TaskId, _: Permission, _: Mark) -> PieResult<PieToken> {
         unreachable!()
     }
-    pub fn accord_window(
+    pub fn derive(
         _: PieToken,
-        _: TaskId,
         _: Permission,
         _: Mark,
-        _: usize,
-        _: usize,
+        _: abi::GrantRange,
     ) -> PieResult<PieToken> {
         unreachable!()
     }
@@ -78,6 +77,8 @@ pub mod pie {
 }
 #[path = "../../../crates/resource/src/capability.rs"]
 mod capability;
+#[path = "../../../crates/resource/src/loan.rs"]
+mod loan;
 pub mod raw {
     pub use crate::pie::revoke;
     pub fn release(token: crate::PieToken) -> crate::PieResult<()> {

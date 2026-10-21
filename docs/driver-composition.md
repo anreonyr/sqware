@@ -28,7 +28,7 @@
 | A10：显式资源交付与身份核验 | 未实施 |
 | A11：逐绑定异步推进 | 未实施 |
 | A12：单端点限制收敛到实现 | 未实施 |
-| A13：Derive 加 Accord 替换 AccordWindow | 本地 Derive 已验证；调用方及旧 ABI 待迁移 |
+| A13：Derive 加 Accord 替换 AccordWindow | Derive、Resource 与供给已验证；Driver 与旧 ABI 待迁移 |
 | 单个 Daemon 真实装配与受限守护 | 未实施 |
 | 双设备、双 Domain、相同数值 IOVA | 未实施 |
 | 最终固定源码四/八核与 1024 代回归 | 未实施 |
@@ -84,8 +84,9 @@ CARGO_INCREMENTAL=0 QEMU_SMP=4 TRACE_OUT="$PWD/target/driver-composition/pr1/iom
 - 把 Execution 状态机迁 Daemon：违背 Control 是生命周期唯一权威的用户合同。
 - 另建 base/len 授权账：内核 `pend/accord.rs::effective_window` 已使用 Grant 的窗口，
   并检查父范围、继承、溢出和只收窄。Derive 应复用它，不复制状态。
-- 按名字维护 Driver 特例：`ControlConfig` 实际包含 after/ending/ready/construction，
-  不采用审查中关于 Declaration 的错误字段描述；新策略须接入实际声明及授权机制。
+- 把内部 Declaration 当成装配入口：公开 `ControlConfig` 包含 after/ending/ready/construction，
+  内部 Table::Declaration 的 name/announce/restart 是其运行投影。
+  新策略须接入实际装配声明及授权机制，不能另建按名字分派的 Driver 特例表。
 
 ## 第二检查点：精确派生基础
 
@@ -121,3 +122,38 @@ cargo test --manifest-path kernel/tests/pend/Cargo.toml --target x86_64-unknown-
 cargo test -p env --target x86_64-unknown-linux-gnu --offline
 CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true QEMU_SMP=4 TRACE_OUT="$PWD/target/driver-composition/derive/local-fixed" nu scripts/qtest.nu --package kernel -- --features semihosting -- local_derive_inherits_and_narrows
 ```
+
+## 生命周期迁移的实施约束（待实施）
+
+- 装配声明列出必需退休提供方及入口，运行时从声明建立依赖；发现失败、超时、失联均为
+  Pending，不能从参与集合移除。内部 Declaration 是装配配置的投影，不是第二配置权威。
+- 通用退休请求携带实际目标实例身份；提供方自行解释该实例的资源责任。
+  静态 Driver 退休和动态业务实例退休都走同一机制，不再按四个 Driver 名称分支。
+- 退休 RPC 使用已有 `ipc::rpc::request::Sender::begin` 和在途请求的 `poll`，
+  不在 System 事件循环同步等待 Hub；否则 Hub 等 Control 停止确认时可能互相阻塞。
+- Control 停止请求只在 `Join(Team, receive=false) == Complete` 后确认 CPU 已停止。
+  退休计划先等此条件，再等待外部责任，最后撤授权、供给并 Oust；Task 退出不等于两者完成。
+- Hub 的执行登记最终只保留绑定准入与认领水位，不保存 Team、启动资源或回收阶段。
+  对实例的启动、停止与查询均由真实 owner 通过 Control 完成；不能迁出后在 Daemon 重建状态机。
+- 动态程序需要的通用启动载体由 Assembly prepare 交付并持有到退休，
+  覆盖未知回复与释放失败；不能发消息后立即 Revoke 撤销尚未消费的载体。
+- 全局退场先关闭新建准入、停止动态执行域、结清其退休依赖，再按依赖顺序退休提供方。
+  当前无绑定但已创建的执行实例也必须由 Control 结清，不能只统计绑定数。
+
+## 第三检查点：Resource 与供给精确派生
+
+外部 worker 会话 `session-2a1ed33c-ba68-42f2-9ac6-12bdc7ae841f` 已正常完成，
+由主线程复核与补充验证；没有其他 Codex worker。
+
+- Capability 与 Loan 分文件。Capability::derive 接受本任务持有的来源 token，
+  返回拥有的本地子能力，能够用于 Pole 来源，不要求先造一个 Hole 包装器。
+- Capability::release、Loan::revoke 使用可重试的可变借用；失败保留原句柄，成功后重复调用无操作。
+- 供给 PieEffects 将本地 Derivation 与跨任务 Accord 分离。RootAssignment 使用 GrantRange，
+  交付总是继承精确父范围，检查及失败根的恢复责任保留。
+- Resource 与 System 供给内已无 AccordWindow/grant_window；Driver、测具及旧 ABI 仍待迁移。
+- 主线程独立通过 resource 21、supply 23、lease-window 3、operator-watch 5 项。
+  operator-watch 首次独立调度遇自动审批超时，未执行；同命令重试后通过。
+- 四核真实 iommu-product 与完整 accept 场景均通过，现场为
+  `target/driver-composition/derive/supply-product/` 和 `supply-accept/`。
+- worker 首次 supply 编译发现 fixture 缺失新 derivation 模块，补齐模块后 23 项通过；
+  不把该编译失败计作成功。workspace dev check 保留原有 5 项 warning。
