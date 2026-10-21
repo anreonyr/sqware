@@ -21,6 +21,7 @@ pub static ENTRY: UnitFile = UnitFile {
         ending: None,
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };
@@ -39,6 +40,7 @@ pub static UNIT: UnitFile = UnitFile {
         ending: None,
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };

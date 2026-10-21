@@ -16,7 +16,7 @@
 
 | 项目 | 当前证据 |
 | --- | --- |
-| A1：通用退休依赖替换 System HubDma 闸门 | 未实施 |
+| A1：通用退休依赖替换 System HubDma 闸门 | 已实现全局及静态闸门，宿主和真实Ruin/forced/accept通过 |
 | A2：Control 唯一管理执行实例生命周期 | 未实施 |
 | A3：设备协调迁入设备控制 Driver | 未实施 |
 | A4：公共目录与来源元数据分离 | 已实现，相关宿主与真实产品景通过 |
@@ -189,3 +189,25 @@ CARGO_INCREMENTAL=0 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true QEMU_SMP=4 TRACE
 - 当前源码四核整机 accept 通过，现场为 `derive/final-accept/`。
 - 本检查点不等于完成完整重构；A1–A3、A5、A7–A12、Daemon 和最终固定源码
   双 Domain/1024 代仍须实施验收。没有据本检查点声称全绿。
+
+## 第五检查点：通用退休闸门
+
+外部作者仍为同一只读 Flash 会话 `session-4c4341ed-f94e-4dd7-a8ca-b80b0876bf9e`；
+主线程是唯一 writer，未启 Codex 子代理。ControlConfig 的 retirement 声明定位 provider、
+namespace 和 face。运行集合从实际 deployment.start 建立，不从发现成功的面或全 PROGRAMS 推断。
+System 只认通用 Pending/Done；Hub 只向真实 sire 响应整机结清，并保留原有安全停止链。
+静态 Ruin 按目标声明等依赖，正常和 forced 全局退场共用同一门。
+
+- 使用现有 Sender::begin / Pending::poll 推进请求，不同步等待 Hub 回复。
+  面发现仍是向独立 Operator 的有界 find（1秒），并非完全异步发现；失败保持 Pending。
+- 首份外部补丁声称边界测试，但实际没有测试用例；主线程退回返工。
+  独立编译又发现 interface 缺 metadata 模式、fixture include 路径及缺失方法，均修正后重跑。
+- 主线程通过退休边界8项，control-api 8、hub-api 4、device-api 5、interface-marks 5、
+  system-shape 20、image 17项。Ruin 追踪判定器14项通过，全部停止及最终回收断言保留。
+- workspace dev check 通过，保留既有5项warning；image 首次使用 workspace包选择报未找到，
+  改用其独立 manifest 后17项通过，该命令失败未计入通过。
+- 真实四核Ruin通过，辅助Team先于Driver回收，帧数85→85；八核forced通过，帧数153→153；
+  四核accept通过。现场均位于 `target/driver-composition/retirement/`。
+- 新测试的适配与fixture已按功能拆出，每文件一个数据结构；整理后8项重新通过。
+  外部只读复核未发现新增确定问题，但未独立运行原生，原生证据来自主线程。
+- 这是全局及静态退休闸门；动态实例的具体退休身份、Control生命周期归一与Daemon仍待实施。

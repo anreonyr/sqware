@@ -479,6 +479,7 @@ mod tests {
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
                 construction: &[],
+                retirement: &[],
             },
             supply: unit::SupplyConfig { bindings: &[] },
         };
@@ -495,6 +496,7 @@ mod tests {
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
                 construction: &[],
+                retirement: &[],
             },
             supply: unit::SupplyConfig { bindings: &[] },
         };
@@ -549,6 +551,7 @@ mod tests {
                 ending: None,
                 ready: unit::Ready::OnSpawn,
                 construction: &[unit::Construction::image()],
+                retirement: &[],
             },
             supply: unit::SupplyConfig {
                 bindings: ENTRY_BINDINGS,
@@ -567,6 +570,7 @@ mod tests {
                 ending: None,
                 ready: unit::Ready::OnSpawn,
                 construction: &[unit::Construction::unit("test-second")],
+                retirement: &[],
             },
             supply: unit::SupplyConfig { bindings: &[] },
         };
@@ -583,6 +587,7 @@ mod tests {
                 ending: None,
                 ready: unit::Ready::OnSpawn,
                 construction: &[unit::Construction::unit("test-first")],
+                retirement: &[],
             },
             supply: unit::SupplyConfig { bindings: &[] },
         };
@@ -636,6 +641,7 @@ mod tests {
                 ending: None,
                 ready: unit::Ready::OnSpawn,
                 construction: &[unit::Construction::unit("missing-unit")],
+                retirement: &[],
             },
             supply: unit::SupplyConfig { bindings: &[] },
         };
@@ -672,6 +678,7 @@ mod tests {
                 ending: None,
                 ready: unit::Ready::OnSpawn,
                 construction: &[unit::Construction::image()],
+                retirement: &[],
             },
             supply: unit::SupplyConfig { bindings: &[] },
         };
@@ -710,6 +717,7 @@ mod tests {
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
                 construction: &[],
+                retirement: &[],
             },
             supply: unit::SupplyConfig { bindings: &[] },
         };
@@ -744,6 +752,7 @@ mod tests {
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
                 construction: &[],
+                retirement: &[],
             },
             supply: unit::SupplyConfig { bindings: &[] },
         };
@@ -760,6 +769,7 @@ mod tests {
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
                 construction: &[],
+                retirement: &[],
             },
             supply: unit::SupplyConfig { bindings: &[] },
         };

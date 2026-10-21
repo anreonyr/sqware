@@ -11,17 +11,18 @@ mod tests {
 
     #[test]
     fn every_provider_mark_is_unique_and_keeps_its_value() {
-        use system_api::{control, identity, operator};
-        let groups: [&[Definition]; 7] = [
+        use system_api::{control, identity, operator, retirement};
+        let groups: [&[Definition]; 8] = [
             &control::marks::DECLARATIONS,
             &identity::marks::DECLARATIONS,
             &operator::marks::DECLARATIONS,
             system_api::loader::CHANNELS,
+            retirement::DECLARATIONS,
             router_api::marks::DECLARATIONS,
             hub_api::marks::DECLARATIONS,
             terminal_api::marks::DECLARATIONS,
         ];
-        assert_eq!(groups.iter().map(|group| group.len()).sum::<usize>(), 27);
+        assert_eq!(groups.iter().map(|group| group.len()).sum::<usize>(), 28);
         assert_eq!(env::marks::conflict(&groups), None);
         for definition in groups.iter().flat_map(|group| group.iter()) {
             assert_eq!(definition.mark, env::Mark::of(definition.name));
@@ -37,7 +38,7 @@ mod tests {
             .flat_map(|registry| registry.iter())
             .flat_map(|group| group.iter())
             .collect();
-        assert_eq!(actual.len(), 59);
+        assert_eq!(actual.len(), 61);
         let dma: Vec<_> = actual.iter()
             .filter(|definition| definition.name == "hub-entry-dma")
             .collect();

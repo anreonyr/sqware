@@ -12,6 +12,13 @@ pub(crate) fn validate() -> Result<(), &'static str> {
                 .construction
                 .iter()
                 .any(|policy| !policy.valid())
+            || program.control.retirement.iter().any(|retirement| {
+                !retirement.valid()
+                    || !crate::unit::PROGRAMS.iter().any(|provider| {
+                        provider.name() == retirement.provider
+                            && retirement.namespace < provider.operator.namespace.len()
+                    })
+            })
         {
             return Err("invalid UnitFile policy");
         }

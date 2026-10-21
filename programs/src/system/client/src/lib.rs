@@ -7,4 +7,5 @@ mod debug;
 pub mod identity;
 pub mod loader;
 pub mod operator;
+pub mod retirement;
 pub mod supply;

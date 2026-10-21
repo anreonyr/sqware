@@ -7,6 +7,7 @@ pub const APIS: &[&[&[env::marks::Definition]]] = &[
     system_api::identity::REGISTRY,
     system_api::operator::REGISTRY,
     system_api::control::REGISTRY,
+    system_api::retirement::REGISTRY,
     hub_api::REGISTRY,
     terminal_api::REGISTRY,
     router_api::REGISTRY,

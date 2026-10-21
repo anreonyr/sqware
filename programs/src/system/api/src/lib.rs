@@ -6,6 +6,7 @@ pub mod control;
 pub mod identity;
 pub mod namespace;
 pub mod operator;
+pub mod retirement;
 pub mod supply;
 
 #[mold::interface(id = "sqware.system.loader.v1")]

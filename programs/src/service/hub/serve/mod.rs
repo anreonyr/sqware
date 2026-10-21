@@ -62,7 +62,7 @@ struct League {
 pub fn serve() -> Result<(), Start> {
     programs::debug::put("hub: serve enter");
     // 一～七：起手。
-    let (mut ledger, league, plates, mut doors, _dtb, dma, tree, devices, device_anchor, subject) =
+    let (mut ledger, league, plates, mut doors, _dtb, dma, retire, tree, devices, device_anchor, subject) =
         (|| {
             let sire = unit::sire();
 
@@ -118,6 +118,8 @@ pub fn serve() -> Result<(), Start> {
             // DMA 安全绑定那一面：发现、认领、关闭、查看与整机结清共用这一扇门。
             let dma = env::hole::unseal(Grant::Dma.mark(), env::HoleLimits::default())
                 .map_err(|_| Start::Tree(E_HUB))?;
+            let retire = env::hole::unseal(Grant::Retire.mark(), env::HoleLimits::default())
+                .map_err(|_| Start::Tree(E_HUB))?;
             let publisher =
                 system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS))
                     .map_err(|_| Start::Tree(E_HUB))?;
@@ -129,6 +131,7 @@ pub fn serve() -> Result<(), Start> {
                 (Grant::List.name(), list),
                 (Grant::Claim.name(), claim),
                 (Grant::Dma.name(), dma),
+                (Grant::Retire.name(), retire),
             ]
             .into_iter()
             .enumerate()
@@ -193,9 +196,9 @@ pub fn serve() -> Result<(), Start> {
             // 九、挂组那一张表：四枚面 ＋ 每一台那一枚门（**挂在孔上，面由孔推**）。
             let mut doors: Vec<PieToken> = Vec::new();
             doors
-                .try_reserve(4 + ledger.count())
+                .try_reserve(5 + ledger.count())
                 .map_err(|_| Start::Desk(E_HUB))?;
-            doors.extend([bond, list, claim, dma]);
+            doors.extend([bond, list, claim, dma, retire]);
             for class in &classes {
                 doors.extend(ledger.doors(class.clone()).map(|(_, door)| door));
             }
@@ -206,6 +209,7 @@ pub fn serve() -> Result<(), Start> {
                 doors,
                 dtb,
                 dma,
+                retire,
                 tree,
                 devices,
                 device_anchor,
@@ -263,6 +267,8 @@ pub fn serve() -> Result<(), Start> {
                 if token == dma {
                     // DMA 那一面走类型化的一问一答（回信孔由 ipc::rpc 铸、交、核）。
                     drain_dma(&mut ledger, &mut peers, &tree, &directory, token, &mut buf);
+                } else if token == retire {
+                    drain_retirement(&mut ledger, token, &mut buf);
                 } else {
                     // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
                     let hole = Hole::from_raw(token);
@@ -347,6 +353,35 @@ fn drain_dma(
     }
 }
 
+/// Generic retirement face: only the assembler (sire) may ask; the provider maps its own
+/// outstanding responsibility count to Pending/Done. No lifecycle is copied here.
+fn drain_retirement(ledger: &mut Ledger, entry: PieToken, buffer: &mut [u8]) {
+    let receiver = RequestReceiver::<system_api::retirement::Call>::from_raw(
+        entry,
+        system_api::retirement::Call::BACK,
+        system_api::retirement::Call::back,
+    );
+    loop {
+        match receiver.receive(buffer, Wait::POLL) {
+            Ok(incoming) => {
+                let done = incoming.from == unit::sire()
+                    && incoming.request.state == system_api::retirement::ASK
+                    && ledger.settle() == 0;
+                let reply = if done {
+                    system_api::retirement::Retirement::done()
+                } else {
+                    system_api::retirement::Retirement::pending()
+                };
+                let _ = incoming.reply.send(reply);
+            }
+            Err(rejected) => match rejected.fail {
+                rpc::Fail::Receive(_) => break,
+                _ => continue,
+            },
+        }
+    }
+}
+
 fn turn(
     ledger: &mut Ledger,
     league: &League,
@@ -414,6 +449,10 @@ pub(super) fn send_status(mine: Grant, status: u8, back: PieToken) {
         Grant::Dma => {
             let mut tx = Sender::<hub_api::DmaSaid>::from_raw(back);
             let _ = tx.send(hub_api::DmaSaid::of(status));
+        }
+        Grant::Retire => {
+            let mut tx = Sender::<system_api::retirement::Retirement>::from_raw(back);
+            let _ = tx.send(system_api::retirement::Retirement::pending());
         }
     }
 }

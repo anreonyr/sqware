@@ -88,7 +88,7 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
     frame.system("running", f::running)?;
     frame.system("activity", f::activity)?;
     frame.system("eligibility", crate::system::control::eligibility)?;
-    // 退场门：先找 Hub 那一面，再在够条件退场时让它结清；结清之后才进 settling。
+    // 声明的退休提供方全部结清后才进入 settling。
     frame.system("settle.open", f::gate_open)?;
     frame.system("settle", f::settle)?;
     frame.system("idle", f::idle)?;

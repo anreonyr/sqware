@@ -1,3 +1,4 @@
+use super::participant::Participant;
 use crate::system::app::Fault as Fail;
 use crate::system::assembly::Jobs;
 use crate::system::control::Startup;
@@ -7,6 +8,7 @@ use crate::system::app::life::{Phase, Status};
 use ::core::sync::atomic::Ordering;
 use ::schedule::{Progress, Res, ResMut};
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use env::Wait;
 
 pub struct Flow {
@@ -18,43 +20,157 @@ pub use super::activity::{Activity, activity};
 pub struct Bound(pub Wait);
 pub struct Shutoff(pub Option<u64>);
 
-/// 退场状态：流动那一份 ＋ **Hub 结清门**。
-///
-/// 门核对 α 启动/退休责任与 DMA 绑定均已结清（`open == Some(0)`）。
-/// 正常退场与超时退场都要先过这道门，才允许 `flow.settling` 触发 Control 的
-/// Slay/Ruin；没结清就一直停在门口，责任保留在 Hub 与各驱动那一侧，
-/// 本机不因此假报已停。
+/// Retirement gate: every declared provider must report Done before settling.
 pub struct Settle {
     pub flow: Flow,
-    hub: Option<crate::driver::shared::dma::HubDma>,
-    open: Option<u8>,
+    participants: Vec<Participant>,
+    attempting: bool,
 }
 
 impl Settle {
-    pub fn new(flow: Flow) -> Self {
+    pub fn new(flow: Flow, programs: &[&crate::unit::UnitFile]) -> Self {
+        let mut participants: Vec<Participant> = Vec::new();
+        for program in programs {
+            for declaration in program.control.retirement {
+                if participants
+                    .iter()
+                    .any(|participant| participant.declaration == *declaration)
+                {
+                    continue;
+                }
+                participants.push(Participant::new(*declaration));
+            }
+        }
         Self {
             flow,
-            hub: None,
-            open: None,
+            participants,
+            attempting: false,
         }
     }
 
-    /// 结清了吗（没问过或没结清 ⇒ false）。
     pub fn settled(&self) -> bool {
-        self.open == Some(0)
+        self.participants.iter().all(|participant| participant.done)
     }
 
-    /// 向 Hub 提一句“结清”（幂等：已在收场的继续同一责任），并把还有几笔记下来。
-    pub(crate) fn ask(&mut self) {
-        let Some(hub) = self.hub.as_ref() else {
-            self.open = None;
+    pub(crate) fn settled_for(&self, declarations: &[crate::unit::Retirement]) -> bool {
+        declarations.iter().all(|declaration| {
+            self.participants
+                .iter()
+                .any(|participant| participant.declaration == *declaration && participant.done)
+        })
+    }
+
+    pub(crate) fn working(&self) -> bool {
+        self.attempting && !self.settled()
+    }
+
+    pub(crate) fn discover(
+        &mut self,
+        layout: Option<&crate::system::app::namespace::System>,
+        namespaces: &crate::system::assembly::namespace::NamespaceInstallations,
+    ) {
+        let Some(system) = layout else {
             return;
         };
-        self.open = hub.settle(Wait::AtMost(MS)).ok();
+        for participant in &mut self.participants {
+            if participant.done || participant.face.is_some() || participant.pending.is_some() {
+                continue;
+            }
+            let Some(grant) = namespaces.program_grant(
+                participant.declaration.provider,
+                participant.declaration.namespace,
+            ) else {
+                continue;
+            };
+            let Ok(bound) = system.capability().find(
+                grant.entry,
+                participant.declaration.face,
+                system_api::operator::Permit::Public,
+                Wait::AtMost(MS),
+            ) else {
+                continue;
+            };
+            if let Ok(face) = system_client::retirement::Face::of(bound.resource) {
+                participant.face = Some(face);
+            }
+        }
+    }
+
+    pub(crate) fn advance_all(&mut self) -> bool {
+        self.attempting = true;
+        for index in 0..self.participants.len() {
+            self.advance_at(index);
+        }
+        self.settled()
+    }
+
+    pub(crate) fn advance(&mut self, declarations: &[crate::unit::Retirement]) -> bool {
+        self.attempting = true;
+        for index in 0..self.participants.len() {
+            let declaration = self.participants[index].declaration;
+            if declarations.contains(&declaration) {
+                self.advance_at(index);
+            }
+        }
+        self.settled_for(declarations)
+    }
+
+    pub(crate) fn gate(&mut self, program: &crate::unit::UnitFile) -> bool {
+        let declarations = program.control.retirement;
+        self.advance(declarations);
+        self.settled_for(declarations)
+    }
+
+    fn advance_at(&mut self, index: usize) {
+        let Some(participant) = self.participants.get_mut(index) else {
+            return;
+        };
+        if participant.done {
+            return;
+        }
+        if let Some(mut pending) = participant.pending.take() {
+            match pending.poll() {
+                Ok(Some(reply)) if reply.settled() => participant.done = true,
+                Ok(Some(_)) => {}
+                Ok(None) => participant.pending = Some(pending),
+                Err(_) => participant.face = None,
+            }
+            return;
+        }
+        let begin = participant
+            .face
+            .as_ref()
+            .map(|face| face.begin(Wait::AtMost(MS)));
+        let Some(begin) = begin else {
+            return;
+        };
+        match begin {
+            Ok(mut pending) => match pending.poll() {
+                Ok(Some(reply)) if reply.settled() => participant.done = true,
+                Ok(Some(_)) => {}
+                Ok(None) => participant.pending = Some(pending),
+                Err(_) => participant.face = None,
+            },
+            Err(_) => participant.face = None,
+        }
+    }
+
+    fn enter(&mut self, forced: bool) -> bool {
+        if !self.settled() {
+            return false;
+        }
+        self.flow.settling = true;
+        self.flow.forced |= forced;
+        true
+    }
+
+    pub(crate) fn admit(&mut self, forced: bool) -> bool {
+        self.advance_all();
+        self.enter(forced)
     }
 }
 
-/// 等 Hub 那一面的上限（毫秒）。
+/// 退休面发现与一次请求的时限（毫秒）。
 const MS: usize = 1000;
 
 pub fn health(status: Res<Arc<Status>>) -> Result<Progress, Fail> {
@@ -68,37 +184,17 @@ pub fn health(status: Res<Arc<Status>>) -> Result<Progress, Fail> {
     }
     Ok(Progress::Done)
 }
-/// 找 Hub 那一面（找到就留着；没找到下一格再来）。
+/// 按装配声明发现退休面；缺失提供方保持未完成。
 pub fn gate_open(
     layout: Res<crate::system::app::operator::Layout>,
     namespaces: Res<crate::system::assembly::namespace::NamespaceInstallations>,
     mut settle: ResMut<Settle>,
 ) -> Result<Progress, Fail> {
-    if settle.hub.is_some() {
-        return Ok(Progress::Done);
-    }
-    let Some(system) = layout.as_ref() else {
-        return Ok(Progress::Done);
-    };
-    let capability = system.capability();
-    let Some(hub) = namespaces.program_grant("hub", 0) else {
-        return Ok(Progress::Done);
-    };
-    let Ok(dma) = capability.find(
-        hub.entry,
-        "dma",
-        system_api::operator::Permit::Public,
-        Wait::AtMost(MS),
-    ) else {
-        return Ok(Progress::Done);
-    };
-    if let Ok(client) = crate::driver::shared::dma::HubDma::open(dma.resource) {
-        settle.hub = Some(client);
-    }
+    settle.discover(layout.as_ref(), &namespaces);
     Ok(Progress::Done)
 }
 
-/// 退场门：够条件退场时先让 Hub 结清，结清之后才允许 `settling`。
+/// 达到退场条件后推进全部退休依赖，结清后才进入 settling。
 pub fn settle(
     startup: Res<Startup>,
     operations: Res<Jobs>,
@@ -110,11 +206,7 @@ pub fn settle(
     if !(startup.eligible() && operations.is_empty()) {
         return Ok(Progress::Done);
     }
-    if settle.settled() {
-        settle.flow.settling = true;
-        return Ok(Progress::Done);
-    }
-    settle.ask();
+    settle.admit(false);
     Ok(Progress::Done)
 }
 pub fn deadline(settle: Res<Settle>, mut shutoff: ResMut<Shutoff>) -> Result<Progress, Fail> {
@@ -138,13 +230,10 @@ pub fn idle(
         }
     } else if activity.walking && now.saturating_sub(activity.quiet) >= 10_000_000_000 {
         // 超时退场与正常退场走同一道门：没结清就不进 settling。
-        if settle.settled() {
-            programs::debug::put("system: forced shutdown admitted after DMA settlement");
-            settle.flow.forced = true;
-            settle.flow.settling = true;
+        if settle.admit(true) {
+            programs::debug::put("system: forced shutdown admitted after retirement settlement");
         } else {
-            programs::debug::put("system: idle deadline reached; awaiting DMA settlement");
-            settle.ask();
+            programs::debug::put("system: idle deadline reached; awaiting retirement settlement");
         }
     }
     Ok(Progress::Done)
@@ -170,6 +259,8 @@ pub fn bound(
 ) -> Result<Progress, Fail> {
     bound.0 = if settle.flow.done {
         Wait::POLL
+    } else if settle.working() {
+        Wait::AtMost(1)
     } else if !settle.flow.settling && !activity.walking {
         Wait::Forever
     } else {

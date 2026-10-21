@@ -12,19 +12,13 @@ use env::Wait;
 
 pub(crate) fn drain(
     active: Res<Active>,
+    control: Res<Control>,
     mut settle: ResMut<crate::system::app::policy::Settle>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
-    if matches!(
-        job.key.request.name.as_str(),
-        "hub" | "pci" | "iommu" | "recovery"
-    ) {
-        if !settle.settled() {
-            settle.ask();
-        }
-        if !settle.settled() {
-            return Ok(Progress::Pending);
-        }
+    let program = control.input(&job.key.request.name)?.program;
+    if !settle.gate(program) {
+        return Ok(Progress::Pending);
     }
     Ok(Progress::Done)
 }

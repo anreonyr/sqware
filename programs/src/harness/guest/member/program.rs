@@ -29,6 +29,7 @@ pub static MEMBER: UnitFile = UnitFile {
         ending: Some(Ending::Transient),
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };

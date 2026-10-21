@@ -81,6 +81,7 @@ const fn work(name: &'static str, image: &'static str) -> UnitFile {
             ready: Ready::OnSpawn,
             ending: Some(Ending::Transient),
             construction: &[],
+            retirement: &[],
         },
         supply: crate::unit::SupplyConfig { bindings: &[] },
     }
@@ -114,6 +115,7 @@ const fn control(
             ready: Ready::OnSpawn,
             ending: Some(Ending::Transient),
             construction,
+            retirement: &[],
         },
         supply: crate::unit::SupplyConfig { bindings: &[] },
     }

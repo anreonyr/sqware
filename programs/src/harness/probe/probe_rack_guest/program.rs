@@ -22,6 +22,7 @@ pub static PROBE_RACK_GUEST: UnitFile = UnitFile {
         ending: Some(Ending::Transient),
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };

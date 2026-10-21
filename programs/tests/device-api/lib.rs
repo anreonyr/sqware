@@ -208,7 +208,7 @@ mod tests {
         assert_eq!(router_api::frame::BACK_MARK, router_api::LINE_BACK);
         assert_eq!(router_api::frame::LANE, router_api::LANE);
 
-        assert_eq!(hub_api::PUBLICATIONS, ["bond", "list", "claim", "dma"]);
+        assert_eq!(hub_api::PUBLICATIONS, ["bond", "list", "claim", "dma", "retire"]);
         assert_eq!(terminal_api::PUBLICATIONS, ["attach"]);
         assert_eq!(router_api::PUBLICATIONS, ["router"]);
 
@@ -217,6 +217,7 @@ mod tests {
             system_api::identity::REGISTRY,
             system_api::operator::REGISTRY,
             system_api::control::REGISTRY,
+            system_api::retirement::REGISTRY,
             hub_api::REGISTRY,
             terminal_api::REGISTRY,
             router_api::REGISTRY,

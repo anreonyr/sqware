@@ -70,5 +70,13 @@ mod interface {
             publication = "dma"
         )]
         Dma,
+        /// Generic retirement face: the provider alone maps its own responsibility to Done.
+        #[grant(
+            code = 5,
+            key = "retire",
+            legacy = "hub-entry-retire",
+            publication = "retire"
+        )]
+        Retire,
     }
 }

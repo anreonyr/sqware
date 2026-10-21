@@ -236,6 +236,23 @@ mod tests {
     }
 
     #[test]
+    fn retirement_frame_keeps_only_request_and_pending_or_done() {
+        use system_api::retirement::{self, Retirement};
+        let back = token(0x0102_0304_0506_0708);
+        for value in [Retirement::ask(back), Retirement::pending(), Retirement::done()] {
+            let mut bytes = Retirement::EMPTY;
+            let len = value.store(&mut bytes).unwrap();
+            assert_eq!(Retirement::fetch(&bytes[..len]), Some(value));
+            assert!(Retirement::fetch(&bytes[..len + 1]).is_none());
+        }
+        assert!(!Retirement::pending().settled());
+        assert!(Retirement::done().settled());
+        assert_eq!(system_api::retirement::Call::BACK, retirement::DECLARATIONS[0].mark);
+        assert_eq!(system_api::retirement::DECLARATIONS.len(), 1);
+        assert_eq!(env::marks::conflict(system_api::retirement::REGISTRY), None);
+    }
+
+    #[test]
     fn identity_exports_preserve_actual_entry_revision_and_validation_boundaries() {
         use system_api::identity::{export, IdentityObject, IdentityName, PrincipalId, OperatorEntryRef};
         let request = export::Request {
