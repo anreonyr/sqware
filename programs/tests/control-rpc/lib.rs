@@ -113,6 +113,23 @@ pub mod rpc {
             entry: PieToken,
             _contract: PhantomData<C>,
         }
+        pub struct Pending<C: wire::Contract> {
+            response: Option<Result<Vec<u8>, Fail>>,
+            _contract: PhantomData<C>,
+        }
+        impl<C: wire::Contract> Pending<C> {
+            pub fn poll(
+                &mut self,
+            ) -> Result<Option<<C::Response as Message>::In>, Fail> {
+                match self.response.take() {
+                    Some(Ok(bytes)) => C::Response::fetch(&bytes)
+                        .map(Some)
+                        .ok_or(Fail::Decode),
+                    Some(Err(fail)) => Err(fail),
+                    None => Ok(None),
+                }
+            }
+        }
         impl<C: wire::Contract> Sender<C> {
             pub fn from_raw(entry: PieToken, _: Mark) -> Result<Self, Fail> {
                 Ok(Self {
@@ -123,17 +140,41 @@ pub mod rpc {
             pub fn peer(&self) -> TaskId {
                 TaskId::new(7)
             }
-            pub fn call(
+            fn capture(
                 &self,
                 deadline: crate::time::Deadline,
                 build: impl FnOnce(PieToken) -> C::Request,
-            ) -> Result<<C::Response as Message>::In, Fail> {
+            ) -> Result<(Vec<u8>, PieToken), Fail> {
                 let back = PieToken::from_bytes(&88u64.to_le_bytes()).unwrap();
                 let request = build(back);
                 let mut buffer = C::Request::EMPTY;
                 let len = request.store(buffer.as_mut()).ok_or(Fail::Encode)?;
                 let bytes = buffer.as_ref().get(..len).ok_or(Fail::Encode)?.to_vec();
-                CAPTURE.with(|capture| *capture.borrow_mut() = Some((bytes, deadline.wait, back)));
+                CAPTURE.with(|capture| *capture.borrow_mut() = Some((bytes.clone(), deadline.wait, back)));
+                Ok((bytes, back))
+            }
+            pub fn begin(
+                &self,
+                deadline: crate::time::Deadline,
+                build: impl FnOnce(PieToken) -> C::Request,
+            ) -> Result<Pending<C>, Fail> {
+                self.capture(deadline, build)?;
+                Ok(Pending {
+                    response: Some(RESPONSE.with(|response| {
+                        response
+                            .borrow_mut()
+                            .take()
+                            .unwrap_or_else(|| Err(Fail::Send(())))
+                    })),
+                    _contract: PhantomData,
+                })
+            }
+            pub fn call(
+                &self,
+                deadline: crate::time::Deadline,
+                build: impl FnOnce(PieToken) -> C::Request,
+            ) -> Result<<C::Response as Message>::In, Fail> {
+                self.capture(deadline, build)?;
                 match RESPONSE.with(|response| response.borrow_mut().take()) {
                     Some(Ok(bytes)) => C::Response::fetch(&bytes).ok_or(Fail::Decode),
                     Some(Err(fail)) => Err(fail),
@@ -245,6 +286,44 @@ mod tests {
         let value = system_api::control::Said { status, a: state, task: TaskId::new(task), team: env::TeamId::new(0), reason: 0, completed: false };
         let mut bytes = vec![0; system_api::control::Said::LEN];
         value.store(&mut bytes).unwrap(); bytes
+    }
+
+    #[test]
+    fn instance_async_requests_preserve_wire_shape_and_reply_validation() {
+        fn instance_answer(task: usize, team: usize) -> Vec<u8> {
+            let mut value = frame::said_task(TaskId::new(task));
+            value.team = TeamId::new(team);
+            let mut bytes = vec![0; frame::Said::LEN];
+            value.store(&mut bytes).unwrap();
+            bytes
+        }
+        let face = Face::of(token(9)).unwrap();
+        let instance = face.instance(TaskId::new(22));
+        RESPONSE.with(|response| {
+            *response.borrow_mut() = Some(Ok(instance_answer(22, 42)));
+        });
+        let mut pending = instance.begin_inspect(Wait::AtMost(19)).unwrap();
+        let (bytes, wait, back) = CAPTURE.with(|capture| capture.borrow_mut().take().unwrap());
+        assert_eq!(wait, Wait::AtMost(19));
+        assert_eq!(
+            Request::fetch(&bytes),
+            Some((Some(Wire::StateInstance(TaskId::new(22))), back))
+        );
+        let reply = pending.poll().unwrap().unwrap();
+        assert_eq!(instance.inspect_reply(reply).unwrap().team, TeamId::new(42));
+
+        RESPONSE.with(|response| {
+            *response.borrow_mut() = Some(Ok(said(0, 0, 0)));
+        });
+        let mut release = instance.begin_release(Wait::AtMost(23)).unwrap();
+        let (bytes, wait, back) = CAPTURE.with(|capture| capture.borrow_mut().take().unwrap());
+        assert_eq!(wait, Wait::AtMost(23));
+        assert_eq!(
+            Request::fetch(&bytes),
+            Some((Some(Wire::ReleaseInstance(TaskId::new(22))), back))
+        );
+        let reply = release.poll().unwrap().unwrap();
+        assert_eq!(instance.release_reply(reply), Ok(()));
     }
 
     #[test]

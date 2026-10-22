@@ -44,6 +44,8 @@ pub mod directory;
 pub mod dma;
 mod enrollment_failure;
 mod execution;
+mod launch;
+mod returned;
 mod grant;
 use self::grant::ship;
 pub mod list;
@@ -220,6 +222,7 @@ pub fn serve() -> Result<(), Start> {
     // 十、协调入口那几面：三个硬件域与 Control（树上查回来的门牌）；
     //     再加一本“设备目录”的装置（新设备的门牌与类联盟由它挂出去）。
     let mut peers = None;
+    let mut executions = execution::Executions::new();
     let directory = Directory {
         devices: &devices,
         anchor: device_anchor,
@@ -249,7 +252,13 @@ pub fn serve() -> Result<(), Start> {
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
-        let wait = if ledger.executions_pending() || ledger.open_bindings_all().any(|binding| {
+        // Advance launch/return work and admission deadlines before handling a door, so
+        // an expired admission cannot claim in the same wake.
+        if let Some(peers) = peers.as_ref() {
+            execution::receive(&mut ledger, &mut executions);
+            executions.advance(&mut ledger, peers);
+        }
+        let wait = if executions.pending(&ledger) || ledger.open_bindings_all().any(|binding| {
             matches!(
                 binding.state,
                 hub_api::BindingState::Preparing | hub_api::BindingState::Closing
@@ -268,7 +277,7 @@ pub fn serve() -> Result<(), Start> {
                     // DMA 那一面走类型化的一问一答（回信孔由 ipc::rpc 铸、交、核）。
                     drain_dma(&mut ledger, &mut peers, &tree, &directory, token, &mut buf);
                 } else if token == retire {
-                    drain_retirement(&mut ledger, token, &mut buf);
+                    drain_retirement(&mut ledger, &mut executions, token, &mut buf);
                 } else {
                     // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
                     let hole = Hole::from_raw(token);
@@ -298,7 +307,7 @@ pub fn serve() -> Result<(), Start> {
             debug!("hub: vacated {freed}");
         }
         if let Some(peers) = peers.as_ref() {
-            dma::advance(&mut ledger, peers);
+            dma::advance(&mut ledger, peers, &mut executions);
         }
         for class in ledger.classes().ok_or(Start::Room(E_HUB))? {
             for (_, door) in ledger.doors(class) {
@@ -355,7 +364,17 @@ fn drain_dma(
 
 /// Generic retirement face: only the assembler (sire) may ask; the provider maps its own
 /// outstanding responsibility count to Pending/Done. No lifecycle is copied here.
-fn drain_retirement(ledger: &mut Ledger, entry: PieToken, buffer: &mut [u8]) {
+///
+/// A non-zero target is Control's proof that one execution domain stopped. It only
+/// advances Hub resources bound to that exact task. The global target additionally waits
+/// for every owner receipt Hub accepted, but never for a release reply while answering a
+/// per-instance resource request.
+fn drain_retirement(
+    ledger: &mut Ledger,
+    executions: &mut execution::Executions,
+    entry: PieToken,
+    buffer: &mut [u8],
+) {
     let receiver = RequestReceiver::<system_api::retirement::Call>::from_raw(
         entry,
         system_api::retirement::Call::BACK,
@@ -364,14 +383,24 @@ fn drain_retirement(ledger: &mut Ledger, entry: PieToken, buffer: &mut [u8]) {
     loop {
         match receiver.receive(buffer, Wait::POLL) {
             Ok(incoming) => {
-                let done = incoming.from == unit::sire()
-                    && incoming.request.state == system_api::retirement::ASK
-                    && incoming.request.target == TaskId::new(0)
-                    && ledger.settle() == 0;
-                let reply = if done {
-                    system_api::retirement::Retirement::done_for(incoming.request.target)
+                let target = incoming.request.target;
+                let trusted = incoming.from == unit::sire()
+                    && incoming.request.state == system_api::retirement::ASK;
+                let done = if !trusted {
+                    false
+                } else if target == TaskId::new(0) {
+                    ledger.settle();
+                    executions.settle(ledger);
+                    ledger.open_bindings_all().next().is_none() && executions.idle(ledger)
                 } else {
-                    system_api::retirement::Retirement::pending_for(incoming.request.target)
+                    ledger.stop_target(target);
+                    executions.target(ledger, target);
+                    ledger.open_bindings_for(target) == 0
+                };
+                let reply = if done {
+                    system_api::retirement::Retirement::done_for(target)
+                } else {
+                    system_api::retirement::Retirement::pending_for(target)
                 };
                 let _ = incoming.reply.send(reply);
             }

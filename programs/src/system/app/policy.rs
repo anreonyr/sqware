@@ -1,4 +1,4 @@
-use super::participant::Participant;
+use crate::system::assembly::retirement::Participant;
 use crate::system::app::Fault as Fail;
 use crate::system::assembly::Jobs;
 use crate::system::control::Startup;
@@ -25,6 +25,8 @@ pub struct Settle {
     pub flow: Flow,
     participants: Vec<Participant>,
     attempting: bool,
+    closing: bool,
+    domains: bool,
 }
 
 impl Settle {
@@ -45,6 +47,8 @@ impl Settle {
             flow,
             participants,
             attempting: false,
+            closing: false,
+            domains: false,
         }
     }
 
@@ -122,6 +126,24 @@ impl Settle {
         self.advance_all();
         self.enter(forced)
     }
+
+    /// Close new construction and stop dynamic execution domains before providers.
+    pub(crate) fn close(&mut self, forced: bool) {
+        if self.flow.settling {
+            return;
+        }
+        self.closing = true;
+        self.flow.forced |= forced;
+    }
+
+    pub(crate) fn closing(&self) -> bool {
+        self.closing
+    }
+
+    /// Dynamic execution domains have all settled; the provider gate may now open.
+    pub(crate) fn domains_settled(&mut self) {
+        self.domains = true;
+    }
 }
 
 pub fn health(status: Res<Arc<Status>>) -> Result<Progress, Fail> {
@@ -145,7 +167,7 @@ pub fn gate_open(
     Ok(Progress::Done)
 }
 
-/// 达到退场条件后推进全部退休依赖，结清后才进入 settling。
+/// 达到退场条件后先停止动态执行域，全部结清后才推进退休提供方。
 pub fn settle(
     startup: Res<Startup>,
     operations: Res<Jobs>,
@@ -157,7 +179,22 @@ pub fn settle(
     if !(startup.eligible() && operations.is_empty()) {
         return Ok(Progress::Done);
     }
-    settle.admit(false);
+    if !settle.closing() {
+        settle.close(false);
+        return Ok(Progress::Done);
+    }
+    if settle.domains {
+        settle.admit(false);
+    }
+    Ok(Progress::Done)
+}
+pub fn domains(control: Res<Control>, mut settle: ResMut<Settle>) -> Result<Progress, Fail> {
+    if settle.closing()
+        && !settle.flow.settling
+        && control.instances().all(|item| item.settled())
+    {
+        settle.domains_settled();
+    }
     Ok(Progress::Done)
 }
 pub fn deadline(settle: Res<Settle>, mut shutoff: ResMut<Shutoff>) -> Result<Progress, Fail> {
@@ -180,12 +217,9 @@ pub fn idle(
             return Err(Fail::Idle);
         }
     } else if activity.walking && now.saturating_sub(activity.quiet) >= 10_000_000_000 {
-        // 超时退场与正常退场走同一道门：没结清就不进 settling。
-        if settle.admit(true) {
-            programs::debug::put("system: forced shutdown admitted after retirement settlement");
-        } else {
-            programs::debug::put("system: idle deadline reached; awaiting retirement settlement");
-        }
+        // 超时退场与正常退场走同一道门：先停动态执行域，再等退休提供方。
+        settle.close(true);
+        programs::debug::put("system: forced shutdown closing dynamic execution domains");
     }
     Ok(Progress::Done)
 }
@@ -211,6 +245,8 @@ pub fn bound(
     bound.0 = if settle.flow.done {
         Wait::POLL
     } else if settle.working() {
+        Wait::AtMost(1)
+    } else if settle.closing() && !settle.flow.settling {
         Wait::AtMost(1)
     } else if !settle.flow.settling && !activity.walking {
         Wait::Forever

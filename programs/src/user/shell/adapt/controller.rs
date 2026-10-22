@@ -40,6 +40,12 @@ enum Work {
     Release {
         pending: Pending<pipe_api::Call>,
     },
+    Reclaim {
+        index: usize,
+        task: TaskId,
+        until: u64,
+        pending: Pending<system_api::control::Call>,
+    },
 }
 pub struct RuntimeJob {
     pub model: Job,
@@ -67,6 +73,7 @@ pub struct Controller {
     loader: PieToken,
     subject: Subject,
     identity_authority: TaskId,
+    lifecycle: system_client::control::Face,
     pub foreground: Option<JobId>,
     jobs: Vec<RuntimeJob>,
     next: u64,
@@ -82,6 +89,7 @@ impl Controller {
         loader: PieToken,
         subject: Subject,
         identity_authority: TaskId,
+        lifecycle: system_client::control::Face,
     ) -> Self {
         Self {
             catalogue,
@@ -90,6 +98,7 @@ impl Controller {
             loader,
             subject,
             identity_authority,
+            lifecycle,
             foreground: None,
             jobs: Vec::new(),
             next: 0,
@@ -287,6 +296,9 @@ impl Controller {
                     Work::Bind { pending, .. } | Work::Release { pending } => {
                         (Some(pending.source()), pending.remaining())
                     }
+                    Work::Reclaim { pending, .. } => {
+                        (Some(pending.source()), pending.remaining())
+                    }
                 };
                 if let Some(source) = source {
                     interests.source(source);
@@ -371,6 +383,7 @@ impl Controller {
         let loader = self.loader;
         let subject = self.subject;
         let identity_authority = self.identity_authority;
+        let lifecycle = &self.lifecycle;
         let next_create = &mut self.next_create;
         let job = &mut self.jobs[index];
         if let Err(error) = advance(
@@ -378,6 +391,7 @@ impl Controller {
             objects,
             &self.catalogue,
             &self.pipe,
+            lifecycle,
             construction,
             loader,
             subject,
@@ -421,6 +435,7 @@ fn advance(
     objects: &mut Objects,
     catalogue: &Catalogue,
     pipe: &Client,
+    lifecycle: &system_client::control::Face,
     construction_entry: PieToken,
     loader_entry: PieToken,
     subject: Subject,
@@ -535,6 +550,44 @@ fn advance(
                     }
                 }
             }
+            Work::Reclaim {
+                index,
+                task,
+                until,
+                pending,
+            } => {
+                let now = env::chrono::clock();
+                match pending.poll() {
+                    Ok(None) if now < *until => true,
+                    Ok(None) => {
+                        *pending = lifecycle
+                            .instance(*task)
+                            .begin_release(WAIT)
+                            .map_err(|e| format!("instance release: {e:?}"))?;
+                        true
+                    }
+                    Ok(Some(said)) => {
+                        lifecycle
+                            .instance(*task)
+                            .release_reply(said)
+                            .map_err(|e| format!("instance release: {e:?}"))?;
+                        let member = &mut job.members[*index];
+                        member.dead = true;
+                        job.model
+                            .complete(*index, member.reason.unwrap_or(0))
+                            .map_err(|_| "missing result")?;
+                        false
+                    }
+                    Err(_) if now < *until => {
+                        *pending = lifecycle
+                            .instance(*task)
+                            .begin_release(WAIT)
+                            .map_err(|e| format!("instance release: {e:?}"))?;
+                        true
+                    }
+                    Err(error) => return Err(format!("instance release: {error:?}")),
+                }
+            }
         };
         if pending {
             job.work = Some(work);
@@ -618,6 +671,7 @@ fn advance(
         job.model.prepared().map_err(|_| "invalid prepare state")?;
         return Ok(());
     }
+    let mut reclaim = None;
     for (index, member) in job.members.iter_mut().enumerate() {
         let Some(built) = member.built.filter(|_| !member.dead) else {
             continue;
@@ -660,18 +714,23 @@ fn advance(
         if matches!(
             env::unit::join(built.team.into(), env::Wait::POLL, false),
             Ok(env::JoinReply::Complete)
-        ) {
-            match env::unit::oust(built.team) {
-                Ok(()) => {
-                    member.dead = true;
-                    job.model
-                        .complete(index, member.reason.unwrap_or(0))
-                        .map_err(|_| "missing result")?;
-                }
-                Err(error) if error.source == env::UnitFail::Busy => {}
-                Err(error) => return Err(format!("job reclaim: {error:?}")),
-            }
+        ) && reclaim.is_none()
+        {
+            reclaim = Some((index, built.task));
         }
+    }
+    if let Some((index, task)) = reclaim {
+        let pending = lifecycle
+            .instance(task)
+            .begin_release(WAIT)
+            .map_err(|e| format!("instance release: {e:?}"))?;
+        job.work = Some(Work::Reclaim {
+            index,
+            task,
+            until: env::chrono::clock().saturating_add(5_000_000_000),
+            pending,
+        });
+        return Ok(());
     }
     if matches!(
         job.model.status,

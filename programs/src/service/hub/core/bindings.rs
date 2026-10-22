@@ -8,7 +8,7 @@ use hub_api::{BindingId, BindingState, Close, DeviceId, Fail, Failure};
 
 use super::binding::{Binding, Step};
 use super::ledger::Ledger;
-use super::{ClaimRequest, ExecutionStep};
+use super::ClaimRequest;
 
 /// Recently completed receipts; open bindings are never evicted.
 const CLOSED_HISTORY: usize = 32;
@@ -71,12 +71,12 @@ impl Ledger {
         let Some(device) = self.device(request.requester) else {
             return Err(Fail::Unknown);
         };
-        let execution = self.executions
+        let execution = self
+            .admissions
             .iter()
-            .position(|execution| execution.task == request.from && execution.team.is_some()
-                && matches!(execution.step, ExecutionStep::Embark | ExecutionStep::Running))
+            .position(|admission| admission.task == request.from && admission.claimable())
             .ok_or(Fail::Denied)?;
-        if request.id <= self.executions[execution].claim_high {
+        if request.id <= self.admissions[execution].claim_high() {
             return Err(Fail::Conflict);
         }
         if self.open_bindings(request.requester) > 0 {
@@ -86,7 +86,7 @@ impl Ledger {
         hub_api::iova_base(serial).ok_or(Fail::Full)?;
         self.bindings.try_reserve(1).map_err(|_| Fail::Full)?;
         self.serial = serial;
-        self.executions[execution].claim_high = request.id;
+        self.admissions[execution].advance_claim(request.id);
         self.bindings.push(Binding::new(
             BindingId {
                 hub: self.hub,
@@ -146,18 +146,16 @@ impl Ledger {
     /// 封闭准入，退休执行实例并关闭绑定，返回未结清责任数。
     pub fn settle(&mut self) -> usize {
         self.settling = true;
-        let mut open = 0;
+        let open = self.bindings.iter().filter(|binding| binding.open()).count();
         for binding in &mut self.bindings {
             if binding.open() {
                 binding.close(Close::Normal);
-                open += 1;
             }
         }
-        for execution in &mut self.executions {
-            execution.retire();
-            open += usize::from(execution.step != super::ExecutionStep::Done);
+        for admission in &mut self.admissions {
+            admission.close();
         }
-        open
+        open.saturating_add(self.admissions.len())
     }
 
     /// 记一笔原始失败（失败方、操作、原失败码）。

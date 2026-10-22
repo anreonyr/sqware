@@ -1,275 +1,201 @@
-use env::{PieFail, PieToken, TaskId, TeamId};
-use hub_api::Fail;
-use system_api::control::Fail as ControlFail;
+//! Hub admission and target-retirement responsibilities.
+//!
+//! These replace the old Hub execution stage machine. Hub records only launch identity,
+//! claim watermark, deadline and closed history; Control owns running/death state.
 
-use crate::hub_core::{
-    Execution, ExecutionEffects, ExecutionFailure as Failure, ExecutionStep as Step, Ledger,
-};
+use env::{PieToken, TaskId};
+use hub_api::{BindingState, Fail};
 
-const TASK: TaskId = TaskId::new(7);
-const TEAM: TeamId = TeamId::new(9);
+use crate::hub_core::{ClaimRequest, Ledger, Step};
 
-#[derive(Default)]
-struct Effects {
-    calls: Vec<Step>,
-    fail: Option<Step>,
-    absent: bool,
-    exited: bool,
-    oust_pending: bool,
-    lost_embark_reply: bool,
-    starts: usize,
-    ousts: usize,
+const HUB: usize = 1;
+const RECOVERY: usize = 3;
+const TASK: TaskId = TaskId::new(9);
+
+fn ledger() -> Ledger {
+    let mut ledger = Ledger::new().with_hub(TaskId::new(HUB));
+    crate::enrollment::enroll(&mut ledger, &[0]);
+    ledger
 }
 
-impl Effects {
-    fn call(&mut self, step: Step) -> Result<(), Failure> {
-        self.calls.push(step);
-        if self.fail == Some(step) {
-            self.fail = None;
-            return Err(Failure::Pie(PieFail::OoM));
-        }
-        Ok(())
-    }
+fn admit(ledger: &mut Ledger, task: TaskId, deadline: u64) {
+    ledger.admit(task, deadline).unwrap();
 }
 
-impl ExecutionEffects for Effects {
-    fn team(&mut self, task: TaskId) -> Result<Option<TeamId>, Failure> {
-        assert_eq!(task, TASK);
-        self.call(Step::Identify)?;
-        Ok((!self.absent).then_some(TEAM))
-    }
-
-    fn embark(&mut self, task: TaskId) -> Result<(), Failure> {
-        assert_eq!(task, TASK);
-        self.call(Step::Embark)?;
-        if self.starts == 0 {
-            self.starts = 1;
-        }
-        if self.lost_embark_reply {
-            self.lost_embark_reply = false;
-            return Err(Failure::Control(ControlFail::Bad));
-        }
-        Ok(())
-    }
-
-    fn exited(&mut self, _: TaskId) -> Result<bool, Failure> {
-        self.call(Step::Running)?;
-        Ok(self.exited)
-    }
-
-    fn stop(&mut self, team: TeamId) -> Result<(), Failure> {
-        assert_eq!(team, TEAM);
-        self.call(Step::Stop)
-    }
-
-    fn oust(&mut self, team: TeamId) -> Result<bool, Failure> {
-        assert_eq!(team, TEAM);
-        self.call(Step::Oust)?;
-        if self.oust_pending {
-            return Ok(false);
-        }
-        self.ousts += 1;
-        assert_eq!(self.ousts, 1, "never Oust a consumed receipt again");
-        Ok(true)
-    }
-
-}
-
-fn drive(execution: &mut Execution, effects: &mut Effects, target: Step) {
-    for _ in 0..32 {
-        if execution.step == target {
-            return;
-        }
-        let _ = execution.advance(0, effects);
-    }
-    panic!("did not reach {target:?}: {:?}", execution.step);
+fn claim_at(ledger: &mut Ledger, task: TaskId, id: u64) -> Result<u64, Fail> {
+    ledger
+        .claim(ClaimRequest {
+            from: task,
+            id,
+            requester: 0,
+            sensor: PieToken::mint(task.get()),
+            recovery: TaskId::new(RECOVERY),
+        })
+        .map(|binding| binding.serial)
 }
 
 #[test]
-fn every_partial_startup_retries_without_recreating_completed_effects() {
-    for fail in [Step::Identify, Step::Embark] {
-        let mut execution = Execution::new(TASK, 100);
-        let mut effects = Effects { fail: Some(fail), ..Effects::default() };
-        drive(&mut execution, &mut effects, Step::Running);
-        assert_eq!(execution.team, Some(TEAM));
-        assert_eq!(effects.starts, 1);
-        assert_eq!(execution.failure, Some(Failure::Pie(PieFail::OoM)));
-        assert_eq!(effects.calls.iter().filter(|step| **step == fail).count(), 2);
-        execution.retire();
-        drive(&mut execution, &mut effects, Step::Done);
-        assert!(execution.stopped());
-        assert_eq!(effects.ousts, 1);
-    }
+fn launch_replay_keeps_identity_and_deadline_without_a_second_record() {
+    let mut ledger = ledger();
+    admit(&mut ledger, TASK, 100);
+    admit(&mut ledger, TASK, 200);
+    assert_eq!(ledger.admissions().count(), 1);
+    assert_eq!(ledger.admission(TASK).unwrap().deadline(), 100);
+    assert!(ledger.admission(TASK).unwrap().claimable());
 }
 
 #[test]
-fn lost_embark_reply_retries_same_instance_without_starting_twice() {
-    let mut execution = Execution::new(TASK, 100);
-    let mut effects = Effects { lost_embark_reply: true, ..Effects::default() };
-    drive(&mut execution, &mut effects, Step::Embark);
-    assert_eq!(execution.advance(0, &mut effects), Err(Failure::Control(ControlFail::Bad)));
-    assert_eq!(execution.step, Step::Embark);
-    assert_eq!(effects.starts, 1);
-    drive(&mut execution, &mut effects, Step::Running);
-    assert_eq!(effects.starts, 1);
-    assert_eq!(effects.calls.iter().filter(|step| **step == Step::Embark).count(), 2);
+fn claim_requires_an_open_admission_and_advances_the_watermark_once() {
+    let mut ledger = ledger();
+    assert_eq!(claim_at(&mut ledger, TASK, 1), Err(Fail::Denied));
+    admit(&mut ledger, TASK, u64::MAX);
+    assert_eq!(claim_at(&mut ledger, TASK, 1), Ok(1));
+    assert_eq!(claim_at(&mut ledger, TASK, 1), Ok(1));
+    assert_eq!(claim_at(&mut ledger, TASK, 0), Err(Fail::Bad));
+    assert_eq!(claim_at(&mut ledger, TASK, 2), Err(Fail::Taken));
+    // A denied claim does not advance the watermark or create a binding.
+    assert_eq!(ledger.admission(TASK).unwrap().claim_high(), 1);
+    assert_eq!(ledger.open_bindings_all().count(), 1);
 }
 
 #[test]
-fn timeout_at_every_startup_boundary_stops_verified_team_without_starting() {
-    for boundary in [Step::Identify, Step::Embark] {
-        let mut execution = Execution::new(TASK, 100);
-        let mut effects = Effects::default();
-        drive(&mut execution, &mut effects, boundary);
-        execution.advance(100, &mut effects).unwrap();
-        drive(&mut execution, &mut effects, Step::Done);
-        assert_eq!(effects.starts, 0);
-        assert!(execution.stopped());
-        assert_eq!(effects.ousts, 1);
-    }
+fn expired_launch_aborts_before_it_can_claim() {
+    let mut ledger = ledger();
+    admit(&mut ledger, TASK, 100);
+    let mut expired = None;
+    ledger.expire_admissions(100, |task| expired = Some(task));
+    assert_eq!(expired, Some(TASK));
+    assert!(ledger.admission(TASK).unwrap().closed());
+    assert_eq!(claim_at(&mut ledger, TASK, 1), Err(Fail::Denied));
+    assert_eq!(ledger.open_bindings_all().count(), 0);
 }
 
 #[test]
-fn stop_confirmation_keeps_the_same_receipt_until_oust_completes() {
-    let mut execution = Execution::new(TASK, 100);
-    let mut effects = Effects::default();
-    drive(&mut execution, &mut effects, Step::Running);
-    execution.retire();
-    drive(&mut execution, &mut effects, Step::Oust);
-    effects.oust_pending = true;
-    for _ in 0..3 {
-        execution.retire();
-        execution.advance(0, &mut effects).unwrap();
-        assert!(!execution.stopped());
-        assert_eq!(execution.team, Some(TEAM));
-        assert_eq!(execution.step, Step::Oust);
-        assert_eq!(effects.ousts, 0);
-    }
-    effects.oust_pending = false;
-    execution.advance(0, &mut effects).unwrap();
-    assert!(execution.stopped());
-    execution.retire();
-    assert_eq!(execution.step, Step::Done);
-    assert_eq!(execution.team, Some(TEAM));
-    drive(&mut execution, &mut effects, Step::Done);
-    execution.advance(0, &mut effects).unwrap();
-    assert_eq!(effects.ousts, 1);
+fn failed_or_foreign_launch_records_nothing() {
+    let mut ledger = ledger();
+    assert_eq!(ledger.admit(TaskId::new(0), 100), Err(Fail::Denied));
+    admit(&mut ledger, TASK, 100);
+    assert_eq!(claim_at(&mut ledger, TaskId::new(10), 1), Err(Fail::Denied));
+    assert!(ledger.admission(TaskId::new(10)).is_none());
+    assert!(ledger.admission(TASK).is_some());
 }
 
 #[test]
-fn absent_or_foreign_instance_is_not_a_stop_confirmation() {
-    let mut execution = Execution::new(TASK, 100);
-    let mut effects = Effects { absent: true, ..Effects::default() };
-    drive(&mut execution, &mut effects, Step::Done);
-    assert!(!execution.stopped());
-    assert_eq!(effects.calls, [Step::Identify]);
+fn target_proof_advances_only_its_bound_binding_and_never_repeats_completed_steps() {
+    let mut ledger = ledger();
+    admit(&mut ledger, TASK, u64::MAX);
+    let serial = claim_at(&mut ledger, TASK, 1).unwrap();
+    ledger.close(serial, hub_api::Close::Normal).unwrap();
+    assert_eq!(ledger.binding(serial).unwrap().step, Step::StopCpu);
+
+    assert_eq!(ledger.stop_target(TASK), 1);
+    assert_eq!(ledger.binding(serial).unwrap().step, Step::Invalidate);
+
+    // Repeating the same proof must not replay an already completed transition.
+    ledger.binding_mut(serial).unwrap().step = Step::Disable;
+    assert_eq!(ledger.stop_target(TASK), 1);
+    assert_eq!(ledger.binding(serial).unwrap().step, Step::Disable);
+    assert!(ledger.admission(TASK).unwrap().closed());
 }
 
 #[test]
-fn main_exit_without_a_binding_still_retires_the_whole_team() {
-    let mut execution = Execution::new(TASK, 100);
-    let mut effects = Effects::default();
-    drive(&mut execution, &mut effects, Step::Running);
-    execution.advance(1000, &mut effects).unwrap();
-    assert_eq!(execution.step, Step::Running, "running tasks do not inherit startup timeout");
-    effects.exited = true;
-    execution.advance(1000, &mut effects).unwrap();
-    drive(&mut execution, &mut effects, Step::Done);
-    assert_eq!(effects.ousts, 1);
+fn target_without_a_binding_is_resource_done_without_faking_lifecycle() {
+    let mut ledger = ledger();
+    admit(&mut ledger, TASK, 100);
+    assert_eq!(ledger.stop_target(TASK), 0);
+    assert_eq!(ledger.stop_target(TaskId::new(44)), 0);
+    assert!(ledger.admission(TaskId::new(44)).is_none());
+    assert!(ledger.admission(TASK).unwrap().closed());
 }
 
 #[test]
-fn settle_counts_and_retires_launches_before_their_first_dma_claim() {
-    let mut ledger = Ledger::new();
-    ledger.launch(TASK, 100).unwrap();
+fn settle_retires_unbound_launches_and_keeps_the_receipt_until_release() {
+    let mut ledger = ledger();
+    admit(&mut ledger, TASK, 100);
     assert_eq!(ledger.settle(), 1);
-    let mut effects = Effects::default();
-    drive(ledger.execution(TASK).unwrap(), &mut effects, Step::Done);
-    assert_eq!(effects.starts, 0);
-    assert_eq!(ledger.settle(), 0);
-    ledger.prune_executions();
-    assert!(ledger.execution(TASK).is_none());
-    assert_eq!(ledger.launch(TASK, 200), Err(Fail::Denied));
-}
-
-#[test]
-fn settle_after_lost_embark_reply_stops_the_already_running_instance() {
-    let mut ledger = Ledger::new();
-    ledger.launch(TASK, 100).unwrap();
-    let mut effects = Effects { lost_embark_reply: true, ..Effects::default() };
-    let execution = ledger.execution(TASK).unwrap();
-    drive(execution, &mut effects, Step::Embark);
-    assert!(execution.advance(0, &mut effects).is_err());
-    assert_eq!(effects.starts, 1);
+    assert!(ledger.admission(TASK).unwrap().closed());
+    assert_eq!(claim_at(&mut ledger, TASK, 1), Err(Fail::Denied));
     assert_eq!(ledger.settle(), 1);
-    drive(ledger.execution(TASK).unwrap(), &mut effects, Step::Done);
+    ledger.released(TASK);
     assert_eq!(ledger.settle(), 0);
-    assert_eq!((effects.starts, effects.ousts), (1, 1));
+    assert!(ledger.admission(TASK).is_none());
+    assert_eq!(ledger.admit(TASK, 200), Err(Fail::Denied));
 }
 
 #[test]
-fn execution_capacity_is_bounded_and_full_does_not_create_a_record() {
+fn target_proof_does_not_advance_another_executions_binding() {
+    let other = TaskId::new(10);
+    let mut ledger = Ledger::new().with_hub(TaskId::new(HUB));
+    crate::enrollment::enroll(&mut ledger, &[0, 1]);
+    admit(&mut ledger, TASK, u64::MAX);
+    admit(&mut ledger, other, u64::MAX);
+    let mine = ledger
+        .claim(ClaimRequest {
+            from: TASK,
+            id: 1,
+            requester: 0,
+            sensor: PieToken::mint(TASK.get()),
+            recovery: TaskId::new(RECOVERY),
+        })
+        .unwrap()
+        .serial;
+    let theirs = ledger
+        .claim(ClaimRequest {
+            from: other,
+            id: 1,
+            requester: 1,
+            sensor: PieToken::mint(other.get()),
+            recovery: TaskId::new(RECOVERY),
+        })
+        .unwrap()
+        .serial;
+    ledger.close(mine, hub_api::Close::Normal).unwrap();
+    ledger.close(theirs, hub_api::Close::Normal).unwrap();
+
+    assert_eq!(ledger.stop_target(TASK), 1);
+    assert_eq!(ledger.binding(mine).unwrap().step, Step::Invalidate);
+    assert_eq!(ledger.binding(theirs).unwrap().step, Step::StopCpu);
+    assert!(ledger.admission(TASK).unwrap().closed());
+    assert!(!ledger.admission(other).unwrap().closed());
+}
+
+#[test]
+fn settle_closes_bindings_but_does_not_pretend_the_cpu_stopped() {
+    let mut ledger = ledger();
+    admit(&mut ledger, TASK, u64::MAX);
+    let serial = claim_at(&mut ledger, TASK, 1).unwrap();
+    assert_eq!(ledger.settle(), 2);
+    assert_eq!(ledger.binding(serial).unwrap().state, BindingState::Closing);
+    assert_eq!(ledger.binding(serial).unwrap().step, Step::StopCpu);
+    assert_eq!(claim_at(&mut ledger, TaskId::new(10), 1), Err(Fail::Denied));
+    assert_eq!(ledger.stop_target(TASK), 1);
+    assert_eq!(ledger.binding(serial).unwrap().step, Step::Invalidate);
+    ledger.finish(serial);
+    ledger.released(TASK);
+    assert_eq!(ledger.settle(), 0);
+}
+
+#[test]
+fn closed_launch_history_is_bounded_and_stops_a_late_replay() {
+    let mut ledger = ledger();
+    for task in 1..=40 {
+        let task = TaskId::new(task);
+        admit(&mut ledger, task, 100);
+        ledger.released(task);
+    }
+    assert!(ledger.admission(TaskId::new(40)).is_none());
+    assert_eq!(ledger.admit(TaskId::new(40), 100), Err(Fail::Denied));
+    // The bounded history is not a second lifecycle ledger.
+    assert!(ledger.closed_admission_count() <= 32);
+}
+
+#[test]
+fn admission_capacity_is_bounded_and_full_creates_no_record() {
     let mut ledger = Ledger::new();
     for task in 1..=256 {
-        ledger.launch(TaskId::new(task), 100).unwrap();
+        admit(&mut ledger, TaskId::new(task), 100);
     }
-    assert_eq!(ledger.launch(TaskId::new(257), 100), Err(Fail::Full));
-    assert!(ledger.execution(TaskId::new(257)).is_none());
-    assert_eq!(ledger.launch(TASK, 200), Ok(()));
-    assert_eq!(ledger.execution(TASK).unwrap().deadline, 100);
-}
-
-#[test]
-fn failed_identity_query_after_timeout_keeps_retirement_intent() {
-    let mut execution = Execution::new(TASK, 100);
-    let mut effects = Effects { fail: Some(Step::Identify), ..Effects::default() };
-    assert!(execution.advance(100, &mut effects).is_err());
-    assert_eq!(execution.step, Step::Identify);
-    drive(&mut execution, &mut effects, Step::Done);
-    assert!(execution.stopped());
-    assert_eq!((effects.starts, effects.ousts), (0, 1));
-}
-
-#[test]
-fn failed_stop_or_oust_cannot_become_a_stop_confirmation() {
-    for boundary in [Step::Stop, Step::Oust] {
-        let mut execution = Execution::new(TASK, 100);
-        let mut effects = Effects::default();
-        drive(&mut execution, &mut effects, Step::Running);
-        execution.retire();
-        drive(&mut execution, &mut effects, boundary);
-        effects.fail = Some(boundary);
-        assert!(execution.advance(0, &mut effects).is_err());
-        assert_eq!(execution.step, boundary);
-        assert!(!execution.stopped());
-        assert_eq!(effects.ousts, 0);
-        drive(&mut execution, &mut effects, Step::Done);
-        assert_eq!(effects.ousts, 1);
-    }
-}
-
-#[test]
-fn stopped_execution_receipt_is_retained_until_its_binding_is_closed() {
-    use crate::hub_core::ClaimRequest;
-    let mut ledger = Ledger::new();
-    crate::enrollment::enroll(&mut ledger, &[8]);
-    ledger.launch(TASK, 100).unwrap();
-    let mut effects = Effects::default();
-    drive(ledger.execution(TASK).unwrap(), &mut effects, Step::Running);
-    let serial = ledger.claim(ClaimRequest {
-        from: TASK,
-        id: 1,
-        requester: 8,
-        sensor: PieToken::mint(5),
-        recovery: TaskId::new(3),
-    }).unwrap().serial;
-    let execution = ledger.execution(TASK).unwrap();
-    execution.retire();
-    drive(execution, &mut effects, Step::Done);
-    ledger.prune_executions();
-    assert!(ledger.execution(TASK).unwrap().stopped());
-    ledger.finish(serial);
-    ledger.prune_executions();
-    assert!(ledger.execution(TASK).is_none());
-    assert_eq!(effects.ousts, 1);
+    assert_eq!(ledger.admit(TaskId::new(257), 100), Err(Fail::Full));
+    assert!(ledger.admission(TaskId::new(257)).is_none());
+    assert_eq!(ledger.admissions().count(), 256);
 }

@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn different_instance_replies_cannot_discharge_each_others_obligations() {
-        use system::app::participant::Participant;
+        use system::assembly::retirement::Participant;
         use crate::system_api::retirement::Retirement as Reply;
         let (a, b) = (TaskId::new(7), TaskId::new(8));
         backend::reset(vec![Ok(()), Ok(())], vec![Ok(()); 4], vec![

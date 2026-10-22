@@ -15,7 +15,8 @@ pub struct Ledger {
     pub(super) leagues: Vec<League>,
     /// DMA 安全绑定：一笔一条，序号不复用。
     pub(super) bindings: Vec<super::binding::Binding>,
-    pub(super) executions: Vec<super::Execution>,
+    pub(super) admissions: Vec<super::Admission>,
+    pub(super) closed_admissions: Vec<TaskId>,
     /// 绑定编号的游标（从 1 起，不复用）。
     pub(super) serial: u64,
     /// 本册那一台（绑定编号里的 `hub` 那一格）。
@@ -30,7 +31,8 @@ impl Ledger {
             cells: Vec::new(),
             leagues: Vec::new(),
             bindings: Vec::new(),
-            executions: Vec::new(),
+            admissions: Vec::new(),
+            closed_admissions: Vec::new(),
             serial: 0,
             hub: TaskId::new(0),
             settling: false,
@@ -41,6 +43,10 @@ impl Ledger {
     pub fn with_hub(mut self, hub: TaskId) -> Self {
         self.hub = hub;
         self
+    }
+
+    pub fn settling(&self) -> bool {
+        self.settling
     }
 
     /// 册 · 写：收一台。**撞名即拒**（名是这一台的坐标，两处写同一个名＝自述坏了）

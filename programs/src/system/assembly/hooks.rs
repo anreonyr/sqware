@@ -19,6 +19,7 @@ pub(crate) fn children() -> Result<alloc::vec::Vec<(Key, Plan<&'static str>)>, B
     prepare.system("supply", super::supply::prepare)?;
     prepare.system("bootstrap", bootstrap)?;
     let mut retire = Schedule::sequence();
+    retire.system("retirement", retirement_dependencies)?;
     retire.system("identity.exports", retire_exports)?;
     retire.system("namespace", retire_namespace)?;
     retire.system("constructor", retire_constructor)?;
@@ -32,6 +33,39 @@ pub(crate) fn children() -> Result<alloc::vec::Vec<(Key, Plan<&'static str>)>, B
         (Key::Retire, retire.build()?)
     ])
 }
+fn retirement_dependencies(
+    mut jobs: ResMut<Jobs>,
+    layout: Res<crate::system::app::operator::Layout>,
+    namespaces: Res<crate::system::assembly::namespace::NamespaceInstallations>,
+) -> Result<Progress, &'static str> {
+    let reference = jobs
+        .active_hook_reference()
+        .ok_or("instance retirement reference")?;
+    let launch = jobs
+        .launches
+        .iter_mut()
+        .find(|launch| launch.instance.reference == reference)
+        .ok_or("instance retirement launch")?;
+    if launch.installation.retirement.is_empty() {
+        return Ok(Progress::Done);
+    }
+    let system = layout.as_ref().ok_or("instance retirement layout")?;
+    for participant in &mut launch.installation.retirement {
+        participant.discover(system, &namespaces);
+        participant.advance();
+    }
+    Ok(if launch
+        .installation
+        .retirement
+        .iter()
+        .all(|participant| participant.done)
+    {
+        Progress::Done
+    } else {
+        Progress::Pending
+    })
+}
+
 fn release_supply(
     jobs: Res<Jobs>,
     mut supplies: ResMut<crate::system::app::supplies::Supplies>,

@@ -6,7 +6,6 @@ pub(crate) mod install;
 pub(crate) mod life;
 pub(crate) mod namespace;
 pub(crate) mod operator;
-mod participant;
 pub(crate) mod policy;
 pub(crate) mod scene;
 pub(crate) mod schedule;

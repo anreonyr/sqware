@@ -88,6 +88,8 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
     frame.system("running", f::running)?;
     frame.system("activity", f::activity)?;
     frame.system("eligibility", crate::system::control::eligibility)?;
+    // 先停动态执行域并等其结清，再按声明退休提供方。
+    frame.system("domains.closed", f::domains)?;
     // 声明的退休提供方全部结清后才进入 settling。
     frame.system("settle.open", f::gate_open)?;
     frame.system("settle", f::settle)?;

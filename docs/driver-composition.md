@@ -17,7 +17,7 @@
 | 项目 | 当前证据 |
 | --- | --- |
 | A1：通用退休依赖替换 System HubDma 闸门 | 已实现全局及静态闸门，宿主和真实Ruin/forced/accept通过 |
-| A2：Control 唯一管理执行实例生命周期 | Complete停止前置和Assembly启动载体已实现；Hub其余阶段机仍待迁移 |
+| A2：Control 唯一管理执行实例生命周期 | 已实现：Hub 执行阶段机与直接 join/slay/oust 移除，逐实例目标退休、交回队列和调用方迁移；原生新路径未验 |
 | A3：设备协调迁入设备控制 Driver | 未实施 |
 | A4：公共目录与来源元数据分离 | 已实现，相关宿主与真实产品景通过 |
 | A5：PCI 不解析 VirtIO 设备协议 | 未实施 |
@@ -343,3 +343,51 @@ Returned未结清时不驱逐、不允许全局退场，等待间隔保持有界
   不变量错误，实际reclaim已限定owner早退，不能用Pending掩盖未核销的完成结果。
 - 本检查点保留在本地，迁移Hub及普通owner调用方后再推送。当前Owner收据不驱逐会使未迁移
   调用方在256条历史后背压；这是明确的中间缺口，未声称1024代通过或A2完成。
+
+## 第十检查点：A2 实例生命周期归一
+
+Hub 不再保存 Team、Running/死亡阶段或执行状态机。核心只保留执行实例准入身份、认领水位、
+启动期限、闭合标记和有界闭合历史；适配层保留有界 launch/return RPC 工作队列。启动报告不再
+自报授权：Hub 先通过 Control 的 `StateInstance`（真实 owner 核验）认证，再经同一个实例面
+`Embark`；丢回复时重试同一实例，Control 的重复 Embark 幂等。启动超时只关闭准入并排交回，
+不伪造 Running/死亡事实。
+
+退休语义：
+
+- 来自真实 System sire 的非零 target 才推进该 task 绑定的 `StopCpu -> Invalidate`，重复
+  target 不重放已完成步骤；没有绑定也可完成该实例资源责任，不存在对应 Hub 准入时不伪造
+  Oust 完成。绑定 Fault/Normal、Sensor 失活判据保持不变。
+- Hub 在资源关闭、未绑定实例的 target、启动超时和全局 settle 时排真实 owner 交回；
+  只有确实经实例面确认 owner 的实例才排 Release，别的 owner 只得到 no-receipt 结果，不留下
+  永远挂起的假 job。逐实例 target 回复不等待 Release 最终回复，避免 Control 等资源 Done、
+  Hub 等 Oust 的循环。
+- 全局 target 0 在所有绑定结清且自身已接交回工作完成后才 Done；全局退场先关闭新构造准入、
+  停止动态执行域并等其结清，之后才按声明推进退休提供方，不会让全局 Hub 请求等一个尚未被
+  Control 停止的执行域。
+- `Participant` 从 `app` 迁到 `assembly`，全局 Settle 与逐实例退休共用同一实现。Assembly
+  的实例退休计划第一步推进该实例声明的提供方责任，之后才撤 identity exports、namespace、
+  construction claim、supply、bootstrap，最后 Control 核销。动态 `device-work` 三张声明
+  已列出 Hub retire 依赖。
+- Login 与 Shell 的最终核销改为 Control `ReleaseInstance`；Shell 用现有异步 Work 队列推进
+  Release，不再同步阻塞 pumps，也不再直接 Oust。Hub 对执行实例不再调用 kernel join/slay/oust。
+
+宿主验证（2026-10-22，基线 `4a9f7450` 之上）：
+
+- retention 41、control-instance 32、control-api 9、control-rpc 6、retirement-boundary 10、
+  system-shape 21、shell 14 全部通过。
+- 另外 control-query 9、control-lifetime 8、bootstrap-carrier 12、hub-api 4、
+  interface-marks 5、device-api 5、identity 19、startup-authority 6、shutdown-policy 8、
+  loader-client 4、namespace-installation 4、operator-watch 5 通过。
+- `cargo check --workspace --offline` 通过，保留既有 5 项 warning（League 可见性、未用
+  device-work ENTRY、三枚 subset 常量）。
+- retention 的旧 Hub Execution 用例已改为新责任：准入重放、水位、超时、target 推进、
+  全局 settle 和闭合历史；不是删除旧断言。
+
+未验证与已知缺口：
+
+- 本工作区禁止运行 QEMU，因此没有新的原生 target 退休、Hub Release、WholeTeamComplete
+  后资源顺序或 128/1024 代证据；四核/八核结论未在本检查点重跑。
+- 新 Hub launch/return RPC 队列只有类型与源码边界检查，没有独立的宿主 RPC 驱动测试；
+  其正确性仍需原生产品景证明。
+- A3 设备协调、A5、A7-A12、单 Daemon、双 Domain 同数值 IOVA 与最终 1024 代仍未实施；
+  本检查点只声称 A2 的宿主和代码路径闭环，不声称整个重构完成。

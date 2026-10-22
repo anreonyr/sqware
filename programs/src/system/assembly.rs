@@ -197,6 +197,7 @@ pub(crate) struct InstanceInstall {
     pub identity: Option<system_api::identity::InstallId>,
     pub startup: system_api::loader::StartupMetadata,
     pub bootstrap: Option<bootstrap::Carrier>,
+    pub retirement: Vec<retirement::Participant>,
 }
 pub(crate) struct Launched {
     pub reference: InstanceRef,
@@ -1191,7 +1192,7 @@ fn settle(
     settle: Res<crate::system::app::policy::Settle>,
     mut jobs: ResMut<Jobs>,
 ) -> Result<Progress, crate::system::app::Fault> {
-    if settle.flow.settling {
+    if settle.flow.settling || settle.closing() {
         let requests = jobs.take_construct_batch();
         for (id, request) in requests {
             request.image.release();
@@ -1406,6 +1407,19 @@ fn construct_one(
                     return Err((Fail::NotReady, delivery));
                 }
             }
+            let retirement = delivery
+                .program
+                .map(|program| {
+                    program
+                        .control
+                        .retirement
+                        .iter()
+                        .map(|declaration| {
+                            retirement::Participant::new(*declaration, built.task)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             Ok(Launch {
                 instance: Launched {
                     reference: InstanceRef {
@@ -1423,6 +1437,7 @@ fn construct_one(
                         resolve: env::PieToken::NONE,
                     },
                     bootstrap: None,
+                    retirement,
                 },
             })
         }
@@ -1558,5 +1573,7 @@ pub(crate) mod static_plan;
 
 #[path = "assembly/namespace.rs"]
 pub(crate) mod namespace;
+#[path = "assembly/retirement.rs"]
+pub(crate) mod retirement;
 #[path = "assembly/supply.rs"]
 pub(crate) mod supply;
