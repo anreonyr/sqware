@@ -9,43 +9,59 @@ use env::{TaskId, Wait};
 
 use crate::service::hub::core::Ledger;
 
-use super::launch::{self, Launch};
+use super::launch::Launch;
+use super::launch_reply::LaunchReply;
 use super::peers::Peers;
-use super::returned::{self, Return};
+use super::return_reply::ReturnReply;
+use super::returned::Return;
 
 const START_MS: u64 = 3_000_000_000;
 pub(super) const RETURN_MS: usize = 3000;
 const LAUNCH_CAP: usize = 256;
-const RETURN_CAP: usize = 256;
+const RETURN_CAP: usize = 512;
 
 pub(crate) struct Executions {
     launches: VecDeque<Launch>,
     returns: VecDeque<Return>,
+    launch_cap: usize,
+    return_cap: usize,
 }
 
 impl Executions {
-    pub(crate) fn new() -> Self {
-        Self {
-            launches: VecDeque::new(),
-            returns: VecDeque::new(),
-        }
+    /// Reserve both bounded queues once, so later trusted handoff cannot fail on OOM.
+    pub(crate) fn try_new() -> Result<Self, ()> {
+        Self::with_capacity(LAUNCH_CAP, RETURN_CAP)
+    }
+
+    pub(crate) fn with_capacity(launch_cap: usize, return_cap: usize) -> Result<Self, ()> {
+        let mut launches = VecDeque::new();
+        launches.try_reserve(launch_cap).map_err(|_| ())?;
+        let mut returns = VecDeque::new();
+        returns.try_reserve(return_cap).map_err(|_| ())?;
+        Ok(Self {
+            launches,
+            returns,
+            launch_cap,
+            return_cap,
+        })
+    }
+
+    fn reserve_launch(&mut self) -> bool {
+        self.launches.len() < self.launch_cap && self.launches.try_reserve(1).is_ok()
     }
 
     /// Accept one launch report if Hub has room and has not already settled its identity.
-    pub(crate) fn receive(&mut self, ledger: &Ledger, task: TaskId) -> bool {
-        if ledger.admission(task).is_some() || ledger.admission_closed(task) {
-            return true;
-        }
-        if ledger.settling() {
+    pub(crate) fn receive(&mut self, ledger: &Ledger, task: TaskId, now: u64) -> bool {
+        if ledger.admission(task).is_some() || ledger.admission_closed(task) || ledger.settling() {
             return true;
         }
         if self.launches.iter().any(|launch| launch.task() == task) {
             return true;
         }
-        if self.launches.len() >= LAUNCH_CAP || self.launches.try_reserve(1).is_err() {
+        if !self.reserve_launch() {
             return false;
         }
-        let deadline = env::chrono::clock().saturating_add(START_MS);
+        let deadline = now.saturating_add(START_MS);
         self.launches.push_back(Launch::new(task, deadline));
         true
     }
@@ -58,24 +74,24 @@ impl Executions {
                 .any(|admission| !admission.closed() && admission.claim_high() == 0)
     }
 
-    pub(crate) fn advance(&mut self, ledger: &mut Ledger, peers: &Peers) {
-        let now = env::chrono::clock();
-        ledger.expire_admissions(now, |task| {
+    pub(crate) fn advance(&mut self, ledger: &mut Ledger, peers: &Peers, now: u64) {
+        ledger.expire_admissions(now, |task| self.enqueue(task, true, now));
+        for task in ledger.closed_admission_tasks() {
             self.enqueue(task, true, now);
-        });
+        }
 
         let mut at = 0;
         while at < self.launches.len() {
-            match self.launches[at].poll(peers, now) {
-                launch::Reply::Pending => at += 1,
-                launch::Reply::Admitted => {
-                    let launch = self.launches.remove(at).expect("launch index");
-                    if ledger.admit(launch.task(), launch.deadline()).is_err() {
-                        self.enqueue(launch.task(), true, now);
-                    }
+            match self.launches[at].poll(ledger, peers, now) {
+                LaunchReply::Pending => at += 1,
+                LaunchReply::Started => {
+                    self.launches.remove(at);
                 }
-                launch::Reply::Abort { trusted } => {
+                LaunchReply::Abort { trusted } => {
                     let launch = self.launches.remove(at).expect("launch index");
+                    if trusted {
+                        ledger.close_admission(launch.task());
+                    }
                     self.enqueue(launch.task(), trusted, now);
                 }
             }
@@ -84,53 +100,48 @@ impl Executions {
         let mut at = 0;
         while at < self.returns.len() {
             match self.returns[at].poll(peers, now) {
-                returned::Reply::Pending => at += 1,
-                returned::Reply::Released => {
+                ReturnReply::Pending => at += 1,
+                ReturnReply::Released => {
                     let returned = self.returns.remove(at).expect("return index");
                     ledger.released(returned.task());
                 }
-                returned::Reply::NoReceipt => {
+                ReturnReply::NoReceipt => {
                     self.returns.remove(at);
                 }
             }
         }
 
         if ledger.settling() {
-            for task in ledger.admission_tasks() {
-                if ledger.open_bindings_for(task) == 0 {
-                    self.enqueue(task, true, now);
-                }
-            }
+            self.settle(ledger, now);
         }
     }
 
-    /// The instance's resources are closed: return its receipt once nothing remains bound.
-    pub(crate) fn closed(&mut self, ledger: &Ledger, task: TaskId) {
-        if ledger.open_bindings_for(task) == 0 {
-            self.enqueue(task, ledger.admission(task).is_some(), env::chrono::clock());
-        }
+    /// The instance's resources are closing: request the owner handoff immediately.
+    ///
+    /// Hardware teardown still waits for Control's real per-instance target.
+    pub(crate) fn closed(&mut self, ledger: &mut Ledger, task: TaskId, now: u64) -> bool {
+        ledger.close_admission(task);
+        self.enqueue(task, ledger.admission(task).is_some(), now)
     }
 
     /// A real target retirement proves this execution domain stopped.
-    pub(crate) fn target(&mut self, ledger: &Ledger, task: TaskId) {
-        self.launches.retain(|launch| launch.task() != task);
-        if ledger.open_bindings_for(task) == 0 {
-            self.enqueue(task, ledger.admission(task).is_some(), env::chrono::clock());
-        }
+    pub(crate) fn target(&mut self, ledger: &mut Ledger, task: TaskId, now: u64) -> bool {
+        ledger.close_admission(task);
+        self.enqueue(task, ledger.admission(task).is_some(), now)
     }
 
-    pub(crate) fn settle(&mut self, ledger: &mut Ledger) {
-        let tasks: alloc::vec::Vec<TaskId> =
-            self.launches.iter().map(|launch| launch.task()).collect();
-        self.launches.clear();
-        for task in tasks {
-            self.enqueue(task, false, env::chrono::clock());
-        }
-        let now = env::chrono::clock();
-        for task in ledger.admission_tasks() {
-            if ledger.open_bindings_for(task) == 0 {
-                self.enqueue(task, true, now);
+    pub(crate) fn settle(&mut self, ledger: &mut Ledger, now: u64) {
+        let mut at = 0;
+        while at < self.launches.len() {
+            let task = self.launches[at].task();
+            if self.enqueue(task, false, now) {
+                self.launches.remove(at);
+            } else {
+                at += 1;
             }
+        }
+        for task in ledger.closed_admission_tasks() {
+            self.enqueue(task, true, now);
         }
     }
 
@@ -140,29 +151,34 @@ impl Executions {
             && ledger.admissions().next().is_none()
     }
 
-    fn enqueue(&mut self, task: TaskId, trusted: bool, now: u64) {
+    pub(crate) fn has_return(&self, task: TaskId) -> bool {
+        self.returns.iter().any(|returned| returned.task() == task)
+    }
+
+    fn enqueue(&mut self, task: TaskId, trusted: bool, now: u64) -> bool {
         if let Some(returned) = self.returns.iter_mut().find(|item| item.task() == task) {
             if trusted {
                 returned.trust();
             }
-            return;
+            return true;
         }
-        if self.returns.len() >= RETURN_CAP || self.returns.try_reserve(1).is_err() {
-            return;
+        if self.returns.len() >= self.return_cap || self.returns.try_reserve(1).is_err() {
+            return false;
         }
         self.returns
             .push_back(Return::new(task, trusted, now.saturating_add(RETURN_MS as u64 * 1_000_000)));
+        true
     }
 }
 
-/// Drain the bounded launch channel. A full queue leaves the request for the next tick.
+/// Drain the bounded launch channel. A slot is reserved before the only copy is consumed.
 pub(crate) fn receive(ledger: &mut Ledger, executions: &mut Executions) {
     for info in resource::raw::pies().filter(|info| {
         info.alive && info.kind == env::PieKind::Hole && info.mark == hub_api::LAUNCH_MARK
     }) {
         let mut bytes = [0u8; 8];
         loop {
-            if executions.launches.len() >= LAUNCH_CAP {
+            if !executions.reserve_launch() {
                 return;
             }
             let Ok((len, _)) = resource::raw::Hole::from_raw(info.token).pull(&mut bytes, Wait::POLL)
@@ -175,8 +191,8 @@ pub(crate) fn receive(ledger: &mut Ledger, executions: &mut Executions) {
             let Ok(raw) = usize::try_from(u64::from_le_bytes(bytes)) else {
                 continue;
             };
-            if raw != 0 && !executions.receive(ledger, TaskId::new(raw)) {
-                return;
+            if raw != 0 {
+                let _ = executions.receive(ledger, TaskId::new(raw), env::chrono::clock());
             }
         }
     }

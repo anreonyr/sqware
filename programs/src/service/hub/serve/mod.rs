@@ -45,7 +45,10 @@ pub mod dma;
 mod enrollment_failure;
 mod execution;
 mod launch;
+mod launch_phase;
+mod launch_reply;
 mod returned;
+mod return_reply;
 mod grant;
 use self::grant::ship;
 pub mod list;
@@ -222,7 +225,7 @@ pub fn serve() -> Result<(), Start> {
     // 十、协调入口那几面：三个硬件域与 Control（树上查回来的门牌）；
     //     再加一本“设备目录”的装置（新设备的门牌与类联盟由它挂出去）。
     let mut peers = None;
-    let mut executions = execution::Executions::new();
+    let mut executions = execution::Executions::try_new().map_err(|_| Start::Room(E_HUB))?;
     let directory = Directory {
         devices: &devices,
         anchor: device_anchor,
@@ -256,7 +259,7 @@ pub fn serve() -> Result<(), Start> {
         // an expired admission cannot claim in the same wake.
         if let Some(peers) = peers.as_ref() {
             execution::receive(&mut ledger, &mut executions);
-            executions.advance(&mut ledger, peers);
+            executions.advance(&mut ledger, peers, env::chrono::clock());
         }
         let wait = if executions.pending(&ledger) || ledger.open_bindings_all().any(|binding| {
             matches!(
@@ -390,12 +393,18 @@ fn drain_retirement(
                     false
                 } else if target == TaskId::new(0) {
                     ledger.settle();
-                    executions.settle(ledger);
+                    let now = env::chrono::clock();
+                    executions.settle(ledger, now);
                     ledger.open_bindings_all().next().is_none() && executions.idle(ledger)
                 } else {
-                    ledger.stop_target(target);
-                    executions.target(ledger, target);
-                    ledger.open_bindings_for(target) == 0
+                    let open = ledger.stop_target(target, |serial| {
+                        crate::debug::put(&alloc::format!(
+                            "hub: binding {serial} execution domain stopped (tid={})",
+                            target.get()
+                        ));
+                    });
+                    let accepted = executions.target(ledger, target, env::chrono::clock());
+                    open == 0 && accepted && executions.has_return(target)
                 };
                 let reply = if done {
                     system_api::retirement::Retirement::done_for(target)

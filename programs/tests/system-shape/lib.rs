@@ -202,6 +202,14 @@ mod boundaries {
         assert!(hub_launch.contains("begin_inspect"));
         let hub_return = fs::read_to_string(src.join("service/hub/serve/returned.rs")).unwrap();
         assert!(hub_return.contains("begin_release"));
+        // One structure/enum per file, and no empty StopCpu forwarding.
+        assert!(src.join("service/hub/serve/launch_phase.rs").is_file());
+        assert!(src.join("service/hub/serve/launch_reply.rs").is_file());
+        assert!(src.join("service/hub/serve/return_reply.rs").is_file());
+        assert!(!dma.contains("fn stop_cpu"));
+        assert!(!dma.contains("owned_instance"));
+        assert!(!hub_return.contains("Err(Fail::Unknown) | Err(Fail::Denied) => ReturnReply::Released"));
+        assert!(hub_execution.contains("try_reserve"));
         // 认领走设备门牌与类联盟（不自报设备号、不开放设备清单）。
         assert!(dma.contains("device_by_door("));
         assert!(!dma.contains("claim.requester"));

@@ -1,5 +1,3 @@
-use alloc::vec::Vec;
-
 use env::TaskId;
 use hub_api::{Close, Fail};
 
@@ -60,28 +58,36 @@ impl Ledger {
     }
 
     /// Unclaimed admissions keep their original deadline, then close for retirement.
-    pub fn expire_admissions(&mut self, now: u64, mut enqueue: impl FnMut(TaskId)) {
+    ///
+    /// The admission is closed only after the caller has reliably accepted the return
+    /// work; a failed enqueue leaves it open for the next tick.
+    pub fn expire_admissions(&mut self, now: u64, mut enqueue: impl FnMut(TaskId) -> bool) {
         for admission in &mut self.admissions {
-            if admission.expired(now) {
+            if admission.expired(now) && enqueue(admission.task) {
                 admission.close();
-                enqueue(admission.task);
             }
+        }
+    }
+
+    pub fn close_admission(&mut self, task: TaskId) {
+        if let Some(admission) = self.admission_mut(task) {
+            admission.close();
         }
     }
 
     /// A retirement target is the proof that its execution domain stopped.
     ///
-    /// Close every bound responsibility and move it past `StopCpu` exactly once. No
-    /// admission means there is no Hub execution lifecycle to finish.
-    pub fn stop_target(&mut self, task: TaskId) -> usize {
-        if let Some(admission) = self.admission_mut(task) {
-            admission.close();
-        }
+    /// Close every bound responsibility and move it past `StopCpu` exactly once, calling
+    /// `advanced` with each binding serial that crossed. No admission means there is no
+    /// Hub execution lifecycle to finish.
+    pub fn stop_target(&mut self, task: TaskId, mut advanced: impl FnMut(u64)) -> usize {
+        self.close_admission(task);
         for binding in &mut self.bindings {
             if binding.open() && binding.execution == task {
                 binding.close(Close::Normal);
                 if binding.step == Step::StopCpu {
                     binding.step = Step::Invalidate;
+                    advanced(binding.id.serial);
                 }
             }
         }
@@ -121,10 +127,15 @@ impl Ledger {
     pub fn closed_admission_count(&self) -> usize {
         self.closed_admissions.len()
     }
-}
 
-impl Ledger {
-    pub fn admission_tasks(&self) -> Vec<TaskId> {
-        self.admissions.iter().map(|admission| admission.task).collect()
+    pub fn closed_admission_tasks(&self) -> impl Iterator<Item = TaskId> + '_ {
+        self.admissions
+            .iter()
+            .filter(|admission| admission.closed())
+            .map(|admission| admission.task)
+    }
+
+    pub fn admission_tasks(&self) -> impl Iterator<Item = TaskId> + '_ {
+        self.admissions.iter().map(|admission| admission.task)
     }
 }

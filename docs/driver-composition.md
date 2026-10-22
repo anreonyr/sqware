@@ -391,3 +391,43 @@ Hub 不再保存 Team、Running/死亡阶段或执行状态机。核心只保留
   其正确性仍需原生产品景证明。
 - A3 设备协调、A5、A7-A12、单 Daemon、双 Domain 同数值 IOVA 与最终 1024 代仍未实施；
   本检查点只声称 A2 的宿主和代码路径闭环，不声称整个重构完成。
+
+## 第十一检查点：根审查返工（A2 handoff 适配器）
+
+根审查候选 `f669396e` 后，在同一 worktree 修正：
+
+- `returned`：已认证/Root 退休的 Release 只在 OK 时 Released；Unknown、Denied、传输超时
+  一律保留原 task 和同一交回责任，不调用 `ledger.released`，global idle 不被错误放行。
+  只有未认证的纯 launch/非 owner 查询返回 Unknown/Denied 才可 NoReceipt。
+- `launch`：认证真实 owner 后、发 Embark 前先建立有界准入；`Stopping`/`Dead`/无 Team
+  不作为新的开放准入。丢 Embark 回复重试同一实例，不重复准入；失败或超时关闭该准入并
+  可靠排交回。DMA 认领不再同步查 Control，只接受已经真实 owner 认证的准入。
+- 交回不再等资源关闭：绑定进入 Closing 即非阻塞请求 Release；逐实例 target 的
+  资源 Done 只要求交回工作已可靠承接，不等待最终 ACK。`StopCpu` 仍只由真实 target
+  越过，并保留 `hub: binding X execution domain stopped (tid=Y)` 一次性事件。
+- 队列先预留再消费：launch 通道先 `try_reserve` 再 pull；`expire_admissions` 只在
+  交回被可靠接纳后关闭准入；交回队列满时保留原责任并让 target/global 保持 Pending。
+  队列容量在 Hub 启动时 fallible 预留。
+- Shell `Work::Reclaim` 不再阻塞同 pipeline 的 pumps：Reclaim pending 时继续推进 IO；
+  pending 使用 RPC 自身 deadline，不在每个 pump tick 替换请求；timeout 才重发；
+  job 进入 terminal 后仍继续交回未结清成员。`StopCpu` 不再保留空转发函数。
+
+新增真实生产适配器宿主测试：
+
+- `programs/tests/hub-handoff`：直接编译生产 `serve/{launch,returned,execution}.rs`
+  与真实 Hub core，注入可控 Control 响应。覆盖：Embark 前准入已存在、丢回复不重复准入、
+  `Stopping` 不开放、trusted Release 的 Unknown/Denied/超时后成功仍保留责任、
+  未见 launch 的早期构造 target 认证后交回、异 owner 无收据、绑定关闭前已发 Release、
+  交回队列满时责任不丢、重复 target 去重、launch 队列有界、队列预留 fallible。
+- `programs/tests/shell-adapter`：直接编译生产 `shell/adapt/controller.rs`，用受控延迟
+  Release RPC 和持续 pump 的场景验证：Reclaim pending 不阻塞 pump、pending 不被每 tick
+  替换、RPC timeout 后重发、terminal job 仍交回成员。
+
+验证结果（2026-10-22，基于 `f669396e` 之后的返工）：
+
+- hub-handoff 10 项、shell-adapter 2 项、retention 41 项通过。
+- control-instance 32、control-api 9、control-rpc 6、retirement-boundary 10、
+  system-shape 21、shell 14 通过；`cargo check --workspace --offline` 退出 0，
+  保留既有 5 项 warning。
+- 未运行 QEMU；无原生 target/Release/1024 代证据。Shell 适配器测试使用宿主 fake RPC
+  与 fake Objects，不是真实内核执行证据。

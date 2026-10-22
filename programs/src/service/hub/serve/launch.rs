@@ -2,19 +2,21 @@ use env::TaskId;
 use ipc::rpc::request::Pending;
 use system_api::control::{Call, Fail, State};
 
+use crate::service::hub::core::Ledger;
+
+use super::launch_phase::LaunchPhase;
+use super::launch_reply::LaunchReply;
 use super::peers::Peers;
 
-pub(super) enum Reply {
-    Pending,
-    Admitted,
-    Abort { trusted: bool },
-}
-
 /// One reported instance being authenticated and started through Control.
+///
+/// Owner authentication creates the bounded admission before any Embark request is
+/// sent, so a running instance may claim as soon as Control starts it. A lost Embark
+/// reply retries the same instance without a second admission.
 pub(super) struct Launch {
     task: TaskId,
     deadline: u64,
-    authenticated: bool,
+    phase: LaunchPhase,
     pending: Option<Pending<Call>>,
 }
 
@@ -23,7 +25,7 @@ impl Launch {
         Self {
             task,
             deadline,
-            authenticated: false,
+            phase: LaunchPhase::Inspect,
             pending: None,
         }
     }
@@ -32,79 +34,86 @@ impl Launch {
         self.task
     }
 
-    pub(super) fn deadline(&self) -> u64 {
-        self.deadline
-    }
-
-    pub(super) fn poll(&mut self, peers: &Peers, now: u64) -> Reply {
+    pub(super) fn poll(&mut self, ledger: &mut Ledger, peers: &Peers, now: u64) -> LaunchReply {
         if self.pending.is_none() {
-            return self.begin(peers, now);
+            return self.begin(ledger, peers, now);
         }
         let mut pending = self.pending.take().expect("checked pending launch");
         let said = match pending.poll() {
             Ok(Some(said)) => said,
             Ok(None) => {
                 self.pending = Some(pending);
-                return if now >= self.deadline {
-                    Reply::Abort {
-                        trusted: self.authenticated,
-                    }
-                } else {
-                    Reply::Pending
-                };
+                return self.hold(ledger, now);
             }
-            Err(_) => return self.retry(now),
+            Err(_) => return self.retry(ledger, now),
         };
         let instance = peers.control.instance(self.task);
-        if !self.authenticated {
-            return match instance.inspect_reply(said) {
-                Ok(said) if State::of_code(said.a) != Some(State::Dead) && said.team.get() != 0 => {
-                    self.authenticated = true;
-                    self.begin(peers, now)
+        match self.phase {
+            LaunchPhase::Inspect => match instance.inspect_reply(said) {
+                Ok(said) if suitable(&said) => match ledger.admit(self.task, self.deadline) {
+                    Ok(()) => {
+                        self.phase = LaunchPhase::Embark;
+                        self.begin(ledger, peers, now)
+                    }
+                    Err(_) => LaunchReply::Abort { trusted: true },
+                },
+                Ok(_) => LaunchReply::Abort { trusted: true },
+                Err(Fail::Unknown) | Err(Fail::Denied) => LaunchReply::Abort { trusted: false },
+                Err(_) => self.retry(ledger, now),
+            },
+            LaunchPhase::Embark => match instance.embark_reply(said) {
+                Ok(()) => LaunchReply::Started,
+                Err(Fail::NotReady) | Err(Fail::Unknown) | Err(Fail::Denied) => {
+                    LaunchReply::Abort { trusted: true }
                 }
-                Ok(_) => Reply::Abort { trusted: true },
-                Err(Fail::Unknown) | Err(Fail::Denied) => Reply::Abort { trusted: false },
-                Err(_) => self.retry(now),
-            };
-        }
-        match instance.embark_reply(said) {
-            Ok(()) => Reply::Admitted,
-            Err(Fail::NotReady) => Reply::Abort { trusted: true },
-            Err(Fail::Unknown) | Err(Fail::Denied) => Reply::Abort { trusted: false },
-            Err(_) => self.retry(now),
+                Err(_) => self.retry(ledger, now),
+            },
         }
     }
 
-    fn begin(&mut self, peers: &Peers, now: u64) -> Reply {
+    fn begin(&mut self, ledger: &Ledger, peers: &Peers, now: u64) -> LaunchReply {
         if now >= self.deadline {
-            return Reply::Abort {
-                trusted: self.authenticated,
+            return LaunchReply::Abort {
+                trusted: ledger.admission(self.task).is_some(),
             };
         }
         let instance = peers.control.instance(self.task);
         let wait = super::execution::budget(now, self.deadline);
-        let pending = if self.authenticated {
-            instance.begin_embark(wait)
-        } else {
-            instance.begin_inspect(wait)
+        let pending = match self.phase {
+            LaunchPhase::Inspect => instance.begin_inspect(wait),
+            LaunchPhase::Embark => instance.begin_embark(wait),
         };
         match pending {
             Ok(pending) => {
                 self.pending = Some(pending);
-                Reply::Pending
+                LaunchReply::Pending
             }
-            Err(Fail::Unknown) | Err(Fail::Denied) => Reply::Abort { trusted: false },
-            Err(_) => self.retry(now),
+            Err(Fail::Unknown) | Err(Fail::Denied) => LaunchReply::Abort {
+                trusted: ledger.admission(self.task).is_some(),
+            },
+            Err(_) => LaunchReply::Pending,
         }
     }
 
-    fn retry(&mut self, now: u64) -> Reply {
+    fn hold(&mut self, ledger: &Ledger, now: u64) -> LaunchReply {
         if now >= self.deadline {
-            Reply::Abort {
-                trusted: self.authenticated,
+            LaunchReply::Abort {
+                trusted: ledger.admission(self.task).is_some(),
             }
         } else {
-            Reply::Pending
+            LaunchReply::Pending
         }
     }
+
+    fn retry(&mut self, ledger: &Ledger, now: u64) -> LaunchReply {
+        self.hold(ledger, now)
+    }
+}
+
+fn suitable(said: &system_api::control::frame::Said) -> bool {
+    said.team.get() != 0
+        && !matches!(
+            State::of_code(said.a),
+            Some(State::Stopping) | Some(State::Dead) | None
+        )
 }

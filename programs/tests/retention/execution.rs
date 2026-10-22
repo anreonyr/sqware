@@ -63,7 +63,7 @@ fn expired_launch_aborts_before_it_can_claim() {
     let mut ledger = ledger();
     admit(&mut ledger, TASK, 100);
     let mut expired = None;
-    ledger.expire_admissions(100, |task| expired = Some(task));
+    ledger.expire_admissions(100, |task| { expired = Some(task); true });
     assert_eq!(expired, Some(TASK));
     assert!(ledger.admission(TASK).unwrap().closed());
     assert_eq!(claim_at(&mut ledger, TASK, 1), Err(Fail::Denied));
@@ -88,12 +88,12 @@ fn target_proof_advances_only_its_bound_binding_and_never_repeats_completed_step
     ledger.close(serial, hub_api::Close::Normal).unwrap();
     assert_eq!(ledger.binding(serial).unwrap().step, Step::StopCpu);
 
-    assert_eq!(ledger.stop_target(TASK), 1);
+    assert_eq!(ledger.stop_target(TASK, |_| {}), 1);
     assert_eq!(ledger.binding(serial).unwrap().step, Step::Invalidate);
 
     // Repeating the same proof must not replay an already completed transition.
     ledger.binding_mut(serial).unwrap().step = Step::Disable;
-    assert_eq!(ledger.stop_target(TASK), 1);
+    assert_eq!(ledger.stop_target(TASK, |_| {}), 1);
     assert_eq!(ledger.binding(serial).unwrap().step, Step::Disable);
     assert!(ledger.admission(TASK).unwrap().closed());
 }
@@ -102,8 +102,8 @@ fn target_proof_advances_only_its_bound_binding_and_never_repeats_completed_step
 fn target_without_a_binding_is_resource_done_without_faking_lifecycle() {
     let mut ledger = ledger();
     admit(&mut ledger, TASK, 100);
-    assert_eq!(ledger.stop_target(TASK), 0);
-    assert_eq!(ledger.stop_target(TaskId::new(44)), 0);
+    assert_eq!(ledger.stop_target(TASK, |_| {}), 0);
+    assert_eq!(ledger.stop_target(TaskId::new(44), |_| {}), 0);
     assert!(ledger.admission(TaskId::new(44)).is_none());
     assert!(ledger.admission(TASK).unwrap().closed());
 }
@@ -152,7 +152,7 @@ fn target_proof_does_not_advance_another_executions_binding() {
     ledger.close(mine, hub_api::Close::Normal).unwrap();
     ledger.close(theirs, hub_api::Close::Normal).unwrap();
 
-    assert_eq!(ledger.stop_target(TASK), 1);
+    assert_eq!(ledger.stop_target(TASK, |_| {}), 1);
     assert_eq!(ledger.binding(mine).unwrap().step, Step::Invalidate);
     assert_eq!(ledger.binding(theirs).unwrap().step, Step::StopCpu);
     assert!(ledger.admission(TASK).unwrap().closed());
@@ -168,7 +168,7 @@ fn settle_closes_bindings_but_does_not_pretend_the_cpu_stopped() {
     assert_eq!(ledger.binding(serial).unwrap().state, BindingState::Closing);
     assert_eq!(ledger.binding(serial).unwrap().step, Step::StopCpu);
     assert_eq!(claim_at(&mut ledger, TaskId::new(10), 1), Err(Fail::Denied));
-    assert_eq!(ledger.stop_target(TASK), 1);
+    assert_eq!(ledger.stop_target(TASK, |_| {}), 1);
     assert_eq!(ledger.binding(serial).unwrap().step, Step::Invalidate);
     ledger.finish(serial);
     ledger.released(TASK);

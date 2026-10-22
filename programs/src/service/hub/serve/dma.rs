@@ -167,6 +167,17 @@ pub(crate) fn advance(ledger: &mut Ledger, peers: &Peers, executions: &mut super
             "hub: {gone} binding(s) closing (owner gone)"
         ));
     }
+    // A closing binding must request owner handoff immediately; the target proof for
+    // StopCpu arrives later and does not depend on the release reply.
+    let now = env::chrono::clock();
+    let closing: Vec<(u64, env::TaskId)> = ledger
+        .open_bindings_all()
+        .filter(|binding| binding.state == BindingState::Closing)
+        .map(|binding| (binding.id.serial, binding.execution))
+        .collect();
+    for (_, execution) in closing {
+        executions.closed(ledger, execution, now);
+    }
     let serials: Vec<u64> = ledger
         .open_bindings_all()
         .map(|binding| binding.id.serial)
@@ -197,7 +208,8 @@ fn step(
             _ => {}
         },
         BindingState::Closing => match step {
-            Step::StopCpu => stop_cpu(ledger, peers, serial),
+            // Control's per-instance target is the only proof that crosses StopCpu.
+            Step::StopCpu => {}
             Step::Invalidate => invalidate(ledger, peers, serial),
             Step::Disable => disable(ledger, peers, serial),
             Step::DeviceStop => device_stop(ledger, peers, serial),
@@ -240,7 +252,7 @@ fn finish(
     let execution = ledger.binding(serial).map(|binding| binding.execution);
     ledger.finish(serial);
     if let Some(execution) = execution {
-        executions.closed(ledger, execution);
+        executions.closed(ledger, execution, env::chrono::clock());
     }
     crate::debug::put(&alloc::format!(
         "hub: binding {serial} closed and released device {requester}"
@@ -445,11 +457,6 @@ fn enable(ledger: &mut Ledger, peers: &Peers, serial: u64) {
     crate::debug::put(&alloc::format!(
         "hub: binding {serial} active (business released) iova={iova:#x}"
     ));
-}
-
-fn stop_cpu(_ledger: &mut Ledger, _peers: &Peers, _serial: u64) {
-    // Control's per-instance retirement target is the only CPU-stop proof; the
-    // retirement face moves this binding past StopCpu when that proof arrives.
 }
 
 fn iommu_step(peers: &Peers, serial: u64, op: u8, reason: Close) -> Result<iommu::Said, Failure> {

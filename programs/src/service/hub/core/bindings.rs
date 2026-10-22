@@ -180,4 +180,24 @@ impl Ledger {
             self.bindings.remove(oldest);
         }
     }
+
+    #[cfg(test)]
+    pub fn test_open_binding(&mut self, task: env::TaskId, serial: u64) {
+        let mut binding = Binding::new(
+            BindingId {
+                hub: self.hub,
+                serial,
+            },
+            1,
+            DeviceId {
+                pci: env::TaskId::new(0),
+                requester: 0,
+            },
+            task,
+            PieToken::NONE,
+            env::TaskId::new(0),
+        );
+        binding.close(Close::Normal);
+        self.bindings.push(binding);
+    }
 }

@@ -3,17 +3,13 @@ use ipc::rpc::request::Pending;
 use system_api::control::{Call, Fail};
 
 use super::peers::Peers;
-
-pub(super) enum Reply {
-    Pending,
-    Released,
-    NoReceipt,
-}
+use super::return_reply::ReturnReply;
 
 /// One owner receipt being returned to Control through the real instance face.
 ///
 /// A launch that Hub never saw has no admission. It is authenticated once through
-/// `StateInstance`; only a successful owner check creates a release request.
+/// `StateInstance`; only a successful owner check creates a release request. Once
+/// trusted, every reply failure keeps the same task and the same return obligation.
 pub(super) struct Return {
     task: TaskId,
     deadline: u64,
@@ -43,7 +39,7 @@ impl Return {
         self.pending = None;
     }
 
-    pub(super) fn poll(&mut self, peers: &Peers, now: u64) -> Reply {
+    pub(super) fn poll(&mut self, peers: &Peers, now: u64) -> ReturnReply {
         if self.pending.is_none() {
             return self.begin(peers, now);
         }
@@ -52,19 +48,9 @@ impl Return {
             Ok(Some(said)) => said,
             Ok(None) => {
                 self.pending = Some(pending);
-                return if !self.trusted && now >= self.deadline {
-                    Reply::NoReceipt
-                } else {
-                    Reply::Pending
-                };
+                return self.hold(now);
             }
-            Err(_) => {
-                return if !self.trusted && now >= self.deadline {
-                    Reply::NoReceipt
-                } else {
-                    self.begin(peers, now)
-                }
-            }
+            Err(_) => return self.begin(peers, now),
         };
         let instance = peers.control.instance(self.task);
         if !self.trusted {
@@ -73,47 +59,42 @@ impl Return {
                     self.trusted = true;
                     self.begin(peers, now)
                 }
-                Err(Fail::Unknown) | Err(Fail::Denied) => Reply::NoReceipt,
-                Err(_) => {
-                    if now >= self.deadline {
-                        Reply::NoReceipt
-                    } else {
-                        Reply::Pending
-                    }
-                }
+                Err(Fail::Unknown) | Err(Fail::Denied) => ReturnReply::NoReceipt,
+                Err(_) => self.hold(now),
             };
         }
         match instance.release_reply(said) {
-            Ok(()) => Reply::Released,
-            Err(Fail::Unknown) | Err(Fail::Denied) => Reply::Released,
+            Ok(()) => ReturnReply::Released,
+            // Any error reply keeps the same trusted obligation; never release it here.
             Err(_) => self.begin(peers, now),
         }
     }
 
-    fn begin(&mut self, peers: &Peers, now: u64) -> Reply {
+    fn begin(&mut self, peers: &Peers, now: u64) -> ReturnReply {
         if !self.trusted && now >= self.deadline {
-            return Reply::NoReceipt;
+            return ReturnReply::NoReceipt;
         }
         let instance = peers.control.instance(self.task);
         let pending = if self.trusted {
-            let wait = Wait::AtMost(super::execution::RETURN_MS);
-            instance.begin_release(wait)
+            instance.begin_release(Wait::AtMost(super::execution::RETURN_MS))
         } else {
             instance.begin_inspect(super::execution::budget(now, self.deadline))
         };
         match pending {
             Ok(pending) => {
                 self.pending = Some(pending);
-                Reply::Pending
+                ReturnReply::Pending
             }
-            Err(Fail::Unknown) | Err(Fail::Denied) if !self.trusted => Reply::NoReceipt,
-            Err(_) => {
-                if !self.trusted && now >= self.deadline {
-                    Reply::NoReceipt
-                } else {
-                    Reply::Pending
-                }
-            }
+            Err(Fail::Unknown) | Err(Fail::Denied) if !self.trusted => ReturnReply::NoReceipt,
+            Err(_) => self.hold(now),
+        }
+    }
+
+    fn hold(&self, now: u64) -> ReturnReply {
+        if !self.trusted && now >= self.deadline {
+            ReturnReply::NoReceipt
+        } else {
+            ReturnReply::Pending
         }
     }
 }
