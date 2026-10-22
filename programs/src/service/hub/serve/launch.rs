@@ -34,7 +34,15 @@ impl Launch {
         self.task
     }
 
+    pub(super) fn returning(&mut self, trusted: bool) {
+        self.pending = None;
+        self.phase = LaunchPhase::Return { trusted };
+    }
+
     pub(super) fn poll(&mut self, ledger: &mut Ledger, peers: &Peers, now: u64) -> LaunchReply {
+        if let LaunchPhase::Return { trusted } = self.phase {
+            return LaunchReply::Abort { trusted };
+        }
         if self.pending.is_none() {
             return self.begin(ledger, peers, now);
         }
@@ -68,6 +76,7 @@ impl Launch {
                 }
                 Err(_) => self.retry(ledger, now),
             },
+            LaunchPhase::Return { trusted } => LaunchReply::Abort { trusted },
         }
     }
 
@@ -82,6 +91,7 @@ impl Launch {
         let pending = match self.phase {
             LaunchPhase::Inspect => instance.begin_inspect(wait),
             LaunchPhase::Embark => instance.begin_embark(wait),
+            LaunchPhase::Return { trusted } => return LaunchReply::Abort { trusted },
         };
         match pending {
             Ok(pending) => {

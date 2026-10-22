@@ -16,6 +16,7 @@ pub(crate) fn children() -> Result<alloc::vec::Vec<(Key, Plan<&'static str>)>, B
     prepare.system("namespace.coordinates", namespace_coordinates)?;
     prepare.system("namespace", prepare_namespace)?;
     prepare.system("identity.exports", identity_exports)?;
+    prepare.system("channels", channels)?;
     prepare.system("supply", super::supply::prepare)?;
     prepare.system("bootstrap", bootstrap)?;
     let mut retire = Schedule::sequence();
@@ -33,6 +34,18 @@ pub(crate) fn children() -> Result<alloc::vec::Vec<(Key, Plan<&'static str>)>, B
         (Key::Retire, retire.build()?)
     ])
 }
+fn channels(mut jobs: ResMut<Jobs>) -> Result<Progress, &'static str> {
+    let reference = jobs.active_hook_reference().ok_or("instance channel reference")?;
+    let launch = jobs.launches.iter_mut()
+        .find(|launch| launch.instance.reference == reference)
+        .ok_or("instance channel installation")?;
+    if let Some(program) = launch.installation.delivery.program {
+        launch.installation.service.as_mut().ok_or("instance channel service")?
+            .connect(program).map_err(|_| "instance channels")?;
+    }
+    Ok(Progress::Done)
+}
+
 fn retirement_dependencies(
     mut jobs: ResMut<Jobs>,
     layout: Res<crate::system::app::operator::Layout>,

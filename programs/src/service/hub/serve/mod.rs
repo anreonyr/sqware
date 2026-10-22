@@ -393,8 +393,7 @@ fn drain_retirement(
                     false
                 } else if target == TaskId::new(0) {
                     ledger.settle();
-                    let now = env::chrono::clock();
-                    executions.settle(ledger, now);
+                    executions.settle(ledger);
                     ledger.open_bindings_all().next().is_none() && executions.idle(ledger)
                 } else {
                     let open = ledger.stop_target(target, |serial| {
@@ -403,7 +402,7 @@ fn drain_retirement(
                             target.get()
                         ));
                     });
-                    let accepted = executions.target(ledger, target, env::chrono::clock());
+                    let accepted = executions.target(ledger, target);
                     open == 0 && accepted && executions.has_return(target)
                 };
                 let reply = if done {

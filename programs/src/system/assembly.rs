@@ -1366,6 +1366,11 @@ fn construct_one(
         image, delivery, ..
     } = request;
     let (count, values, stack) = image.parameters();
+    let declarations = delivery.program.map_or(&[][..], |program| program.control.retirement);
+    let mut retirement = Vec::new();
+    if retirement.try_reserve(declarations.len()).is_err() {
+        return Err((Fail::Full, delivery));
+    }
     let result = context.control.create_instance(
         crate::system::control::instance::create::Admission {
             owner: delivery.owner,
@@ -1400,26 +1405,10 @@ fn construct_one(
     );
     match result {
         Ok(built) => {
-            let mut service = crate::system::control::unit::Service::new(built.task);
-            if let Some(program) = delivery.program {
-                if service.connect(program).is_err() {
-                    context.control.stop_instance(built.task);
-                    return Err((Fail::NotReady, delivery));
-                }
-            }
-            let retirement = delivery
-                .program
-                .map(|program| {
-                    program
-                        .control
-                        .retirement
-                        .iter()
-                        .map(|declaration| {
-                            retirement::Participant::new(*declaration, built.task)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            let service = crate::system::control::unit::Service::new(built.task);
+            retirement.extend(declarations.iter().map(|declaration| {
+                retirement::Participant::new(*declaration, built.task)
+            }));
             Ok(Launch {
                 instance: Launched {
                     reference: InstanceRef {

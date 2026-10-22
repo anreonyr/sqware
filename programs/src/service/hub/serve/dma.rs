@@ -167,22 +167,17 @@ pub(crate) fn advance(ledger: &mut Ledger, peers: &Peers, executions: &mut super
             "hub: {gone} binding(s) closing (owner gone)"
         ));
     }
-    // A closing binding must request owner handoff immediately; the target proof for
-    // StopCpu arrives later and does not depend on the release reply.
-    let now = env::chrono::clock();
-    let closing: Vec<(u64, env::TaskId)> = ledger
-        .open_bindings_all()
-        .filter(|binding| binding.state == BindingState::Closing)
-        .map(|binding| (binding.id.serial, binding.execution))
-        .collect();
-    for (_, execution) in closing {
-        executions.closed(ledger, execution, now);
-    }
     let serials: Vec<u64> = ledger
         .open_bindings_all()
         .map(|binding| binding.id.serial)
         .collect();
     for serial in serials {
+        if let Some(task) = ledger.binding(serial)
+            .filter(|binding| binding.state == BindingState::Closing)
+            .map(|binding| binding.execution)
+        {
+            executions.closed(ledger, task);
+        }
         step(ledger, peers, executions, serial);
     }
 }
@@ -252,7 +247,7 @@ fn finish(
     let execution = ledger.binding(serial).map(|binding| binding.execution);
     ledger.finish(serial);
     if let Some(execution) = execution {
-        executions.closed(ledger, execution, env::chrono::clock());
+        executions.closed(ledger, execution);
     }
     crate::debug::put(&alloc::format!(
         "hub: binding {serial} closed and released device {requester}"

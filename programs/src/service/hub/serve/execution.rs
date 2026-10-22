@@ -75,9 +75,9 @@ impl Executions {
     }
 
     pub(crate) fn advance(&mut self, ledger: &mut Ledger, peers: &Peers, now: u64) {
-        ledger.expire_admissions(now, |task| self.enqueue(task, true, now));
+        ledger.expire_admissions(now, |task| self.enqueue(task, true));
         for task in ledger.closed_admission_tasks() {
-            self.enqueue(task, true, now);
+            self.enqueue(task, true);
         }
 
         let mut at = 0;
@@ -85,24 +85,33 @@ impl Executions {
             match self.launches[at].poll(ledger, peers, now) {
                 LaunchReply::Pending => at += 1,
                 LaunchReply::Started => {
-                    self.launches.remove(at);
+                    let launch = self.launches.remove(at).expect("launch index");
+                    crate::debug::put(&alloc::format!(
+                        "hub: execution instance launched tid={}", launch.task().get()
+                    ));
                 }
                 LaunchReply::Abort { trusted } => {
-                    let launch = self.launches.remove(at).expect("launch index");
+                    let task = self.launches[at].task();
+                    self.launches[at].returning(trusted);
                     if trusted {
-                        ledger.close_admission(launch.task());
+                        ledger.close_admission(task);
                     }
-                    self.enqueue(launch.task(), trusted, now);
+                    if self.enqueue(task, trusted) {
+                        self.launches.remove(at);
+                    } else {
+                        at += 1;
+                    }
                 }
             }
         }
 
         let mut at = 0;
         while at < self.returns.len() {
-            match self.returns[at].poll(peers, now) {
+            match self.returns[at].poll(peers) {
                 ReturnReply::Pending => at += 1,
                 ReturnReply::Released => {
                     let returned = self.returns.remove(at).expect("return index");
+                    self.launches.retain(|launch| launch.task() != returned.task());
                     ledger.released(returned.task());
                 }
                 ReturnReply::NoReceipt => {
@@ -112,36 +121,36 @@ impl Executions {
         }
 
         if ledger.settling() {
-            self.settle(ledger, now);
+            self.settle(ledger);
         }
     }
 
     /// The instance's resources are closing: request the owner handoff immediately.
     ///
     /// Hardware teardown still waits for Control's real per-instance target.
-    pub(crate) fn closed(&mut self, ledger: &mut Ledger, task: TaskId, now: u64) -> bool {
+    pub(crate) fn closed(&mut self, ledger: &mut Ledger, task: TaskId) -> bool {
         ledger.close_admission(task);
-        self.enqueue(task, ledger.admission(task).is_some(), now)
+        self.enqueue(task, ledger.admission(task).is_some())
     }
 
     /// A real target retirement proves this execution domain stopped.
-    pub(crate) fn target(&mut self, ledger: &mut Ledger, task: TaskId, now: u64) -> bool {
+    pub(crate) fn target(&mut self, ledger: &mut Ledger, task: TaskId) -> bool {
         ledger.close_admission(task);
-        self.enqueue(task, ledger.admission(task).is_some(), now)
+        self.enqueue(task, ledger.admission(task).is_some())
     }
 
-    pub(crate) fn settle(&mut self, ledger: &mut Ledger, now: u64) {
+    pub(crate) fn settle(&mut self, ledger: &mut Ledger) {
         let mut at = 0;
         while at < self.launches.len() {
             let task = self.launches[at].task();
-            if self.enqueue(task, false, now) {
+            if self.enqueue(task, false) {
                 self.launches.remove(at);
             } else {
                 at += 1;
             }
         }
         for task in ledger.closed_admission_tasks() {
-            self.enqueue(task, true, now);
+            self.enqueue(task, true);
         }
     }
 
@@ -155,7 +164,7 @@ impl Executions {
         self.returns.iter().any(|returned| returned.task() == task)
     }
 
-    fn enqueue(&mut self, task: TaskId, trusted: bool, now: u64) -> bool {
+    fn enqueue(&mut self, task: TaskId, trusted: bool) -> bool {
         if let Some(returned) = self.returns.iter_mut().find(|item| item.task() == task) {
             if trusted {
                 returned.trust();
@@ -166,7 +175,7 @@ impl Executions {
             return false;
         }
         self.returns
-            .push_back(Return::new(task, trusted, now.saturating_add(RETURN_MS as u64 * 1_000_000)));
+            .push_back(Return::new(task, trusted));
         true
     }
 }

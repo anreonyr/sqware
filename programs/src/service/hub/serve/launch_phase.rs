@@ -2,4 +2,5 @@
 pub(super) enum LaunchPhase {
     Inspect,
     Embark,
+    Return { trusted: bool },
 }

@@ -26,6 +26,7 @@ pub mod backend {
     #[derive(Default)]
     struct Backend {
         team_complete: bool,
+        team_consumed: bool,
         release_begun: usize,
         pump_steps: usize,
         release: VecDeque<Result<Option<system_api::control::frame::Said>, system_api::control::Fail>>,
@@ -45,6 +46,14 @@ pub mod backend {
 
     pub fn team_complete() -> bool {
         BACKEND.with(|backend| backend.borrow().team_complete)
+    }
+
+    pub fn consume_team() {
+        BACKEND.with(|backend| backend.borrow_mut().team_consumed = true);
+    }
+
+    pub fn team_consumed() -> bool {
+        BACKEND.with(|backend| backend.borrow().team_consumed)
     }
 
     pub fn release_begun() -> usize {
@@ -111,6 +120,9 @@ pub mod unit {
         _: Wait,
         receive: bool,
     ) -> Result<JoinReply, Error> {
+        if crate::backend::team_consumed() {
+            return Err(Error { source: UnitFail::Denied });
+        }
         if receive {
             return Ok(JoinReply::Pending);
         }
@@ -455,5 +467,66 @@ mod tests {
         assert!(job.test_member_dead(0));
         assert!(job.model.status.terminal());
         assert_eq!(backend::release_begun(), 1);
+    }
+
+    #[test]
+    fn cancelling_job_with_an_owner_receipt_is_not_settled() {
+        backend::reset();
+        let mut controller = controller();
+        let mut job = RuntimeJob::test_running(JobId(3), TASK, TEAM, root());
+        job.model.fail();
+        assert_eq!(job.model.status, core::JobStatus::Cancelling);
+        controller.test_push_job(job);
+        assert!(!controller.settled(), "terminal status is not receipt settlement");
+    }
+
+    #[test]
+    fn cancelling_job_with_an_owner_receipt_is_not_evicted() {
+        let mut controller = controller();
+        let mut job = RuntimeJob::test_running(JobId(3), TASK, TEAM, root());
+        job.model.fail();
+        assert_eq!(job.model.status, core::JobStatus::Cancelling);
+        controller.test_push_job(job);
+        controller.reclaim(&Objects::new());
+        assert!(controller.job(JobId(3)).is_some(), "unreturned members were discarded");
+    }
+
+    #[test]
+    fn reclaim_pending_still_registers_pipeline_io_waits() {
+        backend::reset();
+        let mut controller = controller();
+        let mut job = RuntimeJob::test_running(JobId(3), TASK, TEAM, root());
+        job.test_push_pump(0);
+        controller.test_push_job(job);
+        let mut objects = Objects::new();
+        objects.ports.push(Some(LocalPort {
+            buffer: Buffer::Write { bytes: Vec::new() },
+            closed: false,
+            bound: None,
+        }));
+        backend::complete_team();
+        controller.advance(&mut objects);
+        let mut interests = adapt::waiting::Interests::new();
+        controller.interests(&objects, &mut interests);
+        assert!(interests.sources.contains(&ToleEventSource::Pole {
+            token: PieToken::NONE, bit: pipe_api::DEMAND_BIT,
+        }), "pending reclaim hides the pipeline's IO wakeup");
+    }
+
+    #[test]
+    fn consumed_team_does_not_fail_a_pending_release() {
+        backend::reset();
+        let mut controller = controller();
+        controller.test_push_job(RuntimeJob::test_running(JobId(3), TASK, TEAM, root()));
+        let mut objects = Objects::new();
+        backend::complete_team();
+        controller.advance(&mut objects);
+        backend::consume_team();
+        controller.advance(&mut objects);
+        let job = controller.job(JobId(3)).unwrap();
+        assert!(job.error.is_none(), "Control may Oust before its reply is observable");
+        backend::script_release(Ok(Some(said())));
+        controller.advance(&mut objects);
+        assert!(controller.job(JobId(3)).unwrap().test_member_dead(0));
     }
 }

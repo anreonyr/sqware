@@ -431,3 +431,32 @@ Hub 不再保存 Team、Running/死亡阶段或执行状态机。核心只保留
   保留既有 5 项 warning。
 - 未运行 QEMU；无原生 target/Release/1024 代证据。Shell 适配器测试使用宿主 fake RPC
   与 fake Objects，不是真实内核执行证据。
+
+## 第十二检查点：主线程补齐交接边界（尚待原生验收）
+
+Flash 候选已封存在 `d6f83aeb`。主线程新增四条回归，修前各有真实失败：
+认证成功但准入和返还队列都满时丢任务；未见启动通知的 target 发现超时后抹掉责任；
+Shell 等待 Release 时遗漏管道事件；Control 已 Oust、回复尚不可见时 Shell 再 join 报错。
+修后 hub-handoff 12 项、shell-adapter 6 项通过。
+
+- Abort 留在原队列直到返还工作可靠承接，保留已经核验的 owner 事实；返还成功撤除同任务的在途启动。
+- 每次发现与 Release RPC 独立有界，超时只重试；只有真实 owner 查询的 Unknown/Denied
+  能排除未认证收据，已认证收据绝不据此完成。
+- Shell 同时登记在途 Release、其他成员和管道事件；等待交回的成员不再重复 join。
+  核实 core 的 fail 先进入 Cancelling，全部结果与 drain 完成才进入终态，未新增第二份终态事实。
+- 退休向量在构造前 fallible 预留。通道连接移入已有 Prepare hook，在 Assembly 保存安装载体后执行，
+  失败沿现有 Retire hook 回滚，不留下已构造而未登记的 Team。
+- 核心内测试专用构造方法已移除；绑定测具改走实际登记、Claim 和 Close。
+  Shell 私有字段夹具移到 tests 目录，生产模块不依赖测试。
+- retirement-boundary 10、bootstrap-carrier 12、system-shape 21 通过，workspace check
+  保持既有 5 项 warning。退休边界测试首次因审批服务超时未执行，单次重试成功。
+
+首次四核 iommu-product 的内层 scene 通过、最终帧 85→85，但外层严格判定缺少旧有
+`hub: execution instance launched` 事件，整体退出 1。失败现场在本隔离工作区
+`target/driver-composition/handoff/product-root/`。启动成功回复处已恢复该一次性事件，
+待固定源码重跑。未据内层通过声称原生验收通过。
+
+固定候选的外部只读审查建议被逐项核查：静态 gate 自身推进 participant，并不依赖
+全局 operations 为空；Retire 子计划之前已有非消费 WholeTeamComplete gate；
+把 trusted Unknown/Denied 当完成违反用户合同；静态 attach_service 的底层 mint 已处理失败清理。
+因此没有采纳删除退休门或伪造完成的建议。最终 1024 代、完整 Daemon 和其余架构条目仍未完成。
