@@ -20,7 +20,7 @@ pub mod chrono {
 pub mod debug {
     pub fn put(_: &str) {}
 }
-pub use abi::{PieToken, TaskId, TeamId, Wait};
+pub use abi::{Access, Mark, PieToken, TaskId, TeamId, Wait};
 
 pub mod ledger {
     pub mod manifest {
@@ -39,10 +39,15 @@ pub mod support {
 
 pub mod fixtures;
 
+#[path = "../../src/unit/operator.rs"]
+pub mod operator;
+
 pub mod unit {
     use crate::{DEAD, TaskId, Wait};
 
     pub use crate::fixtures::{ControlConfig, Dependency, Ending, Target, UnitFile};
+
+    pub use crate::operator;
 
     pub fn self_id() -> TaskId {
         TaskId::new(1)
@@ -103,6 +108,12 @@ pub mod system {
                 include!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
                     "/../../src/system/control/unit/intent.rs"
+                ));
+            }
+            pub mod publisher {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../src/system/control/unit/publisher.rs"
                 ));
             }
             pub mod observe {

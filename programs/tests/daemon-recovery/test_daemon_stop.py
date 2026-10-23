@@ -24,6 +24,7 @@ def valid_evidence():
             "system: activate daemon tid=18",
             "daemon-ctl-stop: outsider source=30 observe=10 recover=10 denied=Denied",
             "daemon-ctl-stop: observed old task=17 helper=25 before=100",
+            "daemon-ctl-stop: checked entry host=10 rejected=7 fake_owner=30 reclaimed=2",
             "daemon-ctl-stop: publisher task=17 host=10 entry_owner=17 entry_mark=44 expected_mark=44",
             "stop-root: request controller=30 old task=17 helper=25 before=100 ack=44",
             "stop-root: kill old task=17 team=21 before=100",
@@ -63,6 +64,17 @@ def valid_evidence():
 
 
 class DaemonStopVerifier(unittest.TestCase):
+    def test_checked_entry_rejection_proof_is_bound_to_actual_root_and_controller(self):
+        console, events, qtest, raw = valid_evidence()
+        for old, new in (
+            ("checked entry host=10", "checked entry host=99"),
+            ("rejected=7", "rejected=6"),
+            ("fake_owner=30", "fake_owner=99"),
+            ("reclaimed=2", "reclaimed=1"),
+        ):
+            with self.subTest(field=old), self.assertRaises(AssertionError):
+                self.verify(console.replace(old, new), events, qtest, raw)
+
     def test_publisher_identity_host_owner_and_mark_must_match(self):
         console, events, qtest, raw = valid_evidence()
         for old, new in (

@@ -3,7 +3,7 @@
 //! 各驱动与 Hub 都用它：开者由内核给出（`opened_by`），一问的荷载与一答的形状由
 //! 契约给，回信孔那一枚由 `ipc::rpc` 铸、交、核（发送者、记号、一次性）。
 
-use env::{PieToken, TaskId, Wait};
+use env::{Mark, PieToken, TaskId, Wait};
 use ipc::rpc::request::Sender;
 use ipc::session::establish;
 use ipc::time::Deadline;
@@ -28,6 +28,30 @@ impl<C: Contract> Peer<C> {
         Ok(Self { sender, host })
     }
 
+    /// Opens a typed peer only when the kernel-reported owner and mark match
+    /// the expected authenticated endpoint identity.
+    pub fn open_checked(
+        entry: PieToken,
+        expected: (TaskId, Mark),
+        back: Mark,
+    ) -> Result<Self, &'static str> {
+        let (task, mark) = expected;
+        if task == TaskId::new(0) || mark == Mark::NONE {
+            return Err("peer: expected identity");
+        }
+        if establish::opened_by(entry) != Some(task) {
+            return Err("peer: owner");
+        }
+        if establish::marked_as(entry) != Some(mark) {
+            return Err("peer: mark");
+        }
+        let peer = Self::open(entry, back)?;
+        if peer.sender.peer() != task {
+            return Err("peer: sender");
+        }
+        Ok(peer)
+    }
+
     /// 树上沿一条路取那一面。
     pub fn find(
         tree: &Face,
@@ -35,14 +59,24 @@ impl<C: Contract> Peer<C> {
         back: env::Mark,
         wait: Wait,
     ) -> Result<Self, &'static str> {
-        let service = tree
-            .resolve(system_api::namespace::SERVICE, wait)
-            .map_err(|_| "peer: service namespace")?;
-        let token = tree
-            .tile_from(service, road, wait)
-            .and_then(|tile| tile.token(wait))
-            .map_err(|_| "peer: entry")?;
+        let token = locate(tree, road, wait)?;
         Self::open(token, back)
+    }
+
+    /// A rejected lookup returns its freshly delivered reference to the caller,
+    /// which must release it or retain it for cleanup. `open_checked` only borrows.
+    pub fn find_checked(
+        tree: &Face,
+        road: &Path,
+        expected: (TaskId, Mark),
+        back: Mark,
+        wait: Wait,
+    ) -> Result<Self, (&'static str, Option<PieToken>)> {
+        if expected.0 == TaskId::new(0) || expected.1 == Mark::NONE {
+            return Err(("peer: expected identity", None));
+        }
+        let token = locate(tree, road, wait).map_err(|cause| (cause, None))?;
+        Self::open_checked(token, expected, back).map_err(|cause| (cause, Some(token)))
     }
 
     /// 对端是那一台（读数用）。
@@ -61,4 +95,13 @@ impl<C: Contract> Peer<C> {
             .call(Deadline::new(wait), build)
             .map_err(|_| "peer: call")
     }
+}
+
+fn locate(tree: &Face, road: &Path, wait: Wait) -> Result<PieToken, &'static str> {
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, wait)
+        .map_err(|_| "peer: service namespace")?;
+    tree.tile_from(service, road, wait)
+        .and_then(|tile| tile.token(wait))
+        .map_err(|_| "peer: entry")
 }

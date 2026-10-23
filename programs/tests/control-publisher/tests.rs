@@ -190,7 +190,8 @@ fn lifecycle_mismatches_are_not_ready() {
     let cases = [
         (Some(TaskId::new(3)), State::Starting, true, true, false),
         (Some(TaskId::new(3)), State::Ready, false, true, false),
-        (Some(TaskId::new(3)), State::Ready, true, false, false),
+        (Some(TaskId::new(3)), State::Stopping, true, false, false),
+        (Some(TaskId::new(3)), State::Dead, true, false, false),
         (None, State::Ready, false, true, false),
         (Some(TaskId::new(0)), State::Ready, true, true, false),
         (Some(TaskId::new(3)), State::Ready, true, true, true),
@@ -231,6 +232,22 @@ fn real_named_ready_publisher_returns_expected_task() {
         control.publisher(NAMESPACE, RESOURCE),
         Ok(TaskId::new(9))
     );
+}
+
+#[test]
+fn stopping_intent_keeps_the_live_identity_until_external_drain_finishes() {
+    let mut control = Control::new(vec![input(
+        "driver",
+        vec![matching(NamespaceKey::of("service"), Some(RESOURCE.get()))],
+    )]);
+    row(&mut control, "driver", Some(TaskId::new(9)), State::Ready, true, true);
+    assert_eq!(control.publisher(NAMESPACE, RESOURCE), Ok(TaskId::new(9)));
+    control.table.set_run_requested("driver", false).unwrap();
+    assert_eq!(control.publisher(NAMESPACE, RESOURCE), Ok(TaskId::new(9)));
+    control.table.set_state("driver", State::Stopping);
+    assert_eq!(control.publisher(NAMESPACE, RESOURCE), Err(Fail::NotReady));
+    control.table.detach("driver").unwrap();
+    assert_eq!(control.publisher(NAMESPACE, RESOURCE), Err(Fail::NotReady));
 }
 
 #[test]

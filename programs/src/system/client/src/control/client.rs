@@ -32,6 +32,19 @@ impl Face {
         Ok(Face { sender, host })
     }
 
+    /// Requires the System identity supplied by trusted composition, such as
+    /// a static unit's parent. The face being opened cannot supply that identity.
+    pub fn of_owned(entry: PieToken, expected: TaskId) -> Result<Self, Fail> {
+        if expected == TaskId::new(0) {
+            return Err(Fail::Bad);
+        }
+        let face = Self::of(entry)?;
+        if face.host != expected {
+            return Err(Fail::Bad);
+        }
+        Ok(face)
+    }
+
     /// 对端是谁（读数用）
     pub fn host(&self) -> TaskId {
         self.host

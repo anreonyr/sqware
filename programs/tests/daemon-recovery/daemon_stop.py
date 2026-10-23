@@ -109,6 +109,12 @@ def verify(console, records, qtest, raw_code):
         "outsider face hosts are not actual Control hosts"
     )
 
+    checked = one(
+        console, r"^daemon-ctl-stop: checked entry host=(\d+) rejected=(\d+) fake_owner=(\d+) reclaimed=(\d+)$"
+    )
+    assert tuple(int(checked[index]) for index in range(1, 5)) == (root, 7, controller, 2), (
+        "checked entry did not reject all foreign owner and mark cases"
+    )
     publisher = one(
         console,
         r"^daemon-ctl-stop: publisher task=(\d+) host=(\d+) entry_owner=(\d+) entry_mark=(\d+) expected_mark=(\d+)$",
@@ -193,6 +199,7 @@ def verify(console, records, qtest, raw_code):
         old.start(),
         outsider.start(),
         observed.start(),
+        checked.start(),
         publisher.start(),
         request.start(),
         kill.start(),

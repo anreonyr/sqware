@@ -34,7 +34,7 @@ impl Control {
 
         let name = expected.ok_or(Fail::Unknown)?;
         let row = self.table.find(name).ok_or(Fail::Unknown)?;
-        if row.state != State::Ready || !row.named || !row.run_requested {
+        if row.state != State::Ready || !row.named {
             return Err(Fail::NotReady);
         }
         let task = match row.slot {

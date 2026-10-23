@@ -27,9 +27,16 @@ matches only when:
 Any matching declaration authorizes the same program once. Matching
 declarations from two distinct program names are `Denied` before the liveness
 filter, including when one program is already `Dead`. Exactly one program then
-requires its existing table row to be `named`, `Ready`, `run_requested`, with a
+requires its existing table row to be `named`, `Ready`, with a
 live nonzero `Slot::Live` task and `Control::live(task)`. Constructed instances
 and internal helper tasks are never candidates.
+
+Publisher reports identity, not permission to start work. An accepted explicit
+Ruin can take over a recovery job and clear `run_requested` before the external
+drain completes. Its live identity remains available during that drain so peers
+can authenticate cleanup. `Stopping`, dead tasks and detached slots remain
+`NotReady`. Supervisor and Recover admission still require running intent;
+consumers must separately enforce admission, target and binding state.
 
 The endpoint returns `Said.task` for a successful query and excludes it from
 the lifecycle enqueue path. The client exposes
@@ -41,7 +48,7 @@ and resource mark.
 The focused host crate includes the production `publisher.rs`, `table.rs`,
 `verdict.rs`, and `unit/operator.rs`, and covers duplicate same-program
 declarations, cross-program ambiguity, unrelated/read-only/instance
-declarations, zero marks, missing or non-ready rows, fake run intent, empty
+declarations, zero marks, missing or non-ready rows, stopping intent during drain, empty
 slots, task zero, kernel-dead tasks, a real named ready publisher, and the
 bounded op-13 wire roundtrip. The existing control-query endpoint fixture adds
 a minimal `publisher` shim solely for dispatch coverage.
