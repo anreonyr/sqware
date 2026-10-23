@@ -68,6 +68,9 @@ pub fn start() -> Result<(), BootError> {
 
     crate::entry::report::shutdown::arm();
     if let Some(entry) = spawn_entry()? {
+        if crate::testing() {
+            crate::putln!("boot: entry task={}", entry.ident.id.get());
+        }
         crate::core::work::room::halt::beacon::arm(&entry);
     }
 

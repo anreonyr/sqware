@@ -49,6 +49,9 @@ pub struct ControlConfig {
     pub ready: Ready,
     pub construction: &'static [Construction],
     pub retirement: &'static [Retirement],
+    /// Deployment target group this unit may supervise. `None` keeps Control
+    /// publication at the existing exact-root scope.
+    pub supervision: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -93,6 +96,7 @@ impl ControlConfig {
         ready: Ready::OnSpawn,
         construction: &[],
         retirement: &[],
+        supervision: None,
     };
 }
 

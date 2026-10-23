@@ -164,6 +164,47 @@ pub mod system {
             pub use crate::operation_key::OperationKey;
             pub use crate::request::Request;
 
+            pub mod origin {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../src/system/control/lifecycle/origin.rs"
+                ));
+            }
+            pub use origin::Origin;
+
+            pub mod directive {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../src/system/control/lifecycle/directive.rs"
+                ));
+            }
+            pub use directive::Directive;
+
+            pub mod intent {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../src/system/control/lifecycle/intent.rs"
+                ));
+            }
+
+            pub mod authority {
+                use ::schedule::Progress;
+                pub fn verify_effect(
+                    _: &crate::Active,
+                    _: &crate::Control,
+                    _: &crate::Settle,
+                ) -> Result<(), crate::Fail> {
+                    Ok(())
+                }
+                pub fn recheck(
+                    _: ::schedule::Res<crate::Active>,
+                    _: ::schedule::Res<crate::Control>,
+                    _: ::schedule::Res<crate::Settle>,
+                ) -> Result<Progress, crate::Fail> {
+                    Ok(Progress::Done)
+                }
+            }
+
             pub mod embark {
                 include!(concat!(
                     env!("CARGO_MANIFEST_DIR"),

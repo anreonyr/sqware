@@ -52,6 +52,18 @@ impl Control {
         self.table.set_guard_held(name, false);
     }
 
+    pub fn request_run(&mut self, name: &str) -> Result<(), Fail> {
+        self.table.set_run_requested(name, true)
+    }
+
+    pub fn request_stop(&mut self, name: &str) -> Result<(), Fail> {
+        self.table.set_run_requested(name, false)
+    }
+
+    pub fn run_requested(&self, name: &str) -> Option<bool> {
+        self.table.find(name).map(|row| row.run_requested)
+    }
+
     pub fn resume(&mut self, name: &str) -> Result<(), Fail> {
         let row = self.table.find(name).ok_or(Fail::Unknown)?;
         if row.state != State::Debarked {

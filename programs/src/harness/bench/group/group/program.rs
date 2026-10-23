@@ -12,6 +12,7 @@ pub static GROUP: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: None,
         ready: crate::unit::Ready::OnSpawn,
         ending: None,

@@ -394,7 +394,7 @@ impl Jobs {
     ) {
         let operation = tracked.operation;
         let id = operation.key.id;
-        let action = operation.key.request.action;
+        let action = operation.key.request.directive.action;
         let task = operation.progress.execution.task;
         let result = match operation.progress.failure {
             Some(fail) => Err(JobFailure::Control(fail)),
@@ -527,7 +527,7 @@ impl Jobs {
         &mut self,
         mut request: crate::system::control::lifecycle::Request,
     ) -> Result<
-        JobId,
+        (JobId, bool),
         (
             crate::system::control::unit::verdict::Fail,
             crate::system::control::lifecycle::Request,
@@ -540,26 +540,10 @@ impl Jobs {
             if tracked.operation.key.request.name != request.name {
                 continue;
             }
-            if matches!(
-                (&tracked.operation.key.request.action, &request.action),
-                (
-                    crate::system::control::lifecycle::Action::Ruin,
-                    crate::system::control::lifecycle::Action::Ruin
-                )
-            ) {
-                if let Some(back) = request.back.take() {
-                    if tracked.operation.key.waiters.try_reserve(1).is_err() {
-                        request.back = Some(back);
-                        return Err((crate::system::control::unit::verdict::Fail::Full, request));
-                    }
-                    tracked.operation.key.waiters.push(back);
-                }
-                return Ok(tracked.operation.key.id);
-            }
-            return Err((
-                crate::system::control::unit::verdict::Fail::NotReady,
-                request,
-            ));
+            return match crate::system::control::lifecycle::takeover::accept(tracked, &mut request) {
+                Ok(_) => Ok((tracked.operation.key.id, true)),
+                Err(fail) => Err((fail, request)),
+            };
         }
         let Some(id) = self.work.reserve_job(272) else {
             return Err((crate::system::control::unit::verdict::Fail::Full, request));
@@ -567,19 +551,15 @@ impl Jobs {
         self.work.push_back(Work::Lifecycle(
             crate::system::control::lifecycle::Tracked::new(id, request),
         ));
-        Ok(id)
+        Ok((id, false))
     }
     pub(crate) fn submit_lifecycle(
         &mut self,
-        name: alloc::string::String,
-        action: crate::system::control::lifecycle::Action,
+        request: crate::system::control::lifecycle::Request,
     ) -> Result<JobId, crate::system::control::unit::verdict::Fail> {
-        self.push_lifecycle(crate::system::control::lifecycle::Request {
-            name,
-            action,
-            back: None,
-        })
-        .map_err(|(fail, _)| fail)
+        self.push_lifecycle(request)
+            .map(|(id, _)| id)
+            .map_err(|(fail, _)| fail)
     }
     pub(crate) fn phase(
         &mut self,
@@ -829,6 +809,9 @@ impl Jobs {
                         }
                         crate::system::control::unit::verdict::Fail::NotReady => {
                             system_api::control::Fail::NotReady
+                        }
+                        crate::system::control::unit::verdict::Fail::Denied => {
+                            system_api::control::Fail::Denied
                         }
                     };
                     system_api::control::frame::said_status(

@@ -1,5 +1,8 @@
 use super::Control;
-use crate::system::control::{lifecycle::Action, unit::table::Slot};
+use crate::system::control::{
+    lifecycle::{Action, Directive, Origin, Request},
+    unit::table::Slot,
+};
 use alloc::vec::Vec;
 use env::{Wait, unit};
 
@@ -20,7 +23,17 @@ pub(crate) fn sweep(
         .collect();
     for name in gone {
         // Natural exit uses the same recoverable cleanup as an explicit retirement.
-        if jobs.submit_lifecycle(name, Action::Ruin).is_err() {
+        if jobs
+            .submit_lifecycle(Request {
+                name,
+                directive: Directive {
+                    action: Action::Ruin,
+                    origin: Origin::Reaper,
+                },
+                back: None,
+            })
+            .is_err()
+        {
             return Ok(::schedule::Progress::Pending);
         }
     }

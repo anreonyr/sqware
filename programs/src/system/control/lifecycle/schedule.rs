@@ -12,10 +12,12 @@ pub(crate) struct ActivationHooks {
 }
 pub fn lifecycle(hooks: ActivationHooks) -> Result<Vec<(Key, Plan<Fail>)>, BuildError> {
     let mut mint = Schedule::sequence();
+    mint.system("admit", work::authority::admit)?;
     mint.system("validate", work::mint::pre)?;
     mint.plan("create", hooks.construct)?;
     mint.system("commit", work::mint::post)?;
     let mut embark = Schedule::sequence();
+    embark.system("authorize", work::authority::recheck)?;
     embark.system("bind", work::embark::pre)?;
     embark.plan("activation", hooks.prepare)?;
     embark.system("run", work::embark::run)?;

@@ -10,5 +10,6 @@
 //! 起手/常驻的哪一步，报给内核出口）。
 //! # 服务面：两个方向放进同一面
 
+pub mod api;
 pub mod client;
 pub mod core;

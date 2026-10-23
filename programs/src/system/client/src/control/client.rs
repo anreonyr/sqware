@@ -82,6 +82,33 @@ impl Face {
             })
     }
 
+    /// Ask the declared supervisor scope to recover one fully retired target.
+    pub fn begin_recover(
+        &self,
+        name: String,
+        wait: Wait,
+    ) -> Result<ipc::rpc::request::Pending<Call>, Fail> {
+        self.begin(frame::Req::Recover(name), wait)
+    }
+
+    pub fn recover(&self, name: String, wait: Wait) -> Result<(), Fail> {
+        read(self.call(frame::Req::Recover(name), wait)?).map(|_| ())
+    }
+
+    pub fn poll_recover(
+        &self,
+        pending: &mut ipc::rpc::request::Pending<Call>,
+    ) -> Result<Option<frame::Said>, Fail> {
+        match pending.poll().map_err(|_| deny("recover"))? {
+            Some(said) => Ok(Some(read(said)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn recover_reply(&self, said: frame::Said) -> Result<(), Fail> {
+        read(said).map(|_| ())
+    }
+
     fn begin(
         &self,
         act: frame::Req,
@@ -102,7 +129,7 @@ impl Face {
     }
 }
 
-fn deny(step: &str) -> Fail {
+pub(super) fn deny(step: &str) -> Fail {
     crate::debug::put(&alloc::format!("control: call deny={step}"));
     Fail::Bad
 }

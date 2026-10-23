@@ -1,4 +1,4 @@
-use super::Action;
+use super::{Action, Directive, Origin, Request};
 use crate::system::{app::Fault as Fail, control::unit::Control};
 use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
@@ -63,17 +63,28 @@ pub fn startup(
         if let Some(program) = startup.plan.units.get(startup.plan.next) {
             startup.waiting = Some(
                 operations
-                    .submit_lifecycle(program.name().into(), action)
+                    .submit_lifecycle(Request {
+                        name: program.name().into(),
+                        directive: Directive {
+                            action,
+                            origin: Origin::Startup,
+                        },
+                        back: None,
+                    })
                     .map_err(|_| Fail::Room)?,
             );
         }
     } else if operations.is_empty() {
         startup.waiting = Some(
             operations
-                .submit_lifecycle(
-                    startup.plan.units[startup.plan.next].name().into(),
-                    Action::Mint,
-                )
+                .submit_lifecycle(Request {
+                    name: startup.plan.units[startup.plan.next].name().into(),
+                    directive: Directive {
+                        action: Action::Mint,
+                        origin: Origin::Startup,
+                    },
+                    back: None,
+                })
                 .map_err(|_| Fail::Room)?,
         );
     }

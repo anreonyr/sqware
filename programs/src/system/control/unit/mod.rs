@@ -197,6 +197,7 @@ fn bootstrap_named(name: &str) -> Option<crate::unit::Bootstrap> {
 }
 
 mod fixture;
+mod intent;
 mod observe;
 pub(crate) mod reap;
 pub mod start;

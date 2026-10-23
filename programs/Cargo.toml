@@ -294,6 +294,62 @@ doctest = false
 
 # 设备账（U 态，独立 team）：整机物料、设备发布和驱动激活。
 [[bin]]
+name = "prog-daemon"
+path = "src/service/daemon/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-daemon-rtc"
+path = "src/harness/probe/daemon_rtc/root_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-daemon-ctl-rtc"
+path = "src/harness/probe/daemon_rtc/control_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-daemon-target"
+path = "src/harness/probe/daemon_target/root_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-daemon-ctl-target"
+path = "src/harness/probe/daemon_target/control_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-fixturetarget"
+path = "src/harness/probe/daemon_target/target_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-daemon-stop"
+path = "src/harness/probe/daemon_stop/root_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-daemon-ctl-stop"
+path = "src/harness/probe/daemon_stop/control_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-hub"
 path = "src/service/hub/main.rs"
 test = false

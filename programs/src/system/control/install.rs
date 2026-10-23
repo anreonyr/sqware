@@ -19,6 +19,8 @@ pub(crate) fn install(
     status: Arc<Status>,
     config: Configuration,
 ) -> Result<(), crate::system::app::InstallError> {
+    super::supervision::validate(&config.inputs, config.targets, config.guarded)
+        .map_err(crate::system::app::InstallError::Configuration)?;
     let mut control = Control::new(status, config.targets);
     control.inputs = config.inputs;
     control.guarded = config.guarded;

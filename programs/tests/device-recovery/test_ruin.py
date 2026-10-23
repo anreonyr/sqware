@@ -10,6 +10,22 @@ from fixtures.ruin import BACKEND, CONSOLE, EVENTS, HELD
 
 
 class RuinEvidence(unittest.TestCase):
+    def test_actual_entry_identity_may_follow_boot_self_checks(self):
+        console = CONSOLE.replace("entry task=1", "entry task=31").replace(
+            "exit tid=1 reason=0x0 note: iommu-ruin", "exit tid=31 reason=0x0 note: iommu-ruin"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            completed(console, EVENTS, BACKEND)
+
+    def test_missing_ambiguous_or_wrong_entry_identity_is_rejected(self):
+        for console in (
+            CONSOLE.replace("boot: entry task=1\n", ""),
+            CONSOLE + "boot: entry task=1\n",
+            CONSOLE.replace("entry task=1", "entry task=31"),
+        ):
+            with self.subTest(console=console), self.assertRaises(AssertionError):
+                completed(console, EVENTS, BACKEND)
+
     def test_success(self):
         pending(HELD, EVENTS[:2])
         with contextlib.redirect_stdout(io.StringIO()):

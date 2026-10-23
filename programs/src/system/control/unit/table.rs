@@ -36,6 +36,7 @@ pub struct Service {
     pub restart: Ending,
     pub named: bool,
     pub guard_held: bool,
+    pub run_requested: bool,
 }
 
 const EMPTY: Service = Service {
@@ -46,6 +47,7 @@ const EMPTY: Service = Service {
     restart: Ending::Resident,
     named: false,
     guard_held: false,
+    run_requested: false,
 };
 
 pub struct Table {
@@ -131,6 +133,14 @@ impl Table {
         if let Some(s) = self.row_mut(name) {
             s.guard_held = held;
         }
+    }
+
+    pub fn set_run_requested(&mut self, name: &str, requested: bool) -> Result<(), Fail> {
+        let Some(s) = self.row_mut(name) else {
+            return Err(Fail::Unknown);
+        };
+        s.run_requested = requested;
+        Ok(())
     }
 
     pub(crate) fn mark_static(&mut self, task: TaskId) {

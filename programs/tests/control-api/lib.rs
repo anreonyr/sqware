@@ -101,10 +101,10 @@ mod tests {
             [0, 1, 2, 3, 4, 5],
         );
         assert_eq!(frame::fail_to_code(Some(Fail::Bad)), 5);
-        assert_eq!(Grant::ALL.map(Grant::at), [1, 2, 3, 4, 5]);
+        assert_eq!(Grant::ALL.map(Grant::at), [1, 2, 3, 4, 5, 6, 7]);
         assert_eq!(
             Grant::ALL.map(Grant::name),
-            ["state", "mint", "embark", "debark", "ruin"]
+            ["state", "mint", "embark", "debark", "ruin", "observe", "recover"]
         );
         assert_eq!(
             Grant::ALL.map(Grant::mark),
@@ -114,6 +114,8 @@ mod tests {
                 Mark::of("control-entry-embark"),
                 Mark::of("control-entry-debark"),
                 Mark::of("control-entry-ruin"),
+                Mark::of("control-entry-observe"),
+                Mark::of("control-entry-recover"),
             ]
         );
         assert_eq!(frame::MINT, 1);
@@ -121,7 +123,8 @@ mod tests {
         assert_eq!(frame::DEBARK, 3);
         assert_eq!(frame::STATE, 4);
         assert_eq!(frame::RUIN, 5);
-        assert_eq!(system_api::control::marks::DECLARATIONS.len(), 4);
+        assert_eq!(frame::RECOVER, 12);
+        assert_eq!(system_api::control::marks::DECLARATIONS.len(), 5);
         assert_eq!(env::marks::conflict(system_api::control::REGISTRY), None);
     }
 
@@ -302,5 +305,51 @@ mod tests {
         assert_eq!(export::Response::fetch(&bytes[..n]).unwrap().status, wire::OK);
         assert!(export::Response::fetch(&bytes[..n + 1]).is_none());
         for end in 0..n { assert!(export::Response::fetch(&bytes[..end]).is_none()); }
+    }
+
+    #[test]
+    fn recover_and_observe_keep_their_own_wire_shapes_and_explicit_end() {
+        use system_api::control::observe::{Reply as Observation, Request as ObserveRequest};
+        let back = token(0x0102_0304_0506_0708);
+        let mut bytes = <Request as Message>::EMPTY;
+        let len = Req::Recover(String::from("worker"))
+            .store(back, &mut bytes)
+            .unwrap();
+        assert_eq!(bytes[0], frame::RECOVER);
+        assert_eq!(
+            Wire::take(&bytes[..len]),
+            Some((Some(Wire::Recover(String::from("worker"))), back))
+        );
+        assert_eq!(
+            Grant::for_wire(&Wire::Recover(String::from("worker"))),
+            Grant::Recover
+        );
+        for end in 0..len {
+            assert!(Wire::take(&bytes[..end]).is_none());
+        }
+
+        let request = ObserveRequest { index: 3, back };
+        let mut bytes = ObserveRequest::EMPTY;
+        let len = request.store(&mut bytes).unwrap();
+        assert_eq!(ObserveRequest::fetch(&bytes[..len]), Some(request));
+
+        let row = Observation {
+            status: frame::OK,
+            index: 3,
+            present: true,
+            end: false,
+            run_requested: true,
+            state: State::Ready.code(),
+            name: String::from("worker"),
+        };
+        let mut bytes = Observation::EMPTY;
+        let len = row.store(&mut bytes).unwrap();
+        assert_eq!(Observation::fetch(&bytes[..len]), Some(row));
+        assert!(!Observation::fetch(&bytes[..len]).unwrap().end);
+        let end = Observation::end(4);
+        assert!(end.end && !end.present && end.name.is_empty());
+        let denied = Observation::denied(0);
+        assert_eq!(denied.status, frame::DENIED);
+        assert!(!denied.end && !denied.present);
     }
 }
