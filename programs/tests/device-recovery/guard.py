@@ -22,6 +22,7 @@ def run(conn, capture):
     resume = Path(str(hold) + ".resume")
     errors = []
     closed = threading.Event()
+    eof = threading.Event()
     feed = {
         "sent_g": False,
         "held_before_trigger": False,
@@ -35,7 +36,11 @@ def run(conn, capture):
     def read():
         try:
             with capture.open("ab", buffering=0) as out:
-                while data := conn.recv(65536):
+                while True:
+                    data = conn.recv(65536)
+                    if not data:
+                        eof.set()
+                        break
                     out.write(data)
         except OSError as error:
             errors.append(error)
@@ -87,9 +92,14 @@ def run(conn, capture):
         feed["trigger"] = True
         wait(lambda: "[critical] guarded exit" in text(), "guarded exit did not follow trigger", 10)
         wait(closed.is_set, "serial EOF", 60)
+        if errors:
+            raise errors[0]
+        if not eof.is_set():
+            raise AssertionError("serial closed without EOF")
         feed["serial_eof"] = True
     finally:
         feed["resume"] = resume.exists()
+        feed["reader_error"] = str(errors[0]) if errors else None
         if not held_console:
             held_console = text()
         if not held_events and events.exists():

@@ -58,6 +58,7 @@ def verify(console, held_console, events, held_events, block, feed, target, hart
     assert runner_code == 101, "raw qtest must remain the non-returning 101"
     assert re.search(r"timed out after \d+s", qtest_log), "VM did not remain halted"
     assert re.search(r"test embedded::tests::scene\s+\.\.\.\s+FAILED", qtest_log), "scene did not fail by halt"
+    assert events, "missing structured execution trace"
 
     armed = one(console, rf"^guard: armed target={target} task=(\d+) team=(\d+)$")
     submitted = one(console, r"^guard: submitted controller=(\d+)$")
@@ -66,7 +67,24 @@ def verify(console, held_console, events, held_events, block, feed, target, hart
     assert (armed[1], armed[2]) == (ready[1], ready[2]) == (trigger[1], trigger[2]), (
         "ready/trigger identity changed"
     )
-    assert armed.start() < ready.start() < trigger.start(), "armed/ready/trigger out of order"
+    assert armed.start() < submitted.start() < ready.start(), "arm/submission/ready out of order"
+    assert ready.start() < trigger.start(), "trigger preceded ready"
+    protected = one(console, r"^guard: critical domains protected=3$")
+    assert submitted.start() < protected.start() < ready.start(), "three-domain proof out of order"
+    drivers = {
+        name: one(console, rf"^system: minted {name} tid=(\d+)$")
+        for name in TARGETS
+    }
+    assert len({record[1] for record in drivers.values()}) == 3, "critical drivers share a task"
+    assert drivers[target][1] == trigger[1], "kernel target does not match the named Driver"
+    assert all(record.start() < submitted.start() for record in drivers.values())
+    published = one(console, r"^iommu: binding 1 published requester=\d+ held=6 ddtp=0x[0-9a-f]+$")
+    master = one(console, r"^pci: endpoint bus-master on=0x4$")
+    active = one(console, r"^hub: binding 1 active \(business released\) iova=0x[0-9a-f]+$")
+    doorbell = one(console, r"^work: rang the in-flight request doorbell$")
+    assert published.start() < master.start() < active.start() < doorbell.start() < submitted.start(), (
+        "DMA publication/submission out of order"
+    )
 
     trip = one(console, r"^\[critical\] trip task=(\d+) task_team=(\d+) team=(\d+)$")
     assert trip[1] == trigger[1], "kernel trip task is not the trigger target"
@@ -106,7 +124,12 @@ def verify(console, held_console, events, held_events, block, feed, target, hart
     assert feed.get("resume") is False, "host resumed the held read"
     assert feed.get("trigger") is True, "host did not observe trigger"
     assert feed.get("serial_eof") is True, "serial did not reach EOF after the halt"
-    assert "guard: ready" in held_console, "ready was not present before the trigger byte"
+    assert feed.get("reader_error") is None, "serial reader failed"
+    held_ready = one(held_console, rf"^guard: ready target={target} task=(\d+) team=(\d+)$")
+    assert held_ready.groups() == ready.groups(), "held snapshot belongs to another target"
+    assert "guard: trigger" not in held_console and "[critical] trip" not in held_console, (
+        "death preceded the host trigger"
+    )
 
     held = retained_events(held_events, "held snapshot")
     final = retained_events(block, "final NBD")
@@ -131,8 +154,6 @@ def verify(console, held_console, events, held_events, block, feed, target, hart
 
 def load_events(path):
     path = Path(path)
-    if not path.exists():
-        return []
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 

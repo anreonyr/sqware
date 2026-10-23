@@ -2,8 +2,15 @@
 
 CONSOLE = """system: minted pci tid=7
 system: activate pci tid=7
+system: minted iommu tid=8
+system: minted recovery tid=9
 guard: armed target=pci task=7 team=3
-guard: submitted controller=9
+iommu: binding 1 published requester=8 held=6 ddtp=0x1000
+pci: endpoint bus-master on=0x4
+hub: binding 1 active (business released) iova=0x100000
+work: rang the in-flight request doorbell
+guard: submitted controller=10
+guard: critical domains protected=3
 guard: ready target=pci task=7 team=3
 guard: trigger target=pci task=7 team=3
 [critical] trip task=7 task_team=3 team=3

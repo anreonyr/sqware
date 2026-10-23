@@ -83,5 +83,36 @@ class GuardDeathEvidence(unittest.TestCase):
                 check(feed=feed)
 
 
+    def test_all_three_domains_must_be_protected(self):
+        with self.assertRaises(AssertionError):
+            check(console=CONSOLE.replace("protected=3", "protected=1"))
+
+    def test_actual_dma_evidence_is_required(self):
+        for prefix in ("iommu: binding 1 published", "pci: endpoint bus-master on=",
+                       "hub: binding 1 active", "work: rang the in-flight"):
+            console = "\n".join(line for line in CONSOLE.splitlines()
+                                if not line.startswith(prefix)) + "\n"
+            with self.subTest(prefix=prefix), self.assertRaises(AssertionError):
+                check(console=console)
+
+    def test_named_driver_identity_must_match(self):
+        with self.assertRaisesRegex(AssertionError, "named Driver"):
+            check(console=CONSOLE.replace("system: minted pci tid=7", "system: minted pci tid=70"))
+
+    def test_empty_trace_is_not_evidence(self):
+        with self.assertRaisesRegex(AssertionError, "structured execution trace"):
+            check(events=[])
+
+    def test_held_snapshot_must_precede_trigger(self):
+        with self.assertRaisesRegex(AssertionError, "host trigger"):
+            check(held=HELD_CONSOLE + TRIGGER)
+
+    def test_serial_reader_error_is_not_eof(self):
+        feed = copy.deepcopy(FEED)
+        feed["reader_error"] = "connection reset"
+        with self.assertRaisesRegex(AssertionError, "serial reader"):
+            check(feed=feed)
+
+
 if __name__ == "__main__":
     unittest.main()

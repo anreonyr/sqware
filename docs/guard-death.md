@@ -10,8 +10,9 @@ retains the block request and physical frame references.
 
 The three deployments are `iommu-guard-pci`, `iommu-guard-iommu`, and
 `iommu-guard-recovery`. They share entry image `iommu-guard`, start
-`hub`, `pci`, `iommu`, `recovery`, `device-ctl-guard`, and select exactly one
-guarded name. The shared entry is the scene Root; the controller image is
+`hub`, `pci`, `iommu`, `recovery`, `device-ctl-guard`, and guard all three critical
+Driver domains, matching the product deployment. The validated scene selects
+the death target separately. The shared entry is the scene Root; the controller image is
 `device-ctl-guard`.
 
 ## Root and trigger
@@ -24,17 +25,18 @@ added.
 
 Each Root tick has one `prepare`, one budget-1 subplan that advances the real
 `app::schedule::frame()` once, and one `trigger` poll. The app-frame cursor lives
-in `Turns`, so the production frame is advanced exactly as the normal supervisor
+in an existing `Cursor` resource, so the production frame is advanced exactly as the normal supervisor
 advances it while startup remains free to progress. `prepare` reads the private
 `device-guard/request` Hole and accepts only the real controller sender and the
 single byte `[1]`.
 
-The trigger step observes the one held Control row, requires `guard_held`, the
+The trigger step observes the selected Control row, requires `guard_held`, the
 actual `task`, and the actual `task_team`, and prints:
 
 ```text
 guard: armed target=<name> task=<id> team=<id>
 guard: submitted controller=<id>
+guard: critical domains protected=3
 guard: ready target=<name> task=<id> team=<id>
 ```
 
@@ -43,6 +45,20 @@ requires the same target, task, team, and a live task, then prints
 `guard: trigger ...` and calls `env::unit::slay_task(task)`. It never calls
 Control Ruin or Unguard. If Slay returns, the Root logs that fact and parks; it
 does not report completion or run cleanup.
+
+Root review sealed the initial worker candidate at `244e88e0` before corrections.
+The initial one-guard selection was replaced with three protected domains and
+an independent scene target. The observer runs before receipt capture, keeping
+arm/submission/ready ordering explicit. All three guards are checked again in
+the trigger frame. The redundant cursor wrapper was removed.
+
+The verifier additionally requires actual IOMMU publication with six retained
+frames, MASTER on, active binding and the in-flight doorbell before submission;
+the named Driver's minted task must match the actual kernel trip identity.
+Missing execution trace, a death already present in the pre-trigger snapshot,
+or a serial reader error cannot count as a successful proof. Root independently
+ran 20 positive/negative verifier controls after these corrections. Native
+unexpected-death acceptance is still pending at this checkpoint.
 
 The controller reuses the Ruin submission path: real in-flight block request,
 `want == 3`, then the private Hole. It keeps the block page, view, references,

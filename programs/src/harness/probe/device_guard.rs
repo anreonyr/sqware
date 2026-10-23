@@ -2,7 +2,6 @@
 //! test Root kill the protected domain main task through the real Kernel path.
 
 mod guard;
-mod turns;
 
 #[path = "../../driver/uart/dev/uart.rs"]
 #[allow(dead_code)]
@@ -10,13 +9,12 @@ mod uart;
 
 use ::resource::dock::{Dock, View};
 use ::schedule::{
-    BuildError, Dispatch, Invocation, Plan, Progress, Res, ResMut, RunError, Schedule,
+    BuildError, Cursor, Dispatch, Invocation, Plan, Progress, Res, ResMut, RunError, Schedule,
 };
 
 use crate::system::app;
 use crate::system::control::unit::Control;
 use guard::Guard;
-use turns::Turns;
 
 /// Private notification from the scene controller after its real block request
 /// is submitted and reported.
@@ -28,6 +26,12 @@ const TARGETS: [&str; 3] = ["pci", "iommu", "recovery"];
 /// Run the guard death scene from the deployment bootstrap image.
 pub fn run() -> Result<(), env::Reason> {
     let boot = app::bootstrap::take().map_err(|why| why.code())?;
+    let target = match boot.catalog.deployment() {
+        "iommu-guard-pci" => "pci",
+        "iommu-guard-iommu" => "iommu",
+        "iommu-guard-recovery" => "recovery",
+        _ => return Err(9usize),
+    };
     let programs = app::scene::programs(&boot.catalog).map_err(|_| 9usize)?;
     let uart = open_uart(&boot)?;
     let mut resources = app::install::resources(boot).map_err(|_| 9usize)?;
@@ -38,12 +42,13 @@ pub fn run() -> Result<(), env::Reason> {
     resources
         .insert(Guard {
             uart,
+            target,
             submitted: false,
             armed: None,
             ready: false,
         })
         .map_err(|_| 9usize)?;
-    resources.insert(Turns::default()).map_err(|_| 9usize)?;
+    resources.insert(Cursor::default()).map_err(|_| 9usize)?;
     resources
         .insert(Dispatch::<u8, app::Fault>::new())
         .map_err(|_| 9usize)?;
@@ -57,15 +62,12 @@ fn open_uart(boot: &app::bootstrap::Boot) -> Result<View, env::Reason> {
         .find(|device| device.class == "ns16550a")
         .ok_or(9usize)?;
     let token = boot.accounts.token(device.resource).ok_or(9usize)?;
-    let dock = Dock::open(token).map_err(|_| 9usize)?;
-    let view = dock.view();
-    core::mem::forget(dock);
-    Ok(view)
+    Ok(Dock::open(token).map_err(|_| 9usize)?.view())
 }
 
 /// One root tick: capture the controller receipt, advance the production frame
 /// once, then poll the real UART. Returning `Done` resets the root cursor while
-/// the app-frame cursor survives in [`Turns`].
+/// the app-frame cursor survives as its own Cursor resource.
 fn frame() -> Result<Plan<app::Fault>, BuildError> {
     let mut root = Schedule::sequence();
     root.system("guard.prepare", prepare)?;
@@ -81,6 +83,7 @@ fn frame() -> Result<Plan<app::Fault>, BuildError> {
 }
 
 fn prepare(mut guard: ResMut<Guard>, control: Res<Control>) -> Result<Progress, app::Fault> {
+    observe(&control, &mut guard)?;
     capture(&control, &mut guard)?;
     Ok(Progress::Done)
 }
@@ -91,20 +94,20 @@ fn budget(mut dispatch: ResMut<Dispatch<u8, app::Fault>>) -> Result<Progress, ap
 }
 
 fn select(
-    mut turns: ResMut<Turns>,
+    mut turns: ResMut<Cursor>,
     mut dispatch: ResMut<Dispatch<u8, app::Fault>>,
 ) -> Result<Progress, app::Fault> {
     dispatch
         .select(Invocation {
             key: 0,
-            cursor: turns.take(),
+            cursor: core::mem::take(&mut *turns),
         })
         .map_err(|_| app::Fault::Room)?;
     Ok(Progress::Done)
 }
 
 fn finish(
-    mut turns: ResMut<Turns>,
+    mut turns: ResMut<Cursor>,
     mut dispatch: ResMut<Dispatch<u8, app::Fault>>,
 ) -> Result<Progress, app::Fault> {
     let completion = dispatch.take_result().map_err(|_| app::Fault::Room)?;
@@ -117,27 +120,20 @@ fn finish(
         Err(RunError::Step(fault)) => return Err(fault),
         Err(_) => return Err(app::Fault::Room),
     }
-    turns.put(cursor);
+    *turns = cursor;
     Ok(Progress::Done)
 }
 
 fn trigger(mut guard: ResMut<Guard>, control: Res<Control>) -> Result<Progress, app::Fault> {
+    observe(&control, &mut guard)?;
     capture(&control, &mut guard)?;
-    let observed = target(&control)?;
-    if let Some((name, task, team)) = observed {
-        if let Some((armed, at, held)) = guard.armed {
-            if (armed, at, held) != (name, task, team) {
+    let name = guard.target;
+    if let Some((task, team)) = guard.armed {
+        if guard.submitted && !guard.ready {
+            if !TARGETS.iter().all(|name| control.guard_held(name)) {
                 return Err(app::Fault::Room);
             }
-        } else {
-            crate::debug::put(&alloc::format!(
-                "guard: armed target={name} task={} team={}",
-                task.get(),
-                team.get(),
-            ));
-            guard.armed = Some((name, task, team));
-        }
-        if guard.submitted && !guard.ready {
+            crate::debug::put("guard: critical domains protected=3");
             crate::debug::put(&alloc::format!(
                 "guard: ready target={name} task={} team={}",
                 task.get(),
@@ -152,13 +148,14 @@ fn trigger(mut guard: ResMut<Guard>, control: Res<Control>) -> Result<Progress, 
         let _ = execution::room::park(core::time::Duration::from_millis(1));
         return Ok(Progress::Done);
     }
-    let Some((name, task, team)) = guard.armed else {
+    let Some((task, team)) = guard.armed else {
         return Err(app::Fault::Room);
     };
     if !guard.submitted || !guard.ready {
         return Err(app::Fault::Room);
     }
-    if target(&control)? != Some((name, task, team))
+    if target(&control, name)? != Some((task, team))
+        || !TARGETS.iter().all(|name| control.guard_held(name))
         || !control.guard_held(name)
         || control.task(name) != Some(task)
         || control.task_team(task) != Some(team)
@@ -205,18 +202,31 @@ fn capture(control: &Control, guard: &mut Guard) -> Result<(), app::Fault> {
 
 fn target(
     control: &Control,
-) -> Result<Option<(&'static str, env::TaskId, env::TeamId)>, app::Fault> {
-    let mut found = None;
-    for name in TARGETS {
-        if !control.guard_held(name) {
-            continue;
-        }
-        let task = control.task(name).ok_or(app::Fault::Room)?;
-        let team = control.task_team(task).ok_or(app::Fault::Room)?;
-        if found.is_some() {
+    name: &str,
+) -> Result<Option<(env::TaskId, env::TeamId)>, app::Fault> {
+    if !control.guard_held(name) {
+        return Ok(None);
+    }
+    let task = control.task(name).ok_or(app::Fault::Room)?;
+    let team = control.task_team(task).ok_or(app::Fault::Room)?;
+    Ok(Some((task, team)))
+}
+
+fn observe(control: &Control, guard: &mut Guard) -> Result<(), app::Fault> {
+    let Some(identity) = target(control, guard.target)? else {
+        return Ok(());
+    };
+    if let Some(prior) = guard.armed {
+        if prior != identity {
             return Err(app::Fault::Room);
         }
-        found = Some((name, task, team));
+    } else {
+        let (task, team) = identity;
+        crate::debug::put(&alloc::format!(
+            "guard: armed target={} task={} team={}",
+            guard.target, task.get(), team.get(),
+        ));
+        guard.armed = Some(identity);
     }
-    Ok(found)
+    Ok(())
 }
