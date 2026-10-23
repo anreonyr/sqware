@@ -503,3 +503,29 @@ forced 首次因丢失旧有“等待退休结清”状态事件失败，挂起�
 仍有稳定 ID；将旧目录坐标用作撤销请求的权限上下文，导致迟到清理无法通过入口检查。
 候选修正只使用 System 已持有的发行者权限撤销同一 grant ID，不放宽 Operator 的权限检查，
 不把 Denied/Unknown 当成成功；须先补直接编译生产退休逻辑的宿主回归，再重跑原生 128 代。
+
+### 宿主回归结果（基线 a48488ca）
+
+- 生产 `Installed` 与 `System::retire` 分入 `app/namespace/{installed,retire}.rs`；
+  回执只保留原 grant ID，`System::retire` 以 `self.root` 为发行者权限上下文撤销；
+  实际 entry 仍只作目录/绑定坐标，Operator 判据未改。
+- 新建 `programs/tests/namespace-retirement`：FakeSystem（root + fake capability）直接编译
+  生产 `installed.rs`、`retire.rs`，capability 只实现 revoke/unbind/unpart 并记录。
+  修前实跑 4 项，1 项按预期行为失败：原 anchor 撤销返回 `Err(Denied)`；修后 4 项通过。
+  负例覆盖真实 Denied 保留 authority/grant/bindings/entries、Revoking 非 Closed 不丢收据
+  且 Closed 后继续、unpart Unknown 保留不存在目录的既有语义。
+- `cargo check --workspace --offline` 通过，保持既有 5 项 warning；`git diff --check` 通过。
+- 既有 `namespace-installation` Host 在本基线不能编译：其 shim 无 `crate::debug`，
+  而 `a48488ca` 在装配退休路径新增了 `crate::debug::put`。这与本次 namespace 改动无关；
+  未修改该测试授权判据，故本项未通过。
+- 未运行 QEMU，未取得修正后的 128 代原生结果；不声称 A2、完整重构或最终 1024 代完成。
+
+主线程复核后补齐原安装测具的 debug shim，未改授权断言；新 namespace-retirement 4 项、
+既有 namespace-installation 4 项、Operator API/authority 25 项均独立通过，workspace check
+仍为既有 5 项 warning。撤销使用的是原发行者持有的权限上下文和同一 grant ID，
+不再保存重复的旧 anchor；真实 Denied 和未 Closed 状态仍保留完整待清理回执。
+
+修正后完整八核 128 代通过，现场 `handoff/soak-issuer-root-128-8/`：
+64 正常退出、64 owner 死亡，98691 ms；全部主任务/辅助任务真实回收，帧 153→153，
+逐代 capability=15、launch=1、command=1。此结果覆盖先前实例 55/59 的失败代次与最终整机清理。
+真实 1024 代仍待执行，以检查超过 256 条 Control 实例记录后的淘汰与回收路径。

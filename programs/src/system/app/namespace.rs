@@ -4,21 +4,15 @@ use alloc::vec::Vec;
 use core::cell::Cell;
 use env::{PieToken, TaskId, Wait};
 use system_api::operator::{
-    self as api, Binding, Entry, GrantId, GrantSpec, GrantState, NamespaceKey, OperationId,
-    PathBuf, Permit, ResourceView, Scope,
+    self as api, Entry, GrantId, GrantSpec, NamespaceKey, OperationId, PathBuf, Permit, ResourceView,
+    Scope,
 };
-use system_client::operator::{Capability, GrantInfo, PartResult};
+use system_client::operator::{Capability, PartResult};
 
-/// Retained by Assembly across prepare/retire so grants and bindings can be retried.
-pub struct Installed {
-    pub anchor: Entry,
-    pub authority: Option<GrantInfo>,
-    /// Kept before the grant request so a lost reply can still cancel an unseen/pending grant.
-    pub grant: Option<(Entry, GrantId)>,
-    pub bindings: Vec<Binding>,
-    pub entries: Vec<Entry>,
-    pub wait: Wait,
-}
+mod installed;
+mod retire;
+
+pub use installed::Installed;
 
 pub struct BindingInput {
     pub name: alloc::string::String,
@@ -249,57 +243,12 @@ impl System {
         }
         if let Some(mut grant) = preparation.plan.grant.clone() {
             grant.anchor = anchor;
-            preparation.installed.grant = Some((anchor, grant.id));
+            preparation.installed.grant = Some(grant.id);
             preparation.installed.authority =
                 Some(self.capability.grant(grant, None, preparation.plan.wait)?);
         }
         preparation.ready = true;
         Ok(())
-    }
-
-    /// Revokes first, then removes only this install's exact binding revisions and entries.
-    /// On any failure, the remaining receipt stays intact for a later retry.
-    pub fn retire(&self, installed: &mut Installed) -> Result<bool, api::Fail> {
-        if let Some((anchor, id)) = installed.grant {
-            let state = self.capability.revoke(anchor, id, installed.wait).map_err(|why| {
-                crate::debug::put(&alloc::format!(
-                    "system: namespace revoke id={} anchor={anchor:?} failed={why:?}", id.0
-                ));
-                why
-            })?;
-            if state != GrantState::Closed {
-                return Err(api::Fail::Dead);
-            }
-            installed.authority = None;
-            installed.grant = None;
-        }
-        while let Some(binding) = installed.bindings.last().copied() {
-            match self.capability.unbind(binding, installed.wait) {
-                Ok(()) | Err(api::Fail::Unknown) => {
-                    installed.bindings.pop();
-                }
-                Err(fail) => {
-                    crate::debug::put(&alloc::format!(
-                        "system: namespace unbind binding={binding:?} failed={fail:?}"
-                    ));
-                    return Err(fail);
-                }
-            }
-        }
-        while let Some(entry) = installed.entries.last().copied() {
-            match self.capability.unpart(entry, installed.wait) {
-                Ok(()) | Err(api::Fail::Unknown) => {
-                    installed.entries.pop();
-                }
-                Err(fail) => {
-                    crate::debug::put(&alloc::format!(
-                        "system: namespace unpart entry={entry:?} failed={fail:?}"
-                    ));
-                    return Err(fail);
-                }
-            }
-        }
-        Ok(true)
     }
 
     pub fn retire_preparation(&self, preparation: &mut Preparation) -> Result<bool, api::Fail> {
