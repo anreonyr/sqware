@@ -189,7 +189,12 @@ fn retire_namespace(
     let system = layout.as_ref().ok_or("operator layout unavailable")?;
     let done = namespaces
         .retire_task(system, task)
-        .map_err(|_| "instance namespace retire")?;
+        .map_err(|why| {
+            crate::debug::put(&alloc::format!(
+                "system: namespace retire task={} failed={why:?}", task.get()
+            ));
+            "instance namespace retire"
+        })?;
     Ok(if done {
         Progress::Done
     } else {

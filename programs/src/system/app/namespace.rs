@@ -261,7 +261,12 @@ impl System {
     /// On any failure, the remaining receipt stays intact for a later retry.
     pub fn retire(&self, installed: &mut Installed) -> Result<bool, api::Fail> {
         if let Some((anchor, id)) = installed.grant {
-            let state = self.capability.revoke(anchor, id, installed.wait)?;
+            let state = self.capability.revoke(anchor, id, installed.wait).map_err(|why| {
+                crate::debug::put(&alloc::format!(
+                    "system: namespace revoke id={} anchor={anchor:?} failed={why:?}", id.0
+                ));
+                why
+            })?;
             if state != GrantState::Closed {
                 return Err(api::Fail::Dead);
             }
@@ -273,7 +278,12 @@ impl System {
                 Ok(()) | Err(api::Fail::Unknown) => {
                     installed.bindings.pop();
                 }
-                Err(fail) => return Err(fail),
+                Err(fail) => {
+                    crate::debug::put(&alloc::format!(
+                        "system: namespace unbind binding={binding:?} failed={fail:?}"
+                    ));
+                    return Err(fail);
+                }
             }
         }
         while let Some(entry) = installed.entries.last().copied() {
@@ -281,7 +291,12 @@ impl System {
                 Ok(()) | Err(api::Fail::Unknown) => {
                     installed.entries.pop();
                 }
-                Err(fail) => return Err(fail),
+                Err(fail) => {
+                    crate::debug::put(&alloc::format!(
+                        "system: namespace unpart entry={entry:?} failed={fail:?}"
+                    ));
+                    return Err(fail);
+                }
             }
         }
         Ok(true)

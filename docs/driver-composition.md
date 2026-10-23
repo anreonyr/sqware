@@ -491,3 +491,15 @@ forced 首次因丢失旧有“等待退休结清”状态事件失败，挂起�
   `handoff/soak-reported-128-8/` 验收，不复用更早检查点证据。
 
 当前记录仍不证明完整重构、A7 装配、单 Daemon、双 Domain 同值 IOVA 或最终 1024 代完成。
+
+## 第十四检查点：128 代最终清理失败定位
+
+`handoff/soak-reported-128-8/` 完成了全部 128 代的设备绑定收尾，但最终整机回收未完成，
+240 秒后退出 101；实例 55、59 的 namespace 退休反复失败。因此该轮整体失败，不能计入验收。
+补充源错误后，75 秒有界诊断 `handoff/soak-namespace-diagnostic-8/` 退出 101，
+记录 namespace revoke 的 Denied，包含原 grant ID 与旧 anchor（如 grant 64、节点 101）。
+
+当前待验证原因：目录坐标可能在另一个实例的共享路径清理中消失，但 System 所发行的 grant
+仍有稳定 ID；将旧目录坐标用作撤销请求的权限上下文，导致迟到清理无法通过入口检查。
+候选修正只使用 System 已持有的发行者权限撤销同一 grant ID，不放宽 Operator 的权限检查，
+不把 Denied/Unknown 当成成功；须先补直接编译生产退休逻辑的宿主回归，再重跑原生 128 代。
