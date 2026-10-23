@@ -31,6 +31,8 @@ pub fn run() -> Result<(), &'static str> {
         old_helper.get(),
         before,
     ));
+    let state = state_face(&tree)?;
+    publisher(&tree, &state, old_task)?;
     let ack =
         establish::lend(env::unit::sire(), super::ACK).map_err(|_| "daemon-stop: ack hole")?;
     request((old_task, old_helper, before), ack.seed())?;
@@ -47,7 +49,7 @@ pub fn run() -> Result<(), &'static str> {
         old_task.get(),
         old_helper.get(),
     ));
-    stable(&tree, old_task)?;
+    stable(&tree, &state, old_task)?;
     Ok(())
 }
 
@@ -190,7 +192,7 @@ fn request(
         .map_err(|_| "daemon-stop: request send")
 }
 
-fn stable(tree: &operator::Face, old_task: TaskId) -> Result<(), &'static str> {
+fn state_face(tree: &operator::Face) -> Result<Face, &'static str> {
     let wait = Wait::AtMost(MS);
     let service = tree
         .resolve(system_api::namespace::SERVICE, wait)
@@ -206,10 +208,37 @@ fn stable(tree: &operator::Face, old_task: TaskId) -> Result<(), &'static str> {
     if face.host() != env::unit::sire() {
         return Err("daemon-stop: state face host");
     }
+    if establish::marked_as(entry) != Some(ctl::Grant::State.mark()) {
+        return Err("daemon-stop: state face mark");
+    }
+    Ok(face)
+}
+
+fn publisher(tree: &operator::Face, face: &Face, old: TaskId) -> Result<(), &'static str> {
+    let expected = face
+        .publisher(system_api::namespace::SERVICE, api::ENTRY_MARK, Wait::AtMost(MS))
+        .map_err(|_| "daemon-stop: publisher query")?;
+    let entry = lookup(tree, Wait::AtMost(MS))?
+        .ok_or("daemon-stop: publisher entry")?;
+    let owner = establish::opened_by(entry).ok_or("daemon-stop: publisher owner")?;
+    let mark = establish::marked_as(entry).ok_or("daemon-stop: publisher mark")?;
+    if expected != old || owner != expected || mark != api::ENTRY_MARK {
+        return Err("daemon-stop: publisher mismatch");
+    }
+    crate::debug::put(&alloc::format!(
+        "daemon-ctl-stop: publisher task={} host={} entry_owner={} entry_mark={} expected_mark={}",
+        expected.get(), face.host().get(), owner.get(), mark.get(), api::ENTRY_MARK.get(),
+    ));
+    Ok(())
+}
+
+fn stable(tree: &operator::Face, face: &Face, old_task: TaskId) -> Result<(), &'static str> {
+    let wait = Wait::AtMost(MS);
     let start = env::chrono::clock();
     let until = start.saturating_add(STABLE_NS);
     let mut checks = 0usize;
     let mut missing = 0usize;
+    let mut revoked = 0usize;
     while env::chrono::clock() < until {
         if !matches!(
             face.service("fixturetarget".into()).state(wait),
@@ -218,6 +247,13 @@ fn stable(tree: &operator::Face, old_task: TaskId) -> Result<(), &'static str> {
             return Err("daemon-stop: target resurrected");
         }
         checks += 1;
+        if !matches!(
+            face.publisher(system_api::namespace::SERVICE, api::ENTRY_MARK, wait),
+            Err(ControlFail::NotReady)
+        ) {
+            return Err("daemon-stop: publisher still authorized");
+        }
+        revoked += 1;
         match lookup(tree, Wait::AtMost(25))? {
             None => missing += 1,
             Some(entry) if establish::opened_by(entry) == Some(old_task) => {
@@ -235,6 +271,10 @@ fn stable(tree: &operator::Face, old_task: TaskId) -> Result<(), &'static str> {
         checks,
         missing,
         env::chrono::clock().saturating_sub(start),
+    ));
+    crate::debug::put(&alloc::format!(
+        "daemon-ctl-stop: publisher revoked checks={} host={} target={}",
+        revoked, face.host().get(), old_task.get(),
     ));
     Ok(())
 }

@@ -109,6 +109,15 @@ def verify(console, records, qtest, raw_code):
         "outsider face hosts are not actual Control hosts"
     )
 
+    publisher = one(
+        console,
+        r"^daemon-ctl-stop: publisher task=(\d+) host=(\d+) entry_owner=(\d+) entry_mark=(\d+) expected_mark=(\d+)$",
+    )
+    assert (int(publisher[1]), int(publisher[2]), int(publisher[3])) == (old_task, root, old_task), (
+        "publisher query or entry owner differs from the actual target and Control"
+    )
+    assert int(publisher[4]) == int(publisher[5]) != 0, "publisher entry mark differs from declaration"
+
     request = one(
         console,
         r"^stop-root: request controller=(\d+) old task=(\d+) helper=(\d+) before=(\d+) ack=(\d+)$",
@@ -153,6 +162,12 @@ def verify(console, records, qtest, raw_code):
     assert checks >= 2, "controller did not poll several daemon intervals"
     assert int(stable[3]) >= 600_000_000, "post-stop observation window is too short"
     assert missing == checks, "target namespace entry reappeared after stop"
+    revoked = one(
+        console, r"^daemon-ctl-stop: publisher revoked checks=(\d+) host=(\d+) target=(\d+)$"
+    )
+    assert (int(revoked[1]), int(revoked[2]), int(revoked[3])) == (checks, root, old_task), (
+        "publisher authority was not revoked throughout the observation window"
+    )
     exit_controller = one(
         console, r"^exit tid=(\d+) reason=0x0 note: daemon-ctl-stop: done$"
     )
@@ -178,6 +193,7 @@ def verify(console, records, qtest, raw_code):
         old.start(),
         outsider.start(),
         observed.start(),
+        publisher.start(),
         request.start(),
         kill.start(),
         queued.start(),
@@ -190,6 +206,7 @@ def verify(console, records, qtest, raw_code):
         ack.start(),
         controller_ack.start(),
         stable.start(),
+        revoked.start(),
         exit_controller.start(),
         daemon_retirement.start(),
         exit_root.start(),

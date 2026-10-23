@@ -1,6 +1,6 @@
 /// 这条路叫什么，以及一条服务的四手。
 use alloc::string::String;
-use env::{PieToken, TaskId, Wait};
+use env::{Mark, PieToken, TaskId, Wait};
 
 use ipc::rpc::{Fail as RpcFail, request::Sender};
 use ipc::session::establish;
@@ -10,6 +10,7 @@ use super::Fail;
 use super::frame::{self, State};
 use system_api::control::Call;
 use system_api::control::frame::{OK, code_to_fail};
+use system_api::operator::NamespaceKey;
 
 /// 一面生命周期服务：**树上查回来的门牌** + 它的开者（对端）
 /// **它不出编排域**：外面那几枚 `Session` / `Endpoint` / `Receiver` 一个都不露
@@ -58,6 +59,27 @@ impl Face {
     /// 查询可信命名程序当前存活的任务。
     pub fn task(&self, name: String, wait: Wait) -> Result<TaskId, Fail> {
         let said = read(self.call(frame::Req::Task(name), wait)?)?;
+        if said.a != 0 || said.task == TaskId::new(0) {
+            return Err(Fail::Bad);
+        }
+        Ok(said.task)
+    }
+
+    /// Ask Control for the current named static publisher of one namespace
+    /// mark and one resource mark.
+    pub fn publisher(
+        &self,
+        namespace: NamespaceKey,
+        mark: Mark,
+        wait: Wait,
+    ) -> Result<TaskId, Fail> {
+        let said = read(self.call(
+            frame::Req::Publisher {
+                namespace: namespace.mark(),
+                mark,
+            },
+            wait,
+        )?)?;
         if said.a != 0 || said.task == TaskId::new(0) {
             return Err(Fail::Bad);
         }

@@ -1,6 +1,6 @@
 //! Byte codecs for environment-local semantic handles, plus shared `wire` reexports.
 
-use crate::wire::{PieToken, TaskId, TeamId};
+use crate::wire::{Mark, PieToken, TaskId, TeamId};
 
 pub use ::wire::{Field, Span, fetch_bytes, fetch_tail, store_bytes, store_tail, times, total};
 
@@ -33,5 +33,18 @@ impl Field for PieToken {
     }
     fn fetch(bytes: &[u8]) -> Option<Self> {
         PieToken::from_bytes(bytes.get(..8)?)
+    }
+}
+
+impl Field for Mark {
+    const WIDTH: usize = Mark::WIDTH;
+
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(&self.to_bytes());
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        let raw: [u8; Mark::WIDTH] = bytes.get(..Mark::WIDTH)?.try_into().ok()?;
+        Some(Mark::from_bytes(raw))
     }
 }

@@ -24,6 +24,7 @@ def valid_evidence():
             "system: activate daemon tid=18",
             "daemon-ctl-stop: outsider source=30 observe=10 recover=10 denied=Denied",
             "daemon-ctl-stop: observed old task=17 helper=25 before=100",
+            "daemon-ctl-stop: publisher task=17 host=10 entry_owner=17 entry_mark=44 expected_mark=44",
             "stop-root: request controller=30 old task=17 helper=25 before=100 ack=44",
             "stop-root: kill old task=17 team=21 before=100",
             "stop-root: actor request queued",
@@ -36,6 +37,7 @@ def valid_evidence():
             "stop-root: ack controller=30 run=false state=dead",
             "daemon-ctl-stop: ack from=10 old task=17 helper=25",
             "daemon-ctl-stop: stable dead checks=12 missing=12 target=fixturetarget elapsed_ns=650000000",
+            "daemon-ctl-stop: publisher revoked checks=12 host=10 target=17",
             "exit tid=30 reason=0x0 note: daemon-ctl-stop: done",
             "system: retired name=daemon task=18 team=22",
             "exit tid=10 reason=0x0 note: daemon-stop: done",
@@ -61,6 +63,28 @@ def valid_evidence():
 
 
 class DaemonStopVerifier(unittest.TestCase):
+    def test_publisher_identity_host_owner_and_mark_must_match(self):
+        console, events, qtest, raw = valid_evidence()
+        for old, new in (
+            ("publisher task=17", "publisher task=99"),
+            ("host=10 entry_owner", "host=99 entry_owner"),
+            ("entry_owner=17", "entry_owner=99"),
+            ("entry_mark=44", "entry_mark=45"),
+            ("entry_mark=44 expected_mark=44", "entry_mark=0 expected_mark=0"),
+        ):
+            with self.subTest(field=old), self.assertRaises(AssertionError):
+                self.verify(console.replace(old, new), events, qtest, raw)
+
+    def test_publisher_revocation_must_cover_every_stable_check(self):
+        console, events, qtest, raw = valid_evidence()
+        for old, new in (
+            ("revoked checks=12", "revoked checks=11"),
+            ("revoked checks=12 host=10", "revoked checks=12 host=99"),
+            ("host=10 target=17", "host=10 target=99"),
+        ):
+            with self.subTest(field=old), self.assertRaises(AssertionError):
+                self.verify(console.replace(old, new), events, qtest, raw)
+
     def verify(self, console, events, qtest, raw=0):
         return daemon_stop.verify(console, events, qtest, raw)
 

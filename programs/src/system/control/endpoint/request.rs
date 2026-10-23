@@ -82,6 +82,12 @@ pub fn state(
                 Ok(task) => ccall::frame::said_task(task),
                 Err(fail) => status(fail),
             },
+            ccall::frame::Wire::Publisher { namespace, mark } => {
+                match control.publisher(namespace, mark) {
+                    Ok(task) => ccall::frame::said_task(task),
+                    Err(fail) => status(fail),
+                }
+            }
             _ => {
                 inbox.0.push_back(incoming);
                 continue;
@@ -136,7 +142,9 @@ pub fn enqueue(
                     origin: Origin::External,
                 },
             ),
-            ccall::frame::Wire::State(_) | ccall::frame::Wire::Task(_) => {
+            ccall::frame::Wire::State(_)
+            | ccall::frame::Wire::Task(_)
+            | ccall::frame::Wire::Publisher { .. } => {
                 return Err(crate::system::app::Fault::Room);
             }
             _ => {
