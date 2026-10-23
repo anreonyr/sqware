@@ -11,6 +11,7 @@ use super::construct::make_team;
 pub struct TeamBuilder {
     space: Space,
     sire: TaskWeak,
+    creator: env::TaskId,
     constructing: bool,
 }
 
@@ -19,12 +20,18 @@ impl TeamBuilder {
         Self {
             space,
             sire: TaskWeak::empty(),
+            creator: env::TaskId::new(0),
             constructing: false,
         }
     }
 
     pub fn sire(mut self, sire: TaskWeak) -> Self {
         self.sire = sire;
+        self
+    }
+
+    pub fn creator(mut self, creator: env::TaskId) -> Self {
+        self.creator = creator;
         self
     }
 
@@ -35,12 +42,20 @@ impl TeamBuilder {
 
     /// 按 `kind` 起一个空间（非内核的会带跳板），再以 `sire` 落一座构造中的团队。
     pub(crate) fn build(kind: SpaceKind, sire: TaskWeak) -> Result<Arc<Team>, NestError> {
+        Self::build_with_creator(kind, sire, env::TaskId::new(0))
+    }
+
+    pub(crate) fn build_with_creator(
+        kind: SpaceKind,
+        sire: TaskWeak,
+        creator: env::TaskId,
+    ) -> Result<Arc<Team>, NestError> {
         let space = match kind {
             SpaceKind::Supervisor => SpaceBuilder::supervisor(),
             SpaceKind::User => SpaceBuilder::user(),
         }
         .build()?;
-        TeamBuilder::new(space).sire(sire).constructing().spawn()
+        TeamBuilder::new(space).sire(sire).creator(creator).constructing().spawn()
     }
 
     pub fn spawn(self) -> Result<Arc<Team>, NestError> {
@@ -50,6 +65,6 @@ impl TeamBuilder {
             None => return Err(NestError::NoRegion),
         };
         let space = Arc::try_new(self.space).map_err(|_| NestError::OutOfMemory)?;
-        make_team(space, sire, self.constructing)
+        make_team(space, sire, self.creator, self.constructing)
     }
 }

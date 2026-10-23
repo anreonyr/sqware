@@ -66,6 +66,11 @@ pub static PROGRAM: UnitFile = UnitFile {
         ending: Some(Ending::Resident),
 
         construction: &[],
+        retirement: &[crate::unit::Retirement {
+            provider: "hub",
+            namespace: 0,
+            face: "retire",
+        }],
     },
     supply: crate::unit::SupplyConfig {
         bindings: &[system_api::supply::Binding {

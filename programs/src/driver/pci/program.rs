@@ -38,6 +38,11 @@ pub static PROGRAM: UnitFile = UnitFile {
         ready: Ready::Signal(crate::unit::READY_MARK),
         ending: Some(Ending::Resident),
         construction: &[],
+        retirement: &[crate::unit::Retirement {
+            provider: "hub",
+            namespace: 0,
+            face: "retire",
+        }],
     },
     supply: crate::unit::SupplyConfig {
         bindings: &[bindings::ECAM_BINDING, bindings::APERTURE_BINDING],

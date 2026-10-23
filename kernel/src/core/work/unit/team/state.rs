@@ -28,6 +28,10 @@ impl TeamState {
         self.phase.terminal()
     }
 
+    pub(crate) fn debarked(&self) -> bool {
+        matches!(self.phase, TeamPhase::Paused)
+    }
+
     pub(crate) fn ready(&self) -> bool {
         matches!(self.stage, TeamStage::Ready { .. }) && !self.terminal()
     }

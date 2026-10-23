@@ -101,12 +101,17 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 return Outcome::fail(frame, UnitFail::Denied);
             }
             let sire = TaskWeak::stored(Arc::downgrade(&parent), Origin::Sire);
-            match crate::core::work::unit::team::TeamBuilder::build(SpaceKind::from(kind), sire) {
+            match crate::core::work::unit::team::TeamBuilder::build_with_creator(
+                SpaceKind::from(kind),
+                sire,
+                me.ident.id,
+            ) {
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
                 Err(error) => return Outcome::fail(frame, map_err(error)),
             }
         }
         UnitCall::SelfId => frame.gpr.set_x(Gprs::A0, ident.id.get()),
+        UnitCall::Creator => frame.gpr.set_x(Gprs::A0, ident.team.creator().get()),
         UnitCall::Sire => frame
             .gpr
             .set_x(Gprs::A0, ident.team.sire().map_or(0, |id| id.get())),
@@ -256,6 +261,32 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 }
             };
             if let Err(error) = result {
+                return Outcome::fail(frame, error);
+            }
+        }
+        UnitCall::Guard { team, authority } => {
+            let target = match me.clan(team) {
+                Some(target) => target,
+                None if team == ident.team.id => ident.team.clone(),
+                None => return Outcome::fail(frame, UnitFail::Denied),
+            };
+            if !crate::core::work::unit::team::exit::authorize(me.as_ref(), authority) {
+                return Outcome::fail(frame, UnitFail::Denied);
+            }
+            if let Err(error) = target.guard(ident.id) {
+                return Outcome::fail(frame, error);
+            }
+        }
+        UnitCall::Unguard { team, authority } => {
+            let target = match me.clan(team) {
+                Some(target) => target,
+                None if team == ident.team.id => ident.team.clone(),
+                None => return Outcome::fail(frame, UnitFail::Denied),
+            };
+            if !crate::core::work::unit::team::exit::authorize(me.as_ref(), authority) {
+                return Outcome::fail(frame, UnitFail::Denied);
+            }
+            if let Err(error) = target.unguard(ident.id) {
                 return Outcome::fail(frame, error);
             }
         }

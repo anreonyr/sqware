@@ -14,6 +14,7 @@ pub static PROGRAM: UnitFile = UnitFile {
         ending: None,
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };

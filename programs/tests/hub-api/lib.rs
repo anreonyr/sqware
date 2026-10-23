@@ -34,11 +34,11 @@ mod tests {
     #[test]
     fn marks_grants_and_actions_keep_their_fixed_values() {
         assert_eq!([frame::BOND, frame::LIST, frame::CLAIM], [1, 2, 3]);
-        assert_eq!(Grant::ALL.map(Grant::at), [1, 2, 3, 4]);
-        assert_eq!(Grant::ALL.map(Grant::name), ["bond", "list", "claim", "dma"]);
+        assert_eq!(Grant::ALL.map(Grant::at), [1, 2, 3, 4, 5]);
+        assert_eq!(Grant::ALL.map(Grant::name), ["bond", "list", "claim", "dma", "retire"]);
         assert_eq!(Grant::ALL.map(Grant::mark), [
             Mark::of("hub-entry-bond"), Mark::of("hub-entry-list"), Mark::of("hub-entry-claim"),
-            Mark::of("hub-entry-dma"),
+            Mark::of("hub-entry-dma"), Mark::of("hub-entry-retire"),
         ]);
         assert_eq!(hub_api::marks::DECLARATIONS.len(), 2);
         assert_eq!(env::marks::conflict(hub_api::REGISTRY), None);

@@ -28,6 +28,9 @@ pub mod backtrace;
 pub mod boot_devices;
 pub mod closed_transfer;
 pub mod depend;
+pub mod exit_policy;
+#[cfg(feature = "critical-scene")]
+pub mod critical;
 #[cfg(feature = "dma-confirmation-scene")]
 pub mod dma_confirmation;
 pub mod fault;

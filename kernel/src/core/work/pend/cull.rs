@@ -319,6 +319,9 @@ pub(crate) fn revoke(
 }
 
 pub(crate) fn doom(task: &Arc<Task>) {
+    crate::core::work::unit::team::exit::member_dying(task, 0);
+    #[cfg(feature = "critical-scene")]
+    crate::core::work::unit::team::exit::cleanup_started(task);
     let tokens = {
         let _pend = task.pend.lock();
         super::changed(task);

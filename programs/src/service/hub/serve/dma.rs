@@ -16,7 +16,7 @@
 use alloc::vec::Vec;
 use env::{Access, PieToken, TaskId, Wait};
 use hub_api::{
-    BindingState, Close, DmaSaid, DmaWire, Fail, Failure, PARTY_CONTROL, PARTY_HUB, PARTY_IOMMU,
+    BindingState, Close, DmaSaid, DmaWire, Fail, Failure, PARTY_HUB, PARTY_IOMMU,
     PARTY_PCI, PARTY_RECOVERY,
 };
 use resource::raw::Hole;
@@ -85,16 +85,12 @@ pub fn turn(
     }
 }
 
-/// 这一台是不是本台名下、经可信构造登记的执行实例（owner 检查在 Control 那一侧）。
-fn owned_instance(peers: &Peers, task: TaskId) -> bool {
-    peers.control.instance(task).state(Wait::AtMost(MS)).is_ok()
-}
-
 /// 设备门牌上的 DMA 认领。
 ///
 /// “哪一台”由**哪一枚门响了**回答（调用方给的就是那一枚）；准入由门牌上的类联盟
 /// permit 回答（认领者先经 `bond` 进类，否则 `find` 都拿不到这一枚）——
-/// 不看报文里的自报设备号，也不开放设备清单。返 `None` = 这一帧不是 DMA 认领。
+/// 不看报文里的自报设备号，也不开放设备清单。执行实例是否真实存在、是否属于 Hub
+/// 已由 launch 队列经 Control 实例面核验并记入准入；这里只接受那道准入。
 pub fn claim_at_door(
     ledger: &mut Ledger,
     peers: &Peers,
@@ -112,10 +108,6 @@ pub fn claim_at_door(
         Some(_) if !claim::sensor_from(from, claim.sensor) => {
             DmaSaid::of(fail_to_code(Fail::Denied))
         }
-        // **真实授权来源**：认领者必须是本台名下、经可信构造登记的执行实例
-        // （`StateInstance` 在 Control 那一侧按真实 owner 核）；公开报名（bond）
-        // 与自铸报活孔都只是过滤器，不当授权。
-        Some(_) if !owned_instance(peers, from) => DmaSaid::of(fail_to_code(Fail::Denied)),
         Some(device) => {
             let request = ClaimRequest {
                 from,
@@ -168,8 +160,7 @@ fn enroll_device(
 /// 推进所有开着的绑定：先放行构造方报来的执行实例，再逐笔推一格。
 ///
 /// 调用方（常驻那一圈）每一格叫一次；没推进就下一格再来。
-pub fn advance(ledger: &mut Ledger, peers: &Peers) {
-    super::execution::advance(ledger, peers);
+pub(crate) fn advance(ledger: &mut Ledger, peers: &Peers, executions: &mut super::execution::Executions) {
     let gone = ledger.owner_gone(sweep::alive);
     if gone > 0 {
         crate::debug::put(&alloc::format!(
@@ -181,12 +172,23 @@ pub fn advance(ledger: &mut Ledger, peers: &Peers) {
         .map(|binding| binding.id.serial)
         .collect();
     for serial in serials {
-        step(ledger, peers, serial);
+        if let Some(task) = ledger.binding(serial)
+            .filter(|binding| binding.state == BindingState::Closing)
+            .map(|binding| binding.execution)
+        {
+            executions.closed(ledger, task);
+        }
+        step(ledger, peers, executions, serial);
     }
 }
 
 /// 推一格。
-fn step(ledger: &mut Ledger, peers: &Peers, serial: u64) {
+fn step(
+    ledger: &mut Ledger,
+    peers: &Peers,
+    executions: &mut super::execution::Executions,
+    serial: u64,
+) {
     let Some(binding) = ledger.binding(serial) else {
         return;
     };
@@ -201,15 +203,16 @@ fn step(ledger: &mut Ledger, peers: &Peers, serial: u64) {
             _ => {}
         },
         BindingState::Closing => match step {
-            Step::StopCpu => stop_cpu(ledger, peers, serial),
+            // Control's per-instance target is the only proof that crosses StopCpu.
+            Step::StopCpu => {}
             Step::Invalidate => invalidate(ledger, peers, serial),
             Step::Disable => disable(ledger, peers, serial),
             Step::DeviceStop => device_stop(ledger, peers, serial),
             Step::Quiesce => quiesce(ledger, peers, serial),
             Step::Release => release(ledger, peers, serial),
             Step::Detach => detach(ledger, peers, serial),
-            Step::Unplace => unplace(ledger, peers, serial),
-            _ => finish(ledger, serial),
+            Step::Unplace => unplace(ledger, peers, executions, serial),
+            _ => finish(ledger, executions, serial),
         },
         BindingState::Active | BindingState::Closed => {}
     }
@@ -232,12 +235,20 @@ fn note(ledger: &mut Ledger, serial: u64, fail: Failure) {
     ledger.note_failure(serial, fail);
 }
 
-fn finish(ledger: &mut Ledger, serial: u64) {
+fn finish(
+    ledger: &mut Ledger,
+    executions: &mut super::execution::Executions,
+    serial: u64,
+) {
     let requester = ledger
         .binding(serial)
         .map(|binding| binding.device.requester)
         .unwrap_or(0);
+    let execution = ledger.binding(serial).map(|binding| binding.execution);
     ledger.finish(serial);
+    if let Some(execution) = execution {
+        executions.closed(ledger, execution);
+    }
     crate::debug::put(&alloc::format!(
         "hub: binding {serial} closed and released device {requester}"
     ));
@@ -443,25 +454,6 @@ fn enable(ledger: &mut Ledger, peers: &Peers, serial: u64) {
     ));
 }
 
-fn stop_cpu(ledger: &mut Ledger, _peers: &Peers, serial: u64) {
-    let Some(binding) = ledger.binding(serial) else {
-        return;
-    };
-    let execution = binding.execution;
-    let Some(record) = ledger.execution(execution) else {
-        note(ledger, serial, failure(PARTY_CONTROL, 0, 0));
-        return;
-    };
-    record.retire();
-    if record.stopped() {
-        crate::debug::put(&alloc::format!(
-            "hub: binding {serial} execution domain stopped (tid={})",
-            execution.get()
-        ));
-        next(ledger, serial, Step::Invalidate);
-    }
-}
-
 fn iommu_step(peers: &Peers, serial: u64, op: u8, reason: Close) -> Result<iommu::Said, Failure> {
     peers
         .iommu
@@ -618,7 +610,12 @@ fn detach(ledger: &mut Ledger, peers: &Peers, serial: u64) {
     next(ledger, serial, Step::Unplace);
 }
 
-fn unplace(ledger: &mut Ledger, peers: &Peers, serial: u64) {
+fn unplace(
+    ledger: &mut Ledger,
+    peers: &Peers,
+    executions: &mut super::execution::Executions,
+    serial: u64,
+) {
     match peers.pci.call(Wait::AtMost(MS), |back| {
         pci::Wire::Release(pci::Toggle {
             op: pci::RELEASE,
@@ -626,7 +623,7 @@ fn unplace(ledger: &mut Ledger, peers: &Peers, serial: u64) {
             back,
         })
     }) {
-        Ok(said) if said.status == wire::OK => finish(ledger, serial),
+        Ok(said) if said.status == wire::OK => finish(ledger, executions, serial),
         Ok(said) => note(
             ledger,
             serial,

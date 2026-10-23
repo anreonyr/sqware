@@ -14,7 +14,7 @@ use crate::core::work::unit::task::Task;
 ///
 /// 不请求就**继承**父的那一段（带窗口的父派生出来的子仍带那一段，不是整段来源）；
 /// 请求的那一段必须落在父的有效窗口里（父没有窗口就是整段来源），越窗与溢出一律拒。
-/// 空长在这一层见不到：ABI 那一格先把它折成 `NotAligned`（`PageCount::new`，见 `entry/call/pie.rs`）。
+/// ABI 解码检查非空与溢出；这一层检查父范围。
 /// 窗口只在 Pole（有真实来源）上成立。
 fn effective_window(
     pie: &PieSnapshot,
@@ -48,15 +48,25 @@ pub(crate) fn accord(
     subset: Permission,
     mark: Mark,
 ) -> Result<usize, PieFail> {
-    accord_window(caller, src, dst, subset, mark, None)
+    publish(caller, src, dst, subset, mark, None)
 }
 
-/// 同 `accord`，但可给这一枚子分支一个**有效窗口**。
+/// 本地派生：目标就是 `caller`，范围继承或收窄，仍走同一条授权发布实现。
+pub(crate) fn derive(
+    caller: &Arc<Task>,
+    src: PieToken,
+    subset: Permission,
+    mark: Mark,
+    window: Option<(PageOffset, PageCount)>,
+) -> Result<usize, PieFail> {
+    publish(caller, src, &Arc::downgrade(caller), subset, mark, window)
+}
+
+/// 两条授权路径的唯一发布后端：`accord` 继承父窗口，`derive` 可显式收窄。
 ///
 /// 请求的那一段用**相对来源起点的绝对页偏移**说（不是相对父分支的偏移），
 /// 且必须落在父的有效窗口里：重复与嵌套派生只能单调收窄，没有放宽的路。
-/// 不请求（旧 `Accord`）则**继承**父的有效窗口——带窗口的父交出去的仍是那一段。
-pub(crate) fn accord_window(
+fn publish(
     caller: &Arc<Task>,
     src: PieToken,
     dst: &Weak<Task>,
@@ -94,7 +104,7 @@ pub(crate) fn accord_window(
         }
         let mark = if mark == Mark::NONE { pie.mark() } else { mark };
         let window = effective_window(&pie, requested)?;
-        // Accord 操作的是这一段授权窗口：这一段的子段或别人的独立持有仍在占用就不建
+        // 授权发布操作的是这一段窗口：这一段的子段或别人的独立持有仍在占用就不建
         // 新分支，也不隐式裁到剩余范围（建新授权不享受“持有人自己”那一档）。
         if let Some(meta) = &pole
             && let Some(authorization) = meta.authorization()

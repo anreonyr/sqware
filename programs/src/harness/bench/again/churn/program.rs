@@ -17,6 +17,7 @@ pub static CHURN: UnitFile = UnitFile {
         ending: None,
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };

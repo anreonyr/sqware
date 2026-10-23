@@ -1,0 +1,15 @@
+[package]
+name = "retirement-boundary-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+env = { path = "../../../crates/env" }
+schedule = { path = "../../../crates/schedule" }
+system-api = { path = "../../src/system/api" }

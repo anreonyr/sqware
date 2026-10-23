@@ -1,12 +1,13 @@
-use ::core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::machine::hart;
+use ::core::sync::atomic::{AtomicUsize, Ordering};
 use sbi::{self, ecall::SArgs, fid};
 
-static ALARM: AtomicBool = AtomicBool::new(false);
 static ALARMER: AtomicUsize = AtomicUsize::new(usize::MAX);
+static QUIET: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) fn hush() {
-    if ALARM.load(Ordering::Acquire) && ALARMER.load(Ordering::Acquire) != hart::hart_id().get() {
+    let owner = ALARMER.load(Ordering::Acquire);
+    if owner != usize::MAX && owner != hart::hart_id().get() {
         hunker();
     }
 }
@@ -14,6 +15,8 @@ pub(crate) fn hush() {
 fn hunker() -> ! {
     crate::core::memory::nest::identity::vacate();
     unsafe { ::core::arch::asm!("csrci sstatus, 2") };
+    // This path never returns: each peer acknowledges once after vacating its lease.
+    QUIET.fetch_add(1, Ordering::Release);
     let _ = sbi::HsmCall::new(fid::Hsm::Stop).call();
     loop {
         ::core::hint::spin_loop();
@@ -21,14 +24,16 @@ fn hunker() -> ! {
 }
 
 pub(crate) fn claim() -> bool {
-    if ALARM.swap(true, Ordering::AcqRel) {
-        if ALARMER.load(Ordering::Acquire) != hart::hart_id().get() {
-            hunker();
-        }
-        return false;
+    let me = hart::hart_id().get();
+    match ALARMER.compare_exchange(usize::MAX, me, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => true,
+        Err(owner) if owner == me => false,
+        Err(_) => hunker(),
     }
-    ALARMER.store(hart::hart_id().get(), Ordering::Release);
-    true
+}
+
+pub(crate) fn quiesced_peers() -> usize {
+    QUIET.load(Ordering::Acquire)
 }
 
 pub(crate) fn alarm() -> bool {
@@ -55,7 +60,11 @@ pub(crate) fn broadcast() {
             continue;
         }
         let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
-            .args(SArgs { a0: mask, a1: base, ..Default::default() })
+            .args(SArgs {
+                a0: mask,
+                a1: base,
+                ..Default::default()
+            })
             .call();
     }
 }

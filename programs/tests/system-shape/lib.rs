@@ -181,6 +181,35 @@ mod boundaries {
         assert!(!bindings.contains("Cell::Vacant"));
         let dma = fs::read_to_string(src.join("service/hub/serve/dma.rs")).unwrap();
         assert!(!dma.contains("join_task("));
+        assert!(!dma.contains("slay_team("));
+        assert!(!dma.contains("env::unit::oust("));
+        // Hub keeps only admission identity, watermarks and binding facts.
+        let hub_core = src.join("service/hub/core");
+        for old in [
+            "execution.rs",
+            "execution_effects.rs",
+            "execution_failure.rs",
+            "execution_step.rs",
+            "executions.rs",
+        ] {
+            assert!(!hub_core.join(old).exists(), "Hub lifecycle state remains: {old}");
+        }
+        assert!(hub_core.join("admission.rs").is_file());
+        let hub_execution =
+            fs::read_to_string(src.join("service/hub/serve/execution.rs")).unwrap();
+        assert!(!hub_execution.contains("env::unit::"));
+        let hub_launch = fs::read_to_string(src.join("service/hub/serve/launch.rs")).unwrap();
+        assert!(hub_launch.contains("begin_inspect"));
+        let hub_return = fs::read_to_string(src.join("service/hub/serve/returned.rs")).unwrap();
+        assert!(hub_return.contains("begin_release"));
+        // One structure/enum per file, and no empty StopCpu forwarding.
+        assert!(src.join("service/hub/serve/launch_phase.rs").is_file());
+        assert!(src.join("service/hub/serve/launch_reply.rs").is_file());
+        assert!(src.join("service/hub/serve/return_reply.rs").is_file());
+        assert!(!dma.contains("fn stop_cpu"));
+        assert!(!dma.contains("owned_instance"));
+        assert!(!hub_return.contains("Err(Fail::Unknown) | Err(Fail::Denied) => ReturnReply::Released"));
+        assert!(hub_execution.contains("try_reserve"));
         // 认领走设备门牌与类联盟（不自报设备号、不开放设备清单）。
         assert!(dma.contains("device_by_door("));
         assert!(!dma.contains("claim.requester"));
@@ -188,6 +217,50 @@ mod boundaries {
         let claim_frame = fs::read_to_string(src.join("service/hub/api/src/frame/dma.rs")).unwrap();
         assert!(!claim_frame.contains("pub requester: u32,\n    pub sensor"));
     }
+    #[test]
+    fn instance_retirement_precedes_cleanup_and_dynamic_units_declare_hub() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let hooks = fs::read_to_string(repo.join("programs/src/system/assembly/hooks.rs")).unwrap();
+        let retire = hooks
+            .split("let mut retire = Schedule::sequence();")
+            .nth(1)
+            .unwrap()
+            .split("Ok(alloc::vec!")
+            .next()
+            .unwrap();
+        let order = [
+            "\"retirement\"",
+            "\"identity.exports\"",
+            "\"namespace\"",
+            "\"constructor\"",
+            "\"claim\"",
+            "\"supply\"",
+            "\"identity\"",
+            "\"bootstrap\"",
+            "\"reclaim\"",
+        ];
+        let mut at = 0;
+        for step in order {
+            let found = retire[at..].find(step).map(|offset| at + offset);
+            assert!(found.is_some(), "missing retirement step {step}");
+            at = found.unwrap() + step.len();
+        }
+        // Dynamic execution instances declare Hub's generic retirement dependency.
+        let device = fs::read_to_string(repo.join("programs/src/harness/device/programs.rs")).unwrap();
+        assert!(device.contains("retirement: &WORK_RETIREMENT"));
+        assert!(device.contains("provider: \"hub\""));
+        // Common owner callers hand receipts back through Release, never kernel Oust.
+        for path in ["programs/src/user/login/main.rs", "programs/src/user/shell/adapt/controller.rs"] {
+            let source = fs::read_to_string(repo.join(path)).unwrap();
+            assert!(!source.contains("env::unit::oust"), "{path} still Ousts directly");
+            assert!(source.contains("release"), "{path} does not return through Release");
+        }
+        let shell = fs::read_to_string(repo.join("programs/src/user/shell/adapt/controller.rs")).unwrap();
+        assert!(shell.contains("begin_release"));
+        assert!(shell.contains("release_reply"));
+        assert!(!shell.contains("env::unit::oust"));
+    }
+
     #[test]
     fn static_pause_and_resume_target_the_same_whole_team() {
         let control = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system/control");

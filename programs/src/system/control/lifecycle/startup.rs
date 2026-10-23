@@ -40,7 +40,7 @@ pub fn startup(
     mut operations: ResMut<crate::system::assembly::Jobs>,
     settle: Res<crate::system::app::policy::Settle>,
 ) -> Result<Progress, Fail> {
-    if settle.flow.settling || startup.plan.next == startup.plan.units.len() {
+    if settle.flow.settling || settle.closing() || startup.plan.next == startup.plan.units.len() {
         return Ok(Progress::Done);
     }
     if let Some(id) = startup.waiting {

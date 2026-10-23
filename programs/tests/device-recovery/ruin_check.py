@@ -36,7 +36,7 @@ def pending(console, events, mode="ruin"):
     main, auxiliary, beta = tasks(console)
     if mode == "forced":
         one(console, r"ctl: awaiting forced global shutdown with in-flight read")
-        assert "system: idle deadline reached; awaiting DMA settlement\n" in console
+        assert re.search(r"^system: idle deadline reached; awaiting (?:DMA|retirement) settlement$", console, re.MULTILINE)
         for service in ("hub", "pci", "iommu", "recovery", "device-ctl-forced"):
             task = int(one(console, rf"system: minted {service} tid=(\d+)")[1])
             assert task not in reaps(events), f"{service} reaped before DMA settlement"
@@ -57,6 +57,7 @@ def pending(console, events, mode="ruin"):
         "hub: binding 1 closed",
         "ruin: recovery dead after reply",
         "system: forced shutdown admitted after DMA settlement",
+        "system: forced shutdown admitted after retirement settlement",
         "system: frame Step(Idle)",
         "task: all tasks exited, system halted",
     ):
@@ -87,7 +88,7 @@ def completed(console, events, backend, mode="ruin"):
         rf"hub: binding 1 closed and released device {requester}",
         *(
             (
-                r"system: forced shutdown admitted after DMA settlement",
+                r"system: forced shutdown admitted after (?:DMA|retirement) settlement",
                 r"system: frame Step\(Idle\)",
             )
             if mode == "forced" else (

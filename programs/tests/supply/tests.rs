@@ -2,7 +2,9 @@ use super::lease::{
     Accord, Begin, DeliveryRequest, FailedRoots, LeaseKey, LeaseStart, Ledger, Origin,
     OriginBinding, Parameters, PieEffects, PrivateRoot, RootAssignment, RootRequest,
 };
-use env::{Mark, Permission, PieInfo, PieKind, PieToken, TaskId};
+use super::derivation::Derivation;
+use super::production_source::Derivation as ProductionDerivation;
+use env::{GrantRange, Mark, Permission, PieInfo, PieKind, PieToken, TaskId};
 use system_api::supply::{Fail, Key, LeaseId, State};
 
 const SOURCE: Key = Key::of("vendor/source");
@@ -513,8 +515,8 @@ struct PieModel {
     next: usize,
     entries: Vec<(PieInfo, Option<PieToken>)>,
     fail_revoke: bool,
-    /// 每次 `accord` 收到的窗口请求，按调用顺序；用来核“窗口真的从供给层走到了效果层”。
-    windows: Vec<Option<(usize, usize)>>,
+    /// 每次 `derive` 收到的范围请求，按调用顺序；用来核“范围真的从供给层走到了效果层”。
+    ranges: Vec<GrantRange>,
 }
 
 impl PieModel {
@@ -580,10 +582,19 @@ impl PieEffects for PieModel {
     }
 
     fn accord(&mut self, request: Accord) -> Result<PieToken, Fail> {
-        self.windows.push(request.window);
         self.issue(
             request.token,
             request.target,
+            request.permission,
+            request.mark,
+        )
+    }
+
+    fn derive(&mut self, request: Derivation) -> Result<PieToken, Fail> {
+        self.ranges.push(request.range);
+        self.issue(
+            request.source,
+            TaskId::new(8),
             request.permission,
             request.mark,
         )
@@ -634,6 +645,9 @@ impl PieEffects for SharedPie {
             request.mark,
         )
     }
+    fn derive(&mut self, request: Derivation) -> Result<PieToken, Fail> {
+        self.0.borrow_mut().derive(request)
+    }
     fn revoke(&mut self, token: PieToken) -> Result<(), Fail> {
         self.0.borrow_mut().revoke(token)
     }
@@ -650,6 +664,14 @@ impl super::production_source::PieEffects for SharedPie {
             request.permission,
             request.mark,
         )
+    }
+    fn derive(&mut self, request: ProductionDerivation) -> Result<PieToken, Fail> {
+        self.0.borrow_mut().derive(Derivation {
+            source: request.source,
+            permission: request.permission,
+            mark: request.mark,
+            range: request.range,
+        })
     }
     fn revoke(&mut self, token: PieToken) -> Result<(), Fail> {
         self.0.borrow_mut().revoke(token)
@@ -694,7 +716,7 @@ impl super::production_source::Resource for TestResource {
                 super::production_source::RootAssignment {
                     shared: self.shared,
                     index,
-                    window: None,
+                    range: GrantRange::Inherit,
                 },
                 super::production_source::RootRequest {
                     id: request.id,
@@ -848,7 +870,7 @@ fn production_private_root_revoke_covers_regrant_descendants_but_keeps_siblings(
         RootAssignment {
             shared,
             index: 0,
-            window: None,
+            range: GrantRange::Inherit,
         },
         request(1),
         &mut effects,
@@ -858,7 +880,7 @@ fn production_private_root_revoke_covers_regrant_descendants_but_keeps_siblings(
         RootAssignment {
             shared,
             index: 0,
-            window: None,
+            range: GrantRange::Inherit,
         },
         request(2),
         &mut effects,
@@ -882,7 +904,6 @@ fn production_private_root_revoke_covers_regrant_descendants_but_keeps_siblings(
             target: TaskId::new(81),
             permission: Permission::FETCH,
             mark: Mark::of("kept-grandchild"),
-            window: None,
         })
         .unwrap();
 
@@ -895,7 +916,7 @@ fn production_private_root_revoke_covers_regrant_descendants_but_keeps_siblings(
 }
 
 #[test]
-fn production_private_root_derivation_carries_the_assignment_window_to_the_effect() {
+fn production_private_root_derivation_carries_the_assignment_range_to_the_effect() {
     let mut effects = PieModel::default();
     let shared = effects.seed(PieInfo {
         token: PieToken::mint(1),
@@ -912,30 +933,39 @@ fn production_private_root_derivation_carries_the_assignment_window_to_the_effec
         owner: TaskId::new(8),
         permission: Permission::FETCH,
     };
-    // `None` = 不请求窗口：效果层收到的就是 `None`（继承父分支那一段在内核那一侧）。
+    // `Inherit` = 不请求窗口：效果层收到的就是 `Inherit`（继承父分支那一段在内核那一侧）。
     PrivateRoot::derive_with(
         RootAssignment {
             shared,
             index: 0,
-            window: None,
+            range: GrantRange::Inherit,
         },
         request,
         &mut effects,
     )
     .unwrap();
-    assert_eq!(effects.windows.last().copied(), Some(None));
+    assert_eq!(effects.ranges.last().copied(), Some(GrantRange::Inherit));
     // 真实管理者给的绝对页坐标原样走到效果层。
     PrivateRoot::derive_with(
         RootAssignment {
             shared,
             index: 1,
-            window: Some((1, 3)),
+            range: GrantRange::Pages {
+                offset: 1,
+                count: 3,
+            },
         },
         request,
         &mut effects,
     )
     .unwrap();
-    assert_eq!(effects.windows.last().copied(), Some(Some((1, 3))));
+    assert_eq!(
+        effects.ranges.last().copied(),
+        Some(GrantRange::Pages {
+            offset: 1,
+            count: 3
+        })
+    );
 }
 
 #[test]
@@ -1193,7 +1223,7 @@ fn failed_native_root_cleanup_stays_releasing_until_retry_succeeds() {
         RootAssignment {
             shared,
             index: 0,
-            window: None,
+            range: GrantRange::Inherit,
         },
         RootRequest {
             id: LeaseId(1),
@@ -1254,7 +1284,7 @@ fn invalid_provision_keeps_derived_roots_available_for_recovery() {
         RootAssignment {
             shared,
             index: 0,
-            window: None,
+            range: GrantRange::Inherit,
         },
         RootRequest {
             id: LeaseId(1),
@@ -1305,7 +1335,7 @@ fn partial_provider_failure_keeps_earlier_derived_roots_for_cleanup() {
         RootAssignment {
             shared,
             index: 0,
-            window: None,
+            range: GrantRange::Inherit,
         },
         RootRequest {
             id: LeaseId(1),

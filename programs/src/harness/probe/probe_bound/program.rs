@@ -31,6 +31,7 @@ pub static PROBE_BOUND: UnitFile = UnitFile {
         ending: Some(Ending::Transient),
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };

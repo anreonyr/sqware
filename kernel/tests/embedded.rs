@@ -468,6 +468,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn local_derive_inherits_and_narrows() {
+        kernel::entry::check::syscall::local_derive();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn memory_control_and_task_death() {
         kernel::entry::check::syscall::control_and_death();
     }
@@ -668,6 +674,27 @@ mod tests {
     #[test]
     fn syscall_capability() {
         kernel::entry::check::syscall::capability();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn execution_domain_policy_core() {
+        kernel::entry::check::exit_policy::policy();
+        kernel::entry::check::exit_policy::authority();
+        kernel::entry::check::exit_policy::install_requires_debark();
+        kernel::entry::check::exit_policy::nested_domains();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn unit_creator_distinguishes_owner() {
+        kernel::entry::check::syscall::creator_and_owner();
+    }
+
+    #[cfg(all(debug_assertions, feature = "critical-scene"))]
+    #[test]
+    fn critical_domain_exit_stops() {
+        kernel::entry::check::critical::run();
     }
 
     #[cfg(debug_assertions)]

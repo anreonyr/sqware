@@ -183,7 +183,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
             .read::<crate::system::control::unit::Control>()
             .unwrap()
             .instances()
-            .all(|item| item.team.is_none());
+            .all(|item| item.team().is_none());
         if done.load(Ordering::Acquire) && clean {
             break;
         }

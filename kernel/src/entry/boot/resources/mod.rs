@@ -5,11 +5,13 @@ use env::Name;
 pub(crate) mod ledger;
 mod failure;
 mod frozen;
+mod guard;
 mod registry;
 mod retention;
 
 use failure::Failure;
 pub(crate) use frozen::Frozen;
+pub(crate) use guard::{ENTRIES as GUARD_ENTRIES, grant as grant_guard};
 pub(crate) use registry::Registry;
 pub(crate) use retention::{ENTRIES as RETENTION_ENTRIES, grant as grant_retention};
 

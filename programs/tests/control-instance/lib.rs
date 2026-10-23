@@ -5,6 +5,7 @@ extern crate self as env;
 extern crate self as programs;
 
 pub use abi::{ExitCause, JoinReply, Reason, TaskExit, TaskId, TeamId, UnitFail, UnitTarget, Wait};
+pub use system::control::instance::receipt::Receipt;
 use std::cell::RefCell;
 
 #[derive(Default)]
@@ -16,6 +17,8 @@ struct Effects {
     slain_teams: Vec<TeamId>,
     exits: std::collections::VecDeque<TaskExit>,
     ousted: usize,
+    oust_fail: Option<UnitFail>,
+    oust_attempts: Vec<TeamId>,
     embark_fail: bool,
     embark_busy: bool,
     debark_fail: Option<UnitFail>,
@@ -45,25 +48,33 @@ pub mod unit {
         _: crate::Wait,
         receive: bool,
     ) -> Result<crate::JoinReply, crate::Error> {
-        assert!(receive);
-        crate::EFFECTS.with(|effects| {
-            Ok(effects
-                .borrow_mut()
+        Ok(crate::EFFECTS.with(|effects| {
+            let mut effects = effects.borrow_mut();
+            if !receive {
+                return if effects.alive_tasks.is_empty() {
+                    crate::JoinReply::Complete
+                } else {
+                    crate::JoinReply::Pending
+                };
+            }
+            effects
                 .exits
                 .pop_front()
-                .map_or(crate::JoinReply::Pending, crate::JoinReply::Reaped))
-        })
+                .map_or(crate::JoinReply::Pending, crate::JoinReply::Reaped)
+        }))
     }
     pub fn join_task(task: crate::TaskId, _: crate::Wait) -> Result<bool, crate::Error> {
         Ok(crate::EFFECTS.with(|effects| !effects.borrow().alive_tasks.contains(&task)))
     }
-    pub fn oust(_: crate::TeamId) -> Result<(), crate::Error> {
+    pub fn oust(team: crate::TeamId) -> Result<(), crate::Error> {
         crate::EFFECTS.with(|effects| {
             let mut effects = effects.borrow_mut();
+            effects.oust_attempts.push(team);
+            if let Some(source) = effects.oust_fail { return Err(crate::Error { source }) }
             effects.ousted += 1;
             effects.exits.clear();
-        });
-        Ok(())
+            Ok(())
+        })
     }
 
     pub fn embark_task(task: crate::TaskId) -> Result<(), crate::Error> {
@@ -153,6 +164,13 @@ pub mod system {
             }
         }
         pub mod instance {
+            pub mod receipt {
+                include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/system/control/instance/receipt.rs"));
+            }
+            mod release {
+                include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/system/control/instance/release.rs"));
+            }
+            use crate::unit;
             pub mod activation {
                 include!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
@@ -361,7 +379,7 @@ mod tests {
                 reference: crate::system::assembly::reference(TaskId::new(2)),
                 owner: TaskId::new(1),
                 task: TaskId::new(2),
-                team: Some(TeamId::new(3)),
+                receipt: crate::Receipt::Owner(TeamId::new(3)),
                 state,
                 started: matches!(state, State::Ready),
                 reason: None,
@@ -376,7 +394,7 @@ mod tests {
             reference: crate::system::assembly::reference(TaskId::new(2)),
             owner: TaskId::new(1),
             task: TaskId::new(2),
-            team: Some(TeamId::new(3)),
+            receipt: crate::Receipt::Owner(TeamId::new(3)),
             state: State::Starting,
             started: true,
             reason: None,
@@ -400,6 +418,7 @@ mod tests {
             Command::Embark(TaskId::new(2)),
             Command::Debark(TaskId::new(2)),
             Command::Ruin(TaskId::new(2)),
+            Command::Release(TaskId::new(2)),
         ] {
             let mut control = fixture(State::Debarked);
             assert_eq!(
@@ -410,8 +429,8 @@ mod tests {
             EFFECTS.with(|effects| {
                 let effects = effects.borrow();
                 assert_eq!(
-                    (effects.embarked, effects.debarked, effects.doomed),
-                    (0, 0, 0)
+                    (effects.embarked, effects.debarked, effects.doomed, effects.ousted),
+                    (0, 0, 0, 0)
                 );
             });
         }
@@ -474,8 +493,7 @@ mod tests {
         let mut control = fixture(State::Ready);
         assert_eq!(call(&mut control, Command::Ruin(TaskId::new(2))), Ok(None));
         assert_eq!(control.instances[0].state, State::Stopping);
-        assert!(control.instances[0].team.is_some());
-        control.instances[0].team = None;
+        assert!(control.instances[0].team().is_some());
         control.instances[0].state = State::Dead;
         assert_eq!(
             call(&mut control, Command::Ruin(TaskId::new(2))),
@@ -486,6 +504,189 @@ mod tests {
             assert_eq!(effects.doomed, 1);
             assert_eq!(effects.slain_teams, vec![TeamId::new(3)]);
         });
+    }
+
+    #[test]
+    fn release_retries_original_receipt_and_never_confirms_a_failed_oust() {
+        let mut control = fixture(State::Dead);
+        for error in [UnitFail::Busy, UnitFail::Denied, UnitFail::OoM] {
+            EFFECTS.with(|effects| effects.borrow_mut().oust_fail = Some(error));
+            let expected = if error == UnitFail::Busy { Ok(None) } else { Err(Fail::NotReady) };
+            assert_eq!(call(&mut control, Command::Release(TaskId::new(2))), expected);
+            assert_eq!(control.instances[0].receipt, Receipt::Returned(TeamId::new(3)));
+            assert_eq!(control.instances[0].team(), None);
+            assert_eq!(control.reclaimed_at, 0);
+            EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 0));
+        }
+        EFFECTS.with(|effects| {
+            let mut effects = effects.borrow_mut();
+            effects.oust_fail = None;
+            effects.now = 84;
+        });
+        assert_eq!(call(&mut control, Command::Release(TaskId::new(2))), Ok(Some(State::Dead)));
+        assert_eq!(control.instances[0].receipt, Receipt::Consumed);
+        assert_eq!(control.reclaimed_at, 84);
+        EFFECTS.with(|effects| effects.borrow_mut().now = 168);
+        assert_eq!(call(&mut control, Command::Release(TaskId::new(2))), Ok(Some(State::Dead)));
+        assert_eq!(control.reclaimed_at, 84);
+        EFFECTS.with(|effects| {
+            let effects = effects.borrow();
+            assert_eq!(effects.ousted, 1);
+            assert_eq!(effects.oust_attempts, vec![TeamId::new(3); 4]);
+        });
+        assert_eq!(call(&mut control, Command::Release(TaskId::new(99))), Err(Fail::Unknown));
+    }
+
+    #[test]
+    fn returned_receipt_waits_for_real_whole_team_completion_and_hook_reclamation() {
+        use system::control::instance::hook;
+        let resources = hook_resources(State::Ready);
+        assert_eq!(call(&mut resources.write::<Control>().unwrap(), Command::Release(TaskId::new(2))), Ok(None));
+        EFFECTS.with(|effects| effects.borrow_mut().alive_tasks.push(TaskId::new(4)));
+        let mut child = schedule::Schedule::sequence();
+        child.system("reclaim", hook::reclaim).unwrap();
+        let mut plan = hook::plan(vec![(hook::Key::Retire, child.build().unwrap())]).unwrap();
+        plan.prepare(&resources);
+        plan.advance(&mut schedule::Cursor::default(), &resources).unwrap();
+        assert_eq!(resources.read::<Control>().unwrap().instances[0].receipt, Receipt::Returned(TeamId::new(3)));
+        EFFECTS.with(|effects| assert!(effects.borrow().oust_attempts.is_empty()));
+        EFFECTS.with(|effects| effects.borrow_mut().alive_tasks.clear());
+        plan.advance(&mut schedule::Cursor::default(), &resources).unwrap();
+        let control = resources.read::<Control>().unwrap();
+        assert_eq!(control.instances[0].state, State::Dead);
+        assert_eq!(control.instances[0].receipt, Receipt::Consumed);
+        assert_eq!(control.reclaimed_at, 42);
+        EFFECTS.with(|effects| assert_eq!(effects.borrow().oust_attempts, [TeamId::new(3)]));
+    }
+
+    #[test]
+    fn returned_receipt_is_retried_without_an_owner_reply_or_another_command() {
+        let mut control = fixture(State::Dead);
+        EFFECTS.with(|effects| effects.borrow_mut().oust_fail = Some(UnitFail::Busy));
+        assert_eq!(call(&mut control, Command::Release(TaskId::new(2))), Ok(None));
+        control.reclaim_returned();
+        assert_eq!(control.instances[0].receipt, Receipt::Returned(TeamId::new(3)));
+        EFFECTS.with(|effects| {
+            let mut effects = effects.borrow_mut();
+            effects.oust_fail = None;
+            effects.now = 91;
+        });
+        control.reclaim_returned();
+        assert_eq!(control.instances[0].receipt, Receipt::Consumed);
+        assert_eq!(control.reclaimed_at, 91);
+        EFFECTS.with(|effects| effects.borrow_mut().now = 182);
+        control.reclaim_returned();
+        assert_eq!(control.reclaimed_at, 91);
+        EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 1));
+    }
+
+    #[test]
+    fn legacy_retire_preserves_owner_receipt_for_late_release() {
+        let resources = hook_resources(State::Stopping);
+        run_hook(&resources, system::control::instance::hook::Key::Retire, Ok(schedule::Progress::Done));
+        {
+            let control = resources.read::<Control>().unwrap();
+            assert_eq!(control.instances[0].state, State::Dead);
+            assert_eq!(control.instances[0].team(), None);
+            assert_eq!(control.instances[0].receipt, Receipt::Owner(TeamId::new(3)));
+        }
+        EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 0));
+        assert_eq!(call(&mut resources.write::<Control>().unwrap(), Command::Release(TaskId::new(2))), Ok(Some(State::Dead)));
+        assert_eq!(resources.read::<Control>().unwrap().instances[0].receipt, Receipt::Consumed);
+        EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 1));
+    }
+
+    #[test]
+    fn retire_dispatch_can_finish_after_kernel_receipt_has_been_consumed() {
+        let resources = hook_resources(State::Stopping);
+        {
+            let mut control = resources.write::<Control>().unwrap();
+            control.instances[0].receipt = Receipt::Consumed;
+            control.reclaimed_at = 21;
+        }
+        EFFECTS.with(|effects| effects.borrow_mut().alive_tasks.push(TaskId::new(99)));
+        run_hook(&resources, system::control::instance::hook::Key::Retire, Ok(schedule::Progress::Done));
+        let control = resources.read::<Control>().unwrap();
+        assert_eq!(control.instances[0].state, State::Dead);
+        assert_eq!(control.instances[0].receipt, Receipt::Consumed);
+        assert_eq!(control.reclaimed_at, 21);
+        EFFECTS.with(|effects| assert!(effects.borrow().oust_attempts.is_empty()));
+    }
+
+    #[test]
+    fn unreturned_or_pending_receipts_cannot_be_evicted_to_build_another_instance() {
+        use system::control::instance::create::Admission;
+        use system_api::loader::Built;
+        for receipt in [Receipt::Owner(TeamId::new(3)), Receipt::Returned(TeamId::new(3)), Receipt::Consumed] {
+            let mut control = fixture(State::Dead);
+            control.instances[0].receipt = receipt;
+            for at in 1..state::INSTANCE_CAP {
+                let mut item = Instance {
+                    reference: crate::system::assembly::reference(TaskId::new(at + 2)),
+                    owner: TaskId::new(1), task: TaskId::new(at + 2),
+                    receipt: Receipt::Owner(TeamId::new(at + 3)),
+                    state: State::Dead, claimed: false, started: false,
+                    reason: None, claim_until: 0,
+                };
+                item.stop();
+                assert_eq!(item.state, State::Dead);
+                control.instances.push(item);
+            }
+            let invoked = std::cell::Cell::new(false);
+            let result = control.create_instance(Admission {
+                owner: TaskId::new(1), job: crate::system::assembly::JobId::new(999).unwrap(),
+            }, || {
+                invoked.set(true);
+                Ok(Built { task: TaskId::new(999), team: TeamId::new(1000) })
+            });
+            assert_eq!(invoked.get(), receipt == Receipt::Consumed);
+            if receipt == Receipt::Consumed { assert!(result.is_ok()); }
+            else { assert!(matches!(result, Err(Fail::Full))); }
+            assert_eq!(control.instances.len(), state::INSTANCE_CAP);
+        }
+    }
+
+    #[test]
+    fn consumed_receipt_is_retained_until_its_owner_can_receive_completion() {
+        use system::control::instance::create::Admission;
+        use system_api::loader::Built;
+        let mut control = fixture(State::Dead);
+        let owner = TaskId::new(99);
+        control.instances[0].owner = owner;
+        EFFECTS.with(|effects| effects.borrow_mut().alive_tasks.push(owner));
+        assert_eq!(control.release_instance(owner, TaskId::new(2)), Ok(Some(State::Dead)));
+        assert_eq!(control.instances[0].receipt, Receipt::Consumed);
+        for at in 1..state::INSTANCE_CAP {
+            control.instances.push(Instance {
+                reference: crate::system::assembly::reference(TaskId::new(at + 100)),
+                owner, task: TaskId::new(at + 100),
+                receipt: Receipt::Owner(TeamId::new(at + 100)), state: State::Dead,
+                claimed: false, started: false, reason: None, claim_until: 0,
+            });
+        }
+        let invoked = std::cell::Cell::new(false);
+        let result = control.create_instance(Admission {
+            owner, job: crate::system::assembly::JobId::new(9999).unwrap(),
+        }, || {
+            invoked.set(true);
+            Ok(Built { task: TaskId::new(9999), team: TeamId::new(9999) })
+        });
+        assert!(matches!(result, Err(Fail::Full)), "completion was evicted before delivery");
+        assert!(!invoked.get());
+        assert_eq!(control.release_instance(owner, TaskId::new(2)), Ok(Some(State::Dead)));
+        EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 1));
+        let reference = control.instances[0].reference;
+        assert!(!control.release_reported(TaskId::new(98), reference));
+        assert!(!control.release_reported(owner,
+            crate::system::assembly::reference(TaskId::new(98))));
+        assert_eq!(control.instances[0].receipt, Receipt::Consumed);
+        assert!(control.release_reported(owner, reference));
+        assert_eq!(control.instances[0].receipt, Receipt::Reported);
+        assert!(control.create_instance(Admission {
+            owner, job: crate::system::assembly::JobId::new(9999).unwrap(),
+        }, || Ok(Built { task: TaskId::new(9999), team: TeamId::new(9999) })).is_ok());
+        assert!(control.instances.iter().all(|item| item.task != TaskId::new(2)));
+        assert_eq!(control.instances.len(), state::INSTANCE_CAP);
     }
     #[test]
     fn zero_main_exit_cannot_hide_an_auxiliary_failure() {
@@ -585,6 +786,70 @@ mod tests {
     }
 
     #[test]
+    fn retire_hook_waits_for_every_team_member_to_exit() {
+        use system::control::instance::hook;
+        fn set_alive(tasks: &[TaskId]) {
+            EFFECTS.with(|effects| {
+                let mut effects = effects.borrow_mut();
+                effects.alive_tasks.clear();
+                effects.alive_tasks.extend_from_slice(tasks);
+            });
+        }
+        fn selects(resources: &schedule::Resources<'static>) -> bool {
+            assert!(matches!(
+                hook::budget(
+                    resources.read().unwrap(),
+                    resources.write().unwrap(),
+                    resources.write().unwrap()
+                ),
+                Ok(schedule::Progress::Done)
+            ));
+            assert!(matches!(
+                hook::select(
+                    resources.read().unwrap(),
+                    resources.write().unwrap(),
+                    resources.write().unwrap()
+                ),
+                Ok(schedule::Progress::Done)
+            ));
+            resources
+                .read::<system::assembly::Jobs>()
+                .unwrap()
+                .active_hook_reference()
+                .is_some()
+        }
+
+        let mut control = fixture(State::Ready);
+        control.instances[0].reap(TaskExit {
+            task: TaskId::new(2),
+            cause: ExitCause::Reap,
+            reason: 0,
+        });
+        assert_eq!(control.instances[0].state, State::Stopping);
+        // 主线程 2 已退，辅助成员 4 仍在：Team 尚未 Complete。
+        set_alive(&[TaskId::new(4)]);
+        let mut resources = schedule::Resources::new();
+        resources.insert(control).unwrap();
+        resources.insert(system::assembly::Jobs::default()).unwrap();
+        resources
+            .insert(schedule::Dispatch::<
+                system::control::instance::hook::Key,
+                &'static str,
+            >::new())
+            .unwrap();
+        assert!(!selects(&resources));
+        set_alive(&[]);
+        assert!(selects(&resources));
+        assert!(
+            resources
+                .read::<system::assembly::Jobs>()
+                .unwrap()
+                .active_hook_reference() ==
+            Some(system::assembly::reference(TaskId::new(2)))
+        );
+    }
+
+    #[test]
     fn missing_instance_and_invalid_transition_have_no_effects() {
         let mut control = fixture(State::Starting);
         assert_eq!(
@@ -639,7 +904,7 @@ mod tests {
         run_hook(&resources, Key::Retire, Ok(schedule::Progress::Done));
         let control = resources.read::<Control>().unwrap();
         assert_eq!(control.reclaimed_at, 42);
-        assert_eq!(control.instances[0].team, None);
+        assert_eq!(control.instances[0].team(), None);
         assert_eq!(control.instances[0].state, State::Dead);
     }
 
@@ -651,7 +916,7 @@ mod tests {
             run_hook(&resources, Key::Retire, result);
             let control = resources.read::<Control>().unwrap();
             assert_eq!(control.reclaimed_at, 0);
-            assert_eq!(control.instances[0].team, Some(TeamId::new(3)));
+            assert_eq!(control.instances[0].team(), Some(TeamId::new(3)));
             assert_eq!(control.instances[0].state, State::Stopping);
         }
     }
@@ -663,8 +928,29 @@ mod tests {
         run_hook(&resources, Key::Prepare, Ok(schedule::Progress::Done));
         let control = resources.read::<Control>().unwrap();
         assert_eq!(control.reclaimed_at, 0);
-        assert_eq!(control.instances[0].team, Some(TeamId::new(3)));
+        assert_eq!(control.instances[0].team(), Some(TeamId::new(3)));
         assert_eq!(control.instances[0].state, State::Debarked);
+    }
+
+    #[test]
+    fn failed_prepare_cannot_be_claimed_or_embarked_before_retirement() {
+        use system::control::instance::hook::Key;
+        let resources = hook_resources(State::Starting);
+        run_hook(&resources, Key::Prepare, Err("bootstrap push"));
+        {
+            let mut control = resources.write::<Control>().unwrap();
+            assert_eq!(control.reclaimed_at, 0);
+            let item = &mut control.instances[0];
+            assert_eq!(item.state, State::Stopping);
+            assert_eq!(item.team(), Some(TeamId::new(3)));
+            assert!(!item.started);
+            assert_eq!(item.claim(42), None);
+        }
+        EFFECTS.with(|effects| assert_eq!(effects.borrow().embarked, 0));
+        run_hook(&resources, Key::Retire, Ok(schedule::Progress::Done));
+        let control = resources.read::<Control>().unwrap();
+        assert_eq!(control.instances[0].state, State::Dead);
+        assert_eq!(control.instances[0].team(), None);
     }
 
     #[test]
@@ -673,11 +959,12 @@ mod tests {
         let resources = hook_resources(State::Stopping);
         run_hook(&resources, Key::Retire, Ok(schedule::Progress::Done));
         EFFECTS.with(|effects| effects.borrow_mut().now = 84);
-        resources.write::<Control>().unwrap().instances[0].state = State::Stopping;
+        resources.write::<Control>().unwrap().instances[0].stop();
+        assert_eq!(resources.read::<Control>().unwrap().instances[0].state, State::Dead);
         run_hook(&resources, Key::Retire, Ok(schedule::Progress::Done));
         let control = resources.read::<Control>().unwrap();
         assert_eq!(control.reclaimed_at, 42);
-        assert_eq!(control.instances[0].team, None);
+        assert_eq!(control.instances[0].team(), None);
     }
 }
 
@@ -698,7 +985,7 @@ fn resuming_busy_team_keeps_transition_retriable() {
             reference: crate::system::assembly::reference(TaskId::new(2)),
             owner: TaskId::new(1),
             task: TaskId::new(2),
-            team: Some(TeamId::new(3)),
+            receipt: crate::Receipt::Owner(TeamId::new(3)),
             state: State::Debarked,
             claimed: true,
             started: true,
@@ -734,7 +1021,7 @@ fn full_instance_table_rejects_before_construction() {
                 reference: crate::system::assembly::reference(TaskId::new(n + 2)),
                 owner: TaskId::new(1),
                 task: TaskId::new(n + 2),
-                team: Some(TeamId::new(n + 3)),
+                receipt: crate::Receipt::Owner(TeamId::new(n + 3)),
                 state: State::Starting,
                 claimed: false,
                 started: false,
@@ -828,7 +1115,7 @@ fn successful_construction_is_registered_before_return() {
     assert_eq!(control.instances.len(), 1);
     let instance = &control.instances[0];
     assert_eq!(
-        (instance.owner, instance.task, instance.team),
+        (instance.owner, instance.task, instance.team()),
         (TaskId::new(7), built.task, Some(built.team))
     );
     assert_eq!(instance.state, State::Starting);
@@ -894,7 +1181,7 @@ fn repeated_claim_after_deadline_keeps_the_successful_claim() {
         reference: crate::system::assembly::reference(TaskId::new(2)),
         owner: TaskId::new(1),
         task: TaskId::new(2),
-        team: Some(TeamId::new(3)),
+        receipt: crate::Receipt::Owner(TeamId::new(3)),
         state: State::Debarked,
         claimed: false,
         started: false,
@@ -914,7 +1201,7 @@ fn expired_unclaimed_instance_cannot_be_claimed() {
         reference: crate::system::assembly::reference(TaskId::new(2)),
         owner: TaskId::new(1),
         task: TaskId::new(2),
-        team: Some(TeamId::new(3)),
+        receipt: crate::Receipt::Owner(TeamId::new(3)),
         state: State::Debarked,
         claimed: false,
         started: false,
@@ -932,7 +1219,7 @@ fn claimed_instance_does_not_inherit_a_child_job_failure() {
         reference: crate::system::assembly::reference(TaskId::new(2)),
         owner: TaskId::new(1),
         task: TaskId::new(2),
-        team: Some(TeamId::new(3)),
+        receipt: crate::Receipt::Owner(TeamId::new(3)),
         state: State::Ready,
         claimed: true,
         started: true,

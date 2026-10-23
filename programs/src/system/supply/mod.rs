@@ -1,6 +1,7 @@
 extern crate alloc;
 
 mod collection;
+mod derivation;
 mod lease;
 mod pole;
 
@@ -11,6 +12,11 @@ use ipc::rpc;
 use system_api::supply::{self, Delivery, Fail, Key, LeaseId, State};
 
 pub use collection::{CollectionItem, CollectionResource, CollectionSpec};
+#[allow(
+    unused_imports,
+    reason = "Local derivation request for custom provider effects."
+)]
+pub use derivation::Derivation;
 #[allow(
     unused_imports,
     reason = "Parameter and route types for custom provider effects and resources."
@@ -39,8 +45,8 @@ pub struct LeaseRequest {
 }
 
 impl LeaseRequest {
-    /// 从 `assignment` 指定的来源分支上派生一枚子分支；窗口随 `assignment.window`
-    /// （`None` = 不请求，继承父分支那一段）。见 [`RootAssignment`]。
+    /// 从 `assignment` 指定的来源分支上**本地**派生一枚子分支；范围随 `assignment.range`
+    /// （`Inherit` = 继承父分支那一段）。见 [`RootAssignment`]。
     pub fn derive(&self, assignment: RootAssignment) -> Result<PrivateRoot, Fail> {
         PrivateRoot::derive(
             assignment,

@@ -8,7 +8,7 @@ use hub_api::{BindingId, BindingState, Close, DeviceId, Fail, Failure};
 
 use super::binding::{Binding, Step};
 use super::ledger::Ledger;
-use super::{ClaimRequest, ExecutionStep};
+use super::ClaimRequest;
 
 /// Recently completed receipts; open bindings are never evicted.
 const CLOSED_HISTORY: usize = 32;
@@ -18,11 +18,9 @@ impl Ledger {
     pub fn device(&self, requester: u32) -> Option<DeviceId> {
         self.cells
             .iter()
-            .find(|cell| cell.ready() && cell.entry().dma && cell.entry().requester == requester)
-            .map(|cell| DeviceId {
-                pci: cell.entry().pci,
-                requester: cell.entry().requester,
-            })
+            .filter(|cell| cell.ready())
+            .filter_map(|cell| cell.device())
+            .find(|device| device.requester == requester)
     }
 
     /// 这台设备此刻开着几笔绑定（未结清）。
@@ -37,11 +35,8 @@ impl Ledger {
     pub fn device_by_door(&self, door: PieToken) -> Option<DeviceId> {
         self.cells
             .iter()
-            .find(|cell| cell.ready() && cell.entry().dma && cell.entry().door == door)
-            .map(|cell| DeviceId {
-                pci: cell.entry().pci,
-                requester: cell.entry().requester,
-            })
+            .filter(|cell| cell.ready() && cell.entry().door == door)
+            .find_map(|cell| cell.device())
     }
 
     /// 已登记设备的坐标窗口（**不对外开**：认领走门牌，清单不开放）。
@@ -49,11 +44,8 @@ impl Ledger {
     pub fn devices(&self) -> impl Iterator<Item = DeviceId> + '_ {
         self.cells
             .iter()
-            .filter(|cell| cell.ready() && cell.entry().dma)
-            .map(|cell| DeviceId {
-                pci: cell.entry().pci,
-                requester: cell.entry().requester,
-            })
+            .filter(|cell| cell.ready())
+            .filter_map(|cell| cell.device())
     }
 
     /// 认领一台：同调用者同编号同参幂等；异参或旧编号冲突；设备已有开着的一笔则 `Taken`。
@@ -79,12 +71,12 @@ impl Ledger {
         let Some(device) = self.device(request.requester) else {
             return Err(Fail::Unknown);
         };
-        let execution = self.executions
+        let execution = self
+            .admissions
             .iter()
-            .position(|execution| execution.task == request.from && execution.team.is_some()
-                && matches!(execution.step, ExecutionStep::Embark | ExecutionStep::Running))
+            .position(|admission| admission.task == request.from && admission.claimable())
             .ok_or(Fail::Denied)?;
-        if request.id <= self.executions[execution].claim_high {
+        if request.id <= self.admissions[execution].claim_high() {
             return Err(Fail::Conflict);
         }
         if self.open_bindings(request.requester) > 0 {
@@ -94,7 +86,7 @@ impl Ledger {
         hub_api::iova_base(serial).ok_or(Fail::Full)?;
         self.bindings.try_reserve(1).map_err(|_| Fail::Full)?;
         self.serial = serial;
-        self.executions[execution].claim_high = request.id;
+        self.admissions[execution].advance_claim(request.id);
         self.bindings.push(Binding::new(
             BindingId {
                 hub: self.hub,
@@ -154,24 +146,22 @@ impl Ledger {
     /// 封闭准入，退休执行实例并关闭绑定，返回未结清责任数。
     pub fn settle(&mut self) -> usize {
         self.settling = true;
-        let mut open = 0;
+        let open = self.bindings.iter().filter(|binding| binding.open()).count();
         for binding in &mut self.bindings {
             if binding.open() {
                 binding.close(Close::Normal);
-                open += 1;
             }
         }
-        for execution in &mut self.executions {
-            execution.retire();
-            open += usize::from(execution.step != super::ExecutionStep::Done);
+        for admission in &mut self.admissions {
+            admission.close();
         }
-        open
+        open.saturating_add(self.admissions.len())
     }
 
     /// 记一笔原始失败（失败方、操作、原失败码）。
     pub fn note_failure(&mut self, serial: u64, failure: Failure) {
         if let Some(binding) = self.binding_mut(serial) {
-            binding.failure = Some(failure);
+            binding.failure.get_or_insert(failure);
         }
     }
 
@@ -190,4 +180,5 @@ impl Ledger {
             self.bindings.remove(oldest);
         }
     }
+
 }

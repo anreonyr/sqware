@@ -15,7 +15,8 @@ pub struct Ledger {
     pub(super) leagues: Vec<League>,
     /// DMA 安全绑定：一笔一条，序号不复用。
     pub(super) bindings: Vec<super::binding::Binding>,
-    pub(super) executions: Vec<super::Execution>,
+    pub(super) admissions: Vec<super::Admission>,
+    pub(super) closed_admissions: Vec<TaskId>,
     /// 绑定编号的游标（从 1 起，不复用）。
     pub(super) serial: u64,
     /// 本册那一台（绑定编号里的 `hub` 那一格）。
@@ -30,7 +31,8 @@ impl Ledger {
             cells: Vec::new(),
             leagues: Vec::new(),
             bindings: Vec::new(),
-            executions: Vec::new(),
+            admissions: Vec::new(),
+            closed_admissions: Vec::new(),
             serial: 0,
             hub: TaskId::new(0),
             settling: false,
@@ -43,6 +45,10 @@ impl Ledger {
         self
     }
 
+    pub fn settling(&self) -> bool {
+        self.settling
+    }
+
     /// 册 · 写：收一台。**撞名即拒**（名是这一台的坐标，两处写同一个名＝自述坏了）
     /// （这一台机器起不来，而不是"少收一台"）
     pub fn enroll(&mut self, entry: Entry) -> Result<(), ()> {
@@ -52,7 +58,7 @@ impl Ledger {
             return Err(());
         }
         self.cells.try_reserve(1).map_err(|_| ())?;
-        self.cells.push(Cell::Vacant(entry));
+        self.cells.push(Cell::Vacant { entry, origin: None });
         Ok(())
     }
 
@@ -76,6 +82,7 @@ impl Ledger {
         let delivered = deliver(&entry)?;
         self.cells[at] = Cell::Held {
             entry: entry.clone(),
+            origin: self.cells[at].device(),
             owner,
         };
         Ok((entry, delivered))
@@ -85,13 +92,13 @@ impl Ledger {
     pub fn vacate(&mut self, alive: impl Fn(PieToken) -> bool) -> usize {
         let mut freed = 0;
         for cell in self.cells.iter_mut() {
-            let Cell::Held { entry, owner } = cell else {
+            let Cell::Held { entry, origin, owner } = cell else {
                 continue;
             };
             if alive(owner.sensor) {
                 continue;
             }
-            *cell = Cell::Vacant(entry.clone());
+            *cell = Cell::Vacant { entry: entry.clone(), origin: *origin };
             freed += 1;
         }
         freed

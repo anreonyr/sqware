@@ -48,6 +48,7 @@ pub struct ControlConfig {
     pub ending: Option<Ending>,
     pub ready: Ready,
     pub construction: &'static [Construction],
+    pub retirement: &'static [Retirement],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -91,6 +92,7 @@ impl ControlConfig {
         ending: None,
         ready: Ready::OnSpawn,
         construction: &[],
+        retirement: &[],
     };
 }
 
@@ -133,13 +135,16 @@ pub use construction::{
 
 impl UnitFile {
     pub fn valid(&self) -> bool {
-        valid_supplies(self.supply())
+        valid_supplies(self.supply()) && self.control.retirement.iter().all(Retirement::valid)
     }
     /// 这一台显式声明要交的资源与启动凭据。
     pub fn supply(&self) -> &'static [Binding] {
         self.supply.bindings
     }
 }
+
+mod retirement;
+pub use retirement::Retirement;
 
 mod image;
 #[allow(unused_imports)]

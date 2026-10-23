@@ -119,6 +119,24 @@ pub(crate) fn stop_boot() {
     }
 }
 
+/// Fences other harts, then parks this one. `ALARM` is a hart boundary, not
+/// evidence that a device stopped.
+pub(crate) fn protected_stop(_reason: usize) -> ! {
+    if !alarm() {
+        crate::machine::stop::hush();
+    }
+    unsafe { ::core::arch::asm!("csrci sstatus, 2") };
+    let expected = hart::hart_count().saturating_sub(1);
+    while crate::machine::stop::quiesced_peers() != expected {
+        ::core::hint::spin_loop();
+    }
+    #[cfg(feature = "critical-scene")]
+    crate::putln!("[critical] peer harts quiesced={expected}");
+    loop {
+        unsafe { ::core::arch::asm!("wfi") };
+    }
+}
+
 pub(crate) fn halt_loop() -> ! {
     unsafe { ::core::arch::asm!("csrci sstatus, 2") };
     loop {

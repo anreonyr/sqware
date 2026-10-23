@@ -61,6 +61,12 @@ const AFTER_CONSTRUCTION: [crate::unit::Construction; 1] =
     )];
 
 /// α 的三张镜像共用的声明（只有名字与镜像不同）。
+const WORK_RETIREMENT: [crate::unit::Retirement; 1] = [crate::unit::Retirement {
+    provider: "hub",
+    namespace: 0,
+    face: "retire",
+}];
+
 const fn work(name: &'static str, image: &'static str) -> UnitFile {
     UnitFile {
         name,
@@ -81,6 +87,7 @@ const fn work(name: &'static str, image: &'static str) -> UnitFile {
             ready: Ready::OnSpawn,
             ending: Some(Ending::Transient),
             construction: &[],
+            retirement: &WORK_RETIREMENT,
         },
         supply: crate::unit::SupplyConfig { bindings: &[] },
     }
@@ -114,6 +121,7 @@ const fn control(
             ready: Ready::OnSpawn,
             ending: Some(Ending::Transient),
             construction,
+            retirement: &[],
         },
         supply: crate::unit::SupplyConfig { bindings: &[] },
     }

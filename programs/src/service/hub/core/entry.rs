@@ -1,5 +1,5 @@
 use alloc::string::String;
-use env::{PieToken, TaskId};
+use env::PieToken;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Entry {
@@ -8,7 +8,4 @@ pub struct Entry {
     pub line: u32,
     pub page: PieToken,
     pub door: PieToken,
-    pub dma: bool,
-    pub requester: u32,
-    pub pci: TaskId,
 }

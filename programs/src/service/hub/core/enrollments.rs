@@ -1,5 +1,5 @@
 use env::{PieToken, TaskId};
-use hub_api::{Enroll, Fail, INVENTORY_MAX};
+use hub_api::{DeviceId, Enroll, Fail, INVENTORY_MAX};
 use system_api::operator::OperationId;
 
 use super::{Cell, Enrollment, EnrollmentEffects, EnrollmentStep, Entry, Ledger};
@@ -16,10 +16,10 @@ impl Ledger {
             return Err(Fail::Bad);
         }
         if let Some(cell) = self.cells.iter().find(|cell| {
-            cell.entry().dma && cell.entry().requester == enroll.requester
+            cell.device().is_some_and(|device| device.requester == enroll.requester)
         }) {
             let entry = cell.entry();
-            return if entry.pci == from && entry.name == enroll.name
+            return if cell.device().is_some_and(|device| device.pci == from) && entry.name == enroll.name
                 && entry.class == enroll.class && entry.line == enroll.line
             {
                 Ok(())
@@ -42,10 +42,8 @@ impl Ledger {
                 line: enroll.line,
                 page: PieToken::NONE,
                 door: PieToken::NONE,
-                dma: true,
-                requester: enroll.requester,
-                pci: from,
             },
+            origin: Some(DeviceId { pci: from, requester: enroll.requester }),
             step: EnrollmentStep::Door,
         }));
         Ok(())
@@ -61,7 +59,7 @@ impl Ledger {
             return None;
         }
         let at = self.cells.iter().position(|cell| {
-            cell.entry().dma && cell.entry().requester == requester
+            cell.device().is_some_and(|device| device.requester == requester)
         })?;
         // Inventory rows are append-only; publish pending rows in reservation order.
         if !self.cells[at].ready() && self.cells[..at].iter().any(|cell| !cell.ready()) {
@@ -92,6 +90,7 @@ impl Ledger {
                 };
             }
         })();
-        Some(result.map(|entry| *cell = Cell::Vacant(entry)))
+        let origin = enrollment.origin;
+        Some(result.map(|entry| *cell = Cell::Vacant { entry, origin }))
     }
 }

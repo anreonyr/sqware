@@ -323,16 +323,14 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     let (serial, want) = (report.serial, report.want);
     crate::debug::put(&alloc::format!("ctl: report serial={serial} want={want}"));
     if report.want != 0 {
-        // 交窗：整窗交给 α（含 VEST：它还要再交进 IOMMU）。
-        env::pie::accord_window(
+        // 交窗：这根 Pole 正好是整窗，普通 Accord 继承同一范围；含 VEST 供 α 再交 IOMMU。
+        env::pie::accord(
             pole,
             alpha,
             env::Permission::FETCH
                 .union(env::Permission::STORE)
                 .union(env::Permission::VEST),
             dma::window_mark(serial),
-            0,
-            layout::PAGES,
         )
         .map_err(|_| "ctl: window handover")?;
         command(writer, Command::Window)?;
@@ -421,13 +419,11 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
                 for page in 0..layout::PAGES {
                     block.fill(page, 0);
                 }
-                env::pie::accord_window(
+                env::pie::accord(
                     pole,
                     replacement,
                     env::Permission::FETCH | env::Permission::STORE | env::Permission::VEST,
                     dma::window_mark(next.serial),
-                    0,
-                    layout::PAGES,
                 )
                 .map_err(|_| "ctl: generation window")?;
                 command(writer, Command::Window)?;
@@ -536,13 +532,11 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             if again <= serial {
                 return Err("ctl: binding serial reused");
             }
-            env::pie::accord_window(
+            env::pie::accord(
                 pole,
                 replacement,
                 env::Permission::FETCH | env::Permission::STORE | env::Permission::VEST,
                 dma::window_mark(again),
-                0,
-                layout::PAGES,
             )
             .map_err(|_| "ctl: rebind window")?;
             block.fill(layout::DESC, 0);

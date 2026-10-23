@@ -93,7 +93,7 @@ pub fn run() -> ! {
     restore(conductor::run::run())
 }
 
-fn register_runtime_hooks() {
+pub(crate) fn register_runtime_hooks() {
     use crate::core::work::room::halt;
     use crate::core::work::room::messenger;
 
@@ -163,7 +163,9 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
         source: e.into_parts().0,
     })?;
     let ledger_len = crate::entry::boot::resources::ledger::size(
-        resources.len() + crate::entry::boot::resources::RETENTION_ENTRIES,
+        resources.len()
+            + crate::entry::boot::resources::RETENTION_ENTRIES
+            + crate::entry::boot::resources::GUARD_ENTRIES,
     )
     .map_err(|source| BootError::Resources {
         operation: ResourceOperation::LedgerSize,
@@ -205,10 +207,21 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
     // 与上面那批具名资源同走账本一条路。
     let mut entries = entries;
     entries
-        .try_reserve(crate::entry::boot::resources::RETENTION_ENTRIES)
+        .try_reserve(
+            crate::entry::boot::resources::RETENTION_ENTRIES
+                + crate::entry::boot::resources::GUARD_ENTRIES,
+        )
         .map_err(|_| BootError::Bootstrap(NestError::OutOfMemory))?;
     entries.push(
         crate::entry::boot::resources::grant_retention(&bootstrap).map_err(|source| {
+            BootError::Resources {
+                operation: ResourceOperation::Grant,
+                source,
+            }
+        })?,
+    );
+    entries.push(
+        crate::entry::boot::resources::grant_guard(&bootstrap).map_err(|source| {
             BootError::Resources {
                 operation: ResourceOperation::Grant,
                 source,
@@ -273,7 +286,7 @@ fn attach_exact(
     Ok(())
 }
 
-fn boot_harts() -> Result<(), BootError> {
+pub(crate) fn boot_harts() -> Result<(), BootError> {
     let me = hart::hart_id();
     let count = hart::hart_count();
     let entry = ::core::ptr::addr_of!(_boot_entry) as usize;

@@ -22,6 +22,7 @@ pub fn answer(
             call::frame::Wire::DebarkInstance(task) => Command::Debark(*task),
             call::frame::Wire::RuinInstance(task) => Command::Ruin(*task),
             call::frame::Wire::StateInstance(task) => Command::State(*task),
+            call::frame::Wire::ReleaseInstance(task) => Command::Release(*task),
             _ => {
                 inbox.0.push_back(incoming);
                 continue;
@@ -31,7 +32,8 @@ pub fn answer(
             Command::Embark(task)
             | Command::Debark(task)
             | Command::Ruin(task)
-            | Command::State(task) => task,
+            | Command::State(task)
+            | Command::Release(task) => task,
         };
         let Some(reference) = control.instance(task).map(|instance| instance.reference) else {
             answer::reply(
@@ -63,6 +65,7 @@ pub fn answer(
             call::frame::Wire::DebarkInstance(task) => Command::Debark(*task),
             call::frame::Wire::RuinInstance(task) => Command::Ruin(*task),
             call::frame::Wire::StateInstance(task) => Command::State(*task),
+            call::frame::Wire::ReleaseInstance(task) => Command::Release(*task),
             _ => {
                 finish_command(
                     &mut jobs,
@@ -78,7 +81,8 @@ pub fn answer(
             Command::Embark(task)
             | Command::Debark(task)
             | Command::Ruin(task)
-            | Command::State(task) => task,
+            | Command::State(task)
+            | Command::Release(task) => task,
         };
         if control.instance(task).map(|instance| instance.reference) != Some(work.reference) {
             finish_command(
@@ -146,7 +150,7 @@ pub fn answer(
                     let mut said = call::frame::said_state(answer::wire_state(state));
                     if let Some(item) = control.instance(task) {
                         said.task = item.task;
-                        said.team = item.team.unwrap_or(env::TeamId::new(0));
+                        said.team = item.team().unwrap_or(env::TeamId::new(0));
                         said.completed = item.reason.is_some();
                         said.reason = item.reason.unwrap_or(0) as u64;
                     }
@@ -162,17 +166,29 @@ pub fn answer(
                         Command::Ruin(_) => {
                             crate::system::assembly::JobOutcome::Retire(work.reference)
                         }
+                        Command::Release(_) => {
+                            crate::system::assembly::JobOutcome::Release(work.reference)
+                        }
                         Command::State(_) => unreachable!(),
                     }
                 };
-                finish_command(&mut jobs, work, Ok(outcome));
+                let owner = work.from;
+                let reference = work.reference;
+                let delivered = finish_command(&mut jobs, work, Ok(outcome));
+                if delivered && matches!(command, Command::Release(_))
+                    && !control.release_reported(owner, reference)
+                {
+                    return Err(Fail::Room);
+                }
             }
             Ok(None) => jobs.requeue_command(work),
-            Err(fail) => finish_command(
-                &mut jobs,
-                work,
-                Err(crate::system::assembly::JobFailure::Command(fail)),
-            ),
+            Err(fail) => {
+                finish_command(
+                    &mut jobs,
+                    work,
+                    Err(crate::system::assembly::JobFailure::Command(fail)),
+                );
+            }
         }
     }
     Ok(Progress::Done)
@@ -182,18 +198,19 @@ fn finish_command(
     jobs: &mut Jobs,
     work: crate::system::assembly::Command,
     result: Result<crate::system::assembly::JobOutcome, crate::system::assembly::JobFailure>,
-) {
+) -> bool {
     let id = work.id;
     let expected = work.reference;
     jobs.complete_command(work, result);
     let Some(completion) = jobs.take(id) else {
-        return;
+        return false;
     };
     let said = match completion.result.outcome {
         Ok(crate::system::assembly::JobOutcome::Command(said)) => said,
         Ok(
             crate::system::assembly::JobOutcome::Activate(reference)
             | crate::system::assembly::JobOutcome::Retire(reference)
+            | crate::system::assembly::JobOutcome::Release(reference)
             | crate::system::assembly::JobOutcome::Debark(reference),
         ) if reference == expected => call::frame::said_status(call::frame::OK),
         Ok(_) => call::frame::said_status(call::frame::fail_to_code(Some(call::Fail::Unknown))),
@@ -204,9 +221,9 @@ fn finish_command(
     };
     let crate::system::assembly::JobReply::Command { reply, waiters } = completion.result.reply
     else {
-        return;
+        return false;
     };
-    reply_command(reply, waiters, said);
+    super::command_reply::send(reply, waiters, said)
 }
 
 struct ActivationFinish<'a> {
@@ -245,20 +262,7 @@ fn finish_activation(jobs: &mut Jobs, finish: ActivationFinish<'_>) {
     else {
         return;
     };
-    reply_command(reply, waiters, said);
-}
-
-fn reply_command(
-    reply: Option<rpc::reply::Sender<call::frame::Said>>,
-    waiters: alloc::vec::Vec<rpc::reply::Sender<call::frame::Said>>,
-    said: call::frame::Said,
-) {
-    if let Some(reply) = reply {
-        answer::reply(reply, said);
-    }
-    for waiter in waiters {
-        answer::reply(waiter, said);
-    }
+    super::command_reply::send(reply, waiters, said);
 }
 
 pub fn receive(
@@ -290,7 +294,8 @@ pub fn receive(
                 wire @ (call::frame::Wire::EmbarkInstance(_)
                 | call::frame::Wire::DebarkInstance(_)
                 | call::frame::Wire::RuinInstance(_)
-                | call::frame::Wire::StateInstance(_)),
+                | call::frame::Wire::StateInstance(_)
+                | call::frame::Wire::ReleaseInstance(_)),
             ) => {
                 if inbox.0.try_reserve(1).is_err() {
                     answer::reply(reply, call::frame::said_status(call::frame::FULL));

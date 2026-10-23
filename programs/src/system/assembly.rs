@@ -196,6 +196,8 @@ pub(crate) struct InstanceInstall {
     pub service: Option<crate::system::control::unit::Service>,
     pub identity: Option<system_api::identity::InstallId>,
     pub startup: system_api::loader::StartupMetadata,
+    pub bootstrap: Option<bootstrap::Carrier>,
+    pub retirement: Vec<retirement::Participant>,
 }
 pub(crate) struct Launched {
     pub reference: InstanceRef,
@@ -242,6 +244,7 @@ pub(crate) enum JobOutcome {
     Prepare(InstanceRef),
     Activate(InstanceRef),
     Retire(InstanceRef),
+    Release(InstanceRef),
     Debark(InstanceRef),
     StaticLifecycle(crate::system::control::lifecycle::Action, Option<TaskId>),
     Command(system_api::control::frame::Said),
@@ -279,6 +282,7 @@ struct ConstructFinish {
 pub(crate) type JobCompletion = work::Completed<JobResult>;
 #[path = "assembly/work.rs"]
 mod work;
+mod bootstrap;
 use work::WorkQueue;
 impl work::JobIdentity for Work {
     fn completed_id(&self) -> Option<JobId> {
@@ -658,6 +662,7 @@ impl Jobs {
             let Some(request) = incoming.as_ref() else {
                 continue;
             };
+            if command.from != request.from { continue; }
             if matches!(
                 request.wire,
                 system_api::control::frame::Wire::StateInstance(_)
@@ -680,7 +685,9 @@ impl Jobs {
                 command.waiters.push(incoming.take().unwrap().reply);
                 return Ok(command.id);
             }
-            if matches!((&command.wire, &request.wire), (system_api::control::frame::Wire::RuinInstance(old), system_api::control::frame::Wire::RuinInstance(new)) if old == new)
+            if matches!((&command.wire, &request.wire),
+                (system_api::control::frame::Wire::RuinInstance(old), system_api::control::frame::Wire::RuinInstance(new))
+                | (system_api::control::frame::Wire::ReleaseInstance(old), system_api::control::frame::Wire::ReleaseInstance(new)) if old == new)
             {
                 if command.waiters.try_reserve(1).is_err() {
                     return Err((
@@ -1185,7 +1192,7 @@ fn settle(
     settle: Res<crate::system::app::policy::Settle>,
     mut jobs: ResMut<Jobs>,
 ) -> Result<Progress, crate::system::app::Fault> {
-    if settle.flow.settling {
+    if settle.flow.settling || settle.closing() {
         let requests = jobs.take_construct_batch();
         for (id, request) in requests {
             request.image.release();
@@ -1359,6 +1366,11 @@ fn construct_one(
         image, delivery, ..
     } = request;
     let (count, values, stack) = image.parameters();
+    let declarations = delivery.program.map_or(&[][..], |program| program.control.retirement);
+    let mut retirement = Vec::new();
+    if retirement.try_reserve(declarations.len()).is_err() {
+        return Err((Fail::Full, delivery));
+    }
     let result = context.control.create_instance(
         crate::system::control::instance::create::Admission {
             owner: delivery.owner,
@@ -1393,13 +1405,10 @@ fn construct_one(
     );
     match result {
         Ok(built) => {
-            let mut service = crate::system::control::unit::Service::new(built.task);
-            if let Some(program) = delivery.program {
-                if service.connect(program).is_err() {
-                    context.control.stop_instance(built.task);
-                    return Err((Fail::NotReady, delivery));
-                }
-            }
+            let service = crate::system::control::unit::Service::new(built.task);
+            retirement.extend(declarations.iter().map(|declaration| {
+                retirement::Participant::new(*declaration, built.task)
+            }));
             Ok(Launch {
                 instance: Launched {
                     reference: InstanceRef {
@@ -1416,6 +1425,8 @@ fn construct_one(
                     startup: system_api::loader::StartupMetadata {
                         resolve: env::PieToken::NONE,
                     },
+                    bootstrap: None,
+                    retirement,
                 },
             })
         }
@@ -1484,7 +1495,7 @@ pub(crate) fn completed(
     while index < jobs.launches.len() {
         let task = jobs.launches[index].instance.task;
         if control.instance(task).is_none_or(|item| {
-            item.state == crate::system::control::unit::table::State::Dead && item.team.is_none()
+            item.state == crate::system::control::unit::table::State::Dead && item.team().is_none()
         }) {
             let launch = jobs.launches.remove(index);
             if let Some(key) = launch.instance.create {
@@ -1551,5 +1562,7 @@ pub(crate) mod static_plan;
 
 #[path = "assembly/namespace.rs"]
 pub(crate) mod namespace;
+#[path = "assembly/retirement.rs"]
+pub(crate) mod retirement;
 #[path = "assembly/supply.rs"]
 pub(crate) mod supply;

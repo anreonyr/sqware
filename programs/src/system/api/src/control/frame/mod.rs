@@ -96,6 +96,7 @@ pub enum Req {
     DebarkInstance(TaskId),
     RuinInstance(TaskId),
     StateInstance(TaskId),
+    ReleaseInstance(TaskId),
 }
 
 impl Req {
@@ -105,6 +106,7 @@ impl Req {
             Req::DebarkInstance(task) => Some((INSTANCE_DEBARK, *task)),
             Req::RuinInstance(task) => Some((INSTANCE_RUIN, *task)),
             Req::StateInstance(task) => Some((INSTANCE_STATE, *task)),
+            Req::ReleaseInstance(task) => Some((INSTANCE_RELEASE, *task)),
             _ => None,
         };
         if let Some((op, task)) = instance {
@@ -140,12 +142,13 @@ pub enum Wire {
     DebarkInstance(TaskId),
     RuinInstance(TaskId),
     StateInstance(TaskId),
+    ReleaseInstance(TaskId),
 }
 
 impl Wire {
     /// 解一问：`(读出来的动作, 回信孔那一格)`
     pub fn take(bytes: &[u8]) -> Option<(Option<Wire>, PieToken)> {
-        if matches!(bytes.first(), Some(INSTANCE_EMBARK..=INSTANCE_STATE)) {
+        if matches!(bytes.first().copied(), Some(INSTANCE_EMBARK..=INSTANCE_STATE | INSTANCE_RELEASE)) {
             let (q, at) = InstanceAsk::fetch_at(bytes, 0)?;
             if at != bytes.len() {
                 return None;
@@ -155,6 +158,7 @@ impl Wire {
                 INSTANCE_DEBARK => Wire::DebarkInstance(q.task),
                 INSTANCE_RUIN => Wire::RuinInstance(q.task),
                 INSTANCE_STATE => Wire::StateInstance(q.task),
+                INSTANCE_RELEASE => Wire::ReleaseInstance(q.task),
                 _ => return None,
             };
             return Some((Some(wire), q.back));

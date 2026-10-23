@@ -40,6 +40,11 @@ enum Work {
     Release {
         pending: Pending<pipe_api::Call>,
     },
+    Reclaim {
+        index: usize,
+        task: TaskId,
+        pending: Pending<system_api::control::Call>,
+    },
 }
 pub struct RuntimeJob {
     pub model: Job,
@@ -60,6 +65,7 @@ pub struct RuntimeJob {
     pub eof: bool,
     released: bool,
 }
+
 pub struct Controller {
     pub catalogue: Catalogue,
     pipe: Client,
@@ -67,6 +73,7 @@ pub struct Controller {
     loader: PieToken,
     subject: Subject,
     identity_authority: TaskId,
+    lifecycle: system_client::control::Face,
     pub foreground: Option<JobId>,
     jobs: Vec<RuntimeJob>,
     next: u64,
@@ -82,6 +89,7 @@ impl Controller {
         loader: PieToken,
         subject: Subject,
         identity_authority: TaskId,
+        lifecycle: system_client::control::Face,
     ) -> Self {
         Self {
             catalogue,
@@ -90,6 +98,7 @@ impl Controller {
             loader,
             subject,
             identity_authority,
+            lifecycle,
             foreground: None,
             jobs: Vec::new(),
             next: 0,
@@ -101,6 +110,7 @@ impl Controller {
     pub fn job(&self, id: JobId) -> Option<&RuntimeJob> {
         self.jobs.iter().find(|job| job.model.id == id)
     }
+
     fn job_mut(&mut self, id: JobId) -> Result<&mut RuntimeJob, &'static str> {
         self.jobs
             .iter_mut()
@@ -287,6 +297,9 @@ impl Controller {
                     Work::Bind { pending, .. } | Work::Release { pending } => {
                         (Some(pending.source()), pending.remaining())
                     }
+                    Work::Reclaim { pending, .. } => {
+                        (Some(pending.source()), pending.remaining())
+                    }
                 };
                 if let Some(source) = source {
                     interests.source(source);
@@ -294,7 +307,9 @@ impl Controller {
                     interests.runnable = true;
                 }
                 interests.budget(budget);
-                continue;
+                if !matches!(work, Work::Reclaim { .. }) {
+                    continue;
+                }
             }
             match job.model.status {
                 JobStatus::Preparing => interests.runnable = true,
@@ -371,6 +386,7 @@ impl Controller {
         let loader = self.loader;
         let subject = self.subject;
         let identity_authority = self.identity_authority;
+        let lifecycle = &self.lifecycle;
         let next_create = &mut self.next_create;
         let job = &mut self.jobs[index];
         if let Err(error) = advance(
@@ -378,6 +394,7 @@ impl Controller {
             objects,
             &self.catalogue,
             &self.pipe,
+            lifecycle,
             construction,
             loader,
             subject,
@@ -421,6 +438,7 @@ fn advance(
     objects: &mut Objects,
     catalogue: &Catalogue,
     pipe: &Client,
+    lifecycle: &system_client::control::Face,
     construction_entry: PieToken,
     loader_entry: PieToken,
     subject: Subject,
@@ -428,24 +446,16 @@ fn advance(
     next_create: &mut u64,
     available: usize,
 ) -> Result<(), String> {
-    if job.model.status.terminal() {
-        if let Some(Work::Load { pending, .. }) = &mut job.work {
-            let _ = pending.poll();
-            if pending.done() {
-                job.work = None;
-            }
-        }
-        return Ok(());
-    }
     if let Some(mut work) = job.work.take() {
         let pending = match &mut work {
             Work::Load { index, pending } => {
                 let result = pending.poll();
+                let done = pending.done();
                 if let Some(built) = pending.built {
                     job.members[*index].built = Some(built);
                 }
                 match result? {
-                    None => true,
+                    None => !done,
                     Some(built) => {
                         job.members[*index].built = Some(built);
                         job.build_index = *index + 1;
@@ -535,13 +545,41 @@ fn advance(
                     }
                 }
             }
+            Work::Reclaim {
+                index,
+                task,
+                pending,
+            } => match pending.poll() {
+                // The RPC owns its deadline; keep the same request until it answers or
+                // times out. A timeout is retried as a fresh request, not a cancellation
+                // on every pump tick.
+                Ok(None) => true,
+                Ok(Some(said)) => {
+                    lifecycle
+                        .instance(*task)
+                        .release_reply(said)
+                        .map_err(|e| format!("instance release: {e:?}"))?;
+                    let member = &mut job.members[*index];
+                    member.dead = true;
+                    job.model
+                        .complete(*index, member.reason.unwrap_or(0))
+                        .map_err(|_| "missing result")?;
+                    false
+                }
+                Err(_) => {
+                    *pending = lifecycle
+                        .instance(*task)
+                        .begin_release(WAIT)
+                        .map_err(|e| format!("instance release: {e:?}"))?;
+                    true
+                }
+            },
         };
         if pending {
             job.work = Some(work);
         }
-        return Ok(());
     }
-    if job.model.status == JobStatus::Preparing {
+    if job.work.is_none() && job.model.status == JobStatus::Preparing {
         if job.build_index < job.members.len() {
             let index = job.build_index;
             let command = &job.plan.commands[index];
@@ -618,7 +656,11 @@ fn advance(
         job.model.prepared().map_err(|_| "invalid prepare state")?;
         return Ok(());
     }
+    let mut reclaim = None;
     for (index, member) in job.members.iter_mut().enumerate() {
+        if matches!(&job.work, Some(Work::Reclaim { index: waiting, .. }) if *waiting == index) {
+            continue;
+        }
         let Some(built) = member.built.filter(|_| !member.dead) else {
             continue;
         };
@@ -660,18 +702,24 @@ fn advance(
         if matches!(
             env::unit::join(built.team.into(), env::Wait::POLL, false),
             Ok(env::JoinReply::Complete)
-        ) {
-            match env::unit::oust(built.team) {
-                Ok(()) => {
-                    member.dead = true;
-                    job.model
-                        .complete(index, member.reason.unwrap_or(0))
-                        .map_err(|_| "missing result")?;
-                }
-                Err(error) if error.source == env::UnitFail::Busy => {}
-                Err(error) => return Err(format!("job reclaim: {error:?}")),
-            }
+        ) && reclaim.is_none()
+        {
+            reclaim = Some((index, built.task));
         }
+    }
+    if job.work.is_none()
+        && let Some((index, task)) = reclaim
+    {
+        let pending = lifecycle
+            .instance(task)
+            .begin_release(WAIT)
+            .map_err(|e| format!("instance release: {e:?}"))?;
+        job.work = Some(Work::Reclaim {
+            index,
+            task,
+            pending,
+        });
+        return Ok(());
     }
     if matches!(
         job.model.status,
@@ -729,7 +777,9 @@ fn advance(
         for member in &mut job.members {
             member.manifest = None;
         }
-        if let Some(root) = job.pipes.last() {
+        if job.work.is_none()
+            && let Some(root) = job.pipes.last()
+        {
             job.work = Some(Work::Release {
                 pending: pipe
                     .begin_release(root, WAIT)
@@ -741,11 +791,13 @@ fn advance(
         job.model.drained();
         return Ok(());
     }
-    if matches!(
-        job.model.status,
-        JobStatus::Starting | JobStatus::Pausing | JobStatus::Resuming
-    ) {
-        if let Some(index) = job.model.pending_member() {
+    if job.work.is_none()
+        && matches!(
+            job.model.status,
+            JobStatus::Starting | JobStatus::Pausing | JobStatus::Resuming
+        )
+        && let Some(index) = job.model.pending_member()
+    {
             let member = &mut job.members[index];
             let built = member.built.ok_or("missing running member")?;
             let result = match job.model.status {
@@ -765,7 +817,6 @@ fn advance(
                 Err(error) => return Err(format!("job transition: {error:?}")),
             }
             return Ok(());
-        }
     }
     if job.model.status == JobStatus::Cancelling {
         for member in &mut job.members {

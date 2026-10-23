@@ -90,13 +90,13 @@ fn run_shell(
     )
     .is_err()
     {
-        let _ = lifecycle.instance(built.task).ruin(WAIT);
+        let _ = lifecycle.instance(built.task).release(WAIT);
         return Err(());
     }
     let issuer = match startup::deliver(built.task, env::unit::sire()) {
         Ok(issuer) => issuer,
         Err(()) => {
-            let _ = lifecycle.instance(built.task).ruin(WAIT);
+            let _ = lifecycle.instance(built.task).release(WAIT);
             return Err(());
         }
     };
@@ -104,7 +104,7 @@ fn run_shell(
         Ok(foreground) => foreground,
         Err(_) => {
             programs::debug::put("login: terminal foreground grant failed");
-            lifecycle.instance(built.task).ruin(WAIT).map_err(|_| ())?;
+            lifecycle.instance(built.task).release(WAIT).map_err(|_| ())?;
             return Ok(false);
         }
     };
@@ -118,12 +118,7 @@ fn run_shell(
         env::unit::join(built.team.into(), Wait::Forever, false).map_err(|_| ())?;
         Ok(())
     })();
-    let stopped = if run.is_err() {
-        lifecycle.instance(built.task).ruin(WAIT).map_err(|_| ())
-    } else {
-        Ok(())
-    };
-    let _ = env::unit::oust(built.team);
+    let stopped = lifecycle.instance(built.task).release(WAIT).map_err(|_| ());
     let restored = foreground.restore();
     drop(issuer);
     stopped?;

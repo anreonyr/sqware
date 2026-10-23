@@ -30,6 +30,8 @@ class RuinEvidence(unittest.TestCase):
             "iommu: binding 1 released",
             "hub: binding 1 closed",
             "ruin: recovery dead after reply",
+            "system: forced shutdown admitted after DMA settlement",
+            "system: forced shutdown admitted after retirement settlement",
         ):
             with self.subTest(line=line), self.assertRaisesRegex(AssertionError, "premature"):
                 pending(HELD + line + "\n", EVENTS[:2])

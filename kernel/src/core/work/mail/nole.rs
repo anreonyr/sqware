@@ -4,6 +4,7 @@ use core::time::Duration;
 use env::{NoleFail, TaskId};
 
 use super::Liveness;
+use super::nole_role::NoleRole;
 use crate::machine::sync::{Level, SpinLock};
 
 use crate::core::work::room::messenger::{self, Handoff, WakeKey};
@@ -15,9 +16,7 @@ pub struct NoleMeta {
     life: Arc<Life>,
     ring: SpinLock<bool>,
     owner: TaskId,
-    /// 这是**内核铸的**一枚（不是用户 `Unseal(Nole)` 自造的那一枚）。
-    /// 它是“独立保留授权”的真对象身份，不靠 `owner` 数字 / `Mark` / 权限位单独证明。
-    retention: bool,
+    role: NoleRole,
 }
 
 impl NoleMeta {
@@ -32,23 +31,33 @@ impl NoleMeta {
     pub(crate) fn mint_retention(
         owner: TaskId,
     ) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
-        Self::try_build(owner, true)
+        Self::try_build(owner, NoleRole::Retention)
+    }
+
+    pub(crate) fn mint_guard(
+        owner: TaskId,
+    ) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
+        Self::try_build(owner, NoleRole::Guard)
     }
 
     /// 是否为内核认可的保留授权对象。
     pub(crate) fn retains(&self) -> bool {
-        self.retention
+        matches!(self.role, NoleRole::Retention)
+    }
+
+    pub(crate) fn guards(&self) -> bool {
+        matches!(self.role, NoleRole::Guard)
     }
 
     pub(crate) fn try_new(
         owner: TaskId,
     ) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
-        Self::try_build(owner, false)
+        Self::try_build(owner, NoleRole::Plain)
     }
 
     fn try_build(
         owner: TaskId,
-        retention: bool,
+        role: NoleRole,
     ) -> Result<Arc<Self>, crate::core::memory::nest::NestError> {
         let life = Life::try_new()?;
         Arc::try_new(Self {
@@ -57,7 +66,7 @@ impl NoleMeta {
             life,
             ring: SpinLock::new_level(Level::L3, false),
             owner,
-            retention,
+            role,
         })
         .map_err(|_| crate::core::memory::nest::NestError::OutOfMemory)
     }

@@ -103,6 +103,15 @@ pub fn run() -> Result<(), &'static str> {
         .map_err(|_| "shell operator")?;
     let tree = system_client::operator::Face::of(session);
     let pipe = pipe_client::Client::find(&tree, WAIT).map_err(|_| "shell pipe service")?;
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, WAIT)
+        .map_err(|_| "shell service namespace")?;
+    let lifecycle = system_client::control::Face::of(
+        tree.tile_from(service, system_api::control::INSTANCE, WAIT)
+            .and_then(|tile| tile.token(WAIT))
+            .map_err(|_| "shell instance endpoint")?,
+    )
+    .map_err(|_| "shell lifecycle")?;
     let mut engine = Engine::new(Limits::default()).map_err(|_| "shell language allocation")?;
     Host::install(&mut engine).map_err(|_| "shell standard library")?;
     let grant = system_api::identity::Grant::Resolve;
@@ -136,6 +145,7 @@ pub fn run() -> Result<(), &'static str> {
         loader,
         binding.current,
         identity_authority,
+        lifecycle,
     ));
     queue(&mut host, b"sqware Lisp Shell\n");
     queue(

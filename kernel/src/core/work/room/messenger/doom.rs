@@ -27,6 +27,7 @@ fn suspend(task: &Arc<Task>, cause: TaskExitCause, reason: usize) -> bool {
     if task.dead() {
         return false;
     }
+    crate::core::work::unit::team::exit::member_dying(task, reason);
     if let Some(hart) = task.on_hart() {
         task.state.lock().doom(Some(hart), cause, reason);
         NUDGED.bump();

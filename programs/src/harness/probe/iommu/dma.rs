@@ -3,9 +3,9 @@
 //!
 //! 四件事各有唯一条目：
 //! - **发现**：`ecam` 扫配置空间、`virtio` 读能力表、`endpoint` 把 BAR 落位；
-//! - **交付**：BAR 从 `Page::Region(aperture)` 那一枚门闩上派生**一段有界窗口**
-//!   （`PieCall::AccordWindow`）。两枚：管理者自己那一枚（0 号位，它留作收口时的门铃通路），
-//!   以及从它**嵌套收窄**出来、交给端点服务的那一枚（1 号位）——不放宽、不下放整段 aperture；
+//! - **交付**：BAR 先从 `Page::Region(aperture)` 那一枚门闩上**本地精确派生**，
+//!   再由它普通 Accord 继承同一范围交给端点服务。管理者自己那一枚留作收口时的门铃通路，
+//!   两枚都只覆盖那一段 BAR——不放宽、不下放整段 aperture；
 //! - **发布**：硬件到得了的每一页先经保留强持，再把**真实物理页起址**写进 DDT/DC/PT/队列；
 //!   设备看到的是另一段 IOVA，故“按我们写下的表翻过去的”这件事有承重的证据；
 //! - **收口**：先 IOTINVAL ＋ IOFENCE（可执行、要等到完成记录），再把 DDTP 落 Off 并回读确认；
@@ -27,8 +27,9 @@
 use alloc::format;
 use core::sync::atomic::Ordering;
 
-use env::{Call, Mark, Name, PAGE_SIZE, Page, Permission, PieToken, Wait};
+use env::{Call, GrantRange, Mark, Name, PAGE_SIZE, Page, Permission, PieToken, Wait};
 use resource::dock::Dock;
+use resource::raw::Capability;
 
 use crate::boot::Accounts;
 use crate::driver::iommu::{
@@ -162,24 +163,27 @@ pub fn acceptance() {
         APERTURE_BASE + APERTURE_SIZE,
     ));
 
-    // ③ 精确 BAR 的两枚窗口：管理者自己那一枚（先开图，再把它交出去），
-    //    以及从它嵌套收窄出来交给服务的那一枚（坐标都是相对来源起点的绝对页偏移）。
+    // ③ 精确 BAR 的两枚能力：管理者自己那一枚（先开图），以及由它普通 Accord
+    //    继承同一范围交给服务的那一枚；两者都只覆盖这一段 BAR。
     let first = ((endpoint.address() - APERTURE_BASE) / PAGE_SIZE as u64) as usize;
     let count = (endpoint.size() as usize).div_ceil(PAGE_SIZE);
-    let mine = env::pie::accord_window(
+    let mut mine = Capability::derive(
         aperture,
-        env::unit::self_id(),
         OWNER_SUBSET,
         BAR_MARK,
-        first,
-        count,
+        GrantRange::Pages {
+            offset: first,
+            count,
+        },
     )
     .expect("iommu-dma: bar window");
-    let bar = Dock::open(mine).expect("iommu-dma: bar mapping");
+    let bar = Dock::open(mine.token()).expect("iommu-dma: bar mapping");
     let bar_base = bar.view().base();
     let service = service::spawn();
-    let theirs = env::pie::accord_window(mine, service, DRIVER_SUBSET, BAR_MARK, first, count)
-        .expect("iommu-dma: bar window for the service");
+    let theirs = mine
+        .grant(service, DRIVER_SUBSET, BAR_MARK)
+        .expect("iommu-dma: bar window for the service")
+        .keep();
 
     // ④ 先把设备那一侧的坐标交出去（放开服务之前写死；那时还没有第二个写者）。
     let (common, notify, multiplier, device) = caps.parts();
@@ -361,6 +365,8 @@ pub fn acceptance() {
         .unwrap_or_else(|fail| panic!("iommu-dma: {fail}"));
     bar.shut()
         .unwrap_or_else(|_| panic!("iommu-dma: bar unmap"));
+    mine.release()
+        .unwrap_or_else(|_| panic!("iommu-dma: bar authority release"));
     ecam_dock
         .shut()
         .unwrap_or_else(|_| panic!("iommu-dma: ecam unmap"));

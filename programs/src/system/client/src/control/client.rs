@@ -68,12 +68,8 @@ impl Face {
     /// **传输失败折进 Fail::Bad**：借不出回信孔 / 超时 / 答话长度不对——三件事都答
     /// 在**对面**：语义格是持表那一侧真会答的码，"没走到"是本端自己在码表之外判的
     fn call(&self, act: frame::Req, wait: Wait) -> Result<frame::Said, Fail> {
-        fn deny(step: &str) -> Fail {
-            crate::debug::put(&alloc::format!("control: call deny={step}"));
-            Fail::Bad
-        }
         self.sender
-            .call(Deadline::new(wait), |back| frame::Request(act, back))
+            .call(Deadline::new(wait), move |back| frame::Request(act.clone(), back))
             .map_err(|fail| {
                 let step = match fail {
                     RpcFail::Open(_) | RpcFail::Create(_) | RpcFail::Grant(_) => "borrow",
@@ -85,6 +81,30 @@ impl Face {
                 deny(step)
             })
     }
+
+    fn begin(
+        &self,
+        act: frame::Req,
+        wait: Wait,
+    ) -> Result<ipc::rpc::request::Pending<Call>, Fail> {
+        self.sender
+            .begin(Deadline::new(wait), move |back| frame::Request(act.clone(), back))
+            .map_err(|fail| {
+                let step = match fail {
+                    RpcFail::Open(_) | RpcFail::Create(_) | RpcFail::Grant(_) => "borrow",
+                    RpcFail::Encode => "encode",
+                    RpcFail::Send(_) => "push",
+                    RpcFail::Receive(_) | RpcFail::WrongSource => "receive",
+                    RpcFail::Decode | RpcFail::Untrusted => "decode",
+                };
+                deny(step)
+            })
+    }
+}
+
+fn deny(step: &str) -> Fail {
+    crate::debug::put(&alloc::format!("control: call deny={step}"));
+    Fail::Bad
 }
 
 /// **一条服务**：`mint` 那一下把名字绑进柄 ⇒ 此后那几手不再重复传名字
@@ -179,11 +199,22 @@ pub struct Instance<'a> {
 }
 impl Instance<'_> {
     pub fn inspect(&self, wait: Wait) -> Result<frame::Said, Fail> {
-        let said = read(self.face.call(frame::Req::StateInstance(self.task), wait)?)?;
+        self.inspect_reply(self.face.call(frame::Req::StateInstance(self.task), wait)?)
+    }
+
+    pub fn inspect_reply(&self, said: frame::Said) -> Result<frame::Said, Fail> {
+        let said = read(said)?;
         if said.task != self.task || State::of_code(said.a).is_none() {
             return Err(Fail::Bad);
         }
         Ok(said)
+    }
+
+    pub fn begin_inspect(
+        &self,
+        wait: Wait,
+    ) -> Result<ipc::rpc::request::Pending<Call>, Fail> {
+        self.face.begin(frame::Req::StateInstance(self.task), wait)
     }
 
     pub fn team(&self, wait: Wait) -> Result<env::TeamId, Fail> {
@@ -206,6 +237,15 @@ impl Instance<'_> {
         )
         .map(|_| ())
     }
+    pub fn begin_embark(
+        &self,
+        wait: Wait,
+    ) -> Result<ipc::rpc::request::Pending<Call>, Fail> {
+        self.face.begin(frame::Req::EmbarkInstance(self.task), wait)
+    }
+    pub fn embark_reply(&self, said: frame::Said) -> Result<(), Fail> {
+        read(said).map(|_| ())
+    }
     pub fn debark(&self, wait: Wait) -> Result<(), Fail> {
         read(
             self.face
@@ -215,6 +255,21 @@ impl Instance<'_> {
     }
     pub fn ruin(&self, wait: Wait) -> Result<(), Fail> {
         read(self.face.call(frame::Req::RuinInstance(self.task), wait)?).map(|_| ())
+    }
+    pub fn release(&self, wait: Wait) -> Result<(), Fail> {
+        self.release_reply(
+            self.face
+                .call(frame::Req::ReleaseInstance(self.task), wait)?,
+        )
+    }
+    pub fn begin_release(
+        &self,
+        wait: Wait,
+    ) -> Result<ipc::rpc::request::Pending<Call>, Fail> {
+        self.face.begin(frame::Req::ReleaseInstance(self.task), wait)
+    }
+    pub fn release_reply(&self, said: frame::Said) -> Result<(), Fail> {
+        read(said).map(|_| ())
     }
     pub fn state(&self, wait: Wait) -> Result<State, Fail> {
         State::of_code(self.inspect(wait)?.a)
