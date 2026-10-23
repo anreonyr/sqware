@@ -226,7 +226,9 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   let confirmation = $scene in ["iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference"]
   let guard = ($scene | str starts-with "iommu-guard-")
   let guard_target = if $guard { $scene | str replace "iommu-guard-" "" } else { "" }
-  let daemon = $scene == "daemon-rtc"
+  let daemon_rtc = $scene == "daemon-rtc"
+  let daemon_target = $scene == "daemon-target"
+  let daemon = $daemon_rtc or $daemon_target
   let evidence = $retirement or $confirmation or $hardware or $soak or $guard or $daemon
   let retire_mode = if $scene == "iommu-forced" { "forced" } else { "ruin" }
   let feed_script = if ($retirement or $hardware or $guard) and ($feed_script | is-empty) {
@@ -458,6 +460,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     "accept" => "accept: done"
     "product" => "system: done"
     "daemon-rtc" => "daemon-rtc: done"
+    "daemon-target" => "daemon-target: done"
     "system-fault" => "system-fault: acceptance passed"
     _ => ""
   }
@@ -582,7 +585,8 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
       print -n $checked.stderr
       if $checked.exit_code != 0 { $code = 1 }
     } else if $daemon {
-      let checked = (^python3 ($repo | path join "programs/tests/daemon-recovery/daemon_rtc.py")
+      let checker = if $daemon_rtc { "daemon_rtc.py" } else { "daemon_target.py" }
+      let checked = (^python3 ($repo | path join "programs/tests/daemon-recovery" $checker)
         $env.QEMU_TEE_LOG $archived $qtlog ($raw_code | into string) | complete)
       print -n $checked.stdout
       print -n $checked.stderr

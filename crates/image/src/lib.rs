@@ -428,6 +428,7 @@ mod tests {
             "iommu-product-before",
             "iommu-product-after",
             "daemon-rtc",
+            "daemon-target",
         ];
         for deployment in unit::DEPLOYMENTS {
             let count = deployment
@@ -456,14 +457,26 @@ mod tests {
             let deployment = unit::Deployment::find(scene).unwrap();
             let order = order_of(deployment, unit::PROGRAMS).unwrap();
             let daemon = order.iter().position(|name| *name == "daemon").unwrap();
-            let rtc = order.iter().position(|name| *name == "rtc").unwrap();
-            assert!(daemon > rtc, "daemon must start after rtc in {scene}");
+            let provider = if *scene == "daemon-target" {
+                "fixturetarget"
+            } else {
+                "rtc"
+            };
+            let provider_at = order.iter().position(|name| *name == provider).unwrap();
+            assert!(
+                daemon > provider_at,
+                "daemon must start after {provider} in {scene}"
+            );
             let supervised = deployment
                 .targets
                 .iter()
                 .find(|target| target.name == "supervised")
                 .unwrap();
-            assert_eq!(supervised.members, ["rtc"], "supervised group in {scene}");
+            assert_eq!(
+                supervised.members,
+                [provider],
+                "supervised group in {scene}"
+            );
             assert!(
                 supervised
                     .members
@@ -483,6 +496,12 @@ mod tests {
                     .unwrap()
                     .iter()
                     .any(|(image, _)| *image == "daemon")
+            );
+            assert!(
+                bins_for(deployment)
+                    .unwrap()
+                    .iter()
+                    .any(|(image, _)| *image == provider)
             );
         }
     }

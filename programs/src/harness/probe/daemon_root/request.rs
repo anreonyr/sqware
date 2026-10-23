@@ -1,11 +1,11 @@
 use env::wire::Span as _;
 use env::TaskId;
 
-/// The controller's private request after it observed the old RTC task and a real time.
+/// The controller's private request after it observed the old target and its real heartbeat.
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-#[frame(len = 16)]
 pub struct Request {
     pub old_task: TaskId,
+    pub old_helper: TaskId,
     pub before: u64,
 }
 

@@ -1,6 +1,6 @@
 use env::{TaskId, TeamId};
 
-/// Root-side facts retained while the production app frame runs one RTC recovery.
+/// Root-side facts retained while the production app frame runs one recovery.
 pub(super) struct Root {
     pub controller: Option<TaskId>,
     pub old: Option<(TaskId, TeamId)>,

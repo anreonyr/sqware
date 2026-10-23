@@ -6,7 +6,7 @@ use env::{PieToken, Wait};
 use ipc::session::{Session, establish};
 use system_client::operator;
 
-use super::request::Request;
+use crate::harness::probe::daemon_root::Request;
 use crate::driver::rtc::{api, client};
 
 const MS: usize = 3000;
@@ -84,7 +84,11 @@ fn lookup(tree: &operator::Face) -> Option<PieToken> {
 fn request(old_task: env::TaskId, before: u64) -> Result<(), &'static str> {
     let entry = establish::give(env::unit::sire(), super::REQUEST)
         .map_err(|_| "daemon-rtc: request channel")?;
-    let request = Request { old_task, before };
+    let request = Request {
+        old_task,
+        old_helper: env::TaskId::new(0),
+        before,
+    };
     let mut bytes = [0u8; Request::LEN];
     let len = request
         .encode(&mut bytes)

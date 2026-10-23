@@ -5,10 +5,10 @@ supervision admission, the public Observe/Recover facets, server/client/namespac
 wiring, and host proof. This checkpoint adds the actual single ordinary resident
 daemon process and its product deployment.
 
-Root has verified actual RTC death/restart on 4/8 harts, ordinary product
-startup/shutdown on 4/8 harts and actual Shell interaction on 8 harts. The ordinary
-multi-member target and explicit-stop native races remain to be completed. No
-hardware-chain or kernel ABI change is part of this checkpoint.
+Root has verified actual RTC death/restart and ordinary multi-member target
+recovery on 4/8 harts, ordinary product startup/shutdown on 4/8 harts and actual
+Shell interaction on 8 harts. Explicit-stop native races remain to be completed.
+No hardware-chain or kernel ABI change is part of this checkpoint.
 
 ## Sole mutable fact
 
@@ -225,9 +225,36 @@ paths, and ran the builds and native checks. The read-only reviewer found no
 confirmed blocker in the corrected fixture. The archived candidate itself was
 not presented as accepted evidence.
 
+## Ordinary multi-member target
+
+`daemon-target` uses an ordinary user process that spawns a real helper in its
+own Team. Its authenticated heartbeat reports the main task, a live helper and
+the real monotonic clock. Test Root kills only the old main; production Control
+retires the entire old Team, and the actual daemon issues conditional recovery.
+The shared test Root runs the production frame and carries only immutable scene
+coordinates plus observations. The RTC scenario retains its actual device-time
+proof and previous verifier gates.
+
+Root applied the read-only Flash proposal through exact-context `apply_patch`,
+corrected its Option call and parser variable, and required both old members to
+reap before replacement without imposing an artificial order between those two
+reaps. All 53 parser controls passed, including valid retirement in either order;
+workspace and actual target/controller/Root builds passed with the five existing
+warnings; image 19 and shape 22 checks passed. The same read-only reviewer found
+no confirmed blocker. Helper Team membership is established by the actual
+`execution::unit::task::spawn` implementation, not a new Kernel query ABI.
+
+Strict native target 4/8-hart runs passed in 1.87s/1.97s: old main Task/Team
+13/13 and helper 14 both reaped before new main Task/Team 17/16 and helper 18.
+Daemon 15 was the admitted Recover sender, fresh heartbeat and namespace owner
+were verified, and final frames were 87 -> 87 / 155 -> 155. Shared-harness RTC
+4/8-hart regressions also passed (2.72s/2.83s), with the same frame baselines.
+Evidence is under `target/driver-composition/daemon/helper-first-*-4/` and
+`helper-final-*-8/`; eight-hart runs have separate independent-verifier logs.
+
 ## Remaining work
 
-- ordinary non-DMA multi-member Team recovery and explicit-stop native races;
+- explicit-stop native races and actual outsider-scope rejection;
 - native strict qtest 4/8-hart and product/Ruin/forced/accept regressions on the
   final source;
 - full native acceptance of the broader refactor remains outside this phase.

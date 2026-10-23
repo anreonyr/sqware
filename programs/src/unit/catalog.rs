@@ -30,6 +30,12 @@ pub mod device_confirmation;
 pub mod daemon_rtc;
 #[path = "../harness/probe/daemon_rtc/control_program.rs"]
 pub mod daemon_rtc_control;
+#[path = "../harness/probe/daemon_target/root_program.rs"]
+pub mod daemon_target;
+#[path = "../harness/probe/daemon_target/control_program.rs"]
+pub mod daemon_target_control;
+#[path = "../harness/probe/daemon_target/target_program.rs"]
+pub mod fixturetarget;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
 /// 测具那 29 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
@@ -139,6 +145,9 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &daemon::PROGRAM,
     &daemon_rtc::PROGRAM,
     &daemon_rtc_control::PROGRAM,
+    &daemon_target::PROGRAM,
+    &daemon_target_control::PROGRAM,
+    &fixturetarget::PROGRAM,
     &pipe::PROGRAM,
     &account::PROGRAM,
     &terminal::PROGRAM,

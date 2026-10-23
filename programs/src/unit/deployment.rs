@@ -194,6 +194,22 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         sources: &[],
     },
     Deployment {
+        name: "daemon-target",
+        entry: "daemon-target",
+        start: &["fixturetarget", "daemon", "daemon-ctl-target"],
+        guarded: &[],
+        resources: &[],
+        targets: &[
+            scene_target(&["fixturetarget", "daemon", "daemon-ctl-target"]),
+            Target {
+                name: "supervised",
+                members: &["fixturetarget"],
+            },
+        ],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
         name: "accept",
         entry: "accept-system",
         start: &[
