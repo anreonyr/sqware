@@ -35,6 +35,7 @@ pub struct Service {
     pub announce: Announce,
     pub restart: Ending,
     pub named: bool,
+    pub guard_held: bool,
 }
 
 const EMPTY: Service = Service {
@@ -44,6 +45,7 @@ const EMPTY: Service = Service {
     announce: Announce::None,
     restart: Ending::Resident,
     named: false,
+    guard_held: false,
 };
 
 pub struct Table {
@@ -101,15 +103,33 @@ impl Table {
         let Some(s) = self.row_mut(name) else {
             return Err(Fail::Unknown);
         };
+        if s.guard_held {
+            return Err(Fail::NotReady);
+        }
         s.slot = slot;
         s.state = State::NeverStarted;
         s.named = false;
         Ok(())
     }
 
-    pub fn detach(&mut self, name: &str) {
+    pub fn detach(&mut self, name: &str) -> Result<(), Fail> {
+        let Some(s) = self.row_mut(name) else {
+            return Ok(());
+        };
+        if s.guard_held {
+            return Err(Fail::NotReady);
+        }
+        s.slot = Slot::None;
+        Ok(())
+    }
+
+    pub fn guard_held(&self, name: &str) -> bool {
+        self.find(name).is_some_and(|row| row.guard_held)
+    }
+
+    pub fn set_guard_held(&mut self, name: &str, held: bool) {
         if let Some(s) = self.row_mut(name) {
-            s.slot = Slot::None;
+            s.guard_held = held;
         }
     }
 

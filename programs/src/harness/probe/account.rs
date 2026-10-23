@@ -859,7 +859,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         .unpart(terminal_mounts.1, Wait::AtMost(3000))
         .unwrap();
     let _ = env::pie::release(terminal, env::ReleaseMode::Revoke);
-    assembly
+    let _ = assembly
         .resources
         .write::<Control>()
         .unwrap()

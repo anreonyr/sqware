@@ -29,6 +29,7 @@ pub fn lifecycle(hooks: ActivationHooks) -> Result<Vec<(Key, Plan<Fail>)>, Build
     let mut ruin = Schedule::sequence();
     ruin.system("drain", work::ruin::drain)?;
     ruin.system("retire", work::ruin::pre)?;
+    ruin.system("guard", work::ruin::release_guard)?;
     ruin.plan("activation", hooks.retire)?;
     ruin.system("destroy", work::ruin::run)?;
     ruin.system("construction", work::ruin::retire_construction)?;

@@ -14,6 +14,7 @@ mod reclamation;
 mod service;
 pub use service::Service;
 mod wait;
+pub(crate) mod guard;
 pub struct Control {
     pub(in crate::system::control) reclaimed_at: u64,
     pub(in crate::system::control) status: Arc<Status>,
@@ -24,6 +25,8 @@ pub struct Control {
     pub(in crate::system::control) instances:
         Vec<crate::system::control::instance::state::Instance>,
     pub(in crate::system::control) pending: Vec<Pending>,
+    pub(in crate::system::control) guarded: &'static [&'static str],
+    pub(in crate::system::control) guard_token: Option<env::PieToken>,
 }
 pub(crate) struct Pending {
     pub(crate) name: &'static str,
@@ -40,7 +43,21 @@ impl Control {
             internal: Vec::new(),
             pending: Vec::new(),
             instances: Vec::new(),
+            guarded: &[],
+            guard_token: None,
         }
+    }
+    pub(crate) fn guard_required(&self, name: &str) -> bool {
+        guard::required(self.guarded, name)
+    }
+    pub(crate) fn guard_held(&self, name: &str) -> bool {
+        self.table.guard_held(name)
+    }
+    pub(crate) fn hold_guard(&mut self, name: &str) {
+        self.table.set_guard_held(name, true);
+    }
+    pub(crate) fn clear_guard(&mut self, name: &str) {
+        self.table.set_guard_held(name, false);
     }
     pub fn enlist(&mut self, program: &UnitFile) -> Result<(), Error> {
         if !program.valid() {

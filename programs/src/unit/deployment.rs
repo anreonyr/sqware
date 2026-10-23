@@ -1,12 +1,13 @@
 //! Scene membership and startup are selected independently from UnitFile declarations.
 
-use super::DeploymentSelectionError;
+use super::{DeploymentSelectionError, GuardSelectionError, guard_selection};
 
 #[derive(Clone, Copy)]
 pub struct Deployment {
     pub name: &'static str,
     pub entry: &'static str,
     pub start: &'static [&'static str],
+    pub guarded: &'static [&'static str],
     pub resources: &'static [&'static str],
     pub targets: &'static [Target],
     pub bootstrap: &'static [Bootstrap],
@@ -60,6 +61,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "iommu-soak-long",
         entry: "system",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-soak-long"],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &[],
         targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-soak-long"])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -69,6 +71,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "iommu-fail-fence",
         entry: "system",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-fault"],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &[],
         targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-fault"])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -78,6 +81,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "iommu-fail-reference",
         entry: "iommu-confirmation",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &[],
         targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -87,6 +91,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "iommu-fail-invalidate",
         entry: "iommu-confirmation",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &[],
         targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -96,6 +101,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "iommu-fail-reset",
         entry: "iommu-confirmation",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &[],
         targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -105,6 +111,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "iommu-fail-release",
         entry: "iommu-confirmation",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &[],
         targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-confirmation"])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -114,6 +121,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "iommu-soak",
         entry: "system",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-soak"],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &[],
         targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-soak"])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -123,6 +131,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "iommu-forced",
         entry: "system",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-forced"],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &[],
         targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-forced"])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -132,6 +141,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "iommu-ruin",
         entry: "iommu-ruin",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-ruin"],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &[],
         targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-ruin"])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -173,6 +183,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
             "probe-operator-gate",
             "probe-operator-land",
         ],
+        guarded: &[],
         resources: &[],
         targets: &[scene_target(&[
             "hub",
@@ -214,6 +225,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         start: &[
             "hub", "pipe", "account", "terminal", "login", "router", "uart", "rtc",
         ],
+        guarded: &[],
         resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers"],
         targets: &[scene_target(&[
             "hub", "pipe", "account", "terminal", "router", "uart", "rtc",
@@ -238,6 +250,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
             "recovery",
             "device-ctl",
         ],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers"],
         targets: &[scene_target(&[
             "hub",
@@ -272,6 +285,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
             "recovery",
             "device-ctl-fault",
         ],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers"],
         targets: &[scene_target(&[
             "hub",
@@ -306,6 +320,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
             "recovery",
             "device-ctl-before",
         ],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers"],
         targets: &[scene_target(&[
             "hub",
@@ -340,6 +355,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
             "recovery",
             "device-ctl-after",
         ],
+        guarded: &["pci", "iommu", "recovery"],
         resources: &["shell", "cat", "emit", "upper", "fail", "spin", "workers"],
         targets: &[scene_target(&[
             "hub",
@@ -370,6 +386,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
             "system-dependent",
             "system-child",
         ],
+        guarded: &[],
         resources: &["system-fault-unit"],
         targets: &[scene_target(&[
             "hub",
@@ -388,6 +405,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "memory-transfer",
         entry: "memory-transfer",
         start: &[],
+        guarded: &[],
         resources: &["memory-transfer-unit"],
         targets: &[scene_target(&[])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -397,6 +415,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "memory-transfer-tlb",
         entry: "memory-transfer-tlb",
         start: &[],
+        guarded: &[],
         resources: &[],
         targets: &[scene_target(&[])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -406,6 +425,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "memory-transfer-fresh",
         entry: "memory-transfer-fresh",
         start: &[],
+        guarded: &[],
         resources: &[],
         targets: &[scene_target(&[])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -415,6 +435,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "memory-transfer-race",
         entry: "memory-transfer-race",
         start: &[],
+        guarded: &[],
         resources: &["memory-transfer-race-unit"],
         targets: &[scene_target(&[])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -424,6 +445,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "iommu-probe",
         entry: "iommu-probe",
         start: &[],
+        guarded: &[],
         resources: &[],
         targets: &[scene_target(&[])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -433,6 +455,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "iommu-dma",
         entry: "iommu-dma",
         start: &[],
+        guarded: &[],
         resources: &[],
         targets: &[scene_target(&[])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -442,6 +465,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "rig",
         entry: "rig",
         start: &[],
+        guarded: &[],
         resources: &["hang"],
         targets: &[scene_target(&[])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -451,6 +475,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "load",
         entry: "load",
         start: &[],
+        guarded: &[],
         resources: &["busy", "park"],
         targets: &[scene_target(&[])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -460,6 +485,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "group",
         entry: "group",
         start: &[],
+        guarded: &[],
         resources: &["waiter"],
         targets: &[scene_target(&[])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -469,6 +495,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "beat",
         entry: "beat",
         start: &[],
+        guarded: &[],
         resources: &[],
         targets: &[scene_target(&[])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -478,6 +505,7 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         name: "again",
         entry: "again",
         start: &[],
+        guarded: &[],
         resources: &["churn"],
         targets: &[scene_target(&[])],
         bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
@@ -497,5 +525,13 @@ impl Deployment {
             .iter()
             .find(|program| program.name() == self.entry)
             .map(|program| program.loader.image)
+    }
+
+    pub fn guarded(&self) -> Result<&'static [&'static str], GuardSelectionError> {
+        guard_selection::select(self.guarded, self.start, |name| {
+            super::PROGRAMS
+                .iter()
+                .any(|program| program.name() == name)
+        })
     }
 }

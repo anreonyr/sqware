@@ -1,4 +1,4 @@
-use super::super::unit::Control;
+use super::super::unit::{Control, guard};
 use super::Active;
 use crate::system::{
     control::identity::Roster,
@@ -50,8 +50,42 @@ pub(crate) fn pre(
         .set_state(&job.key.request.name, State::Stopping);
     Ok(Progress::Done)
 }
+pub fn release_guard(
+    active: Res<Active>,
+    mut control: ResMut<Control>,
+) -> Result<Progress, Fail> {
+    let job = active.0.as_ref().ok_or(Fail::Unknown)?;
+    let name = job.key.request.name.as_str();
+    if !control.guard_held(name) {
+        return Ok(Progress::Done);
+    }
+    let Slot::Live {
+        team: Some(team), ..
+    } = control
+        .table
+        .find(name)
+        .map(|row| row.slot)
+        .ok_or(Fail::Unknown)?
+    else {
+        return Err(Fail::Unknown);
+    };
+    let authority = control.guard_token.ok_or(Fail::NotReady)?;
+    match guard::release(team, authority).map_err(|_| Fail::NotReady)? {
+        Progress::Done => {
+            control.clear_guard(name);
+            Ok(Progress::Done)
+        }
+        Progress::Pending if env::chrono::clock() < job.progress.execution.deadline => {
+            Ok(Progress::Pending)
+        }
+        _ => Err(Fail::NotReady),
+    }
+}
 pub fn run(active: Res<Active>, control: Res<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
+    if control.guard_held(&job.key.request.name) {
+        return Err(Fail::NotReady);
+    }
     if let Some(task) = job.progress.execution.task {
         let team = match control
             .table
@@ -154,7 +188,9 @@ pub fn finalize(
     mut control: ResMut<Control>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    control.detach_unit(&job.key.request.name);
+    control
+        .detach_unit(&job.key.request.name)
+        .map_err(|_| Fail::NotReady)?;
     job.progress.execution.instance = None;
     Ok(Progress::Done)
 }

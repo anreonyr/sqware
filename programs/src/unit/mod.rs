@@ -112,6 +112,9 @@ pub use deployment::{
 };
 mod deployment_selection_error;
 pub use deployment_selection_error::DeploymentSelectionError;
+mod guard_selection;
+mod guard_selection_error;
+pub use guard_selection_error::GuardSelectionError;
 mod package;
 pub use package::{PACKAGES, Package};
 mod loader;
