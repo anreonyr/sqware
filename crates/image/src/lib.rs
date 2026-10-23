@@ -477,6 +477,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: Some(&[unit::Dependency::Unit("cycle-b")]),
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
@@ -494,6 +495,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: Some(&[unit::Dependency::Target(unit::SCENE)]),
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
@@ -550,6 +552,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: None,
                 ending: None,
                 ready: unit::Ready::OnSpawn,
@@ -569,6 +572,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: None,
                 ending: None,
                 ready: unit::Ready::OnSpawn,
@@ -586,6 +590,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: None,
                 ending: None,
                 ready: unit::Ready::OnSpawn,
@@ -641,6 +646,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: None,
                 ending: None,
                 ready: unit::Ready::OnSpawn,
@@ -679,6 +685,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: None,
                 ending: None,
                 ready: unit::Ready::OnSpawn,
@@ -719,6 +726,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: Some(&[unit::Dependency::Bootstrap(unit::Bootstrap::Identity)]),
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
@@ -755,6 +763,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: Some(&[unit::Dependency::Target("after-b")]),
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
@@ -772,6 +781,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: Some(&[unit::Dependency::Target("after-a")]),
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,

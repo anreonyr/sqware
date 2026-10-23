@@ -2,8 +2,10 @@
 pub(crate) mod construction;
 mod instance;
 mod command_reply;
+mod supervision;
 pub(crate) mod request;
 pub(crate) use instance::{answer as answer_instances, receive as receive_instances};
+pub(crate) use supervision::receive as receive_observe;
 
 use env::PieToken;
 use system_api::control as ccall;

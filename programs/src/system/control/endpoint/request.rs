@@ -1,4 +1,4 @@
-use crate::system::control::lifecycle::{Action, Request};
+use crate::system::control::lifecycle::{Action, Directive, Origin, Request};
 use crate::system::control::unit::Control;
 use crate::system::control::unit::table::State;
 use env::Wait;
@@ -20,6 +20,9 @@ pub fn receive(
     mut inbox: ::schedule::ResMut<Inbox>,
 ) -> Result<::schedule::Progress, crate::system::app::Fault> {
     for grant in ccall::Grant::ALL {
+        if grant == ccall::Grant::Observe {
+            continue;
+        }
         let Some(face) = watch.face(grant) else {
             continue;
         };
@@ -91,37 +94,78 @@ pub fn state(
 pub fn enqueue(
     mut operations: ::schedule::ResMut<crate::system::assembly::Jobs>,
     mut inbox: ::schedule::ResMut<Inbox>,
+    mut control: ::schedule::ResMut<Control>,
 ) -> Result<::schedule::Progress, crate::system::app::Fault> {
     let count = inbox.0.len();
     for _ in 0..count {
         let incoming = inbox.0.pop_front().ok_or(crate::system::app::Fault::Room)?;
-        let (name, action) = match incoming.wire {
-            ccall::frame::Wire::Mint(name) => (name, Action::Mint),
-            ccall::frame::Wire::Embark(name) => (
+        let Incoming { wire, from, reply: reply_tx } = incoming;
+        let (name, directive) = match wire {
+            ccall::frame::Wire::Mint(name) => (
                 name,
-                Action::Embark {
-                    parent: Some(incoming.from),
+                Directive {
+                    action: Action::Mint,
+                    origin: Origin::External,
                 },
             ),
-            ccall::frame::Wire::Debark(name) => (name, Action::Debark),
-            ccall::frame::Wire::Ruin(name) => (name, Action::Ruin),
+            ccall::frame::Wire::Recover(name) => (
+                name,
+                Directive {
+                    action: Action::Recover,
+                    origin: Origin::Recovery { caller: from },
+                },
+            ),
+            ccall::frame::Wire::Embark(name) => (
+                name,
+                Directive {
+                    action: Action::Embark { parent: Some(from) },
+                    origin: Origin::External,
+                },
+            ),
+            ccall::frame::Wire::Debark(name) => (
+                name,
+                Directive {
+                    action: Action::Debark,
+                    origin: Origin::External,
+                },
+            ),
+            ccall::frame::Wire::Ruin(name) => (
+                name,
+                Directive {
+                    action: Action::Ruin,
+                    origin: Origin::External,
+                },
+            ),
             ccall::frame::Wire::State(_) | ccall::frame::Wire::Task(_) => {
                 return Err(crate::system::app::Fault::Room);
             }
             _ => {
-                inbox.0.push_back(incoming);
+                inbox.0.push_back(Incoming {
+                    wire,
+                    from,
+                    reply: reply_tx,
+                });
                 continue;
             }
         };
-        if let Err((fail, request)) = operations.push_lifecycle(Request {
-            name,
-            action,
-            back: Some(incoming.reply),
+        let reused = match operations.push_lifecycle(Request {
+            name: name.clone(),
+            directive,
+            back: Some(reply_tx),
         }) {
-            if let Some(reply_tx) = request.back {
-                reply(reply_tx, status(fail));
+            Ok((_, reused)) => reused,
+            Err((fail, request)) => {
+                if let Some(reply_tx) = request.back {
+                    reply(reply_tx, status(fail));
+                }
+                continue;
             }
-        }
+        };
+        crate::system::control::lifecycle::accept_intent(
+            &mut control,
+            &name,
+            if reused { Some(directive) } else { None },
+        );
     }
     Ok(::schedule::Progress::Done)
 }
@@ -138,6 +182,7 @@ fn wire_fail(fail: crate::system::control::unit::verdict::Fail) -> ccall::Fail {
         Model::BadImage => ccall::Fail::BadImage,
         Model::Full => ccall::Fail::Full,
         Model::NotReady => ccall::Fail::NotReady,
+        Model::Denied => ccall::Fail::Denied,
     }
 }
 pub(super) fn wire_state(state: State) -> ccall::State {

@@ -76,6 +76,7 @@ const fn work(name: &'static str, image: &'static str) -> UnitFile {
         },
         identity: Identity::DEFAULT,
         control: crate::unit::ControlConfig {
+        supervision: None,
             after: Some(&[
                 Dependency::Bootstrap(crate::unit::Bootstrap::Operator),
                 Dependency::Bootstrap(crate::unit::Bootstrap::Identity),
@@ -110,6 +111,7 @@ const fn control(
         },
         identity: Identity::DEFAULT,
         control: crate::unit::ControlConfig {
+        supervision: None,
             after: Some(&[
                 Dependency::Bootstrap(crate::unit::Bootstrap::Operator),
                 Dependency::Bootstrap(crate::unit::Bootstrap::Identity),

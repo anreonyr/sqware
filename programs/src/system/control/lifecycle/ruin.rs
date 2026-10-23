@@ -29,6 +29,10 @@ pub(crate) fn pre(
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     control.input(&job.key.request.name)?.program;
+    let change = super::intent::change(
+        job.key.request.directive.action,
+        job.key.request.directive.origin,
+    );
     let Some(task) = job
         .progress
         .execution
@@ -40,6 +44,7 @@ pub(crate) fn pre(
             .find(&job.key.request.name)
             .is_some_and(|r| r.state == State::Dead)
         {
+            apply(&mut control, change, &job.key.request.name)?;
             return Ok(Progress::Done);
         }
         return Err(Fail::Unknown);
@@ -48,6 +53,7 @@ pub(crate) fn pre(
     control
         .table
         .set_state(&job.key.request.name, State::Stopping);
+    apply(&mut control, change, &job.key.request.name)?;
     Ok(Progress::Done)
 }
 pub fn release_guard(
@@ -181,6 +187,14 @@ pub fn retire_identity(active: Res<Active>, mut roster: ResMut<Roster>) -> Resul
         }
     }
     Ok(Progress::Done)
+}
+
+fn apply(control: &mut Control, change: Option<bool>, name: &str) -> Result<(), Fail> {
+    match change {
+        Some(true) => control.request_run(name),
+        Some(false) => control.request_stop(name),
+        None => Ok(()),
+    }
 }
 
 pub fn finalize(

@@ -221,6 +221,10 @@ pub(crate) fn supply(
 }
 pub(crate) fn hooks() -> Result<crate::system::control::ActivationHooks, ::schedule::BuildError> {
     let mut construct = ::schedule::Schedule::sequence();
+    construct.system(
+        "authorize",
+        crate::system::control::lifecycle::authority::recheck,
+    )?;
     construct.system("construct", mint)?;
     let mut prepare = ::schedule::Schedule::sequence();
     prepare.system("namespace.coordinates", namespace_coordinates)?;

@@ -78,7 +78,10 @@ pub fn active_with(
         key: OperationKey {
             request: Request {
                 name: name.into(),
-                action,
+                directive: crate::system::control::lifecycle::Directive {
+                    action,
+                    origin: crate::system::control::lifecycle::Origin::External,
+                },
             },
         },
         progress: ExecutionProgress {
@@ -125,7 +128,10 @@ pub fn pending(name: &'static str, task: TaskId) -> Pending {
 pub fn run_embark(resources: &Resources<'static>) -> Result<Progress, Fail> {
     let active = resources.write::<Active>().unwrap();
     let control = resources.write::<Control>().unwrap();
-    embark::run(active, control)
+    let mut local = Resources::new();
+    local.insert(crate::Settle { settled: false }).unwrap();
+    let settle = local.read::<crate::Settle>().unwrap();
+    embark::run(active, control, settle)
 }
 
 pub fn run_pre(resources: &Resources<'static>) -> Result<Progress, Fail> {

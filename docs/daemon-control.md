@@ -1,0 +1,153 @@
+# Daemon Control core (phase 1)
+
+Base `e4753aca`. This phase implements the Control-side contract for one
+restricted daemon: the run-intent fact, supervision admission, the public
+Observe/Recover facets, server/client/namespace wiring, and host proof.
+
+It does **not** implement the actual single daemon process or deployment, and
+it does not implement native service/RTC restart recovery. Those remain phase 2
+and phase 3 work. No QEMU run, hardware-chain change, or kernel ABI change is
+part of this checkpoint.
+
+## Sole mutable fact
+
+Control stores `run_requested: bool` on the existing static `Service` row in
+`programs/src/system/control/unit/table.rs`. It defaults to `false`. Observed
+`State`/`Slot`, `Ending`, and the actual caller are not copied into new state.
+
+The source caller is the kernel RPC `Incoming.from`; Control resolves it against
+the existing row (`named`, `Slot::task`, live state), the deployed
+`Control.inputs.program`, and the trusted deployment target group. There is no
+caller-slot registry, run enum, task/team shadow book, or recovery manager.
+
+`ControlConfig.supervision: Option<&'static str>` authorizes an existing
+`Deployment.targets` group. Install validation
+(`programs/src/system/control/supervision.rs`) requires the group to exist, have
+nonempty and unique actual start members, exclude the supervisor itself and
+guarded targets, include the group in the supervisor's `after:
+Dependency::Target(...)` ordering, and be declared by at most one deployed
+input. No business name is special-cased in System.
+
+## Intent policy
+
+`programs/src/system/control/lifecycle/intent.rs` is the single policy:
+
+- accepted explicit Mint and Startup Mint set `run_requested = false`;
+- accepted normal or startup Embark sets it to `true`;
+- accepted explicit Debark or Ruin sets it to `false`;
+- recovery Mint, recovery Embark, natural reaper Ruin, closing Ruin, and failure
+  rollback retain the existing value.
+
+A stage applies the change only after its own validation and reservation. Wrong
+state, Unknown, NotReady, Full, rejected admission, or a failed RPC therefore
+does not silently rewrite intent. An explicit Ruin that is merged into, or takes
+over, an in-flight job commits its stop at admission after the waiter/job
+reservation and takeover validation succeed; the old stage may already have
+passed its own intent step, so it cannot be the only writer.
+
+## Observe facet
+
+Public `control/supervision` (grant code 6, own mark and receiver) uses the
+typed contract in `programs/src/system/api/src/control/observe/`:
+
+- request: `index` plus return token;
+- reply: `status`, echoed `index`, `present`, explicit `end`, target `name`,
+  observed lifecycle `state`, and `run_requested`.
+
+The list is the caller's declared supervision target group. `end` is the only
+EOF signal; a denial is `status = DENIED` with `end = false`, and an absent row
+is `present = false` without pretending to be EOF or `Dead`. Every request
+re-resolves the actual caller as the named, live, ready static supervisor.
+
+## Recover facet and lifecycle
+
+Recover is a new legacy opcode (`Wire::Recover(name)`, code 12) on its own
+public grant (code 7), reusing `Control::Said` and the existing reply/waiting
+machinery. The lifecycle uses the same `Tracked` and the same Mint plan for a
+conditional recovery Mint; a successful Mint transitions that exact job to
+`Embark { parent: None }`, keeps its callbacks, and resets cursor/deadline once.
+Success is not returned until the Embark phase actually completes.
+
+Admission re-checks the actual caller, caller liveness/intent, target membership,
+target guard status, target intent, global closing, target `Dead` + `Slot::None`,
+and conflicts. Effect rechecks repeat caller scope, caller intent, target intent,
+and closing before construction and immediately before `embark_task`; they do
+not re-demand `Dead` + `Slot::None` after Mint attached the new service.
+
+## Cancellation and cleanup
+
+An explicit valid Ruin that arrives while the same target has an in-flight
+recovery takes over that job/allocation in place. It answers the original
+recovery callback(s) `NotReady`, keeps the constructed task/instance/pending
+ownership, changes the job to a normal Ruin, and resets its cursor/deadline for
+cleanup. No constructed Team is dropped to make cancellation easy.
+
+After Mint moves the Service into `Control.pending`, `execution.instance` is
+`None` while `execution.task` still owns the new Team. The recovery rollback
+predicate therefore keys on the recovery origin plus the surviving task, not on
+`instance.is_some()`. A Ruin failure with a surviving task is not a retryable
+job: `Tracked::finish` escalates it to a global shutdown fault. A Ruin failure
+without a surviving task simply completes that job. Natural reaping continues to
+submit a normal Ruin and retains intent.
+
+## Wiring and client
+
+- `programs/src/system/api/src/control/` owns the granted opcodes, Observe
+  frame contract, and mark declarations. Existing codes 1–5, opcodes 1–11, and
+  the `Said` ABI are unchanged.
+- `programs/src/system/control/endpoint/` receives legacy requests (skipping
+  Observe) and serves the typed supervision receiver.
+- `programs/src/system/control/namespace.rs` publishes State, Observe
+  (`control/supervision`), and Recover as `Permit::Public`; Mint/Embark/Debark/
+  Ruin remain `Permit::Identity(Selector::Exact(root principal))`.
+- `programs/src/system/client/src/control/` exposes bounded
+  `Observe::begin_observe`/`poll_observe` and `Face::begin_recover`/
+  `recover_reply` over the existing IPC sender/pending primitives. A denied or
+  failed reply is an error, not a successful observation or recovery.
+
+No daemon UnitFile is declared in this phase; phase 2 adds the actual process
+and deployment with `supervision = Some(...)` and the matching target ordering.
+
+## Verification
+
+Host checks used for this checkpoint (all offline):
+
+```text
+cargo check --offline --workspace
+cargo check --manifest-path crates/image/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/daemon-control/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/control-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/control-query/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/control-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/control-instance/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/control-lifetime/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/guard-deployment/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/retirement-boundary/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/shutdown-policy/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+```
+
+`programs/tests/daemon-control` compiles production table, intent, admission,
+effect recheck, actual `Tracked::finish`, transition, takeover, and
+install-supervision logic directly. It covers accepted/rejected intent, explicit
+Ruin merge/takeover committing stop at admission before and after the old Ruin
+`pre`, natural cleanup retaining intent, caller revocation, global closing,
+guarded/out-of-scope/dynamic-copy denial, takeover before build and after Mint
+moved the Service to pending, the retirement-complete gate, explicit
+end/denial shapes, and the recovery rollback obligation with `instance = None`
+and a surviving task.
+
+Root independently reran 137 host checks across daemon-control (12), control-api
+(10), control-query (9), control-rpc (9), control-instance (33), control-lifetime
+(8), guard-deployment (16), retirement-boundary (11), shutdown-policy (8), and
+system-shape (21). Workspace and image checks passed with the existing workspace
+warnings. The added pre-build effect test uses the actual `Action::Recover`
+recheck and rejects revoked intent, a dead caller, and global closing.
+
+## Remaining work
+
+- phase 2: the real single daemon process/deployment and its startup/shutdown
+  ordering, built on this restricted Observe/Recover API;
+- phase 3: native service/RTC recovery, including actual process restart
+  evidence;
+- full native acceptance of the broader refactor remains outside this phase.

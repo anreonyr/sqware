@@ -27,6 +27,7 @@ pub static PROBE_RACK_MOUNT: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: Some(&[crate::unit::Dependency::Bootstrap(
             crate::unit::Bootstrap::Operator,
         )]),

@@ -92,6 +92,8 @@ pub enum Req {
     State(String),
     /// 命名程序当前存活的任务。
     Task(String),
+    /// `RECOVER`：由声明的监督者请求重新拉起一个已完整退休的目标。
+    Recover(String),
     EmbarkInstance(TaskId),
     DebarkInstance(TaskId),
     RuinInstance(TaskId),
@@ -119,6 +121,7 @@ impl Req {
             Req::Ruin(name) => (RUIN, name),
             Req::State(name) => (STATE, name),
             Req::Task(name) => (TASK, name),
+            Req::Recover(name) => (RECOVER, name),
             _ => return None,
         };
         Ask { op, name, back }.store_at(out, 0)
@@ -138,6 +141,8 @@ pub enum Wire {
     State(String),
     /// 命名程序当前存活的任务。
     Task(String),
+    /// `RECOVER`：由声明的监督者请求重新拉起一个已完整退休的目标。
+    Recover(String),
     EmbarkInstance(TaskId),
     DebarkInstance(TaskId),
     RuinInstance(TaskId),
@@ -175,6 +180,7 @@ impl Wire {
             RUIN => Some(Wire::Ruin(q.name)),
             STATE => Some(Wire::State(q.name)),
             TASK => Some(Wire::Task(q.name)),
+            RECOVER => Some(Wire::Recover(q.name)),
             _ => None,
         };
         Some((ask, q.back))

@@ -9,6 +9,7 @@ pub static ENTRY: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: None,
         ready: crate::unit::Ready::Signal(crate::unit::READY_MARK),
         ending: None,
@@ -28,6 +29,7 @@ pub static DEPENDENT: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: Some(&[crate::unit::Dependency::Bootstrap(
             crate::unit::Bootstrap::Identity,
         )]),
@@ -49,6 +51,7 @@ pub static CHILD: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: Some(&[crate::unit::Dependency::Bootstrap(
             crate::unit::Bootstrap::Identity,
         )]),
@@ -70,6 +73,7 @@ pub static FAULT_UNIT: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: None,
         ready: crate::unit::Ready::Signal(crate::unit::READY_MARK),
         ending: None,

@@ -6,7 +6,7 @@ use crate::system::control::unit::{
 };
 use ::schedule::{Progress, Res, ResMut};
 
-pub fn pre(mut active: ResMut<Active>, control: Res<Control>) -> Result<Progress, Fail> {
+pub fn pre(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     control.input(&job.key.request.name)?.program;
     let row = control
@@ -17,6 +17,14 @@ pub fn pre(mut active: ResMut<Active>, control: Res<Control>) -> Result<Progress
         return Err(Fail::NotReady);
     }
     job.progress.execution.task = control.task(&job.key.request.name);
+    match super::intent::change(
+        job.key.request.directive.action,
+        job.key.request.directive.origin,
+    ) {
+        Some(true) => control.request_run(&job.key.request.name)?,
+        Some(false) => control.request_stop(&job.key.request.name)?,
+        None => {}
+    }
     Ok(Progress::Done)
 }
 pub fn run(active: Res<Active>, control: Res<Control>) -> Result<Progress, Fail> {
