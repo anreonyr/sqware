@@ -17,7 +17,7 @@
 | 项目 | 当前证据 |
 | --- | --- |
 | A1：通用退休依赖替换 System HubDma 闸门 | 已实现全局及静态闸门，宿主和真实Ruin/forced/accept通过 |
-| A2：Control 唯一管理执行实例生命周期 | Hub阶段机已删除，Release与逐实例退休已接线；原生回收及投递边界验收中 |
+| A2：Control 唯一管理执行实例生命周期 | 已实现；宿主适配器、启动失败、静态退休及八核1024代通过 |
 | A3：设备协调迁入设备控制 Driver | 未实施 |
 | A4：公共目录与来源元数据分离 | 已实现，相关宿主与真实产品景通过 |
 | A5：PCI 不解析 VirtIO 设备协议 | 未实施 |
@@ -529,3 +529,31 @@ forced 首次因丢失旧有“等待退休结清”状态事件失败，挂起�
 64 正常退出、64 owner 死亡，98691 ms；全部主任务/辅助任务真实回收，帧 153→153，
 逐代 capability=15、launch=1、command=1。此结果覆盖先前实例 55/59 的失败代次与最终整机清理。
 真实 1024 代仍待执行，以检查超过 256 条 Control 实例记录后的淘汰与回收路径。
+
+## 第十五检查点：A2 最终交接验收
+
+生产源码固定在 `f1ba2a46ed50fc0009fb123c372ed13004bc3d8b`；本检查点只补记录。
+单个 Codex 执行独立复核与验收，授权的 opencode-go/deepseek-v4.1-flash 执行限定源码的
+只读审查（session-5b7cd20c-39c2-41bf-bb1d-d0c5551215e0），未确认可达阻断。
+主线程额外核对 `instance/schedule.rs::reap` 实际传入 `flow.settling || closing()`，
+关闭阶段不依赖原 startup eligibility 重新满足；外部退休参与者和 WholeTeamComplete 门仍保留。
+
+- 八核 `iommu-soak-long` 整轮退出 0，外层严格检查通过：1024 个真实代次，512 正常退出、
+  512 owner 消失，1148738 ms；2048 个互异主/辅助任务均真实回收并有跨 hart 调度证据，
+  capability=15、launch=1、command=1 全程稳定，最终帧 153→153，System 正常退出并整机 halt。
+  现场 `target/driver-composition/handoff/soak-issuer-root-1024-8/`，含 console、diagnose JSONL。
+  此结果覆盖超过 256 条实例记录后的容量淘汰与 Release 回执投递路径。
+- 在相同源码上重新运行：四核 `iommu-product`，八核发布前/后启动失败、`iommu-ruin`、
+  `iommu-forced` 均整轮退出 0。Ruin 与 forced 的宿主 NBD 驱动确认实际读请求保持在途，
+  保留帧引用；恢复读请求后，执行域回收早于 Driver，最终帧均为 153→153。
+- 八核 `product` 配合 `programs/tests/shell/smoke.py` 整轮退出 0（18.62 s），覆盖真实
+  Login/Lisp Shell、管线、暂停/继续、取消及多成员回收。最初误传 `shell-smoke` 为部署名，
+  image 工具拒绝并退出 1，未启动 VM；改用已有 product 部署及正确输入驱动后通过。
+  本组现场位于 `target/driver-composition/handoff/final-a2/`，每景保留 runner.log。
+- 主线程独立重跑宿主：control-instance 33、control-rpc 9、hub-handoff 12、shell-adapter 6、
+  retirement-boundary 11、namespace-retirement 4、namespace-installation 4，共 79 项通过。
+  未删断言、未放宽最终回收检查；`git diff --check` 通过。
+
+A2 在此检查点完成；完整重构仍未完成。A3/A5/A7 装配与真实故障验收、A8–A12、单个
+Daemon、双设备双 Domain 同数值 IOVA，以及这些后续改动合入后的固定源码四/八核和最终
+1024 代回归，仍按原目标继续。本次 1024 代结果不能替代后续最终集成验收。
