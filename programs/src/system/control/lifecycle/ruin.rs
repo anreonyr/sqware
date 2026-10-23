@@ -202,9 +202,22 @@ pub fn finalize(
     mut control: ResMut<Control>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
+    let retired = job
+        .progress
+        .execution
+        .task
+        .and_then(|task| control.task_team(task).map(|team| (task, team)));
     control
         .detach_unit(&job.key.request.name)
         .map_err(|_| Fail::NotReady)?;
+    if let Some((task, team)) = retired {
+        crate::debug::put(&alloc::format!(
+            "system: retired name={} task={} team={}",
+            job.key.request.name.as_str(),
+            task.get(),
+            team.get(),
+        ));
+    }
     job.progress.execution.instance = None;
     Ok(Progress::Done)
 }

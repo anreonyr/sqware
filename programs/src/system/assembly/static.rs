@@ -31,12 +31,21 @@ pub(crate) fn mint(
     let service = control
         .attach_service(input.program.name(), built)
         .map_err(|_| Fail::Full)?;
-    job.progress.execution.task = Some(service.task());
+    let task = service.task();
+    job.progress.execution.task = Some(task);
     job.progress.execution.instance = Some(Instance {
         service,
         launched: false,
         identity_install: None,
     });
+    let team = control.task_team(task).ok_or(Fail::Unknown)?;
+    crate::debug::put(&alloc::format!(
+        "system: static construct name={} task={} team={} owner={}",
+        input.program.name(),
+        task.get(),
+        team.get(),
+        env::unit::self_id().get(),
+    ));
     Ok(Progress::Done)
 }
 fn namespace(

@@ -178,6 +178,22 @@ pub const DEPLOYMENTS: &[Deployment] = &[
         sources: &[],
     },
     Deployment {
+        name: "daemon-rtc",
+        entry: "daemon-rtc",
+        start: &["hub", "router", "rtc", "daemon", "daemon-ctl-rtc"],
+        guarded: &[],
+        resources: &[],
+        targets: &[
+            scene_target(&["hub", "router", "rtc", "daemon", "daemon-ctl-rtc"]),
+            Target {
+                name: "supervised",
+                members: &["rtc"],
+            },
+        ],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
         name: "accept",
         entry: "accept-system",
         start: &[

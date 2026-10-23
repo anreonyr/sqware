@@ -301,6 +301,20 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-daemon-rtc"
+path = "src/harness/probe/daemon_rtc/root_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-daemon-ctl-rtc"
+path = "src/harness/probe/daemon_rtc/control_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-hub"
 path = "src/service/hub/main.rs"
 test = false

@@ -26,6 +26,10 @@ pub mod device_ruin;
 pub mod device_guard;
 #[path = "../harness/probe/device_confirmation/program.rs"]
 pub mod device_confirmation;
+#[path = "../harness/probe/daemon_rtc/root_program.rs"]
+pub mod daemon_rtc;
+#[path = "../harness/probe/daemon_rtc/control_program.rs"]
+pub mod daemon_rtc_control;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
 /// 测具那 29 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
@@ -133,6 +137,8 @@ pub const PROGRAMS: &[&UnitFile] = &[
     // Device service.
     &hub::PROGRAM,
     &daemon::PROGRAM,
+    &daemon_rtc::PROGRAM,
+    &daemon_rtc_control::PROGRAM,
     &pipe::PROGRAM,
     &account::PROGRAM,
     &terminal::PROGRAM,

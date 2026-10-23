@@ -18,6 +18,8 @@ macro_rules! package {
 pub const PACKAGES: &[Package] = &[
     package!("hub"),
     package!("daemon"),
+    package!("daemon-rtc"),
+    package!("daemon-ctl-rtc"),
     package!("pipe"),
     package!("account"),
     package!("terminal"),

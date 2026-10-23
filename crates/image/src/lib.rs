@@ -427,6 +427,7 @@ mod tests {
             "iommu-product-fault",
             "iommu-product-before",
             "iommu-product-after",
+            "daemon-rtc",
         ];
         for deployment in unit::DEPLOYMENTS {
             let count = deployment

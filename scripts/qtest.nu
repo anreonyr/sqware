@@ -226,7 +226,8 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   let confirmation = $scene in ["iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference"]
   let guard = ($scene | str starts-with "iommu-guard-")
   let guard_target = if $guard { $scene | str replace "iommu-guard-" "" } else { "" }
-  let evidence = $retirement or $confirmation or $hardware or $soak or $guard
+  let daemon = $scene == "daemon-rtc"
+  let evidence = $retirement or $confirmation or $hardware or $soak or $guard or $daemon
   let retire_mode = if $scene == "iommu-forced" { "forced" } else { "ruin" }
   let feed_script = if ($retirement or $hardware or $guard) and ($feed_script | is-empty) {
     let driver = if $hardware { "hardware" } else if $guard { "guard" } else { $retire_mode }
@@ -427,7 +428,8 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
   # `try` 的块作用域会丢掉外部命令的 LAST_EXIT_CODE；直接保留完整执行结果。
   let result = (^cargo ...$qtest_argv o+e>| tee { save --force $qtlog } | complete)
   print -n $result.stdout
-  mut code = $result.exit_code
+  let raw_code = $result.exit_code
+  mut code = $raw_code
   if not ($scene | is-empty) {
     let capture_status = (try { open --raw $env.QEMU_TEE_STATUS | str trim } catch { "missing" })
     if $capture_status != "0" {
@@ -455,6 +457,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
   let completion = match $scene {
     "accept" => "accept: done"
     "product" => "system: done"
+    "daemon-rtc" => "daemon-rtc: done"
     "system-fault" => "system-fault: acceptance passed"
     _ => ""
   }
@@ -575,6 +578,12 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
       let harts = ($env.QEMU_SMP? | default "4")
       let checked = (^python3 ($repo | path join "programs/tests/device-recovery/guard_check.py")
         $env.QEMU_TEE_LOG $archived $cap $guard_target $harts ($code | into string) $qtlog --hold $hold | complete)
+      print -n $checked.stdout
+      print -n $checked.stderr
+      if $checked.exit_code != 0 { $code = 1 }
+    } else if $daemon {
+      let checked = (^python3 ($repo | path join "programs/tests/daemon-recovery/daemon_rtc.py")
+        $env.QEMU_TEE_LOG $archived $qtlog ($raw_code | into string) | complete)
       print -n $checked.stdout
       print -n $checked.stderr
       if $checked.exit_code != 0 { $code = 1 }
@@ -800,9 +809,9 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
   }
 
   if ($qtlog | path exists) {
-    if $code == 0 {
+    if $code == 0 and not $daemon {
       rm --force $qtlog
-    } else {
+    } else if $code != 0 {
       print $"现场（cargo qtest 全份）-> ($qtlog)"
     }
   }

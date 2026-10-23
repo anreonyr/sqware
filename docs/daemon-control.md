@@ -5,9 +5,10 @@ supervision admission, the public Observe/Recover facets, server/client/namespac
 wiring, and host proof. This checkpoint adds the actual single ordinary resident
 daemon process and its product deployment.
 
-Native service/RTC restart recovery remains phase 3 work. Root has verified
-ordinary product startup/shutdown on 4/8 harts and actual Shell interaction on
-8 harts. No hardware-chain or kernel ABI change is part of this checkpoint.
+Root has verified actual RTC death/restart on 4/8 harts, ordinary product
+startup/shutdown on 4/8 harts and actual Shell interaction on 8 harts. The ordinary
+multi-member target and explicit-stop native races remain to be completed. No
+hardware-chain or kernel ABI change is part of this checkpoint.
 
 ## Sole mutable fact
 
@@ -192,10 +193,41 @@ entry task 10, its matching successful System exit, and normal halt. Evidence:
 `target/driver-composition/daemon/phase2-{product-final-4,product-final-8,shell-final-8}/`.
 These are ordinary-runtime checks; they do not prove restart recovery.
 
+## Actual RTC recovery
+
+The `daemon-rtc` deployment runs the actual ordinary daemon, RTC, Hub, Router and
+a transient controller. The controller reads the real RTC through its namespace
+entry and sends an authenticated private request to test Root. Root kills that
+old RTC main once. Production Control admits the real daemon's Recover and
+performs the entire retirement and replacement; the fixture never constructs or
+launches a replacement.
+
+The controller then obtains a fresh namespace token, verifies its `opened_by`
+owner changed, and receives another real `rtc::client::now` reply. Generic
+Control diagnostics record actual admission, construction and finalized
+retirement; no device policy or test-name branch was added to System.
+
+Root's final strict native runs passed on 4/8 harts in 2.43s/2.63s. Both used old
+RTC Task/Team 15/15, actual daemon 16, and replacement Task/Team 18/18. Independent
+verification requires the old actual trace reap before new spawn, Root-owned
+construction, the daemon and controller alive across recovery, changed task and
+team, fresh entry owner and actual time response, daemon retirement before RTC,
+successful controller and actual boot-Root exits, normal halt and equal final
+frame counts (87 -> 87 / 155 -> 155). All passed. Evidence:
+`target/driver-composition/daemon/rtc-final-{4,8}/`, including retained raw qtest
+logs and a separate verifier result. The checker has 22 passing positive and
+negative controls.
+
+The first fixture writer was interrupted with exit 130 after using prohibited
+text-replacement scripts. Root archived its complete diff/new files, took over
+with exact-context patches, corrected incomplete startup/ownership/compile
+paths, and ran the builds and native checks. The read-only reviewer found no
+confirmed blocker in the corrected fixture. The archived candidate itself was
+not presented as accepted evidence.
+
 ## Remaining work
 
-- phase 3: native service/RTC recovery, including actual old/new Task and Team
-  evidence, fresh namespace lookup and device reply, and the closing/race cases;
+- ordinary non-DMA multi-member Team recovery and explicit-stop native races;
 - native strict qtest 4/8-hart and product/Ruin/forced/accept regressions on the
   final source;
 - full native acceptance of the broader refactor remains outside this phase.

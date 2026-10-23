@@ -27,6 +27,11 @@ pub fn admit(active: Res<Active>, control: Res<Control>, settle: Res<Settle>) ->
         target: &job.key.request.name,
     }
     .run(true)?;
+    crate::debug::put(&alloc::format!(
+        "system: recover admitted target={} caller={}",
+        job.key.request.name.as_str(),
+        caller.get(),
+    ));
     Ok(Progress::Done)
 }
 
