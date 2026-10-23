@@ -23,8 +23,6 @@ FORBIDDEN = (
     "recovery: binding 1 detached",
     "hub: binding 1 closed",
     "task: all tasks exited, system halted",
-    "exit tid=1 reason=0x0 note: system: done",
-    "exit tid=1 reason=0x0 note: iommu-guard: done",
     "critical guard returned after slay",
 )
 
@@ -59,6 +57,7 @@ def verify(console, held_console, events, held_events, block, feed, target, hart
     assert re.search(r"timed out after \d+s", qtest_log), "VM did not remain halted"
     assert re.search(r"test embedded::tests::scene\s+\.\.\.\s+FAILED", qtest_log), "scene did not fail by halt"
     assert events, "missing structured execution trace"
+    root = int(one(console, r"^guard: root task=(\d+)$")[1])
 
     armed = one(console, rf"^guard: armed target={target} task=(\d+) team=(\d+)$")
     submitted = one(console, r"^guard: submitted controller=(\d+)$")
@@ -76,6 +75,7 @@ def verify(console, held_console, events, held_events, block, feed, target, hart
         for name in TARGETS
     }
     assert len({record[1] for record in drivers.values()}) == 3, "critical drivers share a task"
+    assert str(root) not in {record[1] for record in drivers.values()}, "Root is a critical Driver"
     assert drivers[target][1] == trigger[1], "kernel target does not match the named Driver"
     assert all(record.start() < submitted.start() for record in drivers.values())
     published = one(console, r"^iommu: binding 1 published requester=\d+ held=6 ddtp=0x[0-9a-f]+$")
@@ -143,9 +143,12 @@ def verify(console, held_console, events, held_events, block, feed, target, hart
             retired.add(reap.get("tid"))
     assert task not in retired, "guarded target was reaped before CPU quiescence"
     assert not any(
-        event.get("kind", {}).get("room", {}).get("exit", {}).get("tid") == 1
+        event.get("kind", {}).get("room", {}).get("exit", {}).get("tid") == root
         for event in events
     ), "root task returned normally"
+    assert re.search(rf"^exit tid={root} reason=", console, re.MULTILINE) is None, (
+        "root task exited before the protected stop"
+    )
     print(
         f"guard {target}: task {task} team {trigger[2]} halted before cleanup; "
         f"NBD held without resume; {harts - 1} peer harts quiesced"

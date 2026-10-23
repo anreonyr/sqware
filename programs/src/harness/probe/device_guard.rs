@@ -32,6 +32,9 @@ pub fn run() -> Result<(), env::Reason> {
         "iommu-guard-recovery" => "recovery",
         _ => return Err(9usize),
     };
+    crate::debug::put(&alloc::format!(
+        "guard: root task={}", env::unit::self_id().get(),
+    ));
     let programs = app::scene::programs(&boot.catalog).map_err(|_| 9usize)?;
     let uart = open_uart(&boot)?;
     let mut resources = app::install::resources(boot).map_err(|_| 9usize)?;

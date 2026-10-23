@@ -57,8 +57,15 @@ frames, MASTER on, active binding and the in-flight doorbell before submission;
 the named Driver's minted task must match the actual kernel trip identity.
 Missing execution trace, a death already present in the pre-trigger snapshot,
 or a serial reader error cannot count as a successful proof. Root independently
-ran 20 positive/negative verifier controls after these corrections. Native
+ran 21 positive/negative verifier controls after these corrections. Native
 unexpected-death acceptance is still pending at this checkpoint.
+
+The first four-hart PCI run at `e5a58586` produced the actual guarded target,
+held NBD read, three peer quiescence receipts and no target reference cleanup;
+its raw runner exited 101 and the independent verifier accepted it. Inspection
+also showed that debug boot checks consume TaskIds. The verifier now reads the
+actual Root identity from the scene and rejects that Root's exit, rather than
+assuming task 1. The fixed source therefore requires a fresh run, including PCI.
 
 The controller reuses the Ruin submission path: real in-flight block request,
 `want == 3`, then the private Hole. It keeps the block page, view, references,

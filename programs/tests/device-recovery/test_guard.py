@@ -103,6 +103,15 @@ class GuardDeathEvidence(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "structured execution trace"):
             check(events=[])
 
+    def test_real_root_identity_is_checked_instead_of_task_one(self):
+        exited = copy.deepcopy(EVENTS) + [
+            {"h": 0, "when": 2, "kind": {"room": {"exit": {"tid": 41}}}},
+        ]
+        with self.assertRaisesRegex(AssertionError, "root task"):
+            check(events=exited)
+        with self.assertRaisesRegex(AssertionError, "root task"):
+            check(console=CONSOLE + "exit tid=41 reason=0x9 note: failed\n")
+
     def test_held_snapshot_must_precede_trigger(self):
         with self.assertRaisesRegex(AssertionError, "host trigger"):
             check(held=HELD_CONSOLE + TRIGGER)

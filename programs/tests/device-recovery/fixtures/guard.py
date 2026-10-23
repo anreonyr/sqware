@@ -1,6 +1,7 @@
 """Synthetic native evidence for the deployed guard-death verifier."""
 
-CONSOLE = """system: minted pci tid=7
+CONSOLE = """guard: root task=41
+system: minted pci tid=7
 system: activate pci tid=7
 system: minted iommu tid=8
 system: minted recovery tid=9
