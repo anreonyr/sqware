@@ -460,10 +460,18 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
   }
   if $code == 0 and not ($completion | is-empty) {
     let console = ($env.QEMU_TEE_LOG? | default "")
-    let proof = $"exit tid=1 reason=0x0 note: ($completion)"
-    if not ($console | path exists) or not (open --raw $console | str contains $proof) {
-      print $"场景未完成：缺少入口任务的成功退出证明 ($completion)"
+    let lines = if ($console | path exists) { open --raw $console | lines } else { [] }
+    let entries = ($lines | parse -r '^boot: entry task=(?<task>[1-9][0-9]*)$')
+    if ($entries | length) != 1 {
+      print $"场景未完成：缺少唯一的实际入口任务身份 ($completion)"
       $code = 1
+    } else {
+      let task = ($entries | first | get task)
+      let proof = $"^exit tid=($task) reason=0x0 note: ($completion)$"
+      if ($lines | where {|line| $line =~ $proof } | length) != 1 {
+        print $"场景未完成：缺少实际入口任务 ($task) 的唯一成功退出证明 ($completion)"
+        $code = 1
+      }
     }
   }
 

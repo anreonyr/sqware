@@ -1,13 +1,13 @@
-# Daemon Control core (phase 1)
+# Daemon Control and resident process (phase 2 checkpoint)
 
-Base `e4753aca`. This phase implements the Control-side contract for one
-restricted daemon: the run-intent fact, supervision admission, the public
-Observe/Recover facets, server/client/namespace wiring, and host proof.
+Base `933793e0` retains the phase 1 Control contract: the run-intent fact,
+supervision admission, the public Observe/Recover facets, server/client/namespace
+wiring, and host proof. This checkpoint adds the actual single ordinary resident
+daemon process and its product deployment.
 
-It does **not** implement the actual single daemon process or deployment, and
-it does not implement native service/RTC restart recovery. Those remain phase 2
-and phase 3 work. No QEMU run, hardware-chain change, or kernel ABI change is
-part of this checkpoint.
+Native service/RTC restart recovery remains phase 3 work. Root has verified
+ordinary product startup/shutdown on 4/8 harts and actual Shell interaction on
+8 harts. No hardware-chain or kernel ABI change is part of this checkpoint.
 
 ## Sole mutable fact
 
@@ -105,8 +105,34 @@ submit a normal Ruin and retains intent.
   `recover_reply` over the existing IPC sender/pending primitives. A denied or
   failed reply is an error, not a successful observation or recovery.
 
-No daemon UnitFile is declared in this phase; phase 2 adds the actual process
-and deployment with `supervision = Some(...)` and the matching target ordering.
+## Daemon process and deployment
+
+`programs/src/service/daemon/` is one ordinary user-mode Resident program. Its
+UnitFile declares `supervision = Some("supervised")`, `after` that target plus
+the Operator bootstrap, and the existing READY signal. The daemon obtains only
+the public `control/supervision` and `control/recover` tokens through the actual
+namespace, then checks each token's mark and that both were opened by the same
+System host. It holds no legacy State/Mint/Embark/Debark/Ruin face.
+
+The runtime signals READY before its first observation. Initial Denied replies
+are retried only inside a fixed startup window; after the first valid observation
+a denial ends the process. Observe and Recover use bounded pending/poll budgets
+with bounded backoff, explicit EOF resets the enumeration index, and only
+`present && Dead && run_requested` requests recovery. Recovery is always
+conditional and a result or failure leads back to fresh observation.
+
+The expected Control host is the daemon's actual System parent. The Operator
+session peer owns namespace responses, and is a different task. Root review
+corrected the endpoint owner check to use the System parent before native runs.
+Face discovery shares one startup deadline. Failed recoveries retain their
+bounded backoff across fresh observations, and a successful recovery waits one
+poll interval before observing again.
+
+`product` and the four `iommu-product` scenes start exactly one daemon and add a
+`supervised` target containing only `rtc`. The existing scene target and start
+list include the daemon, so the existing after-target dependency stops it before
+`rtc` on shutdown. Guarded PCI/IOMMU/recovery targets are never supervised. Other
+scenes are unchanged, and System has no daemon-name condition.
 
 ## Verification
 
@@ -116,6 +142,7 @@ Host checks used for this checkpoint (all offline):
 cargo check --offline --workspace
 cargo check --manifest-path crates/image/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/daemon-control/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/daemon-runtime/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-query/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
@@ -137,17 +164,38 @@ moved the Service to pending, the retirement-complete gate, explicit
 end/denial shapes, and the recovery rollback obligation with `instance = None`
 and a surviving task.
 
-Root independently reran 137 host checks across daemon-control (12), control-api
-(10), control-query (9), control-rpc (9), control-instance (33), control-lifetime
-(8), guard-deployment (16), retirement-boundary (11), shutdown-policy (8), and
-system-shape (21). Workspace and image checks passed with the existing workspace
-warnings. The added pre-build effect test uses the actual `Action::Recover`
-recheck and rejects revoked intent, a dead caller, and global closing.
+Root independently reran 137 phase 1 host checks across daemon-control (12),
+control-api (10), control-query (9), control-rpc (9), control-instance (33),
+control-lifetime (8), guard-deployment (16), retirement-boundary (11),
+shutdown-policy (8), and system-shape (21).
+
+Phase 2 host checks ran offline: workspace `cargo check`, image `cargo check` and
+tests (16 unit + 3 catalog), daemon-runtime (5), daemon-control (13),
+system-shape (22), shutdown-policy (8), guard-deployment (16),
+retirement-boundary (11), control-api (10), control-query (9), control-rpc (9),
+control-instance (33), and control-lifetime (8). daemon-runtime compiles the
+actual decision/startup helper; daemon-control now also compiles the actual
+`closing_service_names` ordering. Root independently reran 83 focused host/image
+checks and the actual daemon build, then repeated affected runtime/Control/shape
+checks after the owner/deadline/backoff corrections.
+
+Root's first debug-assertion product run returned inner qtest 0 and exited
+System task 10 successfully with frames 87 -> 87, but the outer runner returned
+1 because its completion check assumed task 1. The runner now requires exactly
+one actual Kernel boot-entry identity and a matching successful exit. It retains
+the failure on missing, duplicate, wrong-task, or unsuccessful exit evidence.
+
+After that correction, strict product 4/8-hart runs passed in 5.48s/5.58s with
+frames 87 -> 87 / 155 -> 155. The actual Shell smoke on 8 harts passed in 27.01s
+with frames 155 -> 155. Each run recorded one daemon activation, actual boot
+entry task 10, its matching successful System exit, and normal halt. Evidence:
+`target/driver-composition/daemon/phase2-{product-final-4,product-final-8,shell-final-8}/`.
+These are ordinary-runtime checks; they do not prove restart recovery.
 
 ## Remaining work
 
-- phase 2: the real single daemon process/deployment and its startup/shutdown
-  ordering, built on this restricted Observe/Recover API;
-- phase 3: native service/RTC recovery, including actual process restart
-  evidence;
+- phase 3: native service/RTC recovery, including actual old/new Task and Team
+  evidence, fresh namespace lookup and device reply, and the closing/race cases;
+- native strict qtest 4/8-hart and product/Ruin/forced/accept regressions on the
+  final source;
 - full native acceptance of the broader refactor remains outside this phase.

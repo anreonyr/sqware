@@ -1,5 +1,6 @@
 pub mod support;
 
+mod closing_stops_the_daemon_before_the_supervised_provider;
 mod duplicate_ruin_merges_and_nonrecovery_conflicts_keep_the_request;
 mod effect_recheck_accepts_the_minted_target_but_repeats_authority;
 mod explicit_ruin_takes_over_recovery_before_and_after_mint_without_dropping_the_team;

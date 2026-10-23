@@ -105,6 +105,12 @@ pub mod system {
                     "/../../src/system/control/unit/intent.rs"
                 ));
             }
+            pub mod observe {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../src/system/control/unit/observe.rs"
+                ));
+            }
         }
 
         pub mod supervision {

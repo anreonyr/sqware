@@ -294,6 +294,13 @@ doctest = false
 
 # 设备账（U 态，独立 team）：整机物料、设备发布和驱动激活。
 [[bin]]
+name = "prog-daemon"
+path = "src/service/daemon/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-hub"
 path = "src/service/hub/main.rs"
 test = false

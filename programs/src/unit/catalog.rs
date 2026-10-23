@@ -34,6 +34,8 @@ pub mod group;
 pub mod guest;
 #[path = "../harness/bench/rig/hang/program.rs"]
 pub mod hang;
+#[path = "../service/daemon/program.rs"]
+pub mod daemon;
 #[path = "../service/hub/program.rs"]
 pub mod hub;
 #[path = "../driver/iommu/program.rs"]
@@ -130,6 +132,7 @@ pub mod waiter;
 pub const PROGRAMS: &[&UnitFile] = &[
     // Device service.
     &hub::PROGRAM,
+    &daemon::PROGRAM,
     &pipe::PROGRAM,
     &account::PROGRAM,
     &terminal::PROGRAM,
