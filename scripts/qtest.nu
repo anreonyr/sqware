@@ -224,22 +224,24 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   let soak = $scene in ["iommu-soak" "iommu-soak-long"]
   let soak_generations = if $scene == "iommu-soak-long" { 1024 } else { 128 }
   let confirmation = $scene in ["iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference"]
-  let evidence = $retirement or $confirmation or $hardware or $soak
+  let guard = ($scene | str starts-with "iommu-guard-")
+  let guard_target = if $guard { $scene | str replace "iommu-guard-" "" } else { "" }
+  let evidence = $retirement or $confirmation or $hardware or $soak or $guard
   let retire_mode = if $scene == "iommu-forced" { "forced" } else { "ruin" }
-  let feed_script = if ($retirement or $hardware) and ($feed_script | is-empty) {
-    let driver = if $hardware { "hardware" } else { $retire_mode }
+  let feed_script = if ($retirement or $hardware or $guard) and ($feed_script | is-empty) {
+    let driver = if $hardware { "hardware" } else if $guard { "guard" } else { $retire_mode }
     $repo | path join $"programs/tests/device-recovery/($driver).py"
   } else {
     $feed_script
   }
-  let hold = if $retirement or $hardware {
+  let hold = if $retirement or $hardware or $guard {
     $"target/ruin-(random uuid).nbd"
   } else {
     ""
   }
   $env.DMA_HOLD = $hold
   $env.DMA_CONTROL = if $hardware { $"target/control-(random uuid).qtest" } else { "" }
-  $env.DMA_HOLD_SECONDS = if $scene == "iommu-forced" { "30" } else { "10" }
+  $env.DMA_HOLD_SECONDS = if $guard { "60" } else if $scene == "iommu-forced" { "30" } else { "10" }
   let summary = match $scene {
     "memory-transfer" => "scene-memory-transfer-phases.json"
     "memory-transfer-tlb" => "scene-memory-transfer-tlb-summary.json"
@@ -369,7 +371,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   }
   # 端点那一景的那张盘：**可再生**（每次按同一花纹重建，落在 `<TRACE_OUT>/` 里，
   # 不进库），且由参数表那边只读挂上。景那一侧按同一花纹核读回的数据，故盘是承重的。
-  let endpoint_argv = if $scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after" "iommu-ruin" "iommu-forced" "iommu-soak" "iommu-soak-long" "iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference" "iommu-fail-fence"] {
+  let endpoint_argv = if ($scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after" "iommu-ruin" "iommu-forced" "iommu-soak" "iommu-soak-long" "iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference" "iommu-fail-fence"]) or $guard {
     let disk = ($trapdir | path join "iommu-dma.img")
     ^python3 -c 'import sys, pathlib; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 4096)' $disk
     if not ($hold | is-empty) {
@@ -430,7 +432,11 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     let capture_status = (try { open --raw $env.QEMU_TEE_STATUS | str trim } catch { "missing" })
     if $capture_status != "0" {
       print $"控制台捕获未成功完成：($capture_status)"
-      $code = 1
+      # A guard halt is killed by the runner timeout; keep the raw 101 so the
+      # independent verifier can judge the captured non-returning evidence.
+      if not ($guard and ($code == 101)) {
+        $code = 1
+      }
     }
   }
   if not ($feed_script | is-empty) {
@@ -548,24 +554,39 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
   }
 
   if $evidence {
-    let checker = if $retirement {
-      {script: "ruin_check.py", args: [$cap $retire_mode]}
-    } else if $confirmation {
-      {script: "confirmation.py", args: [($scene | str replace "iommu-fail-" "")]}
-    } else if $hardware {
-      {script: "hardware_check.py", args: [$cap]}
-    } else {
-      {script: "soak.py", args: [($soak_generations | into string)]}
-    }
     let exported = ($repo | path join "sqware-diagnose.jsonl")
     let archived = ($trapdir | path join $"scene-($scene)-diagnose.jsonl")
     if ($exported | path exists) { cp --force $exported $archived }
-    if $code == 0 {
-      let checked = (^python3 ($repo | path join "programs/tests/device-recovery" $checker.script)
-        $env.QEMU_TEE_LOG $archived ...$checker.args | complete)
+    if $guard {
+      let nbd_events = ($trapdir | path join $"scene-($scene)-block-events")
+      let nbd_state = ($trapdir | path join $"scene-($scene)-block-state.json")
+      if (not ($hold | is-empty)) and (($"($hold).events") | path exists) {
+        cp --force $"($hold).events" $nbd_events
+        cp --force $"($hold).json" $nbd_state
+      }
+      let harts = ($env.QEMU_SMP? | default "4")
+      let checked = (^python3 ($repo | path join "programs/tests/device-recovery/guard_check.py")
+        $env.QEMU_TEE_LOG $archived $cap $guard_target $harts ($code | into string) $qtlog --hold $hold | complete)
       print -n $checked.stdout
       print -n $checked.stderr
       if $checked.exit_code != 0 { $code = 1 }
+    } else {
+      let checker = if $retirement {
+        {script: "ruin_check.py", args: [$cap $retire_mode]}
+      } else if $confirmation {
+        {script: "confirmation.py", args: [($scene | str replace "iommu-fail-" "")]}
+      } else if $hardware {
+        {script: "hardware_check.py", args: [$cap]}
+      } else {
+        {script: "soak.py", args: [($soak_generations | into string)]}
+      }
+      if $code == 0 {
+        let checked = (^python3 ($repo | path join "programs/tests/device-recovery" $checker.script)
+          $env.QEMU_TEE_LOG $archived ...$checker.args | complete)
+        print -n $checked.stdout
+        print -n $checked.stderr
+        if $checked.exit_code != 0 { $code = 1 }
+      }
     }
   }
 

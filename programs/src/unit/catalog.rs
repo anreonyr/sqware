@@ -22,6 +22,8 @@ pub mod churn;
 pub mod device;
 #[path = "../harness/probe/device_ruin/program.rs"]
 pub mod device_ruin;
+#[path = "../harness/probe/device_guard/program.rs"]
+pub mod device_guard;
 #[path = "../harness/probe/device_confirmation/program.rs"]
 pub mod device_confirmation;
 #[path = "../harness/bench/group/group/program.rs"]
@@ -167,10 +169,12 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &device::CONTROL_AFTER,
     &device::CONTROL_RUIN,
     &device::CONTROL_FORCED,
+    &device::CONTROL_GUARD,
     &device::CONTROL_SOAK,
     &device::CONTROL_SOAK_LONG,
     &device::CONTROL_CONFIRMATION,
     &device_ruin::PROGRAM,
+    &device_guard::PROGRAM,
     &device_confirmation::PROGRAM,
     // 真实 Task 等待那一景：**装载者 ＋ 控制单元**两台——控制单元要真的被装载（有 sire），
     // 故它那一 Team 的成员带着收据；真实等待链本身在控制单元里（见 `probe/memory_transfer`）。

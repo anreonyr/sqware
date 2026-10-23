@@ -141,6 +141,11 @@ pub static CONTROL_FORCED: UnitFile = control(
     "device-ctl-forced",
     &CONTROL_CONSTRUCTION,
 );
+pub static CONTROL_GUARD: UnitFile = control(
+    "device-ctl-guard",
+    "device-ctl-guard",
+    &CONTROL_CONSTRUCTION,
+);
 pub static CONTROL_SOAK: UnitFile = control(
     "device-ctl-soak",
     "device-ctl-soak",
