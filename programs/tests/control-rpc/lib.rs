@@ -91,6 +91,7 @@ pub mod debug {
     pub fn put(_: &str) {}
 }
 pub mod rpc {
+    pub mod reply;
     use super::*;
 
     #[derive(Debug)]
@@ -185,6 +186,12 @@ pub mod rpc {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../src/system/control/endpoint/command_reply.rs"]
+mod command_reply;
+#[cfg(test)]
+mod reply_cases;
 
 pub mod time {
     use env::Wait;

@@ -5,13 +5,14 @@ pub enum Receipt {
     Owner(TeamId),
     Returned(TeamId),
     Consumed,
+    Reported,
 }
 
 impl Receipt {
     pub(crate) fn team(&self) -> Option<TeamId> {
         match self {
             Self::Owner(team) | Self::Returned(team) => Some(*team),
-            Self::Consumed => None,
+            Self::Consumed | Self::Reported => None,
         }
     }
 

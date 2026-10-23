@@ -645,6 +645,49 @@ mod tests {
             assert_eq!(control.instances.len(), state::INSTANCE_CAP);
         }
     }
+
+    #[test]
+    fn consumed_receipt_is_retained_until_its_owner_can_receive_completion() {
+        use system::control::instance::create::Admission;
+        use system_api::loader::Built;
+        let mut control = fixture(State::Dead);
+        let owner = TaskId::new(99);
+        control.instances[0].owner = owner;
+        EFFECTS.with(|effects| effects.borrow_mut().alive_tasks.push(owner));
+        assert_eq!(control.release_instance(owner, TaskId::new(2)), Ok(Some(State::Dead)));
+        assert_eq!(control.instances[0].receipt, Receipt::Consumed);
+        for at in 1..state::INSTANCE_CAP {
+            control.instances.push(Instance {
+                reference: crate::system::assembly::reference(TaskId::new(at + 100)),
+                owner, task: TaskId::new(at + 100),
+                receipt: Receipt::Owner(TeamId::new(at + 100)), state: State::Dead,
+                claimed: false, started: false, reason: None, claim_until: 0,
+            });
+        }
+        let invoked = std::cell::Cell::new(false);
+        let result = control.create_instance(Admission {
+            owner, job: crate::system::assembly::JobId::new(9999).unwrap(),
+        }, || {
+            invoked.set(true);
+            Ok(Built { task: TaskId::new(9999), team: TeamId::new(9999) })
+        });
+        assert!(matches!(result, Err(Fail::Full)), "completion was evicted before delivery");
+        assert!(!invoked.get());
+        assert_eq!(control.release_instance(owner, TaskId::new(2)), Ok(Some(State::Dead)));
+        EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 1));
+        let reference = control.instances[0].reference;
+        assert!(!control.release_reported(TaskId::new(98), reference));
+        assert!(!control.release_reported(owner,
+            crate::system::assembly::reference(TaskId::new(98))));
+        assert_eq!(control.instances[0].receipt, Receipt::Consumed);
+        assert!(control.release_reported(owner, reference));
+        assert_eq!(control.instances[0].receipt, Receipt::Reported);
+        assert!(control.create_instance(Admission {
+            owner, job: crate::system::assembly::JobId::new(9999).unwrap(),
+        }, || Ok(Built { task: TaskId::new(9999), team: TeamId::new(9999) })).is_ok());
+        assert!(control.instances.iter().all(|item| item.task != TaskId::new(2)));
+        assert_eq!(control.instances.len(), state::INSTANCE_CAP);
+    }
     #[test]
     fn zero_main_exit_cannot_hide_an_auxiliary_failure() {
         let main = TaskExit {

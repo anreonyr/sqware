@@ -37,7 +37,7 @@ pub fn select(
         .instances
         .get(jobs.next_hook())
         .map(|item| (item.task, item.team(), item.state, item.started, item.reference,
-            item.receipt == Receipt::Consumed))
+            matches!(item.receipt, Receipt::Consumed | Receipt::Reported)))
     {
         let next = jobs.next_hook() + 1;
         jobs.advance_hook(next);

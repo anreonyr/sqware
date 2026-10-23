@@ -26,7 +26,10 @@ impl Control {
             if let Some(at) = self
                 .instances
                 .iter()
-                .position(|item| item.state == State::Dead && item.receipt == Receipt::Consumed)
+                .position(|item| item.state == State::Dead && (
+                    item.receipt == Receipt::Reported
+                    || item.receipt == Receipt::Consumed && item.owner == env::unit::self_id()
+                ))
             {
                 self.instances.remove(at);
             } else {

@@ -172,14 +172,23 @@ pub fn answer(
                         Command::State(_) => unreachable!(),
                     }
                 };
-                finish_command(&mut jobs, work, Ok(outcome));
+                let owner = work.from;
+                let reference = work.reference;
+                let delivered = finish_command(&mut jobs, work, Ok(outcome));
+                if delivered && matches!(command, Command::Release(_))
+                    && !control.release_reported(owner, reference)
+                {
+                    return Err(Fail::Room);
+                }
             }
             Ok(None) => jobs.requeue_command(work),
-            Err(fail) => finish_command(
-                &mut jobs,
-                work,
-                Err(crate::system::assembly::JobFailure::Command(fail)),
-            ),
+            Err(fail) => {
+                finish_command(
+                    &mut jobs,
+                    work,
+                    Err(crate::system::assembly::JobFailure::Command(fail)),
+                );
+            }
         }
     }
     Ok(Progress::Done)
@@ -189,12 +198,12 @@ fn finish_command(
     jobs: &mut Jobs,
     work: crate::system::assembly::Command,
     result: Result<crate::system::assembly::JobOutcome, crate::system::assembly::JobFailure>,
-) {
+) -> bool {
     let id = work.id;
     let expected = work.reference;
     jobs.complete_command(work, result);
     let Some(completion) = jobs.take(id) else {
-        return;
+        return false;
     };
     let said = match completion.result.outcome {
         Ok(crate::system::assembly::JobOutcome::Command(said)) => said,
@@ -212,9 +221,9 @@ fn finish_command(
     };
     let crate::system::assembly::JobReply::Command { reply, waiters } = completion.result.reply
     else {
-        return;
+        return false;
     };
-    reply_command(reply, waiters, said);
+    super::command_reply::send(reply, waiters, said)
 }
 
 struct ActivationFinish<'a> {
@@ -253,20 +262,7 @@ fn finish_activation(jobs: &mut Jobs, finish: ActivationFinish<'_>) {
     else {
         return;
     };
-    reply_command(reply, waiters, said);
-}
-
-fn reply_command(
-    reply: Option<rpc::reply::Sender<call::frame::Said>>,
-    waiters: alloc::vec::Vec<rpc::reply::Sender<call::frame::Said>>,
-    said: call::frame::Said,
-) {
-    if let Some(reply) = reply {
-        answer::reply(reply, said);
-    }
-    for waiter in waiters {
-        answer::reply(waiter, said);
-    }
+    super::command_reply::send(reply, waiters, said);
 }
 
 pub fn receive(

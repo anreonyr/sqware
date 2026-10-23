@@ -178,6 +178,32 @@ mod tests {
     }
 
     #[test]
+    fn forced_closing_progresses_while_its_controller_is_still_live() {
+        backend::reset(vec![Ok(())], vec![Ok(())], vec![Ok(None), done()]);
+        let mut gate = settle(&DEVICE);
+        discover(&mut gate);
+        gate.close(true);
+        gate.domains_settled();
+        let mut resources = schedule::Resources::new();
+        resources.insert(system::control::Startup).unwrap();
+        resources.insert(system::assembly::Jobs).unwrap();
+        resources.insert(gate).unwrap();
+        assert!(!resources.read::<system::control::Startup>().unwrap().eligible());
+        for expected in [false, true] {
+            assert!(system::app::policy::settle(
+                resources.read().unwrap(),
+                resources.read().unwrap(),
+                resources.write().unwrap(),
+            ).is_ok());
+            let gate = resources.read::<Settle>().unwrap();
+            assert_eq!(gate.flow.settling, expected,
+                "closing cannot wait for a controller that is awaiting retirement");
+            assert!(gate.flow.forced);
+        }
+        assert_eq!(backend::calls(), (1, 1, 2));
+    }
+
+    #[test]
     fn one_pending_participant_blocks_the_global_gate() {
         backend::reset(
             vec![Ok(()), Ok(())],

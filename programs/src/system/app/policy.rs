@@ -176,15 +176,14 @@ pub fn settle(
     if settle.flow.settling {
         return Ok(Progress::Done);
     }
-    if !(startup.eligible() && operations.is_empty()) {
-        return Ok(Progress::Done);
-    }
     if !settle.closing() {
-        settle.close(false);
+        if startup.eligible() && operations.is_empty() {
+            settle.close(false);
+        }
         return Ok(Progress::Done);
     }
-    if settle.domains {
-        settle.admit(false);
+    if settle.domains && settle.admit(false) && settle.flow.forced {
+        programs::debug::put("system: forced shutdown admitted after retirement settlement");
     }
     Ok(Progress::Done)
 }
@@ -218,8 +217,11 @@ pub fn idle(
         }
     } else if activity.walking && now.saturating_sub(activity.quiet) >= 10_000_000_000 {
         // 超时退场与正常退场走同一道门：先停动态执行域，再等退休提供方。
+        let newly_forced = !settle.flow.forced;
         settle.close(true);
-        programs::debug::put("system: forced shutdown closing dynamic execution domains");
+        if newly_forced {
+            programs::debug::put("system: idle deadline reached; awaiting retirement settlement");
+        }
     }
     Ok(Progress::Done)
 }

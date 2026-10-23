@@ -4,6 +4,23 @@ use env::TaskId;
 use system_api::control::Fail;
 
 impl Control {
+    pub(crate) fn release_reported(
+        &mut self,
+        owner: TaskId,
+        reference: crate::system::assembly::InstanceRef,
+    ) -> bool {
+        let Some(item) = self.instances.iter_mut().find(|item| {
+            item.reference == reference && item.owner == owner && item.state == State::Dead
+        }) else { return false };
+        match item.receipt {
+            Receipt::Consumed | Receipt::Reported => {
+                item.receipt = Receipt::Reported;
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn reclaim_returned(&mut self) {
         let mut consumed = false;
         for item in &mut self.instances {
