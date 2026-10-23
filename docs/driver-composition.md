@@ -22,7 +22,7 @@
 | A4：公共目录与来源元数据分离 | 已实现，相关宿主与真实产品景通过 |
 | A5：PCI 不解析 VirtIO 设备协议 | 未实施 |
 | A6：绑定保留首次失败 | 已实现，宿主回归通过 |
-| A7：关键常驻域引用清理前安全终止 | 内核机制四/八核基础通过；Control及Driver装配未实施 |
+| A7：关键常驻域引用清理前安全终止 | β范围已实现；三域可信装配、三目标各四/八核真实DMA在途死亡及正常退役通过独立验收 |
 | A8：Domain 与 IOVA 范围共同标识 | 未实施 |
 | A9：IOMMU 分配 IOVA，绑定编号只表达身份 | 未实施 |
 | A10：显式资源交付与身份核验 | 未实施 |
@@ -557,3 +557,32 @@ forced 首次因丢失旧有“等待退休结清”状态事件失败，挂起�
 A2 在此检查点完成；完整重构仍未完成。A3/A5/A7 装配与真实故障验收、A8–A12、单个
 Daemon、双设备双 Domain 同数值 IOVA，以及这些后续改动合入后的固定源码四/八核和最终
 1024 代回归，仍按原目标继续。本次 1024 代结果不能替代后续最终集成验收。
+
+## 第十六检查点：A7 可信保护装配与真实在途死亡
+
+完整实现和边界见 `docs/guard-deployment.md` 与 `docs/guard-death.md`。
+三个关键域由可信 Deployment 选择，Control 以专用 Guard token 在首次运行前保护；
+正常 Ruin 必须先等外部资源 Done，再整队暂停、真实 Unguard 成功，随后才能撤安装/销毁。
+未完成的解除义务保留在原静态行，不能被 attach/detach 静默覆盖；不新增生命周期权威。
+
+Root 在固定源码 `978c4670529c964200b06ead45bf3f6e5ef5c383` 上独立完成六个场景：
+PCI、IOMMU、Recovery 各四核及八核。每景同时保护三域，实际 NBD 读保持在途后，
+宿主才经真实 UART 发送触发，System 主任务核实际任务/Team/保护状态后直接 Slay。
+Kernel 记录真实目标后在引用清理前停止，其他 3/7 个 hart 先退出地址空间租约并禁中断，
+再确认静止。所有场景均无目标引用清理、DMA 释放、重新启动或正常整机回收。
+
+这六轮的 raw qtest 都按设计超时退出 101；不是普通全绿。每轮外层独立验收器另行退出 0，
+核真实 DMA 发布、MASTER on、门铃、NBD held 且无 resume/reply、目标及实际 Root 身份、
+Kernel trip 与全部 peer 静止的次序，并拒绝任意超时/缺失证据。现场为
+`target/driver-composition/guard-deployment/death-978-{pci,iommu,recovery}-{4,8}/`，
+各含 runner.status、runner.log、independent-verifier.log、console、diagnose 与 NBD/触发快照。
+
+同源码的普通回收另行通过：四/八核 iommu-product，八核真实在途 Ruin/forced，四核完整
+accept，均退出 0；Ruin/forced 仍要求执行域早于 Driver 回收，最终帧均 153→153。
+相关宿主 Control/Hub/退休/结构/Guard/关闭策略 110 项、image 18 项通过，两个验收器
+Python 正反对照共 27 项通过；workspace check 仅既有 5 个 warning，diff-check 通过。
+
+授权 Flash 的 scoped review 未确认阻断；Root 补查了其未覆盖的 peer 停止确认、父任务
+先处理子域再清理父引用的顺序，以及 IOMMU Reference/View 的显式释放责任。A7 只承诺
+β 关键域故障时整机安全终止，不承诺 DMA 排空、自动重启或 Driver 死后继续运行。
+完整重构仍待设备协调/通用PCI、Domain/IOVA/显式交付/并发、单个 Daemon 及最终集成验收。

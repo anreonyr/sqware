@@ -3,6 +3,7 @@ use super::{boot, bootstrap::Boot, life, policy, wait};
 use crate::system::{assembly, control, identity, loader, operator};
 use ::schedule::Resources;
 use alloc::vec::Vec;
+use env::{Call, Name};
 
 pub(crate) fn resources(
     boot: Boot,
@@ -44,6 +45,15 @@ pub(crate) fn resources(
         })
         .collect::<Result<Vec<_>, crate::system::app::InstallError>>()?;
     let deployed = inputs.iter().map(|input| input.program).collect::<Vec<_>>();
+    let guarded = deployment.guarded().map_err(|why| {
+        programs::debug!(
+            "system: invalid guarded deployment {}: {why:?}",
+            deployment.name
+        );
+        crate::system::app::InstallError::Configuration("invalid guarded deployment")
+    })?;
+    let guard = super::guard::authority(guarded, boot.accounts.token(Name::Call(Call::Guard)))
+        .map_err(crate::system::app::InstallError::Configuration)?;
     let mut resources = Resources::new();
     resources.insert(boot.catalog)?.insert(
         Supplies::new(boot.machine, boot.accounts, boot.catalog)
@@ -57,6 +67,8 @@ pub(crate) fn resources(
         control::Configuration {
             inputs,
             targets: deployment.targets,
+            guarded,
+            guard,
         },
     )?;
     identity::install(&mut resources)?;

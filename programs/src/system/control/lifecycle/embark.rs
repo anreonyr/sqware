@@ -1,4 +1,4 @@
-use super::super::unit::Control;
+use super::super::unit::{Control, guard};
 use super::{Action, Active, Instance};
 use crate::system::control::unit::task::Readiness;
 use crate::system::{
@@ -76,19 +76,38 @@ pub(crate) fn pre(
 
 pub fn run(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    if let Some(instance) = job.progress.execution.instance.as_mut() {
-        if !instance.launched {
-            crate::debug::put(&alloc::format!(
-                "system: activate {} tid={}",
-                job.key.request.name,
-                instance.service.task().get()
-            ));
-            env::unit::embark_task(instance.service.task()).map_err(|_| Fail::NotReady)?;
-            instance.launched = true;
-        }
-    } else {
-        control.resume(&job.key.request.name)?;
+    let name = job.key.request.name.as_str();
+    let deadline = job.progress.execution.deadline;
+    let Some(instance) = job.progress.execution.instance.as_mut() else {
+        control.resume(name)?;
+        return Ok(Progress::Done);
+    };
+    if instance.launched {
+        return Ok(Progress::Done);
     }
+    if control.guard_required(name) && !control.guard_held(name) {
+        let team = control
+            .task_team(instance.service.task())
+            .ok_or(Fail::Unknown)?;
+        let authority = control.guard_token.ok_or(Fail::NotReady)?;
+        match guard::arm(team, authority).map_err(|_| Fail::NotReady)? {
+            Progress::Done => {
+                control.hold_guard(name);
+                guard::resume(team).map_err(|_| Fail::NotReady)?;
+            }
+            Progress::Pending if env::chrono::clock() < deadline => {
+                return Ok(Progress::Pending);
+            }
+            _ => return Err(Fail::NotReady),
+        }
+    }
+    crate::debug::put(&alloc::format!(
+        "system: activate {} tid={}",
+        name,
+        instance.service.task().get()
+    ));
+    env::unit::embark_task(instance.service.task()).map_err(|_| Fail::NotReady)?;
+    instance.launched = true;
     Ok(Progress::Done)
 }
 pub fn ready(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
