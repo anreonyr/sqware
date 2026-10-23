@@ -159,3 +159,43 @@ cargo test --manifest-path crates/image/Cargo.toml \
 The native three-target 4/8-hart runs and the raw-101 verifier runs remain for
 the Root thread. This document does not claim A7 completion, DMA drainage, or a
 successful native halt.
+
+## Root native acceptance
+
+At fixed production source `978c4670529c964200b06ead45bf3f6e5ef5c383`, all six
+three-domain-protected scenes were independently accepted:
+
+| Target | Harts | Actual target Task/Team | Peer quiescence | Raw qtest | Independent verifier |
+| --- | --- | --- | --- | --- | --- |
+| PCI | 4 | 15 / 15 | 3 | 101 timeout | 0, accepted |
+| IOMMU | 4 | 14 / 14 | 3 | 101 timeout | 0, accepted |
+| Recovery | 4 | 16 / 16 | 3 | 101 timeout | 0, accepted |
+| PCI | 8 | 15 / 15 | 7 | 101 timeout | 0, accepted |
+| IOMMU | 8 | 14 / 14 | 7 | 101 timeout | 0, accepted |
+| Recovery | 8 | 16 / 16 | 7 | 101 timeout | 0, accepted |
+
+Each backend held an actual published DMA sector read and was never resumed;
+the target never reached reference cleanup, hardware release or a new launch.
+This is a deliberate nonreturning halt with references retained, not successful
+DMA drainage or ordinary all-green qtest output. Evidence directories are
+`target/driver-composition/guard-deployment/death-978-<target>-<harts>/`.
+
+On the same source, normal four/eight-hart product, eight-hart in-flight
+Ruin/forced and four-hart accept all exited 0. Ruin/forced still proved execution
+domains reaped before Driver teardown and frames 153→153. Host suites: Guard 16,
+Control instance 33, Control RPC 9, Hub handoff 12, retirement boundary 11,
+system shape 21, shutdown policy 8 and image 18 passed. Python guard evidence 21
+and earlier kernel verifier 6 passed; workspace check retained five existing
+warnings. No safety predicate or final ordinary reclamation check was removed.
+
+The authorized read-only Flash reviewer
+`session-4204103d-eb75-49f0-9398-5b3ccfea163a` found no confirmed blocker, with
+explicit limits on peer stopping and other cleanup paths. Root checked
+`machine/stop::hunker` (lease vacate, IRQ disable, one acknowledgement before
+nonreturning HSM stop), `protected_stop`, and the real exit-hook order. The
+IOMMU's retained Reference and View records require explicit release; dropping
+their Rust values does not release the kernel references before the exit guard.
+
+A7's beta safe-termination boundary is accepted. Device coordination, generic
+PCI, multiple domains/devices, the single generic Daemon, and final integrated
+four/eight-hart plus 1024-generation acceptance remain separate unfinished work.
