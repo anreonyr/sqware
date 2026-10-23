@@ -61,34 +61,79 @@ Run from this worktree:
 ```text
 cargo test --manifest-path programs/tests/guard-deployment/Cargo.toml \
   --target x86_64-unknown-linux-gnu --offline
-  13 passed
+  16 passed
 
-cargo test --manifest-path crates/image/Cargo.toml \
+cargo test --manifest-path programs/tests/shutdown-policy/Cargo.toml \
   --target x86_64-unknown-linux-gnu --offline
-  15 passed
-
-cargo check --workspace --offline
-  pass
+  8 passed
 
 git diff --check
   pass
 ```
 
-The guard Host fixture compiles the real `unit/guard.rs`, `unit/table.rs`, and
-`lifecycle/ruin.rs` sources against a controlled fake Kernel. It covers:
-unselected domains never call Guard; Live -> debark -> Guard -> team resume ->
-main task start; Guard failure leaves no obligation and no Unguard; embark
-failure after arm keeps the obligation; external retirement Pending performs no
-pause/Unguard/slay; on-hart Busy does not release; Unguard failure keeps the
-obligation and blocks destroy; a successful release happens once and repeated
-retirement does not repeat it; resume does not re-arm. Negative authority tests
-cover missing, unavailable, not-alive, non-Nole, wrong-owner, and non-FETCH-only
-tokens. Negative selection tests cover unknown, duplicate, and unstarted names.
+The earlier guard Host test used a local `launch` helper that mirrored
+`lifecycle/embark.rs`; it did not compile the production Embark. That helper is
+removed. The current fixture includes the real `lifecycle/embark.rs` and drives
+its `pre`/`run`/`ready`/`post` through `schedule::Resources`/`ResMut`, with
+minimal fake Control, Roster, and Service boundaries. It compiles the real
+`unit/guard.rs`, `unit/table.rs`, `lifecycle/ruin.rs`, and `lifecycle/embark.rs`.
+The fixture files are split by fake Kernel, Control, lifecycle, app, and
+assembly roles, one data structure per file; the cases remain in `tests.rs`.
+
+The guard Host tests cover: unselected domains never call Guard; Live ->
+debark -> Guard -> team resume -> main task start; Guard failure leaves no
+obligation and does not start the task; Busy stays Pending until the deadline;
+team-resume failure and task-embark failure after arm both keep the obligation
+and are released through the real `ruin::release_guard`; external retirement
+Pending performs no pause/Unguard/slay; on-hart Busy does not release; Unguard
+failure keeps the obligation and blocks destroy; a successful release happens
+once and repeated retirement does not repeat it; resume keeps the held
+obligation without re-arming Guard. Negative authority tests cover missing,
+unavailable, not-alive, non-Nole, wrong-owner, and non-FETCH-only tokens.
+Negative selection tests cover unknown, duplicate, and unstarted names. The
+shutdown-policy Host tests assert the `detach_unit` Result at every call site;
+the probe fixture likewise asserts its detach Result instead of discarding it.
 
 ## Not verified here
 
 The native DMA-active three-role scenario (4/8 core member death) and the
-independent non-return halt verifier are not covered by these Host tests. They
-remain the next deployment-level step. The known A2 `namespace-installation`
-host diagnostic (missing debug shim in the other tree) was not changed or
-reinterpreted here.
+independent non-return halt verifier were not run in this round. These Host
+tests do not establish A7 completion; the native scenario and the independent
+halt verifier remain required before that claim. The known A2
+`namespace-installation` host diagnostic (missing debug shim in the other tree)
+was not changed or reinterpreted here.
+
+## Root review and deployment checks
+
+The initial writer stopped before the next writer began. Its candidate was
+sealed, then based on accepted A2 `17226ba1`; the namespace issuer correction
+and its debug shim are now present. The fixture revision is a separate
+checkpoint. The original mirrored launch helper has been removed; the new
+cases compile the production Embark source. Missing rows still permit repeated
+detach without reporting new reclamation, preserving the original policy.
+
+Root independently reran guard-deployment 16, shutdown-policy 8,
+namespace-retirement 4 and namespace-installation 4: all passed, with unchanged
+safety assertions. The new fixtures have at most one struct/enum per file.
+The scoped read-only reviewer (DeepSeek Flash,
+session-d7f6de27-3fd1-44cd-81c4-4f610c131e9d) found no confirmed blocker; its
+limits included the kernel role and global teardown path. Root additionally
+checked real lifecycle error-to-Ruin conversion and the kernel exit hook order:
+child-domain doom precedes the parent's reference cleanup. Guard-held failure
+therefore cannot silently proceed through the ordinary destroy/supply steps.
+
+On production Guard source `d61ad202`, root's sequential native runs passed:
+
+- Four-hart `iommu-product`, 5.38 s.
+- Eight-hart `iommu-ruin`, 3.18 s: real held NBD read, alpha tasks 10/11 reaped
+  before Driver 8, final frames 153→153.
+- Eight-hart `iommu-forced`, 11.04 s: real held NBD read, alpha tasks 9/10 reaped
+  before Driver 7, final frames 153→153.
+- Four-hart complete `accept`, 10.65 s, including the fixture's asserted detach
+  Result and the ordinary deployment's empty guard selection.
+
+Evidence is under `target/driver-composition/guard-deployment/initial-*/`, with
+runner logs and per-scene consoles. These runs confirm normal deployment and
+retirement compatibility. Unexpected PCI/IOMMU/Recovery member death during
+held DMA and the strict four/eight-hart halt verifier remain required; A7 and
+the full refactor are not yet complete.

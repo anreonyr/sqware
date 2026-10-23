@@ -859,11 +859,12 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         .unpart(terminal_mounts.1, Wait::AtMost(3000))
         .unwrap();
     let _ = env::pie::release(terminal, env::ReleaseMode::Revoke);
-    let _ = assembly
+    assembly
         .resources
         .write::<Control>()
         .unwrap()
-        .detach_unit("login");
+        .detach_unit("login")
+        .expect("detach login unit");
     {
         let mut roster = assembly
             .resources

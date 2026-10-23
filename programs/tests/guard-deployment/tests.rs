@@ -1,104 +1,10 @@
 use super::*;
-use crate::system::control::lifecycle::{Active, Execution, ExecutionProgress, Operation, OperationKey, Request};
-use crate::system::control::unit::table::{Announce, Declaration, Slot, State, Table};
-use crate::system::control::unit::{Control, Input, PROGRAM};
-use ::schedule::Progress;
-
-fn reset() {
-    crate::reset();
-}
-
-fn info() -> PieInfo {
-    PieInfo {
-        token: PieToken::mint(5),
-        kind: PieKind::Nole,
-        permission: Permission::FETCH,
-        owner: TaskId::new(1),
-        vestor: TaskId::new(0),
-        mark: Mark::NONE,
-        alive: true,
-    }
-}
-
-fn set_inspect(result: Result<PieInfo, ()>) {
-    EFFECTS.with(|effects| effects.borrow_mut().inspect = Some(result));
-}
-
-fn table(name: &'static str, team: TeamId, task: TaskId) -> Table {
-    let mut table = Table::new();
-    table
-        .register(Declaration {
-            name: name.into(),
-            announce: Announce::None,
-            restart: crate::unit::Ending::Resident,
-        })
-        .unwrap();
-    table
-        .attach(
-            name,
-            Slot::Live {
-                team: Some(team),
-                task,
-            },
-        )
-        .unwrap();
-    table.set_state(name, State::Starting);
-    table
-}
-
-fn active(name: &'static str, task: TaskId) -> Active {
-    Active(Some(Operation {
-        key: OperationKey {
-            request: Request {
-                name: name.into(),
-                action: crate::system::control::lifecycle::Action::Ruin,
-            },
-        },
-        progress: ExecutionProgress {
-            execution: Execution {
-                instance: None,
-                task: Some(task),
-                deadline: 100,
-            },
-            failure: None,
-        },
-    }))
-}
-
-fn control(mut table: Table, name: &'static str) -> Control {
-    Control {
-        table: {
-            table.set_guard_held(name, true);
-            table
-        },
-        inputs: vec![Input {
-            name,
-            program: &PROGRAM,
-        }],
-        pending: Vec::new(),
-        guard_token: Some(PieToken::mint(9)),
-    }
-}
-
-fn launch(
-    table: &mut Table,
-    name: &str,
-    team: TeamId,
-    task: TaskId,
-    required: bool,
-) -> Result<Progress, UnitFail> {
-    if required && !table.guard_held(name) {
-        match crate::system::control::unit::guard::arm(team, PieToken::mint(9))? {
-            Progress::Done => {
-                table.set_guard_held(name, true);
-                crate::system::control::unit::guard::resume(team)?;
-            }
-            Progress::Pending => return Ok(Progress::Pending),
-        }
-    }
-    env::unit::embark_task(task).map_err(|error| error.source)?;
-    Ok(Progress::Done)
-}
+use crate::system::control::lifecycle::ruin;
+use crate::system::control::unit::table::{Slot, State};
+use crate::system::control::unit::verdict::Fail;
+use crate::system::control::unit::Control;
+use std::cell::RefCell;
+use ::schedule::{Progress, Resources};
 
 #[test]
 fn guard_selection_rejects_unknown_duplicate_and_unstarted_names() {
@@ -155,72 +61,248 @@ fn unselected_domain_never_calls_guard() {
     reset();
     assert!(!crate::system::control::unit::guard::required(&["pci"], "iommu"));
     assert!(crate::system::control::unit::guard::required(&["pci"], "pci"));
-    let mut table = table("pci", TeamId::new(3), TaskId::new(4));
-    assert_eq!(
-        launch(&mut table, "pci", TeamId::new(3), TaskId::new(4), false),
-        Ok(Progress::Done)
-    );
+    let mut resources = Resources::new();
+    resources
+        .insert(active_with(
+            "pci",
+            TaskId::new(4),
+            Action::Embark { parent: None },
+            Some(Instance::new(Service::new(TaskId::new(4)))),
+            100,
+        ))
+        .unwrap();
+    resources
+        .insert(control_for(
+            table_for("pci", TeamId::new(3), TaskId::new(4)),
+            "pci",
+            &[],
+            false,
+        ))
+        .unwrap();
+    assert_eq!(run_embark(&resources), Ok(Progress::Done));
     assert_eq!(calls(), ["embark_task"]);
-    assert!(!table.guard_held("pci"));
+    assert!(!resources.read::<Control>().unwrap().guard_held("pci"));
 }
 
 #[test]
 fn guarded_launch_debarks_guards_resumes_team_then_starts_task() {
     reset();
-    let mut table = table("pci", TeamId::new(3), TaskId::new(4));
-    assert_eq!(
-        launch(&mut table, "pci", TeamId::new(3), TaskId::new(4), true),
-        Ok(Progress::Done)
-    );
+    let mut resources = Resources::new();
+    resources
+        .insert(active_with(
+            "pci",
+            TaskId::new(4),
+            Action::Embark { parent: None },
+            Some(Instance::new(Service::new(TaskId::new(4)))),
+            100,
+        ))
+        .unwrap();
+    resources
+        .insert(control_for(
+            table_for("pci", TeamId::new(3), TaskId::new(4)),
+            "pci",
+            &["pci"],
+            false,
+        ))
+        .unwrap();
+    assert_eq!(run_embark(&resources), Ok(Progress::Done));
     assert_eq!(
         calls(),
         ["debark_team", "guard", "embark_team", "embark_task"]
     );
-    assert!(table.guard_held("pci"));
+    let control = resources.read::<Control>().unwrap();
+    assert!(control.guard_held("pci"));
+    let active = resources.read::<Active>().unwrap();
+    let instance = active
+        .0
+        .as_ref()
+        .unwrap()
+        .progress
+        .execution
+        .instance
+        .as_ref()
+        .unwrap();
+    assert!(instance.launched);
 }
 
 #[test]
-fn guard_failure_does_not_hold_the_obligation_or_unguard() {
+fn guard_failure_does_not_hold_the_obligation_or_start_the_task() {
     reset();
     EFFECTS.with(|effects| effects.borrow_mut().guard_fail = Some(UnitFail::Denied));
-    let mut table = table("pci", TeamId::new(3), TaskId::new(4));
-    assert_eq!(
-        launch(&mut table, "pci", TeamId::new(3), TaskId::new(4), true),
-        Err(UnitFail::Denied)
-    );
-    assert!(!table.guard_held("pci"));
+    let mut resources = Resources::new();
+    resources
+        .insert(active_with(
+            "pci",
+            TaskId::new(4),
+            Action::Embark { parent: None },
+            Some(Instance::new(Service::new(TaskId::new(4)))),
+            100,
+        ))
+        .unwrap();
+    resources
+        .insert(control_for(
+            table_for("pci", TeamId::new(3), TaskId::new(4)),
+            "pci",
+            &["pci"],
+            false,
+        ))
+        .unwrap();
+    assert_eq!(run_embark(&resources), Err(Fail::NotReady));
     assert_eq!(calls(), ["debark_team", "guard"]);
+    let control = resources.read::<Control>().unwrap();
+    assert!(!control.guard_held("pci"));
+    let active = resources.read::<Active>().unwrap();
+    let instance = active
+        .0
+        .as_ref()
+        .unwrap()
+        .progress
+        .execution
+        .instance
+        .as_ref()
+        .unwrap();
+    assert!(!instance.launched);
 }
 
 #[test]
-fn embark_failure_after_guard_keeps_the_obligation_until_release() {
+fn team_resume_failure_after_guard_keeps_the_obligation_until_release() {
     reset();
     EFFECTS.with(|effects| effects.borrow_mut().embark_team_fail = Some(UnitFail::Denied));
-    let mut table = table("pci", TeamId::new(3), TaskId::new(4));
-    assert_eq!(
-        launch(&mut table, "pci", TeamId::new(3), TaskId::new(4), true),
-        Err(UnitFail::Denied)
-    );
-    assert!(table.guard_held("pci"));
+    let mut resources = Resources::new();
+    resources
+        .insert(active_with(
+            "pci",
+            TaskId::new(4),
+            Action::Embark { parent: None },
+            Some(Instance::new(Service::new(TaskId::new(4)))),
+            100,
+        ))
+        .unwrap();
+    resources
+        .insert(control_for(
+            table_for("pci", TeamId::new(3), TaskId::new(4)),
+            "pci",
+            &["pci"],
+            false,
+        ))
+        .unwrap();
+    assert_eq!(run_embark(&resources), Err(Fail::NotReady));
     assert_eq!(calls(), ["debark_team", "guard", "embark_team"]);
+    assert!(resources.read::<Control>().unwrap().guard_held("pci"));
+    assert!(
+        !resources
+            .read::<Active>()
+            .unwrap()
+            .0
+            .as_ref()
+            .unwrap()
+            .progress
+            .execution
+            .instance
+            .as_ref()
+            .unwrap()
+            .launched
+    );
 
-    EFFECTS.with(|effects| *effects.borrow_mut() = Effects::default());
+    reset();
     assert_eq!(
-        crate::system::control::unit::guard::release(TeamId::new(3), PieToken::mint(9)),
+        ruin::release_guard(
+            resources.read::<Active>().unwrap(),
+            resources.write::<Control>().unwrap(),
+        ),
         Ok(Progress::Done)
     );
-    table.set_guard_held("pci", false);
     assert_eq!(calls(), ["debark_team", "unguard"]);
+    assert!(!resources.read::<Control>().unwrap().guard_held("pci"));
+}
+
+#[test]
+fn task_embark_failure_after_guard_keeps_the_obligation_until_release() {
+    reset();
+    EFFECTS.with(|effects| effects.borrow_mut().embark_task_fail = Some(UnitFail::Denied));
+    let mut resources = Resources::new();
+    resources
+        .insert(active_with(
+            "pci",
+            TaskId::new(4),
+            Action::Embark { parent: None },
+            Some(Instance::new(Service::new(TaskId::new(4)))),
+            100,
+        ))
+        .unwrap();
+    resources
+        .insert(control_for(
+            table_for("pci", TeamId::new(3), TaskId::new(4)),
+            "pci",
+            &["pci"],
+            false,
+        ))
+        .unwrap();
+    assert_eq!(run_embark(&resources), Err(Fail::NotReady));
+    assert_eq!(
+        calls(),
+        ["debark_team", "guard", "embark_team", "embark_task"]
+    );
+    assert!(resources.read::<Control>().unwrap().guard_held("pci"));
+
+    reset();
+    assert_eq!(
+        ruin::release_guard(
+            resources.read::<Active>().unwrap(),
+            resources.write::<Control>().unwrap(),
+        ),
+        Ok(Progress::Done)
+    );
+    assert_eq!(calls(), ["debark_team", "unguard"]);
+    assert!(!resources.read::<Control>().unwrap().guard_held("pci"));
+}
+
+#[test]
+fn busy_debark_stays_pending_until_the_deadline_then_fails() {
+    reset();
+    chrono::set(0);
+    EFFECTS.with(|effects| effects.borrow_mut().debark_fail = Some(UnitFail::Busy));
+    let mut resources = Resources::new();
+    resources
+        .insert(active_with(
+            "pci",
+            TaskId::new(4),
+            Action::Embark { parent: None },
+            Some(Instance::new(Service::new(TaskId::new(4)))),
+            100,
+        ))
+        .unwrap();
+    resources
+        .insert(control_for(
+            table_for("pci", TeamId::new(3), TaskId::new(4)),
+            "pci",
+            &["pci"],
+            false,
+        ))
+        .unwrap();
+    assert_eq!(run_embark(&resources), Ok(Progress::Pending));
+    assert_eq!(calls(), ["debark_team"]);
+    assert!(!resources.read::<Control>().unwrap().guard_held("pci"));
+
+    chrono::set(100);
+    assert_eq!(run_embark(&resources), Err(Fail::NotReady));
+    assert_eq!(calls(), ["debark_team", "debark_team"]);
+    assert!(!resources.read::<Control>().unwrap().guard_held("pci"));
 }
 
 #[test]
 fn external_retirement_pending_stops_before_pause_unguard_or_slay() {
     reset();
-    let active = RefCell::new(active("pci", TaskId::new(4)));
-    let control = RefCell::new(control(table("pci", TeamId::new(3), TaskId::new(4)), "pci"));
-    let settle = RefCell::new(crate::system::app::policy::Settle { settled: false });
+    let active = RefCell::new(active_for("pci", TaskId::new(4), Action::Ruin));
+    let control = RefCell::new(control_for(
+        table_for("pci", TeamId::new(3), TaskId::new(4)),
+        "pci",
+        &["pci"],
+        true,
+    ));
+    let settle = RefCell::new(Settle { settled: false });
     assert_eq!(
-        crate::system::control::lifecycle::ruin::drain(
+        ruin::drain(
             active.borrow(),
             control.borrow(),
             settle.borrow_mut(),
@@ -235,13 +317,15 @@ fn external_retirement_pending_stops_before_pause_unguard_or_slay() {
 fn busy_on_hart_keeps_the_obligation_without_unguard() {
     reset();
     EFFECTS.with(|effects| effects.borrow_mut().debark_fail = Some(UnitFail::Busy));
-    let active = RefCell::new(active("pci", TaskId::new(4)));
-    let control = RefCell::new(control(table("pci", TeamId::new(3), TaskId::new(4)), "pci"));
+    let active = RefCell::new(active_for("pci", TaskId::new(4), Action::Ruin));
+    let control = RefCell::new(control_for(
+        table_for("pci", TeamId::new(3), TaskId::new(4)),
+        "pci",
+        &["pci"],
+        true,
+    ));
     assert_eq!(
-        crate::system::control::lifecycle::ruin::release_guard(
-            active.borrow(),
-            control.borrow_mut(),
-        ),
+        ruin::release_guard(active.borrow(), control.borrow_mut()),
         Ok(Progress::Pending)
     );
     assert_eq!(calls(), ["debark_team"]);
@@ -252,80 +336,150 @@ fn busy_on_hart_keeps_the_obligation_without_unguard() {
 fn unguard_failure_keeps_the_obligation_and_blocks_destroy() {
     reset();
     EFFECTS.with(|effects| effects.borrow_mut().unguard_fail = Some(UnitFail::Denied));
-    let active = RefCell::new(active("pci", TaskId::new(4)));
-    let control = RefCell::new(control(table("pci", TeamId::new(3), TaskId::new(4)), "pci"));
-    assert!(crate::system::control::lifecycle::ruin::release_guard(
-        active.borrow(),
-        control.borrow_mut(),
-    )
-    .is_err());
+    let active = RefCell::new(active_for("pci", TaskId::new(4), Action::Ruin));
+    let control = RefCell::new(control_for(
+        table_for("pci", TeamId::new(3), TaskId::new(4)),
+        "pci",
+        &["pci"],
+        true,
+    ));
+    assert!(ruin::release_guard(active.borrow(), control.borrow_mut()).is_err());
     assert!(control.borrow().table.guard_held("pci"));
     assert_eq!(calls(), ["debark_team", "unguard"]);
 
-    assert!(crate::system::control::lifecycle::ruin::run(
-        active.borrow(),
-        control.borrow(),
-    )
-    .is_err());
+    assert!(ruin::run(active.borrow(), control.borrow()).is_err());
     assert!(!calls().contains(&"slay_team"));
 }
 
 #[test]
 fn successful_release_happens_once_and_retirement_retries_do_not_repeat_it() {
     reset();
-    let active = RefCell::new(active("pci", TaskId::new(4)));
-    let control = RefCell::new(control(table("pci", TeamId::new(3), TaskId::new(4)), "pci"));
+    let active = RefCell::new(active_for("pci", TaskId::new(4), Action::Ruin));
+    let control = RefCell::new(control_for(
+        table_for("pci", TeamId::new(3), TaskId::new(4)),
+        "pci",
+        &["pci"],
+        true,
+    ));
     assert_eq!(
-        crate::system::control::lifecycle::ruin::release_guard(
-            active.borrow(),
-            control.borrow_mut(),
-        ),
+        ruin::release_guard(active.borrow(), control.borrow_mut()),
         Ok(Progress::Done)
     );
     assert!(!control.borrow().table.guard_held("pci"));
     assert_eq!(calls(), ["debark_team", "unguard"]);
 
     assert_eq!(
-        crate::system::control::lifecycle::ruin::release_guard(
-            active.borrow(),
-            control.borrow_mut(),
-        ),
+        ruin::release_guard(active.borrow(), control.borrow_mut()),
         Ok(Progress::Done)
     );
     assert_eq!(calls(), ["debark_team", "unguard"]);
 
     assert_eq!(
-        crate::system::control::lifecycle::ruin::run(active.borrow(), control.borrow()),
+        ruin::run(active.borrow(), control.borrow()),
         Ok(Progress::Done)
     );
     assert!(calls().contains(&"slay_team"));
 }
 
 #[test]
-fn resuming_a_paused_domain_does_not_rearm_guard() {
+fn resuming_a_paused_domain_keeps_held_without_rearming_guard() {
     reset();
-    let table = {
-        let mut table = table("pci", TeamId::new(3), TaskId::new(4));
-        table.set_guard_held("pci", true);
-        table
-    };
-    assert_eq!(crate::system::control::unit::guard::resume(TeamId::new(3)), Ok(()));
+    let mut resources = Resources::new();
+    resources
+        .insert(active_with(
+            "pci",
+            TaskId::new(4),
+            Action::Embark { parent: None },
+            None,
+            100,
+        ))
+        .unwrap();
+    resources
+        .insert(control_for(
+            table_in("pci", TeamId::new(3), TaskId::new(4), State::Debarked),
+            "pci",
+            &["pci"],
+            true,
+        ))
+        .unwrap();
+    assert_eq!(run_embark(&resources), Ok(Progress::Done));
     assert_eq!(calls(), ["embark_team"]);
-    assert!(table.guard_held("pci"));
+    assert!(resources.read::<Control>().unwrap().guard_held("pci"));
 }
 
 #[test]
 fn held_obligation_cannot_be_replaced_or_detached() {
     reset();
-    let mut table = table("pci", TeamId::new(3), TaskId::new(4));
+    let mut table = table_for("pci", TeamId::new(3), TaskId::new(4));
     table.set_guard_held("pci", true);
     assert_eq!(
-        table.attach("pci", Slot::Live { team: Some(TeamId::new(3)), task: TaskId::new(4) }),
-        Err(crate::system::control::unit::verdict::Fail::NotReady)
+        table.attach(
+            "pci",
+            Slot::Live {
+                team: Some(TeamId::new(3)),
+                task: TaskId::new(4),
+            },
+        ),
+        Err(Fail::NotReady)
     );
-    assert_eq!(
-        table.detach("pci"),
-        Err(crate::system::control::unit::verdict::Fail::NotReady)
-    );
+    assert_eq!(table.detach("pci"), Err(Fail::NotReady));
     assert!(table.guard_held("pci"));
+}
+
+#[test]
+fn embark_pre_run_ready_post_completes_the_real_lifecycle() {
+    reset();
+    let mut control = control_for(
+        table_for("pci", TeamId::new(3), TaskId::new(4)),
+        "pci",
+        &["pci"],
+        false,
+    );
+    control.pending.push(pending("pci", TaskId::new(4)));
+    let mut resources = Resources::new();
+    resources
+        .insert(active_with(
+            "pci",
+            TaskId::new(4),
+            Action::Embark { parent: None },
+            None,
+            100,
+        ))
+        .unwrap();
+    resources.insert(control).unwrap();
+    resources.insert(Roster::default()).unwrap();
+
+    assert_eq!(run_pre(&resources), Ok(Progress::Done));
+    assert_eq!(calls(), ["authorize", "connect"]);
+    assert_eq!(run_embark(&resources), Ok(Progress::Done));
+    assert_eq!(run_ready(&resources), Ok(Progress::Done));
+    assert_eq!(run_post(&resources), Ok(Progress::Done));
+    assert_eq!(
+        calls(),
+        [
+            "authorize",
+            "connect",
+            "debark_team",
+            "guard",
+            "embark_team",
+            "embark_task",
+            "ready",
+        ]
+    );
+
+    let control = resources.read::<Control>().unwrap();
+    assert!(control.guard_held("pci"));
+    assert_eq!(control.table.find("pci").unwrap().state, State::Ready);
+    let active = resources.read::<Active>().unwrap();
+    let instance = active
+        .0
+        .as_ref()
+        .unwrap()
+        .progress
+        .execution
+        .instance
+        .as_ref()
+        .unwrap();
+    assert!(instance.launched);
+    assert!(instance.identity_install.is_some());
 }
