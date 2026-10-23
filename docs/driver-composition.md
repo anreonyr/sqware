@@ -17,7 +17,7 @@
 | 项目 | 当前证据 |
 | --- | --- |
 | A1：通用退休依赖替换 System HubDma 闸门 | 已实现全局及静态闸门，宿主和真实Ruin/forced/accept通过 |
-| A2：Control 唯一管理执行实例生命周期 | 已实现：Hub 执行阶段机与直接 join/slay/oust 移除，逐实例目标退休、交回队列和调用方迁移；原生新路径未验 |
+| A2：Control 唯一管理执行实例生命周期 | Hub阶段机已删除，Release与逐实例退休已接线；原生回收及投递边界验收中 |
 | A3：设备协调迁入设备控制 Driver | 未实施 |
 | A4：公共目录与来源元数据分离 | 已实现，相关宿主与真实产品景通过 |
 | A5：PCI 不解析 VirtIO 设备协议 | 未实施 |
@@ -460,3 +460,34 @@ Shell 等待 Release 时遗漏管道事件；Control 已 Oust、回复尚不可�
 全局 operations 为空；Retire 子计划之前已有非消费 WholeTeamComplete gate；
 把 trusted Unknown/Denied 当完成违反用户合同；静态 attach_service 的底层 mint 已处理失败清理。
 因此没有采纳删除退休门或伪造完成的建议。最终 1024 代、完整 Daemon 和其余架构条目仍未完成。
+
+## 第十三检查点：真实退场与回执投递
+
+生产修复与测具布局封存在 `f0672d92`。八核发布前失败、发布后失败、单独静态 Ruin
+通过；Ruin 的 α 主任务及辅助任务均先于恢复 Driver 回收，最终帧 153→153。
+八核真实 Login/Shell smoke 通过，包含流水线、子任务、暂停/恢复、取消及输出泵送，
+现场为 `handoff/shell-smoke-8/`。
+
+forced 首次因丢失旧有“等待退休结清”状态事件失败，挂起的 NBD 未获测具放行；现场
+`handoff/iommu-forced-8/`。恢复真实状态事件后，`handoff/forced-fixed-8/` 又超时失败：
+控制器等待全局退场，而已关闭的退场仍要求该控制器先结束。主线程用生产 policy::settle
+复现修前失败，改为仅在进入关闭阶段前检查启动资格；进入关闭后，仍须域结清和全部
+外部退休义务完成，但不再等待控制器结束。退休边界 11 项通过，八核真实 forced
+在 `handoff/forced-progress-8/` 通过，帧 153→153；挂起期间禁止清理的断言未放宽。
+
+回执压力回归另复现：Oust 成功但成功回复尚未送达时，旧的 Consumed 行可被新构造淘汰，
+使真实 owner 的后续重试变成 Unknown。Receipt 增加 Reported，表达成功完成已经报告；
+外部 owner 的 Consumed 保留到实际成功发送 OK 回复之后。原 owner 与构造引用均须匹配，
+发送失败和协议错误不能标记 Reported；Control 自有回执及 owner 已死亡的清理沿用原责任。
+这复用本地 RPC 的可靠回复通道：客户端先尝试收取已入队回复，再判断等待超时；
+没有把 Unknown/Denied 归一为成功。容量回归修前失败、修后通过。
+
+- Control 实例 33 项通过，包含未报告回执背压、同一回执重试只 Oust 一次、报告权限及
+  报告后才允许腾出容量；RPC 9 项通过，新增直接编译生产回复发送函数的 3 项负/正例。
+- 两套新适配器测具各数据结构分文件，cases 与 fixtures 分离；生产代码不依赖夹具。
+  Flash 布局检查点已交回，主线程重新核查所有新增测试文件，无多数据结构文件；
+  主线程独立通过 hub-handoff 12 项及 shell-adapter 6 项。
+- workspace check 保持 5 项既有 warning；固定当前生产源码的八核 128 代在
+  `handoff/soak-reported-128-8/` 验收，不复用更早检查点证据。
+
+当前记录仍不证明完整重构、A7 装配、单 Daemon、双 Domain 同值 IOVA 或最终 1024 代完成。
