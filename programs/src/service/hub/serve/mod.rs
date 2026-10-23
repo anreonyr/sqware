@@ -396,14 +396,19 @@ fn drain_retirement(
                     executions.settle(ledger);
                     ledger.open_bindings_all().next().is_none() && executions.idle(ledger)
                 } else {
+                    if !executions.target(ledger, target) {
+                        let _ = incoming.reply.send(
+                            system_api::retirement::Retirement::pending_for(target),
+                        );
+                        continue;
+                    }
                     let open = ledger.stop_target(target, |serial| {
                         crate::debug::put(&alloc::format!(
                             "hub: binding {serial} execution domain stopped (tid={})",
                             target.get()
                         ));
                     });
-                    let accepted = executions.target(ledger, target);
-                    open == 0 && accepted && executions.has_return(target)
+                    open == 0 && executions.target_received(target)
                 };
                 let reply = if done {
                     system_api::retirement::Retirement::done_for(target)

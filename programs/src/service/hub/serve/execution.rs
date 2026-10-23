@@ -75,9 +75,9 @@ impl Executions {
     }
 
     pub(crate) fn advance(&mut self, ledger: &mut Ledger, peers: &Peers, now: u64) {
-        ledger.expire_admissions(now, |task| self.enqueue(task, true));
+        ledger.expire_admissions(now, |task| self.enqueue(task, true, false));
         for task in ledger.closed_admission_tasks() {
-            self.enqueue(task, true);
+            self.enqueue(task, true, false);
         }
 
         let mut at = 0;
@@ -96,7 +96,7 @@ impl Executions {
                     if trusted {
                         ledger.close_admission(task);
                     }
-                    if self.enqueue(task, trusted) {
+                    if self.enqueue(task, trusted, false) {
                         self.launches.remove(at);
                     } else {
                         at += 1;
@@ -115,7 +115,11 @@ impl Executions {
                     ledger.released(returned.task());
                 }
                 ReturnReply::NoReceipt => {
-                    self.returns.remove(at);
+                    if ledger.open_bindings_for(self.returns[at].task()) == 0 {
+                        self.returns.remove(at);
+                    } else {
+                        at += 1;
+                    }
                 }
             }
         }
@@ -130,27 +134,30 @@ impl Executions {
     /// Hardware teardown still waits for Control's real per-instance target.
     pub(crate) fn closed(&mut self, ledger: &mut Ledger, task: TaskId) -> bool {
         ledger.close_admission(task);
-        self.enqueue(task, ledger.admission(task).is_some())
+        self.enqueue(task, ledger.admission(task).is_some(), false)
     }
 
     /// A real target retirement proves this execution domain stopped.
     pub(crate) fn target(&mut self, ledger: &mut Ledger, task: TaskId) -> bool {
+        if !self.enqueue(task, ledger.admission(task).is_some(), true) {
+            return false;
+        }
         ledger.close_admission(task);
-        self.enqueue(task, ledger.admission(task).is_some())
+        true
     }
 
     pub(crate) fn settle(&mut self, ledger: &mut Ledger) {
         let mut at = 0;
         while at < self.launches.len() {
             let task = self.launches[at].task();
-            if self.enqueue(task, false) {
+            if self.enqueue(task, false, false) {
                 self.launches.remove(at);
             } else {
                 at += 1;
             }
         }
         for task in ledger.closed_admission_tasks() {
-            self.enqueue(task, true);
+            self.enqueue(task, true, false);
         }
     }
 
@@ -160,14 +167,24 @@ impl Executions {
             && ledger.admissions().next().is_none()
     }
 
+    #[cfg(test)]
     pub(crate) fn has_return(&self, task: TaskId) -> bool {
         self.returns.iter().any(|returned| returned.task() == task)
     }
 
-    fn enqueue(&mut self, task: TaskId, trusted: bool) -> bool {
+    pub(crate) fn target_received(&self, task: TaskId) -> bool {
+        self.returns.iter().any(|returned| {
+            returned.task() == task && returned.target_received()
+        })
+    }
+
+    fn enqueue(&mut self, task: TaskId, trusted: bool, target_received: bool) -> bool {
         if let Some(returned) = self.returns.iter_mut().find(|item| item.task() == task) {
             if trusted {
                 returned.trust();
+            }
+            if target_received {
+                returned.target();
             }
             return true;
         }
@@ -175,7 +192,7 @@ impl Executions {
             return false;
         }
         self.returns
-            .push_back(Return::new(task, trusted));
+            .push_back(Return::new(task, trusted, target_received));
         true
     }
 }

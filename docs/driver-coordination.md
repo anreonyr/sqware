@@ -50,5 +50,36 @@ the final multi-device/multi-domain integration requirement.
 Independent Flash review found no confirmed source security/ownership defect.
 It identified a coverage gap: the takeover test exercised both actions but
 rechecked only Embark. It now rechecks the matching Recover or Embark action.
-The separate actual-target receipt and hardware migration remain subsequent
-work; queued return obligations alone do not prove CPU retirement.
+Queued return obligations alone do not prove CPU retirement. The actual-target
+receipt is described below; hardware migration remains subsequent work.
+
+## Actual retirement target
+
+The bounded Return adapter stores `target_received` independently from receipt
+ownership. Only the trusted Control per-target ASK path sets it. Closing,
+expiry, global settlement, owner inspection and receipt trust do not set it.
+Target queue admission precedes admission closure and hardware advancement. A
+full queue answers Pending and requires Control to retry the same target.
+NoReceipt cannot discard this fact while the task has an open binding.
+
+Return still sends the early Control Release request: this induces CPU stop
+and the per-target retirement callback. Waiting for hardware closure before
+sending that request would deadlock. Successful release remains gated by the
+existing real Control retirement path.
+
+The production handoff host suite passed 14 tests, including distinct target
+proof, failed queue admission and explicit retry, NoReceipt retention with an
+open binding, and the existing early Release request/order/error checks.
+Product 4/8, Ruin/forced retirement 8 and accept 4 passed with raw exit zero and
+frame equality. This still uses the existing hardware chain; the Driver
+runtime and Hub asynchronous adapter must be integrated next.
+
+Independent review rechecked the full Control path and withdrew two earlier
+findings: an early Release request does not imply an early successful ACK,
+and global settlement reaches actual per-target callbacks. Retirement hooks
+start after whole-Team completion; declared retirement dependencies must finish
+before the hook marks the instance Dead. Only then can release succeed.
+The review found no confirmed source defect in this target-receipt change.
+Additional Control instance (33), lifetime (8), retirement-boundary (11) and
+shutdown-policy (8) host tests passed. No duplicate receipt state or global CPU
+permit was introduced.
