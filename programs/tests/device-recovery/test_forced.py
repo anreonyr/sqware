@@ -11,6 +11,20 @@ from ruin_check import completed, pending
 
 
 class ForcedEvidence(unittest.TestCase):
+    def test_actual_entry_identity_controls_forced_exit_and_retirement(self):
+        console = CONSOLE.replace("entry task=1", "entry task=31")
+        events = copy.deepcopy(EVENTS)
+        for event in events:
+            for record in event.get("kind", {}).get("room", {}).values():
+                if record.get("tid") == 1:
+                    record["tid"] = 31
+        with contextlib.redirect_stdout(io.StringIO()):
+            completed(console, events, BACKEND, "forced")
+
+    def test_different_task_cannot_supply_root_exit(self):
+        with self.assertRaises(AssertionError):
+            completed(CONSOLE.replace("entry task=1", "entry task=31"), EVENTS, BACKEND, "forced")
+
     def test_success(self):
         pending(HELD, EVENTS[:2], "forced")
         with contextlib.redirect_stdout(io.StringIO()):

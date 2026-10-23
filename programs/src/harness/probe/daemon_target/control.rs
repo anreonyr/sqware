@@ -130,6 +130,7 @@ fn request(old_task: TaskId, old_helper: TaskId, before: u64) -> Result<(), &'st
         old_task,
         old_helper,
         before,
+        ack: env::PieToken::NONE,
     };
     let mut bytes = [0u8; Request::LEN];
     let len = request

@@ -1,8 +1,8 @@
 //! Root harness for the ordinary non-DMA target with an actual helper task.
 
-mod api;
-mod ask;
-mod beat;
+pub(crate) mod api;
+pub(crate) mod ask;
+pub(crate) mod beat;
 mod control;
 mod target;
 
@@ -21,6 +21,8 @@ const SCENE: Scene = Scene {
     request: REQUEST,
     done: "daemon-target: done",
     helper: true,
+    mode: crate::harness::probe::daemon_root::Mode::Recover,
+    ack: None,
 };
 
 /// Run the ordinary target restart scene from the deployment bootstrap image.

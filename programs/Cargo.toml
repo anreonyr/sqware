@@ -336,6 +336,20 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-daemon-stop"
+path = "src/harness/probe/daemon_stop/root_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-daemon-ctl-stop"
+path = "src/harness/probe/daemon_stop/control_main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-hub"
 path = "src/service/hub/main.rs"
 test = false

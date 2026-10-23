@@ -148,6 +148,7 @@ pub fn enqueue(
                 continue;
             }
         };
+        let is_ruin = directive.action == Action::Ruin;
         let reused = match operations.push_lifecycle(Request {
             name: name.clone(),
             directive,
@@ -161,6 +162,13 @@ pub fn enqueue(
                 continue;
             }
         };
+        if reused && is_ruin {
+            crate::debug::put(&alloc::format!(
+                "system: lifecycle received target={} sender={} action=ruin",
+                name,
+                from.get(),
+            ));
+        }
         crate::system::control::lifecycle::accept_intent(
             &mut control,
             &name,

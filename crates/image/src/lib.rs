@@ -429,6 +429,7 @@ mod tests {
             "iommu-product-after",
             "daemon-rtc",
             "daemon-target",
+            "daemon-stop",
         ];
         for deployment in unit::DEPLOYMENTS {
             let count = deployment
@@ -457,7 +458,7 @@ mod tests {
             let deployment = unit::Deployment::find(scene).unwrap();
             let order = order_of(deployment, unit::PROGRAMS).unwrap();
             let daemon = order.iter().position(|name| *name == "daemon").unwrap();
-            let provider = if *scene == "daemon-target" {
+            let provider = if matches!(*scene, "daemon-target" | "daemon-stop") {
                 "fixturetarget"
             } else {
                 "rtc"

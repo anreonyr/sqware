@@ -66,6 +66,7 @@ def pending(console, events, mode="ruin"):
 
 def completed(console, events, backend, mode="ruin"):
     assert mode in ("ruin", "forced")
+    root = int(one(console, r"boot: entry task=([1-9]\d*)")[1])
     main, auxiliary, beta = tasks(console)
     requester = one(console, r"pci: space task=\d+ ecam=0x[0-9a-f]+ requester=(\d+) bar=\d+")[1]
     ordered = (
@@ -93,7 +94,7 @@ def completed(console, events, backend, mode="ruin"):
             )
             if mode == "forced" else (
                 r"ruin: recovery dead after reply",
-                r"exit tid=1 reason=0x0 note: iommu-ruin: done",
+                rf"exit tid={root} reason=0x0 note: iommu-ruin: done",
             )
         ),
         r"task: all tasks exited, system halted",
@@ -118,13 +119,13 @@ def completed(console, events, backend, mode="ruin"):
             task = int(one(console, rf"system: minted {service} tid=(\d+)")[1])
             assert task in retired, f"missing global retirement: {service}"
             assert max(retired[main], retired[auxiliary]) < retired[task]
-        assert retired.get(1, 0) > max(retired[main], retired[auxiliary], retired[beta])
-        root = [
+        assert retired.get(root, 0) > max(retired[main], retired[auxiliary], retired[beta])
+        exits = [
             event["kind"]["room"]["exit"]["reason"]
             for event in events
-            if event.get("kind", {}).get("room", {}).get("exit", {}).get("tid") == 1
+            if event.get("kind", {}).get("room", {}).get("exit", {}).get("tid") == root
         ]
-        assert root == [0xFFFF_FFFE], "root must take the production self-doom path"
+        assert exits == [0xFFFF_FFFE], "root must take the production self-doom path"
 
     held = [i for i, event in enumerate(backend) if event["phase"] == "held"]
     assert len(held) == 1, "expected exactly one held guest read"

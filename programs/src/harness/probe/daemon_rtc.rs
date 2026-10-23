@@ -15,6 +15,8 @@ const SCENE: Scene = Scene {
     request: REQUEST,
     done: "daemon-rtc: done",
     helper: false,
+    mode: crate::harness::probe::daemon_root::Mode::Recover,
+    ack: None,
 };
 
 /// Run the actual RTC restart scene from the deployment bootstrap image.

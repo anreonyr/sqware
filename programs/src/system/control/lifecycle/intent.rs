@@ -39,5 +39,9 @@ pub(crate) fn accepted(
 fn accept_ruin_stop(control: &mut Control, name: &str) {
     if control.run_requested(name).is_some() {
         let _ = control.request_stop(name);
+        crate::debug::put(&alloc::format!(
+            "system: lifecycle intent target={} run=false",
+            name,
+        ));
     }
 }

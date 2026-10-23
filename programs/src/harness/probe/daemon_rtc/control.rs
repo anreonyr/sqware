@@ -88,6 +88,7 @@ fn request(old_task: env::TaskId, before: u64) -> Result<(), &'static str> {
         old_task,
         old_helper: env::TaskId::new(0),
         before,
+        ack: env::PieToken::NONE,
     };
     let mut bytes = [0u8; Request::LEN];
     let len = request

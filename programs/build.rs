@@ -29,6 +29,8 @@ fn main() {
     println!("cargo::rerun-if-changed=src/harness/probe/daemon_target/root_main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/daemon_target/control_main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/daemon_target/target_main.rs");
+    println!("cargo::rerun-if-changed=src/harness/probe/daemon_stop/root_main.rs");
+    println!("cargo::rerun-if-changed=src/harness/probe/daemon_stop/control_main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/probe_lease/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/probe_owner/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/probe_denied/main.rs");

@@ -1,6 +1,7 @@
 """Synthetic console, kernel trace and backend records for checker tests."""
 
-CONSOLE = """system: minted recovery tid=8
+CONSOLE = """boot: entry task=1
+system: minted recovery tid=8
 ctl: constructed device-work tid=10 owner=hub
 ctl: binding 1 auxiliary=11 alive=true
 pci: space task=7 ecam=0x29000 requester=8 bar=4

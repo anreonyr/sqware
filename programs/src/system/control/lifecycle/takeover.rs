@@ -20,6 +20,11 @@ pub(crate) fn accept(tracked: &mut Tracked, request: &mut Request) -> Result<boo
             }
             tracked.operation.key.waiters.push(back);
         }
+        crate::debug::put(&alloc::format!(
+            "system: ruin merged target={} pending_origin={:?}",
+            tracked.operation.key.request.name,
+            tracked.operation.key.request.directive.origin,
+        ));
         return Ok(false);
     }
     if !candidate(tracked)

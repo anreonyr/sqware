@@ -1,14 +1,14 @@
-# Daemon Control and resident process (phase 2 checkpoint)
+# Ordinary Daemon supervision through Control
 
-Base `933793e0` retains the phase 1 Control contract: the run-intent fact,
-supervision admission, the public Observe/Recover facets, server/client/namespace
-wiring, and host proof. This checkpoint adds the actual single ordinary resident
-daemon process and its product deployment.
+Control owns run intent, supervision admission and conditional recovery. A single
+ordinary resident Daemon observes its declared targets through public scoped
+Observe/Recover facets; it holds no lifecycle or hardware authority.
 
 Root has verified actual RTC death/restart and ordinary multi-member target
 recovery on 4/8 harts, ordinary product startup/shutdown on 4/8 harts and actual
-Shell interaction on 8 harts. Explicit-stop native races remain to be completed.
-No hardware-chain or kernel ABI change is part of this checkpoint.
+Shell interaction on 8 harts. Explicit-stop native races and actual outsider
+rejection also pass on both hart counts. No hardware-chain or kernel ABI change
+is part of this checkpoint.
 
 ## Sole mutable fact
 
@@ -252,9 +252,90 @@ were verified, and final frames were 87 -> 87 / 155 -> 155. Shared-harness RTC
 Evidence is under `target/driver-composition/daemon/helper-first-*-4/` and
 `helper-final-*-8/`; eight-hart runs have separate independent-verifier logs.
 
-## Remaining work
+## Explicit stop and caller-scope acceptance
 
-- explicit-stop native races and actual outsider-scope rejection;
-- native strict qtest 4/8-hart and product/Ruin/forced/accept regressions on the
-  final source;
-- full native acceptance of the broader refactor remains outside this phase.
+The `daemon-stop` fixture deploys the real ordinary Daemon and multi-member
+target. An ordinary controller opens the actual public Observe and Recover
+faces, verifies their System host, and receives Denied for both requests. Root
+accepts an authenticated heartbeat and ACK token before slaying the old main.
+The fixture's actor inherits Root identity through the existing roster and
+receives the existing Ruin/State faces through Accord; it sends an actual Ruin
+RPC. It neither writes Control intent nor constructs a replacement.
+
+The harness waits for the old main's actual reap and queued Ruin RPC before
+advancing the unchanged production frame. The main reap is only the scheduling
+gate: acceptance independently requires both old main and helper reaps. The
+production reaper queues cleanup first, and the explicit RPC merges into that
+Ruin, commits `run_requested = false`, and receives success only after actual
+whole-Team cleanup. Root ACK additionally requires Dead, no slot and false
+intent. The controller then samples actual public State and namespace absence
+for at least 600 ms, rejecting transport failures, stale entries and replacement
+entries. The verifier rejects any second construction or Recover admission.
+
+Final strict 4/8-hart runs passed in 2.28s/2.53s with seven Dead/absent samples,
+ordinary Daemon retirement, successful controller and actual boot-Root exits,
+normal halt and frames 87 -> 87 / 155 -> 155. Same-source helper recovery passed
+in 1.82s/2.02s and RTC recovery in 2.47s/2.77s. All six runs have separately
+invoked independent verifiers. Evidence is under
+`target/driver-composition/daemon/fixed-{daemon-stop,daemon-target,daemon-rtc}-{4,8}/`.
+The verifier suite has 77 passing cases, including short observation intervals,
+wrong face owners, premature member retirement and physical frame leaks.
+
+## Concurrent debug-copy bookkeeping
+
+The first final eight-hart stop attempt failed during startup at the existing
+Muster weak-copy assertion. The old tracker published slot occupancy before
+writing hart/origin metadata. Concurrent reuse could therefore combine a new
+occupant with stale metadata from a different hart. A host test including the
+actual production file reproduced that assertion before the fix.
+
+`kernel/src/core/work/unit/copies.rs` now publishes hart and origin together in
+one atomic record, and returns the owned slot index for release. The existing
+held-copy assertion remains. Three host tests pass: 1.6 million concurrent reuse
+cycles, true held Muster/Snapshot detection only on the owning hart, and stored
+origin reuse that must still detect a temporary copy. The pre-existing bounded
+48-slot tracking capacity is unchanged. Before/after logs are in
+`target/driver-composition/daemon/weak-copies-root/`.
+
+Boot self-checks allocate tasks before the actual scene Root. Native completion
+checks and the Ruin/forced verifier now use the unique boot-entry identity,
+including its actual forced self-doom exit and reap ordering. Missing, duplicate
+and mismatched identities fail. This does not relax final frame equality or
+whole-Team retirement.
+
+## Final source regression and review
+
+The final Rust source passed ordinary product 4/8-hart runs (5.53s/5.58s), real
+eight-hart Shell interaction (6.73s), eight-hart Ruin (4.28s), eight-hart forced
+global retirement (12.34s), and four-hart accept (11.89s). All six used actual
+boot Root 10 and returned physical frames to 87 or 155. Product and Shell each
+activated the ordinary Daemon once. Evidence is under
+`target/driver-composition/daemon/regression-{product-4,product-8,shell-8}/` and
+`regression-final-{iommu-ruin-8,iommu-forced-8,accept-4}/`.
+
+All six real DMA-active protected-driver death cases (PCI/IOMMU/Recovery, each
+4/8 harts) were repeated with `semihosting,critical-scene`, debug assertions and
+the strict 30-second runner timeout. Each retained raw exit 101; the separately
+invoked verifier passed, requiring all three guarded roles, actual DMA
+publication and held NBD request without resume, no target reference cleanup or
+restart, and three/seven peer quiescence receipts. This is intentional
+non-returning halt acceptance, not a successful qtest exit or a DMA-drain claim.
+Evidence is under `target/driver-composition/daemon/guard-probed-{pci,iommu,recovery}-{4,8}/`.
+
+Final focused host checks total 170 passing tests, including image catalog and
+the new kernel-copy suite; Python evidence verifiers have 77 Daemon and 101
+device-recovery passing cases. Workspace check passes with five existing
+warnings. A full workspace host `cargo test` is not a supported substitute for
+the actual RISC-V build and native runs. Independent read-only reviews of stop
+ownership, actual RPCs, identity verification and the packed atomic tracker
+reported no confirmed blocker. The first eight-hart tracker assertion, the old
+Ruin verifier's hardcoded entry failure, and the guard attempt without its
+required observation feature remain archived as failures.
+
+## Remaining broader refactor
+
+- move concrete hardware coordination out of Hub and make PCI discovery generic;
+- complete Domain/IOVA and asynchronous multi-device composition;
+- run the final two-device/two-Domain and fixed-source 4/8-hart + 1024-cycle
+  acceptance after those changes. Earlier phase-specific acceptance does not
+  replace that final integration proof.

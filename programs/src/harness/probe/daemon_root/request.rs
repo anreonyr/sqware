@@ -1,5 +1,5 @@
 use env::wire::Span as _;
-use env::TaskId;
+use env::{PieToken, TaskId};
 
 /// The controller's private request after it observed the old target and its real heartbeat.
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
@@ -7,6 +7,7 @@ pub struct Request {
     pub old_task: TaskId,
     pub old_helper: TaskId,
     pub before: u64,
+    pub ack: PieToken,
 }
 
 impl Request {

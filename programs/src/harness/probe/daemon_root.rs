@@ -1,13 +1,16 @@
 //! Shared Root harness for an ordinary-daemon recovery scene.
 //!
-//! The production application frame runs unchanged. Only the observed target,
-//! transient controller, private request mark, completion note and whether the
-//! target carries a helper task vary with the immutable scene data.
+//! Immutable scene data selects the observed target, controller and recovery or
+//! stop handshake around the production application frame.
 
+mod mode;
 mod request;
 mod root;
 mod scene;
+mod stop;
+mod stop_state;
 
+pub(crate) use mode::Mode;
 pub(crate) use request::Request;
 pub(crate) use scene::Scene;
 
@@ -33,18 +36,37 @@ pub(crate) fn run(settings: Scene) -> Result<(), env::Reason> {
         .write::<crate::system::control::Startup>()
         .map_err(|_| 9usize)?
         .configure(programs);
+    let (stop, actor) = if settings.mode == Mode::Stop {
+        let (stop, actor) = stop::install(&settings);
+        (Some(stop), Some(actor))
+    } else {
+        (None, None)
+    };
     resources.insert(settings).map_err(|_| 9usize)?;
     resources.insert(Root::new()).map_err(|_| 9usize)?;
+    if let Some(stop) = stop {
+        resources.insert(stop).map_err(|_| 9usize)?;
+    }
     resources.insert(Cursor::default()).map_err(|_| 9usize)?;
     resources
         .insert(Dispatch::<u8, app::Fault>::new())
         .map_err(|_| 9usize)?;
-    app::supervise(resources, frame().map_err(|_| 9usize)?)
+    let result = app::supervise(resources, frame(settings.mode).map_err(|_| 9usize)?);
+    if result.is_ok() {
+        if let Some(actor) = actor {
+            actor.join();
+        }
+    }
+    result
 }
 
-fn frame() -> Result<Plan<app::Fault>, BuildError> {
+fn frame(mode: Mode) -> Result<Plan<app::Fault>, BuildError> {
     let mut plan = Schedule::sequence();
     plan.system("daemon-root.prepare", prepare)?;
+    if mode == Mode::Stop {
+        plan.system("daemon-root.stop.authorize", stop::authorize)?;
+        plan.system("daemon-root.stop.deliver", stop::deliver)?;
+    }
     plan.system("daemon-root.budget", budget)?;
     plan.subplans(
         "daemon-root.system",
@@ -53,6 +75,12 @@ fn frame() -> Result<Plan<app::Fault>, BuildError> {
         finish,
     )?;
     plan.system("daemon-root.check", check)?;
+    if mode == Mode::Stop {
+        plan.system("daemon-root.stop.release", stop::release)?;
+        plan.system("daemon-root.stop.reap", stop::reap)?;
+        plan.system("daemon-root.stop.queue", stop::queue)?;
+        plan.system("daemon-root.stop.acknowledge", stop::acknowledge)?;
+    }
     plan.build()
 }
 
@@ -144,6 +172,24 @@ fn capture(settings: &Scene, root: &mut Root, control: &Control) -> Result<(), a
         Ok((len, from)) if from == controller => {
             let request = Request::decode(&bytes[..len]).ok_or(app::Fault::Room)?;
             let (old_task, old_team) = root.old.ok_or(app::Fault::Room)?;
+            let ack = if settings.mode == Mode::Stop {
+                let info = resource::raw::inspect(request.ack).map_err(|_| app::Fault::Room)?;
+                if !info.alive
+                    || info.owner != controller
+                    || info.vestor != controller
+                    || info.kind != env::PieKind::Hole
+                    || Some(info.mark) != settings.ack
+                    || !info.permission.contains(env::Permission::STORE)
+                {
+                    return Err(app::Fault::Room);
+                }
+                Some(request.ack)
+            } else {
+                if request.ack != env::PieToken::NONE {
+                    return Err(app::Fault::Room);
+                }
+                None
+            };
             let helper = if settings.helper {
                 request.old_helper != env::TaskId::new(0) && request.old_helper != old_task
             } else {
@@ -158,7 +204,17 @@ fn capture(settings: &Scene, root: &mut Root, control: &Control) -> Result<(), a
             {
                 return Err(app::Fault::Room);
             }
-            if settings.helper {
+            if settings.mode == Mode::Stop {
+                crate::debug::put(&alloc::format!(
+                    "{}: request controller={} old task={} helper={} before={} ack={}",
+                    settings.root,
+                    controller.get(),
+                    old_task.get(),
+                    request.old_helper.get(),
+                    request.before,
+                    request.ack.get(),
+                ));
+            } else if settings.helper {
                 crate::debug::put(&alloc::format!(
                     "{}: request controller={} old task={} helper={} before={}",
                     settings.root,
@@ -177,6 +233,11 @@ fn capture(settings: &Scene, root: &mut Root, control: &Control) -> Result<(), a
                 ));
             }
             env::unit::slay_task(old_task).map_err(|_| app::Fault::Room)?;
+            root.ack = ack;
+            root.deadline = env::chrono::clock().saturating_add(10_000_000_000);
+            root.reaped = false;
+            root.queued = false;
+            root.ack_sent = false;
             root.killed = true;
             crate::debug::put(&alloc::format!(
                 "{}: kill old task={} team={} before={}",

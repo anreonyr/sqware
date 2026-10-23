@@ -18,6 +18,7 @@ pub mod device_confirmation;
 pub(crate) mod daemon_root;
 pub mod daemon_rtc;
 pub mod daemon_target;
+pub mod daemon_stop;
 
 pub mod memory_transfer;
 
