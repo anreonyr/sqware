@@ -31,7 +31,7 @@
 # `--serial <后端>` = 换掉串口那一格（默认 `stdio`）。整机用例要把串口搬到一条**能喂输入**
 # 的通道上（`cargo-qtest` 把 QEMU 的 stdin 钉成 null），见 [`qtest.nu`](qtest.nu) 的头注；
 # **串口这一格因此只有一个出处**——`-serial` 不是"后者胜"，写两次会多出一枚串口（实测踩过）。
-export def args [elf?: path, --board-only, --serial: string, --iommu, --endpoint: string, --endpoint-hold: string, --qtest-socket: string] {
+export def args [elf?: path, --board-only, --serial: string, --iommu, --endpoint: string, --endpoints: string, --endpoint-hold: string, --qtest-socket: string] {
   if not ($endpoint_hold | is-empty) and ($endpoint | is-empty) {
     error make {msg: "--endpoint-hold 需要 --endpoint 指定夹具磁盘"}
   }
@@ -92,19 +92,21 @@ export def args [elf?: path, --board-only, --serial: string, --iommu, --endpoint
   # `disable-legacy=on` 是前面的代价：QEMU 不给过渡态开那两个一起用
   # （`VIRTIO_F_IOMMU_PLATFORM was supported by neither legacy nor transitional device`），
   # 而本驱动走的就是 1.x 那套寄存器，传统 I/O BAR 那一格本来也不用。
-  let endpoint = if ($endpoint | is-empty) {
-      []
-  } else {
-      let drive = if ($endpoint_hold | is-empty) {
-          $"file=($endpoint),format=raw,if=none,readonly=on,id=iommu-dma"
+  # --endpoints is a JSON array of additional read-only fixture disk paths.
+  let disks = (if ($endpoint | is-empty) { [] } else { [$endpoint] })
+    | append (if ($endpoints | is-empty) { [] } else { $endpoints | from json })
+  let endpoint = $disks | enumerate | each { |disk|
+      let id = if $disk.index == 0 { "iommu-dma" } else { $"iommu-dma($disk.index)" }
+      let drive = if ($endpoint_hold | is-empty) or $disk.index != 0 {
+          $"file=($disk.item),format=raw,if=none,readonly=on,id=($id)"
       } else {
-          $"file.driver=nbd,file.server.type=unix,file.server.path=($endpoint_hold),format=raw,if=none,readonly=on,id=iommu-dma"
+          $"file.driver=nbd,file.server.type=unix,file.server.path=($endpoint_hold),format=raw,if=none,readonly=on,id=($id)"
       }
       [
           "-drive" $drive
-          "-device" "virtio-blk-pci,drive=iommu-dma,iommu_platform=on,disable-legacy=on"
+          "-device" $"virtio-blk-pci,drive=($id),iommu_platform=on,disable-legacy=on"
       ]
-  }
+  } | flatten
 
   [
     "-machine", $machine
@@ -128,6 +130,6 @@ export def args [elf?: path, --board-only, --serial: string, --iommu, --endpoint
 }
 
 # 给外壳消费者用：一行一个参数（`qtest.nu` 靠它拼 `--qemu-arg=`）。
-def main [elf?: path, --board-only, --serial: string, --iommu, --endpoint: string, --endpoint-hold: string, --qtest-socket: string] {
-  for a in (args $elf --board-only=$board_only --serial=$serial --iommu=$iommu --endpoint=$endpoint --endpoint-hold=$endpoint_hold --qtest-socket=$qtest_socket) { print $a }
+def main [elf?: path, --board-only, --serial: string, --iommu, --endpoint: string, --endpoints: string, --endpoint-hold: string, --qtest-socket: string] {
+  for a in (args $elf --board-only=$board_only --serial=$serial --iommu=$iommu --endpoint=$endpoint --endpoints=$endpoints --endpoint-hold=$endpoint_hold --qtest-socket=$qtest_socket) { print $a }
 }

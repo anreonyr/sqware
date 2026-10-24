@@ -316,14 +316,16 @@ class RaceObserverTests(unittest.TestCase):
             self.judge(text=text)
 
     def test_run_stages_a_summary_without_publishing_success(self):
-        trace_dir = self.root / "trace"
-        trace_dir.mkdir()
+        trace_dir = self.root / "target" / "nested" / "trace"
+        trace_dir.mkdir(parents=True)
         capture = trace_dir / "scene-memory-transfer-race-feed.log"
         (self.root / "sqware-diagnose.jsonl").write_text(
             "".join(json.dumps(item) + "\n" for item in proven())
         )
         pending = self.root / "private-pending.json"
-        with patch.dict("os.environ", {"SCENE_SUMMARY_PENDING": str(pending)}):
+        source = self.root / "programs" / "tests" / "memory-transfer" / "race.py"
+        with patch.dict("os.environ", {"SCENE_SUMMARY_PENDING": str(pending)}), \
+                patch.object(DRIVER, "__file__", str(source)):
             DRIVER.run(self.scripted(self.lines()), str(capture))
         summary = json.loads(pending.read_text())
         self.assertEqual(summary["scene"], "memory-transfer-race")

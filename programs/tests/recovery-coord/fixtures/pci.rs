@@ -4,6 +4,7 @@ use super::{action::Action, peer::Fixture, script::Script};
 impl Fixture for Call {
     type Request = Wire;
     type Response = Said;
+
     fn call(script: &mut Script, request: Wire) -> Result<Said, &'static str> {
         script.pci.push(request);
         let (action, okay) = match request {
@@ -14,10 +15,24 @@ impl Fixture for Call {
         };
         script.action(action);
         if !okay { return Err("injected PCI transport error after effect"); }
+        let (status, pages, bar) = match request {
+            Wire::Place(frame) => (script.place_status, script.pages, script.bar(frame.requester)),
+            _ => (0, 0, env::PieToken::NONE),
+        };
         Ok(Said {
-            status: if matches!(request, Wire::Place(_)) { script.place_status } else { 0 },
-            pages: 1, bar: env::PieToken::mint(0x44),
+            status,
+            pages,
+            bar,
             ..Said::NONE
         })
+    }
+
+    fn held(script: &Script, request: &Wire) -> bool {
+        match request {
+            Wire::Place(frame) => script.hold_pci == Some((crate::pci_api::PLACE, frame.serial)),
+            Wire::Enable(frame) => script.hold_pci == Some((crate::pci_api::ENABLE, frame.serial)),
+            Wire::Disable(frame) => script.hold_pci == Some((crate::pci_api::DISABLE, frame.serial)),
+            Wire::Release(frame) => script.hold_pci == Some((crate::pci_api::RELEASE, frame.serial)),
+        }
     }
 }

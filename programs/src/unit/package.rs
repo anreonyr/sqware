@@ -75,6 +75,7 @@ pub const PACKAGES: &[Package] = &[
     package!("device-ctl-forced"),
     package!("device-ctl-guard"),
     package!("device-ctl-soak"),
+    package!("device-ctl-dual"),
     package!("device-ctl-confirmation"),
     package!("iommu-confirmation"),
     package!("iommu-ruin"),

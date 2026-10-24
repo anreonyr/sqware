@@ -47,15 +47,17 @@ fn unrelated_binding_progresses_while_one_driver_reply_is_pending() {
 
 #[test]
 fn late_prepare_cannot_reactivate_closing_and_release_waits_for_actual_target() {
+    for observed in [BindingState::Preparing, BindingState::Active, BindingState::Closing] {
     let mut ledger = ledger(1);
     let mut executions = Executions::try_new().unwrap();
     let mut pending = Vec::new();
     advance(&mut ledger, &peers(), &mut executions, &mut pending);
     ledger.settle();
     executions.settle(&mut ledger);
-    coord_backend::script(1, Ok(Some(DmaSaid::bound(1, BindingState::Active))));
+    coord_backend::script(1, Ok(Some(DmaSaid::bound(1, observed))));
     advance(&mut ledger, &peers(), &mut executions, &mut pending);
     assert_eq!(ledger.binding(1).unwrap().state, BindingState::Closing);
+    assert_eq!(ledger.binding(1).unwrap().failure, None, "late Prepare is benign");
     assert_eq!(coord_backend::requests().len(), 1);
     assert!(executions.has_return(TASK));
     assert!(!executions.target_received(TASK));
@@ -69,6 +71,7 @@ fn late_prepare_cannot_reactivate_closing_and_release_waits_for_actual_target() 
     assert_eq!(ledger.binding(1).unwrap().state, BindingState::Closed);
     assert!(pending.is_empty());
     assert_eq!(coord_backend::requests().len(), 2);
+    }
 }
 
 #[test]

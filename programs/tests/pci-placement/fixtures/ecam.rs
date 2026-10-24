@@ -68,11 +68,11 @@ impl Ecam {
     }
 
     pub fn bar_size(&self, index: u8) -> Option<(u64, bool)> {
-        (index == 0).then_some((state::BAR_SIZE, true))
+        matches!(index, 0 | 4).then_some((state::bar_size(self.requester), true))
     }
 
     pub fn place_bar(&self, index: u8, address: u64, wide: bool) {
-        assert_eq!(index, 0);
+        assert!(matches!(index, 0 | 4));
         assert!(wide);
         state::place_bar(self.requester, address);
     }

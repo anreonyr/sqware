@@ -23,11 +23,54 @@ class ConfirmationEvidence(unittest.TestCase):
 
     def test_stop_gate_requires_the_actual_device_driver_and_pci_trigger(self):
         console, events = evidence("reset")
-        for changed in (
-            console.replace("confirmation: device stop gate armed from=8 pci=6 serial=1\n", ""),
+        armed = "confirmation: device stop gate armed from=8 pci=6 serial=1\n"
+        rejected = "confirmation: transport rejected from=8 to=6 op=3 serial=1 references=2 ticks=3\n"
+        variants = (
+            console.replace(armed, ""),
             console.replace("gate armed from=8", "gate armed from=4"),
             console.replace("gate armed from=8 pci=6", "gate armed from=8 pci=7"),
-        ):
+            console.replace(rejected, ""),
+            console.replace("transport rejected from=8 to=6", "transport rejected from=4 to=6"),
+            console.replace("transport rejected from=8 to=6", "transport rejected from=8 to=7"),
+            console.replace("op=3 serial=1 references=2", "op=2 serial=1 references=2"),
+            console.replace("op=3 serial=1 references=2", "op=3 serial=2 references=2"),
+            console.replace("serial=1 references=2", "serial=1 references=1", 1),
+        )
+        for changed in variants:
+            with self.subTest(console=changed), self.assertRaises(AssertionError):
+                completed(changed, events, "reset")
+
+        failure = "recovery: binding 1 stage Disable failed party=2 op=3 code=0\n"
+        controller = "ctl: confirmation failed party=2 op=3 code=0 state=Closing\n"
+        removed = "confirmation: injection removed hits=5 references=2 ticks=5\n"
+        early_disable = console.replace(
+            "confirmation: device stop gate armed from=8 pci=6 serial=1\n",
+            "pci: binding 1 disabling bus-master\n"
+            "confirmation: device stop gate armed from=8 pci=6 serial=1\n",
+        )
+        early_stop = console.replace(removed + "pci: binding 1 disabling bus-master\n"
+            "pci: endpoint bus-master off=0x0\n"
+            "recovery: binding 1 stopped reset=1 status=0 queue_enable=0\n",
+            removed + "pci: binding 1 disabling bus-master\n"
+            "pci: endpoint bus-master off=0x0\n",
+        ).replace(
+            rejected,
+            "recovery: binding 1 stopped reset=1 status=0 queue_enable=0\n" + rejected,
+        )
+        reordered = console.replace(armed + rejected, rejected + armed)
+        order_variants = (
+            console.replace(failure, ""),
+            console.replace("stage Disable failed party=2", "stage Disable failed party=3"),
+            console.replace("stage Disable failed party=2 op=3", "stage Disable failed party=2 op=5"),
+            console.replace("party=2 op=3 code=0", "party=2 op=3 code=1", 1),
+            console.replace(controller, ""),
+            console.replace("state=Closing", "state=Closed"),
+            console.replace(removed, ""),
+            early_disable,
+            early_stop,
+            reordered,
+        )
+        for changed in order_variants:
             with self.subTest(console=changed), self.assertRaises(AssertionError):
                 completed(changed, events, "reset")
 

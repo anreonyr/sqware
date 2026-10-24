@@ -221,7 +221,10 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   let trapdir = ($env.TRACE_OUT? | default ($repo | path join "trace"))
   let retirement = $scene in ["iommu-ruin" "iommu-forced"]
   let hardware = $scene == "iommu-fail-fence"
+  let readback = $scene == "iommu-fail-readback"
   let soak = $scene in ["iommu-soak" "iommu-soak-long"]
+  let dual = $scene in ["iommu-dual" "iommu-dual-long"]
+  let dual_generations = if $scene == "iommu-dual-long" { 1024 } else { 1 }
   let soak_generations = if $scene == "iommu-soak-long" { 1024 } else { 128 }
   let confirmation = $scene in ["iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference"]
   let guard = ($scene | str starts-with "iommu-guard-")
@@ -230,21 +233,21 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   let daemon_target = $scene == "daemon-target"
   let daemon_stop = $scene == "daemon-stop"
   let daemon = $daemon_rtc or $daemon_target or $daemon_stop
-  let evidence = $retirement or $confirmation or $hardware or $soak or $guard or $daemon
+  let evidence = $retirement or $confirmation or $hardware or $readback or $soak or $dual or $guard or $daemon
   let retire_mode = if $scene == "iommu-forced" { "forced" } else { "ruin" }
-  let feed_script = if ($retirement or $hardware or $guard) and ($feed_script | is-empty) {
-    let driver = if $hardware { "hardware" } else if $guard { "guard" } else { $retire_mode }
+  let feed_script = if ($retirement or $hardware or $readback or $guard) and ($feed_script | is-empty) {
+    let driver = if $hardware { "hardware" } else if $readback { "readback" } else if $guard { "guard" } else { $retire_mode }
     $repo | path join $"programs/tests/device-recovery/($driver).py"
   } else {
     $feed_script
   }
-  let hold = if $retirement or $hardware or $guard {
+  let hold = if $retirement or $hardware or $readback or $guard {
     $"target/ruin-(random uuid).nbd"
   } else {
     ""
   }
   $env.DMA_HOLD = $hold
-  $env.DMA_CONTROL = if $hardware { $"target/control-(random uuid).qtest" } else { "" }
+  $env.DMA_CONTROL = if $hardware or $readback { $"target/control-(random uuid).qtest" } else { "" }
   $env.DMA_HOLD_SECONDS = if $guard { "60" } else if $scene == "iommu-forced" { "30" } else { "10" }
   let summary = match $scene {
     "memory-transfer" => "scene-memory-transfer-phases.json"
@@ -300,7 +303,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     $scene_args = ["--qemu-arg=-initrd" $"--qemu-arg=($at)"]
 
     mkdir $trapdir
-    if $hardware {
+    if $hardware or $readback {
       if (which dtc | is-empty) {
         error make {msg: "硬件故障场景需要 dtc 读取 QEMU 生成的设备树"}
       }
@@ -375,7 +378,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   }
   # 端点那一景的那张盘：**可再生**（每次按同一花纹重建，落在 `<TRACE_OUT>/` 里，
   # 不进库），且由参数表那边只读挂上。景那一侧按同一花纹核读回的数据，故盘是承重的。
-  let endpoint_argv = if ($scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after" "iommu-ruin" "iommu-forced" "iommu-soak" "iommu-soak-long" "iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference" "iommu-fail-fence"]) or $guard {
+  let endpoint_argv = if ($scene in ["iommu-dma" "iommu-product" "iommu-product-fault" "iommu-product-start-before" "iommu-product-start-after" "iommu-ruin" "iommu-forced" "iommu-soak" "iommu-soak-long" "iommu-fail-invalidate" "iommu-fail-reset" "iommu-fail-release" "iommu-fail-reference" "iommu-fail-fence"]) or $readback or $guard or $dual {
     let disk = ($trapdir | path join "iommu-dma.img")
     ^python3 -c 'import sys, pathlib; pathlib.Path(sys.argv[1]).write_bytes(bytes(range(256)) * 4096)' $disk
     if not ($hold | is-empty) {
@@ -393,12 +396,18 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
         error make {msg: "在途块设备夹具未启动"}
       }
     }
-    ["--endpoint" $disk]
+    if $dual {
+      let second = ($trapdir | path join "iommu-dma-second.img")
+      ^python3 -c 'import sys, pathlib; pathlib.Path(sys.argv[1]).write_bytes(bytes(n ^ 0xa5 for n in range(256)) * 4096)' $second
+      ["--endpoint" $disk "--endpoints" ([$second] | to json --raw)]
+    } else {
+      ["--endpoint" $disk]
+    }
   } else {
     []
   }
   let hold_argv = if ($hold | is-empty) { [] } else { ["--endpoint-hold" $hold] }
-  let control_argv = if $hardware { ["--qtest-socket" $env.DMA_CONTROL] } else { [] }
+  let control_argv = if $hardware or $readback { ["--qtest-socket" $env.DMA_CONTROL] } else { [] }
   let board = (^nu ($script_dir | path join "qemu-args.nu") --board-only ...$iommu_argv ...$serial_argv ...$endpoint_argv ...$hold_argv ...$control_argv
       | lines | where { |l| ($l | str trim) != "" })
   let qemu_args = ($board | each { |a| $"--qemu-arg=($a)" })
@@ -606,6 +615,10 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
         {script: "confirmation.py", args: [($scene | str replace "iommu-fail-" "")]}
       } else if $hardware {
         {script: "hardware_check.py", args: [$cap]}
+      } else if $readback {
+        {script: "readback_check.py", args: [$cap]}
+      } else if $dual {
+        {script: "dual_check.py", args: [($dual_generations | into string)]}
       } else {
         {script: "soak.py", args: [($soak_generations | into string)]}
       }

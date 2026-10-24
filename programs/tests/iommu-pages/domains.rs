@@ -158,6 +158,48 @@ fn two_domains_get_equal_numeric_iova_with_distinct_roots_and_physical_reference
 }
 
 #[test]
+fn two_quiet_domains_keep_the_last_reference_until_actual_engine_off() {
+    let mut core = core();
+    source(42, 2, 1);
+    source(43, 3, 2);
+    let a = establish(&mut core, 8);
+    let b = establish(&mut core, 9);
+    acquire(&mut core, a, 1, 42).unwrap();
+    acquire(&mut core, b, 2, 43).unwrap();
+    assert_eq!(core.range(a).unwrap().0, core.range(b).unwrap().0);
+    assert_eq!(publish(&mut core, a, 1), Ok(Done));
+    assert_eq!(publish(&mut core, b, 2), Ok(Done));
+    assert_eq!(invalidate(&mut core, a, 1), Ok(Done));
+    assert_eq!(quiesce(&mut core, a, 1), Ok(Done));
+    assert_eq!(invalidate(&mut core, b, 2), Ok(Done));
+    assert_eq!(quiesce(&mut core, b, 2), Ok(Done));
+    assert_eq!(ddt_word(8, 0), 0);
+    assert_eq!(ddt_word(9, 0), 0);
+    assert_eq!(core.held(), 5);
+    assert_ne!(regs::read64(core.base(), regs::DDTP), regs::DDTP_MODE_OFF);
+
+    let remaining = core.range(b);
+    assert_eq!(release(&mut core, a, 1), Ok(Done));
+    assert_eq!(core.range(a), None);
+    assert_eq!(core.range(b), remaining);
+    assert_eq!(core.held(), 3);
+    assert_ne!(regs::read64(core.base(), regs::DDTP), regs::DDTP_MODE_OFF);
+
+    core_fixture::block_lower(regs::CQCSR, true);
+    assert_eq!(release(&mut core, b, 2), Ok(Pending));
+    assert_eq!(core.range(b), remaining);
+    assert_eq!(core.held(), 3, "last data reference survives pending physical Off");
+    core_fixture::block_lower(regs::CQCSR, false);
+    assert_eq!(release(&mut core, b, 2), Ok(Done));
+    assert_eq!(regs::read64(core.base(), regs::DDTP), regs::DDTP_MODE_OFF);
+    assert_eq!(regs::read32(core.base(), regs::CQCSR) & regs::QUEUE_ON, 0);
+    assert_eq!(regs::read32(core.base(), regs::FQCSR) & regs::QUEUE_ON, 0);
+    assert_eq!(core.held(), 0);
+    core.shutdown().unwrap();
+    assert_eq!(state::counts(), (0, 0, 0));
+}
+
+#[test]
 fn a_foreign_caller_domain_or_hub_cannot_mutate_an_owned_binding() {
     let mut core = core();
     source(42, 2, 1);

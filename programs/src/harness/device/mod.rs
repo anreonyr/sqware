@@ -10,6 +10,8 @@
 mod auxiliary;
 mod command;
 pub mod control;
+pub mod dual;
+mod endpoint;
 pub mod layout;
 mod report;
 pub mod work;

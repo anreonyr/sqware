@@ -243,6 +243,12 @@ test = false
 bench = false
 
 [[bin]]
+name = "prog-device-ctl-dual"
+path = "src/harness/device/control_dual_main.rs"
+test = false
+bench = false
+
+[[bin]]
 name = "prog-device-ctl-confirmation"
 path = "src/harness/device/control_confirmation_main.rs"
 test = false

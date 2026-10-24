@@ -124,8 +124,13 @@ impl Virtio {
 }
 
 pub fn reset(bar: usize, caps: &Caps) -> bool {
-    write(bar, caps, STATUS, 0, 1);
+    reset_begin(bar, caps);
     status(bar, caps) == 0 && queue_enable(bar, caps) == 0
+}
+
+/// Issue the reset write only; the caller reads status and queue-enable later.
+pub fn reset_begin(bar: usize, caps: &Caps) {
+    write(bar, caps, STATUS, 0, 1);
 }
 
 pub fn status(bar: usize, caps: &Caps) -> u8 {

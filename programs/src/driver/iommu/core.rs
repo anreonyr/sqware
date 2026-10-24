@@ -595,8 +595,8 @@ impl Core {
     }
 
     /// ④ 认证 Driver 在设备停止之后发来的 Quiesce 就是停止授权。另一个实际引擎
-    /// 用户仍在时本绑定只进 Quiet；最后一张停稳的映射在放下帧引用之前把共享引擎
-    /// 实际降到 Off，Pending 期间保持 Quiescing 并保留数据引用。
+    /// 用户仍在时本绑定只进 Quiet；没有其他用户时在此降到 Off，同时 Quiet 的
+    /// 绑定由最后一次 Release 降到 Off。实际降级未完成前保留最后的数据引用。
     pub fn quiesce(
         &mut self,
         caller: TaskId,
@@ -676,7 +676,7 @@ impl Core {
     }
 
     /// ⑤ 解除本 Domain 的引用与本地来源窗；最后一张停稳的映射在放下数据引用之前
-    /// 已把共享引擎实际降到 Off，Release 再回读确认（正常收场不调用 `shutdown`）。
+    /// 把共享引擎实际降到 Off，并回读确认（正常收场不调用 `shutdown`）。
     pub fn release(
         &mut self,
         caller: TaskId,

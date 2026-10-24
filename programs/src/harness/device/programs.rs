@@ -158,6 +158,14 @@ pub static CONTROL_SOAK_LONG: UnitFile = {
     unit.loader.args = &[1024];
     unit
 };
+pub static CONTROL_DUAL: UnitFile = control(
+    "device-ctl-dual", "device-ctl-dual", &CONTROL_CONSTRUCTION,
+);
+pub static CONTROL_DUAL_LONG: UnitFile = {
+    let mut unit = control("device-ctl-dual-long", "device-ctl-dual", &CONTROL_CONSTRUCTION);
+    unit.loader.args = &[1024];
+    unit
+};
 pub static CONTROL_CONFIRMATION: UnitFile = control(
     "device-ctl-confirmation",
     "device-ctl-confirmation",

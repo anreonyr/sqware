@@ -141,7 +141,7 @@ impl Mode {
 
 /// 用受限构造协议把执行实例建出来，**以 Hub 为 owner**：只有 Hub 能停止/核销它
 /// （实例面按真实 caller 与 owner 核）；再把它的号报给 Hub，由 Hub 放行。
-fn construct(
+pub(super) fn construct(
     sire: TaskId, hub: TaskId, launch: PieToken, unit: &str, id: u64,
 ) -> Result<TaskId, &'static str> {
     use system_api::control::construction as api;
@@ -546,7 +546,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
 }
 
 /// 第一轮：摆请求 → 让 α 敲门铃 → 等设备写回。
-fn check_auxiliary(report: Report, living: bool) -> Result<(), &'static str> {
+pub(super) fn check_auxiliary(report: Report, living: bool) -> Result<(), &'static str> {
     let alive = resource::raw::reserve(report.sensor).is_ok_and(|(from, owner, mark)| {
         from == report.auxiliary && owner == report.auxiliary && mark == hub_api::ALIVE_MARK
     });
@@ -561,7 +561,7 @@ fn check_auxiliary(report: Report, living: bool) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn receive_report(entry: PieToken, expected: TaskId) -> Result<Report, &'static str> {
+pub(super) fn receive_report(entry: PieToken, expected: TaskId) -> Result<Report, &'static str> {
     let receiver = RequestReceiver::<Call>::from_raw(entry, Call::BACK, Call::back);
     let mut buffer = [0u8; Wire::LEN];
     let incoming = receiver
@@ -578,7 +578,7 @@ fn receive_report(entry: PieToken, expected: TaskId) -> Result<Report, &'static 
     Ok(frame)
 }
 
-fn activation(entry: PieToken, execution: TaskId, serial: u64) -> Result<Report, &'static str> {
+pub(super) fn activation(entry: PieToken, execution: TaskId, serial: u64) -> Result<Report, &'static str> {
     let report = receive_report(entry, execution)?;
     if report.want != 4 || report.serial != serial || report.iova == 0
         || report.iova % PAGE_SIZE as u64 != 0 || report.bytes != layout::SPAN
@@ -617,7 +617,7 @@ fn round_one(block: &Block, writer: PieToken, iova: u64) -> Result<(), &'static 
 }
 
 /// 发一条命令（单槽：推得进就行）。
-fn command(writer: PieToken, command: Command) -> Result<(), &'static str> {
+pub(super) fn command(writer: PieToken, command: Command) -> Result<(), &'static str> {
     let mut bytes = [0; Command::LEN];
     let len = command.store(&mut bytes);
     ::resource::raw::Hole::from_raw(writer)
@@ -626,7 +626,7 @@ fn command(writer: PieToken, command: Command) -> Result<(), &'static str> {
 }
 
 /// 等这一号绑定结清（inspect 到 Closed）。
-fn await_closed(hub: &HubDma, serial: u64, ms: usize) -> Result<(), &'static str> {
+pub(super) fn await_closed(hub: &HubDma, serial: u64, ms: usize) -> Result<(), &'static str> {
     let until = env::chrono::clock().saturating_add(ms as u64 * 1_000_000);
     loop {
         match hub.inspect(Wait::AtMost(MS), serial) {

@@ -1,8 +1,11 @@
 # IOMMU domain integration
 
-The first checkpoint separates command completion ownership before introducing
-multiple Domains. The full refactor and final frozen-source acceptance remain
-unfinished; the production Core still admits one binding.
+The production Core owns persistent Domains with independent bindings and IOVA
+allocation. Domain and explicit-delivery contracts are recorded below; current
+multi-device Driver evidence is in [driver-devices.md](driver-devices.md).
+The full refactor and final frozen-source acceptance remain unfinished.
+
+## Command-completion foundation
 
 Each binding reserves separate publish and retire tickets before acquiring its
 Frame Reference. A ticket keeps its completion slot, checked nonzero value and
@@ -149,8 +152,11 @@ Domain-qualified range does not encode this private allocation policy. Hub no
 longer computes addresses or limits binding serials by an address-space formula.
 
 Each Domain retires through its own DC-zero and actual completion-cookie proof.
-Another active Domain keeps the shared queues running. The last Quiesce lowers
-the engine and verifies actual Off before the data Reference is released; the
+Another retained Domain keeps the shared queues running. A Quiesce with no other
+engine user lowers the engine. If both Domains become Quiet before either releases,
+the last remaining binding's Release lowers and verifies actual Off before releasing
+its data Reference. Each earlier release still requires its own zero DC and completed
+retire cookie; the
 final pool still requires Off, no Busy, quiet queues and no sticky error. A
 partially released binding remains responsible for any remaining engine proof.
 Unpublished close-before-Acquire also reads back its actual idle engine; it does

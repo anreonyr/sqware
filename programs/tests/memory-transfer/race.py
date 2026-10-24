@@ -56,7 +56,7 @@ def run(conn, capture):
     pending = pathlib.Path(os.environ["SCENE_SUMMARY_PENDING"])
     trace_dir = pathlib.Path(capture).parent
     console = Console(conn, capture)
-    trace = Traces(pathlib.Path(capture).resolve().parent.parent / "sqware-diagnose.jsonl")
+    trace = Traces(pathlib.Path(__file__).resolve().parents[3] / "sqware-diagnose.jsonl")
     try:
         summary = judge(console, trace)
         pending.write_text(

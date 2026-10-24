@@ -6,7 +6,6 @@ pub enum Action {
     PciRelease,
     CoreAttach,
     CoreStop,
-    CoreDetach,
     IommuAcquire,
     IommuPublish,
     IommuInvalidate,

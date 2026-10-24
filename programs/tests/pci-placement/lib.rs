@@ -4,10 +4,13 @@
 extern crate alloc;
 extern crate self as env;
 extern crate self as resource;
+extern crate self as execution;
 
 pub use abi::{
-    Frame, GrantRange, HoleFail, HoleLimits, HoleResult, Mark, PAGE_SIZE, Permission, PieFail,
-    PieResult, PieToken, PoleFail, PoleResult, ReleaseMode, TaskId, WireCodes, make_fail, wire,
+    AcquireSource, FlatReference, Frame, GrantRange, HoleFail, HoleLimits, HoleResult, Mark,
+    MemoryFail, MemoryResult, PAGE_SIZE, Permission, PieFail, PieResult, PieToken, Placement,
+    PoleFail, PoleResult, ReferenceRange, ReleaseMode, TaskId, TeamId, ViewControl, ViewId,
+    WireCodes, make_fail, wire,
 };
 
 pub mod debug {
@@ -21,6 +24,12 @@ pub mod loan;
 
 #[path = "fixtures/state.rs"]
 mod state;
+#[path = "fixtures/reference_state.rs"]
+mod reference_state;
+#[path = "fixtures/unseal.rs"]
+mod unseal;
+#[path = "fixtures/root.rs"]
+mod root;
 #[path = "fixtures/ecam.rs"]
 pub mod ecam;
 #[path = "fixtures/pie.rs"]
@@ -78,11 +87,51 @@ pub mod chrono {
 }
 
 pub mod pole {
-    use crate::{PieToken, PoleResult};
+    use crate::{FlatReference, PieToken, PoleResult};
+
+    pub fn unseal(reference: FlatReference, shared: bool) -> PoleResult<PieToken> {
+        crate::state::unseal(reference, shared)
+    }
 
     pub fn shut(_: PieToken) -> PoleResult<()> {
         Ok(())
     }
+}
+
+#[path = "../../../crates/execution/src/memory/reference.rs"]
+pub mod reference;
+
+pub struct View;
+
+impl View {
+    pub fn new(_: crate::TeamId, _: crate::ViewId, _: usize, _: usize) -> Self {
+        Self
+    }
+}
+
+pub fn acquire(
+    source: crate::AcquireSource,
+    retention: crate::PieToken,
+) -> crate::MemoryResult<crate::FlatReference> {
+    crate::state::acquire(source, retention)
+}
+
+pub fn release(reference: crate::FlatReference) -> crate::MemoryResult<()> {
+    crate::state::release_reference(reference)
+}
+
+pub fn attach(
+    _: crate::ReferenceRange,
+    _: crate::TeamId,
+    _: crate::Placement,
+    _: u64,
+    _: crate::ViewControl,
+) -> crate::MemoryResult<(crate::ViewId, usize)> {
+    panic!("pci fixture: attach is not used")
+}
+
+pub mod memory {
+    pub use crate::reference::Reference;
 }
 
 pub mod hole {

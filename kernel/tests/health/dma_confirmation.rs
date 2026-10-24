@@ -32,6 +32,14 @@ fn retained_references() -> usize {
     task.pend.references.len()
 }
 
+pub(crate) fn hits() -> usize {
+    HITS.load(Ordering::Acquire)
+}
+
+pub(crate) fn armed() -> bool {
+    READY.load(Ordering::Acquire)
+}
+
 pub(crate) fn reject(owner: TaskId, from: TaskId, root: bool, bytes: &[u8]) -> bool {
     if !crate::testing() {
         return false;
@@ -78,9 +86,10 @@ pub(crate) fn reject(owner: TaskId, from: TaskId, root: bool, bytes: &[u8]) -> b
     }
     if !ENABLED.load(Ordering::Acquire) { return false; }
     let before_stop = OP.load(Ordering::Relaxed) == injection::BEFORE_DEVICE_STOP;
-    let serial_at = if before_stop { 9 } else { 25 };
+    let serial_at = 25;
     if before_stop {
-        // The gate target is the same authenticated task that calls PCI Disable.
+        // The real PCI Disable request itself is the causal gate. All Hub->Driver
+        // coordination frames remain delivered and cannot arm this path.
         if from.get() == TO.load(Ordering::Relaxed)
             && owner.get() == TRIGGER.load(Ordering::Relaxed)
             && bytes.len() == 21 && bytes[0] == 3
@@ -90,16 +99,29 @@ pub(crate) fn reject(owner: TaskId, from: TaskId, root: bool, bytes: &[u8]) -> b
                 crate::putln!("confirmation: device stop gate armed from={} pci={} serial={}",
                     from.get(), owner.get(), word(bytes, 1));
             }
-            return false;
+            if HITS.fetch_add(1, Ordering::AcqRel) == 0 {
+                let references = retained_references();
+                assert_eq!(
+                    references, 2,
+                    "confirmation: table and DMA references remain owned"
+                );
+                crate::putln!(
+                    "confirmation: transport rejected from={} to={} op={} serial={} references={references} ticks={}",
+                    from.get(),
+                    owner.get(),
+                    bytes[0],
+                    word(bytes, 1),
+                    crate::machine::clock::now().as_ticks(),
+                );
+            }
+            return true;
         }
-        if !READY.load(Ordering::Acquire) || bytes.len() != 42 || bytes[0] != 2
-            || word(bytes, 1) != from.get() as u64
-        { return false; }
+        return false;
     }
     if from.get() != FROM.load(Ordering::Relaxed)
         || owner.get() != TO.load(Ordering::Relaxed)
         || bytes.len() != 42
-        || (!before_stop && u64::from(bytes[0]) != OP.load(Ordering::Relaxed))
+        || u64::from(bytes[0]) != OP.load(Ordering::Relaxed)
         || word(bytes, serial_at) != SERIAL.load(Ordering::Relaxed)
     {
         return false;

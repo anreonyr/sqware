@@ -1,23 +1,39 @@
 use std::cell::RefCell;
 
-use crate::{GrantRange, Mark, Permission, PieFail, PieToken, TaskId};
+use crate::{
+    AcquireSource, FlatReference, GrantRange, Mark, MemoryFail, MemoryResult, Permission, PieFail,
+    PieToken, TaskId,
+};
 
 pub const APERTURE: PieToken = PieToken::mint(41);
 pub const DERIVED: PieToken = PieToken::mint(42);
 pub const REMOTE: PieToken = PieToken::mint(43);
 pub const BAR_SIZE: u64 = 4 * crate::PAGE_SIZE as u64;
+const DEFAULT_APERTURE_PAGES: usize = 4 * BAR_SIZE as usize / crate::PAGE_SIZE;
+pub use crate::{reference_state::ReferenceState, unseal::Unseal};
+use crate::root::Root;
 
 pub struct State {
     memory: [[u8; 256]; 2],
     request_accord: bool,
     request_release: bool,
+    request_unseal: bool,
+    request_reference_release: bool,
     derives: usize,
+    unseals: Vec<Unseal>,
+    references: Vec<ReferenceState>,
+    reference_releases: Vec<FlatReference>,
     accords: Vec<(PieToken, TaskId, Permission, Mark)>,
     releases: Vec<PieToken>,
     revokes: Vec<(TaskId, PieToken)>,
     derived: Option<(PieToken, Permission, Mark, GrantRange)>,
-    roots: Vec<(PieToken, GrantRange)>,
+    roots: Vec<Root>,
+    next_reference: usize,
+    next_root: usize,
+    aperture_pages: usize,
+    parent_heir: Option<GrantRange>,
     bar_address: [u64; 2],
+    bar_size: [u64; 2],
 }
 
 impl Default for State {
@@ -36,13 +52,23 @@ impl Default for State {
             memory: [memory; 2],
             request_accord: false,
             request_release: false,
+            request_unseal: false,
+            request_reference_release: false,
             derives: 0,
+            unseals: Vec::new(),
+            references: Vec::new(),
+            reference_releases: Vec::new(),
             accords: Vec::new(),
             releases: Vec::new(),
             revokes: Vec::new(),
             derived: None,
             roots: Vec::new(),
+            next_reference: 1,
+            next_root: 0,
+            aperture_pages: DEFAULT_APERTURE_PAGES,
+            parent_heir: None,
             bar_address: [0; 2],
+            bar_size: [BAR_SIZE; 2],
         }
     }
 }
@@ -84,6 +110,27 @@ pub fn fail_next_release() {
     STATE.with(|state| state.borrow_mut().request_release = true);
 }
 
+pub fn fail_next_unseal() {
+    STATE.with(|state| state.borrow_mut().request_unseal = true);
+}
+
+pub fn fail_next_reference_release() {
+    STATE.with(|state| state.borrow_mut().request_reference_release = true);
+}
+
+/// Model the declared aperture extent for the exact-full-window boundary.
+pub fn set_aperture_pages(pages: usize) {
+    STATE.with(|state| state.borrow_mut().aperture_pages = pages);
+}
+
+pub fn set_bar_size(requester: usize, size: u64) {
+    STATE.with(|state| state.borrow_mut().bar_size[requester] = size);
+}
+
+pub fn bar_size(requester: u16) -> u64 {
+    STATE.with(|state| state.borrow().bar_size[usize::from(requester)])
+}
+
 pub fn read(at: usize) -> u8 {
     STATE.with(|state| state.borrow().memory[(at >> 12) & 1][at & 0xFF])
 }
@@ -104,6 +151,105 @@ pub fn bar_address() -> u64 {
     STATE.with(|state| state.borrow().bar_address[1])
 }
 
+/// Ordinary task reference over one exact aperture window.
+pub fn acquire(source: AcquireSource, retention: PieToken) -> MemoryResult<FlatReference> {
+    let AcquireSource::Source { token, offset, count } = source else {
+        return Err(crate::make_fail(MemoryFail::Denied));
+    };
+    if token != APERTURE
+        || retention != PieToken::NONE
+        || count == 0
+        || offset
+            .checked_add(count)
+            .is_none_or(|end| end > STATE.with(|state| state.borrow().aperture_pages))
+    {
+        return Err(crate::make_fail(MemoryFail::Denied));
+    }
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        let id = state.next_reference;
+        state.next_reference += 1;
+        let handle = FlatReference::from_bytes(&(id as u64).to_le_bytes()).unwrap();
+        state.references.push(ReferenceState {
+            handle,
+            offset,
+            count,
+            released: false,
+            unsealed: false,
+        });
+        Ok(handle)
+    })
+}
+
+pub fn release_reference(handle: FlatReference) -> MemoryResult<()> {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        let fail = std::mem::take(&mut state.request_reference_release);
+        let Some(reference) = state.references.iter_mut().find(|item| item.handle == handle) else {
+            return Err(crate::make_fail(MemoryFail::Denied));
+        };
+        if reference.released {
+            return Err(crate::make_fail(MemoryFail::Denied));
+        }
+        if fail {
+            return Err(crate::make_fail(MemoryFail::Denied));
+        }
+        reference.released = true;
+        state.reference_releases.push(handle);
+        Ok(())
+    })
+}
+
+/// Mirror the kernel's independent child-root partition: disjoint windows create
+/// separate ONLY roots and never publish the broad aperture's single heir.
+pub fn unseal(handle: FlatReference, shared: bool) -> crate::PoleResult<PieToken> {
+    STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        if std::mem::take(&mut state.request_unseal) || shared {
+            return Err(crate::make_fail(crate::PoleFail::Denied));
+        }
+        let Some(at) = state.references.iter().position(|item| item.handle == handle) else {
+            return Err(crate::make_fail(crate::PoleFail::Denied));
+        };
+        let reference = state.references[at];
+        if reference.released || reference.unsealed {
+            return Err(crate::make_fail(crate::PoleFail::Denied));
+        }
+        let end = reference.offset + reference.count;
+        if state.roots.iter().any(|root| {
+            let root_end = root.offset + root.count;
+            reference.offset < root_end && root.offset < end
+        }) {
+            return Err(crate::make_fail(crate::PoleFail::Busy));
+        }
+        let token = PieToken::mint(200 + state.next_root);
+        state.next_root += 1;
+        let permission = Permission::FETCH
+            | Permission::STORE
+            | Permission::VEST
+            | Permission::ONLY;
+        state.roots.push(Root {
+            token,
+            offset: reference.offset,
+            count: reference.count,
+            permission,
+            mark: Mark::NONE,
+        });
+        state.references[at].unsealed = true;
+        state.unseals.push(Unseal {
+            reference: handle,
+            shared,
+            token,
+            permission,
+            mark: Mark::NONE,
+            offset: reference.offset,
+            count: reference.count,
+        });
+        Ok(token)
+    })
+}
+
+/// The old same-parent derive path models the kernel's single ONLY heir.
 pub fn derive(
     source: PieToken,
     permission: Permission,
@@ -113,14 +259,41 @@ pub fn derive(
     STATE.with(|state| {
         let mut state = state.borrow_mut();
         assert_eq!(source, APERTURE);
-        assert!(
-            state.roots.iter().all(|(_, held)| *held != range),
-            "each exact BAR range must be derived once while its root is live"
-        );
+        let GrantRange::Pages { offset, count } = range else {
+            panic!("exact BAR pages");
+        };
+        let end = offset + count;
+        if end > state.aperture_pages {
+            return Err(crate::make_fail(PieFail::Denied));
+        }
+        if permission.contains(Permission::ONLY) {
+            if state.parent_heir.is_some() {
+                return Err(crate::make_fail(PieFail::HandedOver));
+            }
+        }
+        if state.roots.iter().any(|root| {
+            let root_end = root.offset + root.count;
+            offset < root_end && root.offset < end
+        }) {
+            return Err(crate::make_fail(PieFail::Busy));
+        }
+        if permission.contains(Permission::ONLY) {
+            state.parent_heir = Some(range);
+        }
         state.derives += 1;
         state.derived = Some((source, permission, mark, range));
-        let token = if state.derives == 1 { DERIVED } else { PieToken::mint(42 + state.derives) };
-        state.roots.push((token, range));
+        let token = if state.derives == 1 {
+            DERIVED
+        } else {
+            PieToken::mint(42 + state.derives)
+        };
+        state.roots.push(Root {
+            token,
+            offset,
+            count,
+            permission,
+            mark,
+        });
         Ok(token)
     })
 }
@@ -138,9 +311,8 @@ pub fn accord(
             state.request_accord = false;
             return Err(crate::make_fail(PieFail::Denied));
         }
-        let (_, range) = state.roots.iter().find(|(token, _)| *token == source).expect("live BAR root");
-        let GrantRange::Pages { offset, .. } = *range else { panic!("exact BAR pages"); };
-        Ok(if offset == 0 { REMOTE } else { PieToken::mint(100 + offset) })
+        let root = state.roots.iter().find(|root| root.token == source).expect("live BAR root");
+        Ok(if root.offset == 0 { REMOTE } else { PieToken::mint(100 + root.offset) })
     })
 }
 
@@ -152,7 +324,10 @@ pub fn release(token: PieToken) -> crate::PieResult<()> {
             state.request_release = false;
             return Err(crate::make_fail(PieFail::Denied));
         }
-        state.roots.retain(|(held, _)| *held != token);
+        if state.roots.iter().any(|root| root.token == token
+            && state.parent_heir == Some(GrantRange::Pages { offset: root.offset, count: root.count }))
+        { state.parent_heir = None; }
+        state.roots.retain(|root| root.token != token);
         if state.roots.is_empty() {
             state.derived = None;
         }
@@ -170,6 +345,18 @@ pub fn derives() -> usize {
 
 pub fn derived() -> (PieToken, Permission, Mark, GrantRange) {
     STATE.with(|state| state.borrow().derived.expect("derived BAR"))
+}
+
+pub fn unseals() -> Vec<Unseal> {
+    STATE.with(|state| state.borrow().unseals.clone())
+}
+
+pub fn references() -> Vec<ReferenceState> {
+    STATE.with(|state| state.borrow().references.clone())
+}
+
+pub fn reference_releases() -> Vec<FlatReference> {
+    STATE.with(|state| state.borrow().reference_releases.clone())
 }
 
 pub fn accords() -> Vec<(PieToken, TaskId, Permission, Mark)> {
