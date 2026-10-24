@@ -84,6 +84,7 @@ impl Core {
             pages: request.pages,
             caps,
             stopped: false,
+            reset_pending: false,
             bar_grant: None,
         });
         Self::grant(self.device.as_mut().unwrap(), mapping)
@@ -130,39 +131,50 @@ impl Core {
     }
 
     /// 本设备 reset/drain 并回读：只在业务 CPU 控制已切断、翻译已撤、MASTER 已清之后做
-    /// （顺序在协调入口那一侧）。返此刻的状态字节。
-    pub fn stop(&mut self, serial: u64) -> Result<u8, api::Fail> {
+    /// （顺序在协调入口那一侧）。写入与回读各占一拍；`None` 表示等待下一拍。
+    pub fn stop(&mut self, serial: u64) -> Result<Option<u8>, api::Fail> {
         if serial <= self.floor {
-            return Ok(0);
+            return Ok(Some(0));
         }
         if self.device.is_none() {
             self.close_mapping()?;
         }
         let Some(device) = self.device.as_mut() else {
             self.floor = serial;
-            return Ok(0);
+            return Ok(Some(0));
         };
         if device.serial == 0 && device.stopped {
             self.floor = serial;
-            return Ok(0);
+            return Ok(Some(0));
         }
         if device.serial != serial {
             return Err(api::Fail::Conflict);
         }
         let base = self.mapping.as_ref().ok_or(api::Fail::Unavailable)?.view().base();
         if device.stopped {
-            return Ok(virtio::status(base, &device.caps));
+            let status = virtio::status(base, &device.caps);
+            let queue_enable = virtio::queue_enable(base, &device.caps);
+            if status != 0 || queue_enable != 0 {
+                return Err(api::Fail::Unavailable);
+            }
+            return Ok(Some(status));
         }
-        if !virtio::reset(base, &device.caps) {
+        if !device.reset_pending {
+            virtio::device::reset_begin(base, &device.caps);
+            device.reset_pending = true;
+            return Ok(None);
+        }
+        let status = virtio::status(base, &device.caps);
+        let queue_enable = virtio::queue_enable(base, &device.caps);
+        if status != 0 || queue_enable != 0 {
             return Err(api::Fail::Unavailable);
         }
+        device.reset_pending = false;
         device.stopped = true;
-        let status = virtio::status(base, &device.caps);
         crate::debug::put(&alloc::format!(
-            "recovery: binding {serial} stopped reset=1 status={status} queue_enable={}",
-            virtio::queue_enable(base, &device.caps),
+            "recovery: binding {serial} stopped reset=1 status={status} queue_enable={queue_enable}",
         ));
-        Ok(status)
+        Ok(Some(status))
     }
 
     /// 停链完成后清除本次绑定；设备恢复映射保留到本驱动退场。

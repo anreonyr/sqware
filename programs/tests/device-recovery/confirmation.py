@@ -9,7 +9,7 @@ from ruin_check import identity, one, reaps, tasks
 
 STEPS = {
     "invalidate": (3, 3, "iommu", 1),
-    "reset": (1, 2, "recovery", 4),
+    "reset": (2, 3, "pci", 2),
     "release": (3, 5, "iommu", 6),
     "reference": (3, 5, "iommu", 6),
 }
@@ -18,45 +18,14 @@ STEPS = {
 def completed(console, events, step):
     party, op, target, boundary = STEPS[step]
     main, auxiliary, beta = tasks(console)
-    stage = {"invalidate": "Invalidate", "reset": "Stop", "release": "Release", "reference": "Release"}[step]
+    stage = {
+        "invalidate": "Invalidate", "reset": "Disable",
+        "release": "Release", "reference": "Release",
+    }[step]
     services = {
         service: int(one(console, rf"system: minted {service} tid=(\d+)")[1])
         for service in ("hub", "pci", "iommu", "recovery", "device-ctl-confirmation")
     }
-    if step == "reset":
-        armed = one(console, rf"confirmation: device stop gate armed from={services['recovery']} pci={services['pci']} serial=1")
-        assert armed.start() < one(console, r"pci: endpoint bus-master off=0x0").start()
-    if step == "reference":
-        rejected = one(
-            console,
-            rf"confirmation: reference release rejected from={services['iommu']} "
-            r"reference=(\d+) pages=6 references=2 ticks=(\d+)",
-        )
-        assert int(rejected[1]) > 0, "missing real reference handle"
-        retained = one(
-            console,
-            rf"confirmation: failed reference still owned reference={rejected[1]} pages=6",
-        )
-        released = one(
-            console,
-            rf"confirmation: reference released from={services['iommu']} "
-            rf"reference={rejected[1]} references=1",
-        )
-        injected_tick = int(rejected[2])
-        code = 4
-    else:
-        rejected = one(
-            console,
-            rf"confirmation: transport rejected from={services['hub'] if step == 'reset' else services['recovery']} to={services[target]} "
-            rf"op={op} serial=1 references=2 ticks=(\d+)",
-        )
-        injected_tick = int(rejected[1])
-        code = 0
-    removed = one(console, r"confirmation: injection removed hits=(\d+) references=2 ticks=(\d+)")
-    assert int(removed[1]) > 0, "no actual injection"
-    assert injected_tick < int(removed[2]), "invalid injection interval"
-    if step == "reference":
-        assert rejected.start() < retained.start() < removed.start(), "reference lost before removal"
     _, key = identity(console)
     chain = [
         rf"hub: binding 1 execution domain stopped \(tid={main}\)",
@@ -69,25 +38,96 @@ def completed(console, events, step):
         r"recovery: binding 1 detached",
         rf"hub: binding 1 closed and released device {key}",
     ]
-    positions = [
-        one(console, r"recovery: binding 1 active iova=0x[0-9a-f]+ execution=\d+").start(),
-        one(console, r"ctl: served used=1 len=513 written_ok=true sector_ok=true status=0").start(),
-        *[one(console, pattern).start() for pattern in chain[:boundary]],
-        rejected.start(),
-        one(console,
-            rf"hub: binding 1 coordination failed op={op} code={code} \(holding\)"
-            if step == "reset" else
-            rf"recovery: binding 1 stage {stage} failed party={party} op={op} code={code}"
-        ).start(),
-        one(console, rf"ctl: confirmation failed party={party} op={op} code={code} state=Closing").start(),
-        removed.start(),
-        *([released.start()] if step == "reference" else []),
-        *[one(console, pattern).start() for pattern in chain[boundary:]],
-        one(console, r"ctl: confirmation retry settled; original failure preserved").start(),
-        one(console, r"exit tid=\d+ reason=0x0 note: device-ctl-confirmation: done").start(),
-        one(console, r"exit tid=\d+ reason=0x0 note: iommu-confirmation: done").start(),
-        one(console, r"task: all tasks exited, system halted").start(),
-    ]
+    opened = one(console, r"recovery: binding 1 active iova=0x[0-9a-f]+ execution=\d+").start()
+    served = one(console,
+        r"ctl: served used=1 len=513 written_ok=true sector_ok=true status=0").start()
+
+    if step == "reset":
+        armed = one(console,
+            rf"confirmation: device stop gate armed from={services['recovery']} "
+            rf"pci={services['pci']} serial=1")
+        rejected = one(console,
+            rf"confirmation: transport rejected from={services['recovery']} "
+            rf"to={services['pci']} op=3 serial=1 references=2 ticks=(\d+)")
+        failure = one(console,
+            r"recovery: binding 1 stage Disable failed party=2 op=3 code=0")
+        controller = one(console,
+            r"ctl: confirmation failed party=2 op=3 code=0 state=Closing")
+        removed = one(console,
+            r"confirmation: injection removed hits=(\d+) references=2 ticks=(\d+)")
+        injected_tick = int(rejected[1])
+        positions = [
+            opened,
+            served,
+            *[one(console, pattern).start() for pattern in chain[:boundary]],
+            armed.start(),
+            rejected.start(),
+            failure.start(),
+            controller.start(),
+            removed.start(),
+            *[one(console, pattern).start() for pattern in chain[boundary:]],
+            one(console, r"ctl: confirmation retry settled; original failure preserved").start(),
+            one(console, r"exit tid=\d+ reason=0x0 note: device-ctl-confirmation: done").start(),
+            one(console, r"exit tid=\d+ reason=0x0 note: iommu-confirmation: done").start(),
+            one(console, r"task: all tasks exited, system halted").start(),
+        ]
+        assert armed.start() < rejected.start() < failure.start() < controller.start() < removed.start(), (
+            "PCI Disable gate/failure order is not causal"
+        )
+    else:
+        if step == "reference":
+            rejected = one(
+                console,
+                rf"confirmation: reference release rejected from={services['iommu']} "
+                r"reference=(\d+) pages=6 references=2 ticks=(\d+)",
+            )
+            assert int(rejected[1]) > 0, "missing real reference handle"
+            retained = one(
+                console,
+                rf"confirmation: failed reference still owned reference={rejected[1]} pages=6",
+            )
+            released = one(
+                console,
+                rf"confirmation: reference released from={services['iommu']} "
+                rf"reference={rejected[1]} references=1",
+            )
+            injected_tick = int(rejected[2])
+            code = 4
+        else:
+            rejected = one(
+                console,
+                rf"confirmation: transport rejected from={services['recovery']} "
+                rf"to={services[target]} op={op} serial=1 references=2 ticks=(\d+)",
+            )
+            injected_tick = int(rejected[1])
+            code = 0
+        removed = one(console, r"confirmation: injection removed hits=(\d+) references=2 ticks=(\d+)")
+        positions = [
+            opened,
+            served,
+            *[one(console, pattern).start() for pattern in chain[:boundary]],
+            rejected.start(),
+            one(console,
+                rf"recovery: binding 1 stage {stage} failed party={party} op={op} code={code}"
+            ).start(),
+            one(console,
+                rf"ctl: confirmation failed party={party} op={op} code={code} state=Closing"
+            ).start(),
+            removed.start(),
+            *([released.start()] if step == "reference" else []),
+            *[one(console, pattern).start() for pattern in chain[boundary:]],
+            one(console, r"ctl: confirmation retry settled; original failure preserved").start(),
+            one(console, r"exit tid=\d+ reason=0x0 note: device-ctl-confirmation: done").start(),
+            one(console, r"exit tid=\d+ reason=0x0 note: iommu-confirmation: done").start(),
+            one(console, r"task: all tasks exited, system halted").start(),
+        ]
+        if step == "reference":
+            assert rejected.start() < retained.start() < removed.start(), (
+                "reference lost before removal"
+            )
+
+    assert int(removed[1]) > 0, "no actual injection"
+    assert injected_tick < int(removed[2]), "invalid injection interval"
     assert positions == sorted(positions), "stop chain advanced without confirmation"
     one(console, rf"ctl: binding 1 auxiliary={auxiliary} alive=false")
     frames = one(console, r"memory: frame_allocations before=(\d+) after=(\d+)")
@@ -100,7 +140,11 @@ def completed(console, events, step):
     assert beta == services["recovery"]
     assert not re.search(r"^exit tid=\d+ reason=0xffffffff", console, re.MULTILINE), "fixture failed"
     assert "user fault killed:" not in console, "unexpected native fault"
-    cause = "Reference Release Busy" if step == "reference" else "transport failure"
+    cause = (
+        "PCI Disable transport failure" if step == "reset"
+        else "Reference Release Busy" if step == "reference"
+        else "transport failure"
+    )
     print(f"confirmation {step}: real {cause}, 2 IOMMU references retained; same binding retried; frames {frames[1]} → {frames[2]}")
 
 

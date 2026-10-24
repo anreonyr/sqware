@@ -1,7 +1,8 @@
 //! Generic configuration effects and exact BAR grants for mapped PCI functions.
 
 use alloc::vec::Vec;
-use env::{GrantRange, Permission, PieToken, TaskId};
+use env::{AcquireSource, GrantRange, Permission, PieToken, TaskId};
+use execution::memory::Reference;
 use resource::{dock::Dock, raw::Capability};
 use crate::driver::shared::platform::Window;
 use super::{api, bar::Bar, ecam::{self, Ecam}, endpoint::Endpoint,
@@ -62,7 +63,9 @@ impl Core {
             Some(at) => at,
             None => {
                 function.bars.try_reserve(1).map_err(|_| api::Fail::Unavailable)?;
-                function.bars.push(Bar { index: request.bar, local: None, placement: None });
+                function.bars.push(Bar {
+                    index: request.bar, local: None, reference: None, placement: None,
+                });
                 function.bars.len() - 1
             }
         };
@@ -90,7 +93,7 @@ impl Core {
                 .map_err(|_| api::Fail::Denied)?;
             let pages = u32::try_from(endpoint.size().div_ceil(env::PAGE_SIZE as u64))
                 .map_err(|_| api::Fail::Denied)?;
-            // Geometry is retained before either derivation or delivery can fail.
+            // Geometry is retained before either partition or delivery can fail.
             self.functions[at].bars[bar_at].placement = Some(Placement {
                 address: endpoint.address(), size: endpoint.size(), pages, bar: PieToken::NONE,
             });
@@ -106,9 +109,37 @@ impl Core {
             let offset = placement.address.checked_sub(self.aperture.base)
                 .and_then(|bytes| usize::try_from(bytes / env::PAGE_SIZE as u64).ok())
                 .ok_or(api::Fail::Denied)?;
-            bar.local = Some(Capability::derive(self.aperture.token, BAR_SUBSET, api::BAR_MARK,
-                GrantRange::Pages { offset, count: placement.pages as usize })
-                .map_err(|_| api::Fail::Denied)?);
+            if offset == 0
+                && u64::from(placement.pages) * env::PAGE_SIZE as u64 == self.aperture.size
+            {
+                // The whole declared aperture cannot be a strict sub-Pole child;
+                // its sole window keeps the existing derived-heir primitive.
+                bar.local = Some(Capability::derive(
+                    self.aperture.token, BAR_SUBSET, api::BAR_MARK,
+                    GrantRange::Pages { offset: 0, count: placement.pages as usize },
+                ).map_err(|_| api::Fail::Denied)?);
+            } else {
+                if bar.reference.is_none() {
+                    bar.reference = Some(Reference::acquire(
+                        AcquireSource::Source {
+                            token: self.aperture.token,
+                            offset,
+                            count: placement.pages as usize,
+                        },
+                        PieToken::NONE,
+                    ).map_err(|_| api::Fail::Denied)?);
+                }
+                let handle = bar.reference.as_ref().unwrap()
+                    .handle().map_err(|_| api::Fail::Denied)?;
+                // One exact strict child root per BAR; the parent keeps its ONLY heir.
+                bar.local = Some(Capability::unseal_pole(handle, false)
+                    .map_err(|_| api::Fail::Denied)?);
+            }
+        }
+        if bar.reference.is_some() {
+            // The child root is independent; the temporary parent window goes first.
+            bar.reference.as_mut().unwrap().release().map_err(|_| api::Fail::Denied)?;
+            bar.reference = None;
         }
         scan.command_or(ecam::COMMAND_MEMORY);
         if bar.placement.as_ref().unwrap().bar == PieToken::NONE {
@@ -170,6 +201,10 @@ impl Core {
         if !function.disabled || function.master { return Err(api::Fail::Conflict); }
         for bar in &mut function.bars {
             if bar.placement.as_ref().is_some_and(|placement| placement.bar == PieToken::NONE) {
+                if let Some(reference) = bar.reference.as_mut() {
+                    reference.release().map_err(|_| api::Fail::Denied)?;
+                    bar.reference = None;
+                }
                 if let Some(local) = bar.local.as_mut() {
                     local.release().map_err(|_| api::Fail::Denied)?;
                     bar.local = None;
@@ -178,7 +213,9 @@ impl Core {
                 // capability is released. Its address reservation must remain.
             }
         }
-        function.bars.retain(|bar| bar.placement.is_some() || bar.local.is_some());
+        function.bars.retain(|bar| {
+            bar.placement.is_some() || bar.local.is_some() || bar.reference.is_some()
+        });
         function.serial = None;
         function.floor = function.floor.max(serial);
         Ok(())

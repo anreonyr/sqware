@@ -20,9 +20,9 @@ pub fn run() -> Result<(), env::Reason> {
             "iommu",
         ),
         "iommu-fail-reset" => (
-            hub_api::PARTY_HUB,
-            hub_api::coordination::RELEASE,
-            "recovery",
+            hub_api::PARTY_PCI,
+            crate::driver::pci::api::DISABLE,
+            "pci",
         ),
         "iommu-fail-release" | "iommu-fail-reference" => (
             hub_api::PARTY_IOMMU,
@@ -87,7 +87,7 @@ fn prepare(mut state: ResMut<State>, control: Res<Control>) -> Result<Progress, 
     let bytes = injection::command(
         state.phase == 0,
         if state.before_stop { hub.get() } else { coordinator.get() },
-        target.get(),
+        if state.before_stop { coordinator.get() } else { target.get() },
         if state.before_stop {
             injection::BEFORE_DEVICE_STOP
         } else if state.primitive {
@@ -97,7 +97,7 @@ fn prepare(mut state: ResMut<State>, control: Res<Control>) -> Result<Progress, 
         },
         1,
         retainer.get(),
-        if state.before_stop { control.task("pci").ok_or(app::Fault::Room)?.get() } else { 0 },
+        if state.before_stop { target.get() } else { 0 },
     );
     let injection = resource::raw::Hole::from_raw(state.injection);
     injection

@@ -160,15 +160,20 @@ fn reference_failure_reaches_the_primitive_and_keeps_the_same_handle() {
 }
 
 #[test]
-fn before_stop_gate_uses_real_pci_and_coordination_frames_and_exact_task_pairs() {
+fn before_stop_gate_rejects_the_real_pci_disable_and_delivers_hub_coordination() {
     use env::wire::Span;
     use hub_api::coordination::{Release, RELEASE};
+    const RECOVERY: usize = 100;
+    const PCI: usize = 300;
+    const HUB: usize = 400;
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
     REFERENCES.with(|count| count.set(2));
     let root = env::TaskId::new(41);
     let configure = |enabled| {
         assert!(!fixture::reject(root, root, true,
-            &injection::command(enabled, 100, 300, injection::BEFORE_DEVICE_STOP, 1, 200, 400)));
+            &injection::command(
+                enabled, HUB, RECOVERY, injection::BEFORE_DEVICE_STOP, 1, 200, PCI,
+            )));
     };
     let gate = |from, to, bytes: &[u8]| fixture::reject(
         env::TaskId::new(to), env::TaskId::new(from), false, bytes);
@@ -178,36 +183,50 @@ fn before_stop_gate_uses_real_pci_and_coordination_frames_and_exact_task_pairs()
     assert_eq!(len, 21, "buffer capacity is not wire length");
     let disable = &disable[..len];
     let mut release = [0u8; Release::LEN];
-    let len = Release { op: RELEASE, hub: env::TaskId::new(100), serial: 1, key: 7,
+    let len = Release { op: RELEASE, hub: env::TaskId::new(HUB), serial: 1, key: 7,
         execution: env::TaskId::new(500), reason: 1, back: env::PieToken::NONE }
         .store_at(&mut release, 0).unwrap();
     assert_eq!(len, 42);
     configure(true);
-    assert!(!gate(100, 300, &release), "cleanup starts before the gate");
-    for (from, to) in [(301, 400), (300, 401)] {
+    assert_eq!(fixture::hits(), 0);
+    assert!(!fixture::armed());
+    assert!(!gate(HUB, RECOVERY, &release), "Hub coordination starts before the gate");
+    for (from, to) in [(RECOVERY + 1, PCI), (RECOVERY, PCI + 1)] {
         assert!(!gate(from, to, disable));
-        assert!(!gate(100, 300, &release), "a foreign trigger cannot arm the gate");
+        assert!(!gate(HUB, RECOVERY, &release), "a foreign pair cannot arm the gate");
     }
-    for (offset, value) in [(0, pci::ENABLE), (1, 2)] {
-        let mut invalid = disable.to_vec();
-        invalid[offset] = value;
-        assert!(!gate(300, 400, &invalid));
-        assert!(!gate(100, 300, &release));
+    let mut enable = disable.to_vec();
+    enable[0] = pci::ENABLE;
+    assert!(!gate(RECOVERY, PCI, &enable));
+    let mut neighbour = disable.to_vec();
+    neighbour[1..9].copy_from_slice(&2u64.to_le_bytes());
+    assert!(!gate(RECOVERY, PCI, &neighbour), "neighbour serial 2 is not blocked");
+    for end in 0..disable.len() {
+        assert!(!gate(RECOVERY, PCI, &disable[..end]));
     }
-    assert!(!gate(300, 400, disable), "the actual Disable request is delivered");
-    assert!(!gate(101, 300, &release));
-    assert!(!gate(100, 301, &release));
-    assert!(!gate(100, 300, &release[..41]));
-    for offset in [0, 1, 9] {
-        let mut invalid = release;
-        invalid[offset] = 9;
-        assert!(!gate(100, 300, &invalid));
-    }
-    assert!(gate(100, 300, &release));
-    assert!(gate(100, 300, &release), "gate persists while references are retained");
+    assert!(!gate(RECOVERY, PCI, &release), "any 42-byte frame stays delivered here");
+    assert!(!gate(HUB, RECOVERY, &release), "Hub->Driver Release stays delivered");
+    assert_eq!(fixture::hits(), 0);
+    assert!(!fixture::armed());
+
+    assert!(gate(RECOVERY, PCI, disable), "the actual PCI Disable is rejected");
+    assert_eq!(fixture::hits(), 1);
+    assert!(fixture::armed());
+    assert!(gate(RECOVERY, PCI, disable), "the same request stays rejected");
+    assert_eq!(fixture::hits(), 2);
+    assert!(!gate(HUB, RECOVERY, &release), "Hub coordination must stay delivered when armed");
+    assert!(!gate(HUB, RECOVERY, &release));
+    assert!(!gate(RECOVERY, PCI, &neighbour));
+    assert!(!gate(RECOVERY, PCI, &enable));
+    assert_eq!(fixture::hits(), 2, "nonmatching traffic cannot advance the receipt");
+
     configure(false);
-    assert!(!gate(100, 300, &release));
+    assert!(!fixture::armed());
+    assert!(!gate(RECOVERY, PCI, disable), "removal restores the actual Disable");
     configure(true);
-    assert!(!gate(100, 300, &release), "re-arming clears the old Disable receipt");
+    assert_eq!(fixture::hits(), 0, "re-arming clears the first-hit receipt");
+    assert!(!fixture::armed());
+    assert!(gate(RECOVERY, PCI, disable));
+    assert_eq!(fixture::hits(), 1);
     configure(false);
 }

@@ -58,6 +58,10 @@ pub mod driver {
         pub use crate::virtio_device::{
             notify_offset, queue_enable, reset, ring, status, Virtio,
         };
+
+        pub mod device {
+            pub use crate::virtio_device::{queue_enable, reset, reset_begin, status};
+        }
     }
     pub mod recovery {
         pub use crate::{attach_request, device, recovery_api as api};

@@ -122,6 +122,7 @@ fn receive(ledger: &mut Ledger, executions: &mut Executions, request: BindingRpc
             executions.closed(ledger, execution);
             crate::debug::put(&alloc::format!("hub: binding {serial} closed and released device {key}"));
         }
+        (coordination::PREPARE, BindingState::Closing) if binding.state == BindingState::Closing => {}
         (coordination::PREPARE, BindingState::Preparing | BindingState::Active)
         | (coordination::RELEASE, BindingState::Closing) => {}
         _ => note(ledger, serial, request.op, hub_api::fail_to_code(Some(Fail::Bad))),

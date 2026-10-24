@@ -58,6 +58,36 @@ pub fn select(
 
 pub const DEPLOYMENTS: &[Deployment] = &[
     Deployment {
+        name: "iommu-fail-readback",
+        entry: "system",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-fault"],
+        guarded: &["pci", "iommu", "recovery"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-fault"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-dual",
+        entry: "system",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-dual"],
+        guarded: &["pci", "iommu", "recovery"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-dual"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
+        name: "iommu-dual-long",
+        entry: "system",
+        start: &["hub", "pci", "iommu", "recovery", "device-ctl-dual-long"],
+        guarded: &["pci", "iommu", "recovery"],
+        resources: &[],
+        targets: &[scene_target(&["hub", "pci", "iommu", "recovery", "device-ctl-dual-long"])],
+        bootstrap: &[Bootstrap::Operator, Bootstrap::Identity],
+        sources: &[],
+    },
+    Deployment {
         name: "iommu-soak-long",
         entry: "system",
         start: &["hub", "pci", "iommu", "recovery", "device-ctl-soak-long"],

@@ -47,7 +47,7 @@ fn shape_failure_and_failed_shut_remain_owned_until_cleanup_succeeds() {
         assert!(state.mapped);
     });
     STATE.with(|state| state.borrow_mut().shut_fail = false);
-    assert_eq!(core.stop(1), Ok(0));
+    assert_eq!(core.stop(1), Ok(Some(0)));
     assert_eq!(core.detach(1), Ok(()));
     assert_eq!(core.attach(request(1)), Err(Fail::Conflict));
     STATE.with(|state| {
@@ -85,7 +85,8 @@ fn failed_child_grant_retries_same_mapping_and_conflicting_replay_is_rejected() 
         let state = state.borrow();
         assert_eq!((state.opens, state.shuts, state.grants), (1, 0, 1));
     });
-    assert_eq!(core.stop(1), Ok(0));
+    assert_eq!(core.stop(1), Ok(None));
+    assert_eq!(core.stop(1), Ok(Some(0)));
     assert_eq!(core.detach(1), Ok(()));
     assert_eq!(core.attached(), 0);
     assert_eq!(core.bar_grant(1), Err(Fail::Conflict));
@@ -104,11 +105,12 @@ fn queue_not_quiet_keeps_binding_and_blocks_detach_until_real_readback_changes()
     let mut core = Core::new(PCI);
     core.attach(request(1)).unwrap();
     STATE.with(|state| state.borrow_mut().memory[0x1c / 8] = 1 << 32);
+    assert_eq!(core.stop(1), Ok(None));
     assert_eq!(core.stop(1), Err(Fail::Unavailable));
     assert_eq!(core.detach(1), Err(Fail::Conflict));
     assert_eq!(core.attached(), 1);
     STATE.with(|state| state.borrow_mut().memory[0x1c / 8] = 0);
-    assert_eq!(core.stop(1), Ok(0));
+    assert_eq!(core.stop(1), Ok(Some(0)));
     assert_eq!(core.detach(1), Ok(()));
     assert_eq!(core.attached(), 0);
 }

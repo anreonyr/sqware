@@ -81,38 +81,42 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     )
     .map_err(|_| "work: hub list face")?;
     let until = env::chrono::clock().saturating_add(MS as u64 * 1_000_000);
-    let name = loop {
+    let mut cursor = 0;
+    let said = 'claim: loop {
         let window = list_face
-            .list(CLASS.into(), 0, Wait::AtMost(MS))
+            .list(CLASS.into(), cursor, Wait::AtMost(MS))
             .map_err(|_| "work: hub list")?;
-        if let Some(name) = window.name(0) {
-            break name.clone();
+        for index in 0..usize::from(window.n) {
+            if window.held(index) { continue; }
+            let name = window.name(index).ok_or("work: list name")?;
+            let road = system_api::operator::PathBuf::try_new(&alloc::format!("{CLASS}/{name}"))
+                .ok_or("work: device road")?;
+            let door = tree
+                .tile_from(devices_entry, &road, Wait::AtMost(MS))
+                .and_then(|tile| tile.token(Wait::AtMost(MS)))
+                .map_err(|_| "work: device door")?;
+            let sender = ipc::rpc::request::Sender::<hub_api::DmaCall>::from_raw(
+                door, hub_api::DmaCall::BACK,
+            ).map_err(|_| "work: claim face")?;
+            if sender.peer() != hub.host() { return Err("work: device door owner"); }
+            let said = sender.call(ipc::time::Deadline::new(Wait::AtMost(MS)), |back| {
+                hub_api::DmaWire::Claim(hub_api::DmaClaim {
+                    op: hub_api::DMA_CLAIM, id: 1, sensor, back,
+                })
+            }).map_err(|_| "work: claim call")?;
+            if said.status == wire::OK && said.serial != 0 { break 'claim said; }
+            if said.status != hub_api::fail_to_code(Some(hub_api::Fail::Taken)) {
+                return Err("work: claim refused");
+            }
         }
         if env::chrono::clock() >= until {
             return Err("work: no device");
         }
+        cursor = if usize::from(window.n) == hub_api::LIST_MAX {
+            cursor.checked_add(u32::from(window.n)).ok_or("work: list cursor")?
+        } else { 0 };
         let _ = execution::room::park(::core::time::Duration::from_millis(1));
     };
-    let road = system_api::operator::PathBuf::try_new(&alloc::format!("{CLASS}/{name}"))
-        .ok_or("work: device road")?;
-    let door = tree
-        .tile_from(devices_entry, &road, Wait::AtMost(MS))
-        .and_then(|tile| tile.token(Wait::AtMost(MS)))
-        .map_err(|_| "work: device door")?;
-    let claim_sender =
-        ipc::rpc::request::Sender::<hub_api::DmaCall>::from_raw(door, hub_api::DmaCall::BACK)
-            .map_err(|_| "work: claim face")?;
-    if claim_sender.peer() != hub.host() { return Err("work: device door owner"); }
-    let said = claim_sender
-        .call(ipc::time::Deadline::new(Wait::AtMost(MS)), |back| {
-            hub_api::DmaWire::Claim(hub_api::DmaClaim {
-                op: hub_api::DMA_CLAIM,
-                id: 1,
-                sensor,
-                back,
-            })
-        })
-        .map_err(|_| "work: claim call")?;
     if said.status != wire::OK || said.serial == 0 {
         crate::debug::put(&alloc::format!(
             "work: claim refused status={} serial={}",
@@ -267,10 +271,14 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             match command {
                 Command::Close => {
                     crate::debug::put("work: requesting Close::Normal");
+                    crate::debug::put(&alloc::format!("work: binding {serial} requesting Close::Normal"));
                     hub.close(Wait::AtMost(MS), serial, hub_api::Close::Normal)?;
                     return Ok(());
                 }
-                Command::Exit => return Ok(()),
+                Command::Exit => {
+                    crate::debug::put(&alloc::format!("work: binding {serial} exiting without Close"));
+                    return Ok(());
+                }
                 Command::Ring => {
                     virtio.notify();
                     crate::debug::put("work: rang the doorbell");

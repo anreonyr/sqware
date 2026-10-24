@@ -4,10 +4,16 @@ extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
 pub use abi::{
-    GrantRange, HoleFail, HoleLimits, HoleResult, Mark, Permission, PieToken, ReleaseMode, TaskId,
+    FlatReference, GrantRange, HoleFail, HoleLimits, HoleResult, Mark, Permission, PieToken,
+    PoleResult, ReleaseMode, TaskId,
     Wait,
 };
 pub type PieResult<T> = Result<T, ()>;
+pub mod pole {
+    pub fn unseal(_: crate::FlatReference, _: bool) -> crate::PoleResult<crate::PieToken> {
+        Err(abi::make_fail(abi::PoleFail::Denied))
+    }
+}
 use std::{cell::RefCell, collections::HashMap};
 use wire::Message;
 #[derive(Default)]

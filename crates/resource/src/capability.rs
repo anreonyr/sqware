@@ -1,6 +1,6 @@
 //! 本任务持有的一份能力及其本地派生。
 
-use env::{GrantRange, Mark, Permission, PieResult, PieToken, TaskId, pie};
+use env::{FlatReference, GrantRange, Mark, Permission, PieResult, PieToken, TaskId, pie};
 
 use crate::loan::Loan;
 
@@ -14,6 +14,17 @@ impl Capability {
     pub fn unseal_hole(mark: Mark) -> env::HoleResult<Self> {
         Ok(Self {
             token: env::hole::unseal(mark, env::HoleLimits::default())?,
+            active: true,
+        })
+    }
+
+    /// Turn one exact source window into its own independent root.
+    ///
+    /// The kernel rejects overlapping child windows and keeps the parent's
+    /// exclusive delivery unused; the returned root is what may be granted.
+    pub fn unseal_pole(reference: FlatReference, shared: bool) -> env::PoleResult<Self> {
+        Ok(Self {
+            token: env::pole::unseal(reference, shared)?,
             active: true,
         })
     }

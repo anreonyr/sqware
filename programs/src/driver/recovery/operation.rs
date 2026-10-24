@@ -1,6 +1,7 @@
 use env::{PieToken, TaskId};
 use hub_api::{BindingState, Close, Failure};
 
+use super::exchange::Exchange;
 use super::stage::Stage;
 
 /// One owned binding operation, including every acquired hardware handle.
@@ -12,8 +13,10 @@ pub struct Operation {
     pub first_failure: Option<Failure>,
     pub reason: Close,
     pub stage: Stage,
+    pub closing: bool,
+    pub exchange: Option<Exchange>,
     pub bar: Option<PieToken>,
-    pub handoff: Option<PieToken>,
+    pub handoff: Option<(PieToken, ipc::time::Deadline)>,
     pub client: Option<(PieToken, PieToken)>,
     pub source: Option<(PieToken, u32)>,
     pub pages: u32,
@@ -37,6 +40,8 @@ impl Operation {
             first_failure: None,
             reason: Close::Normal,
             stage: Stage::Place,
+            closing: false,
+            exchange: None,
             bar: None,
             handoff: None,
             client: None,
@@ -53,6 +58,9 @@ impl Operation {
     }
 
     pub fn state(&self) -> BindingState {
+        if self.closing {
+            return BindingState::Closing;
+        }
         match self.stage {
             Stage::Active => BindingState::Active,
             Stage::Done => BindingState::Closed,
