@@ -1,0 +1,16 @@
+[package]
+name = "recovery-coord-host-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dev-dependencies]
+env = { path = "../../../crates/env" }
+hub-api = { path = "../../src/service/hub/api" }
+wire = { path = "../../../crates/wire" }
+mold = { path = "../../../crates/mold" }

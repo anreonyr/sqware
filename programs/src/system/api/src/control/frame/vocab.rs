@@ -100,6 +100,9 @@ pub const RUIN: u8 = 5;
 
 pub const RECOVER: u8 = 12;
 
+/// Generic trusted-publisher query. Carries two marks, never a name or TaskId.
+pub const PUBLISHER: u8 = 13;
+
 /// Control 的运行时发布名称。
 pub const NAME: &str = "control";
 

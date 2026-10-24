@@ -6,6 +6,9 @@
 
 use crate::unit::{Dependency, Ending, Identity, Ready, UnitFile};
 
+#[path = "marks.rs"]
+mod marks;
+
 #[path = "bindings.rs"]
 mod bindings;
 
@@ -24,7 +27,7 @@ pub static PROGRAM: UnitFile = UnitFile {
                 .union(system_api::operator::Ops::UNBIND)
                 .union(system_api::operator::Ops::FIND),
             permit: Some(system_api::operator::Permit::Public),
-            source_mark: None,
+            source_mark: Some(marks::ENTRY.get()),
             bindings: &[],
         }],
     },

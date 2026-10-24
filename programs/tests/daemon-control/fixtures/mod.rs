@@ -11,6 +11,7 @@ pub mod input;
 pub mod instance;
 pub mod operation;
 pub mod operation_key;
+pub mod operator_config;
 pub mod request;
 pub mod sender;
 pub mod settle;

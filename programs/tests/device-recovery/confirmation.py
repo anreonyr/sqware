@@ -5,11 +5,11 @@ import re
 import sys
 from pathlib import Path
 
-from ruin_check import one, reaps, tasks
+from ruin_check import identity, one, reaps, tasks
 
 STEPS = {
     "invalidate": (3, 3, "iommu", 1),
-    "reset": (4, 2, "recovery", 4),
+    "reset": (1, 2, "recovery", 4),
     "release": (3, 5, "iommu", 6),
     "reference": (3, 5, "iommu", 6),
 }
@@ -18,10 +18,14 @@ STEPS = {
 def completed(console, events, step):
     party, op, target, boundary = STEPS[step]
     main, auxiliary, beta = tasks(console)
+    stage = {"invalidate": "Invalidate", "reset": "Stop", "release": "Release", "reference": "Release"}[step]
     services = {
         service: int(one(console, rf"system: minted {service} tid=(\d+)")[1])
         for service in ("hub", "pci", "iommu", "recovery", "device-ctl-confirmation")
     }
+    if step == "reset":
+        armed = one(console, rf"confirmation: device stop gate armed from={services['recovery']} pci={services['pci']} serial=1")
+        assert armed.start() < one(console, r"pci: endpoint bus-master off=0x0").start()
     if step == "reference":
         rejected = one(
             console,
@@ -43,7 +47,7 @@ def completed(console, events, step):
     else:
         rejected = one(
             console,
-            rf"confirmation: transport rejected from={services['hub']} to={services[target]} "
+            rf"confirmation: transport rejected from={services['hub'] if step == 'reset' else services['recovery']} to={services[target]} "
             rf"op={op} serial=1 references=2 ticks=(\d+)",
         )
         injected_tick = int(rejected[1])
@@ -53,7 +57,7 @@ def completed(console, events, step):
     assert injected_tick < int(removed[2]), "invalid injection interval"
     if step == "reference":
         assert rejected.start() < retained.start() < removed.start(), "reference lost before removal"
-    requester = one(console, r"pci: space task=\d+ ecam=0x[0-9a-f]+ requester=(\d+) bar=\d+")[1]
+    _, key = identity(console)
     chain = [
         rf"hub: binding 1 execution domain stopped \(tid={main}\)",
         r"iommu: binding 1 invalidated frames held=6 \(not released\)",
@@ -63,14 +67,18 @@ def completed(console, events, step):
         r"iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0",
         r"iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true",
         r"recovery: binding 1 detached",
-        rf"hub: binding 1 closed and released device {requester}",
+        rf"hub: binding 1 closed and released device {key}",
     ]
     positions = [
-        one(console, r"hub: binding 1 active \(business released\) iova=0x[0-9a-f]+").start(),
+        one(console, r"recovery: binding 1 active iova=0x[0-9a-f]+ execution=\d+").start(),
         one(console, r"ctl: served used=1 len=513 written_ok=true sector_ok=true status=0").start(),
         *[one(console, pattern).start() for pattern in chain[:boundary]],
         rejected.start(),
-        one(console, rf"hub: binding 1 step failed party={party} op={op} code={code} \(holding\)").start(),
+        one(console,
+            rf"hub: binding 1 coordination failed op={op} code={code} \(holding\)"
+            if step == "reset" else
+            rf"recovery: binding 1 stage {stage} failed party={party} op={op} code={code}"
+        ).start(),
         one(console, rf"ctl: confirmation failed party={party} op={op} code={code} state=Closing").start(),
         removed.start(),
         *([released.start()] if step == "reference" else []),

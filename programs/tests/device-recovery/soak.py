@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from trace import check as execution
-from ruin_check import one
+from ruin_check import identity, one
 
 
 def check(console_path, events_path, expected=128):
@@ -26,7 +26,7 @@ def check(console_path, events_path, expected=128):
         r"^ctl: served used=1 len=513 written_ok=true sector_ok=true status=0$",
         console, re.MULTILINE,
     )) == expected, "every generation must complete real DMA"
-    requester = one(console, r"pci: space task=\d+ ecam=0x[0-9a-f]+ requester=(\d+) bar=\d+")[1]
+    _, key = identity(console)
     start = 0
     capabilities = None
     for n, receipt in enumerate(receipts, 1):
@@ -36,7 +36,7 @@ def check(console_path, events_path, expected=128):
             r"^(?:hub|pci|iommu|recovery): binding (\d+) ", segment, re.MULTILINE,
         )), f"generation {n}: another binding crossed its interval"
         patterns = (
-            rf"hub: binding {n} active \(business released\) iova=0x[0-9a-f]+",
+            rf"recovery: binding {n} active iova=0x[0-9a-f]+ execution=\d+",
             r"ctl: served used=1 len=513 written_ok=true sector_ok=true status=0",
             rf"hub: binding {n} execution domain stopped \(tid=\d+\)",
             rf"iommu: binding {n} invalidated frames held=6 \(not released\)",
@@ -45,7 +45,7 @@ def check(console_path, events_path, expected=128):
             rf"iommu: binding {n} queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0",
             rf"iommu: binding {n} released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true",
             rf"recovery: binding {n} detached",
-            rf"hub: binding {n} closed and released device {requester}",
+            rf"hub: binding {n} closed and released device {key}",
             rf"ctl: generation {n} capabilities=\d+ launch=1 command=1",
             rf"ctl: generation {n} serial={n} settled fault=(?:true|false)",
         )

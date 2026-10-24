@@ -77,19 +77,32 @@ impl Ecam {
 
     /// 量一根**内存** BAR 的长度（标准那一手：先写全 1、再读回掩码，随后把原值放回去）。
     ///
-    /// 返 `(字节数, 是不是 64 位那一根)`；`None` = 这一格不存在（原值 0）或它是 I/O 空间
-    /// （bit0）。
+    /// 返 `(字节数, 是不是 64 位那一根)`；拒绝非 BAR、I/O 和不支持的内存类型。
+    /// 原值为零的 32 位 BAR 仍须探尺；不存在由回读掩码为零确认。
     ///
     /// 64 位那一根要把两半**拼成一个 64 位掩码**再取最低那一位（与 Linux `pci_read_bases`
     /// 同一条口径）——把高半当成“必须为 0”是错的：一根 16KiB 的 64 位 BAR 读回去是
     /// `0xffffffff_ffffc000`，高半本来就是全 1。
     pub fn bar_size(&self, index: u8) -> Option<(u64, bool)> {
+        let count = match self.read8(HEADER) & 0x7F {
+            0 => 6,
+            1 => 2,
+            _ => return None,
+        };
+        if index >= count { return None; }
+        let mut at = 0;
+        while at < index {
+            let lower = self.read32(BAR + u16::from(at) * 4);
+            at += if lower & 1 == 0 && is_wide(lower) { 2 } else { 1 };
+        }
+        if at != index { return None; }
         let register = BAR + index as u16 * 4;
         let original = self.read32(register);
-        if original == 0 || original & 1 != 0 {
+        if original & 1 != 0 || matches!((original >> 1) & 3, 1 | 3) {
             return None;
         }
         let wide = is_wide(original);
+        if wide && index + 1 >= count { return None; }
         let upper = if wide {
             let upper = self.read32(register + 4);
             self.write32(register + 4, u32::MAX);
@@ -151,6 +164,7 @@ pub const VENDOR: u16 = 0x00;
 pub const DEVICE: u16 = 0x02;
 pub const COMMAND: u16 = 0x04;
 pub const BAR: u16 = 0x10;
+pub const HEADER: u16 = 0x0E;
 pub const CAPABILITY: u16 = 0x34;
 /// 命令寄存器那两位：内存空间 / bus master。
 pub const COMMAND_MEMORY: u16 = 1 << 1;

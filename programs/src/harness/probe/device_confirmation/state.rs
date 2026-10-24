@@ -3,6 +3,7 @@ pub(super) struct State {
     pub op: u8,
     pub target: &'static str,
     pub primitive: bool,
+    pub before_stop: bool,
     pub injection: env::PieToken,
     pub ack: Option<env::PieToken>,
     pub phase: u8,

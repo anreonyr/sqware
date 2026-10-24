@@ -649,8 +649,9 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     mut want = [
       # 三个硬件域各自独立 Task/Space：各报自己的号与它自己映射的那一段（本域 VA）。
       "^iommu: space task=[0-9]+ iommu=0x[0-9a-f]+ retain=[0-9]+ ddtp=0x0 \\(off\\)$"
-      "^pci: space task=[0-9]+ ecam=0x[0-9a-f]+ requester=[0-9]+ bar=[0-9]+$"
-      "^recovery: ready hub=[0-9]+ pci=[0-9]+$"
+      "^pci: space task=[0-9]+ ecam=0x[0-9a-f]+ functions=[0-9]+$"
+      "^pci: ready functions=[0-9]+$"
+      "^recovery: ready hub=[0-9]+ pci=[0-9]+ requester=[0-9]+ key=[0-9]+$"
       # 执行实例由控制器用受限构造建出（owner = Hub），再由 Hub 放行；
       # 停止与核销也归 Hub（实例面按真实 owner 核）。
       "^ctl: constructed device-work tid=[0-9]+ owner=hub$"
@@ -663,7 +664,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
       "^pci: endpoint bus-master on=0x4$"
       # Hub 放行业务：发布之后才 Active（执行侧从它那一条孔拿到坐标）。
       "^iommu: binding 1 published requester=[0-9]+ held=6"
-      "^hub: binding 1 active \\(business released\\) iova=0x[0-9a-f]+$"
+      "^recovery: binding 1 active iova=0x[0-9a-f]+ execution=[0-9]+$"
       # 固定工作负载：真读一个扇区、花纹对得上、状态是 OK（判据在控制器那一侧）。
       "^ctl: served used=1 len=513 written_ok=true sector_ok=true status=0$"
       # 收场：先整域停执行方 CPU 控制，再按真实停链协调。
@@ -692,6 +693,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
         "^hub: execution instance launched tid=[0-9]+$"
         "^ctl: alpha exit requested \\(hub recovers owner death\\)$"
         "^ctl: rebind probe claimed serial=2 \\(device free again\\)$"
+        "^recovery: binding 2 active iova=0x[0-9a-f]+ execution=[0-9]+$"
         "^work: rang the stale iova doorbell$"
         "^ctl: stale iova submitted sentinel_held=true status_held=true$"
         "^iommu: binding 2 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=[1-9][0-9]* last_did=[0-9]+$"
@@ -707,16 +709,30 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
         $code = 1
       }
     }
-    let devices = ($console | parse -r '^pci: space task=[0-9]+ ecam=0x[0-9a-f]+ requester=(?<requester>[0-9]+) bar=[0-9]+$')
-    if ($devices | length) != 1 {
-      print "本景未成功完成：发现的 PCI requester 不唯一"
+    let pci = ($console | parse -r '^pci: space task=(?<task>[0-9]+) ecam=0x[0-9a-f]+ functions=(?<functions>[0-9]+)$')
+    let pci_ready = ($console | parse -r '^pci: ready functions=(?<functions>[0-9]+)$')
+    let drivers = ($console | parse -r '^recovery: ready hub=(?<hub>[0-9]+) pci=(?<pci>[0-9]+) requester=(?<requester>[0-9]+) key=(?<key>[0-9]+)$')
+    let hubs = ($console | parse -r '^system: minted hub tid=(?<task>[0-9]+)$')
+    mut requester = ""
+    mut key = ""
+    if ($pci | length) != 1 or ($pci_ready | length) != 1 or ($drivers | length) != 1 or ($hubs | length) != 1 {
+      print "本景未成功完成：PCI/Driver 身份不唯一"
       $code = 1
     } else {
-      let requester = ($devices | first | get requester)
-      mut linked = [$"^hub: binding 1 closed and released device ($requester)$"]
+      let pci_task = ($pci | first | get task)
+      $requester = ($drivers | first | get requester)
+      $key = ($drivers | first | get key)
+      if ($drivers | first | get pci) != $pci_task or ($drivers | first | get hub) != ($hubs | first | get task) or ($pci_ready | first | get functions) != ($pci | first | get functions) {
+        print "本景未成功完成：PCI/Driver 身份未对上"
+        $code = 1
+      }
+      mut linked = [
+        $"^iommu: binding 1 published requester=($requester) held=6"
+        $"^hub: binding 1 closed and released device ($key)$"
+      ]
       if $scene == "iommu-product-fault" {
         $linked = ($linked | append [
-          $"^hub: binding 2 closed and released device ($requester)$"
+          $"^hub: binding 2 closed and released device ($key)$"
           $"^iommu: binding 2 queues stopped .* faults=[1-9][0-9]* last_did=($requester)$"
         ])
       }
@@ -737,7 +753,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
       ["^iommu: binding 1 queues stopped" "^iommu: binding 1 released"]
       ["^iommu: binding 1 invalidated" "^iommu: binding 1 released"]
       ["^iommu: binding 1 released" "^recovery: binding 1 detached"]
-      ["^recovery: binding 1 detached" "^hub: binding 1 closed and released device [0-9]+$"]
+      ["^recovery: binding 1 detached" $"^hub: binding 1 closed and released device ($key)$"]
     ]
     for $pair in $ordered {
       let before = ($console | enumerate | where {|row| $row.item =~ $pair.0 } | get index | first)
@@ -755,7 +771,26 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     # 且两档之间设备那一侧的现场截然不同——发布之前失败 = 设备从来没被接上；
     # 发布之后失败 = 平台真把设备停了才释放。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
+    let pci = ($console | parse -r '^pci: space task=(?<task>[0-9]+) ecam=0x[0-9a-f]+ functions=(?<functions>[0-9]+)$')
+    let pci_ready = ($console | parse -r '^pci: ready functions=(?<functions>[0-9]+)$')
+    let drivers = ($console | parse -r '^recovery: ready hub=(?<hub>[0-9]+) pci=(?<pci>[0-9]+) requester=(?<requester>[0-9]+) key=(?<key>[0-9]+)$')
+    let hubs = ($console | parse -r '^system: minted hub tid=(?<task>[0-9]+)$')
+    mut key = ""
+    if ($pci | length) != 1 or ($pci_ready | length) != 1 or ($drivers | length) != 1 or ($hubs | length) != 1 {
+      print "本景未成功完成：PCI/Driver 身份不唯一"
+      $code = 1
+    } else {
+      let pci_task = ($pci | first | get task)
+      $key = ($drivers | first | get key)
+      if ($drivers | first | get pci) != $pci_task or ($drivers | first | get hub) != ($hubs | first | get task) or ($pci_ready | first | get functions) != ($pci | first | get functions) {
+        print "本景未成功完成：PCI/Driver 身份未对上"
+        $code = 1
+      }
+    }
     mut want = [
+      "^pci: space task=[0-9]+ ecam=0x[0-9a-f]+ functions=[0-9]+$"
+      "^pci: ready functions=[0-9]+$"
+      "^recovery: ready hub=[0-9]+ pci=[0-9]+ requester=[0-9]+ key=[0-9]+$"
       "^work: claimed serial=1$"
       "^ctl: constructed device-work-(before|after) tid=[0-9]+ owner=hub$"
       "^ctl: binding 1 auxiliary=[0-9]+ alive=true$"
@@ -764,7 +799,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
       "^hub: binding 1 execution domain stopped \\(tid=[0-9]+\\)$"
       "^iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true$"
       "^recovery: binding 1 detached$"
-      "^hub: binding 1 closed and released device [0-9]+$"
+      $"^hub: binding 1 closed and released device ($key)$"
       "^exit tid=1 reason=0x0 note: system: done$"
       "^task: all tasks exited, system halted$"
       "^memory: frame_allocations before=[0-9]+ after=[0-9]+$"
@@ -804,10 +839,15 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
   if $code == 0 and $scene == "iommu-dma" {
     # 同理：端点那一景的正证与负证都在那一台自己那一侧逐条核过（身子见 `probe/iommu/dma.rs`）。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
-    let proof = "^exit tid=[0-9]+ reason=0x0 note: iommu-dma: acceptance passed"
-    if ($console | where {|line| $line =~ $proof } | is-empty) {
-      print $"本景未成功完成：缺少 ($proof)"
-      $code = 1
+    for proof in [
+      "^pci-probe: reset-zero requester=[0-9]+ bar=[0-5] size=0x[0-9a-f]+ restored=0 master=0$"
+      "^pci-probe: upper-half requester=[0-9]+ bar=[1-5] rejected=true restored=true$"
+      "^exit tid=[0-9]+ reason=0x0 note: iommu-dma: acceptance passed"
+    ] {
+      if ($console | where {|line| $line =~ $proof } | is-empty) {
+        print $"本景未成功完成：缺少 ($proof)"
+        $code = 1
+      }
     }
   }
 

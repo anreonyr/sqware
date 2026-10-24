@@ -1,4 +1,4 @@
-use crate::pci_api::{self, BAR_ANY, Fail};
+use crate::pci_api::{self, Fail};
 use crate::pci_core::{Core, PlaceRequest};
 use crate::platform::Window;
 use crate::{GrantRange, PAGE_SIZE, Permission, PieToken, TaskId, state};
@@ -6,8 +6,9 @@ use crate::{GrantRange, PAGE_SIZE, Permission, PieToken, TaskId, state};
 const APERTURE_BASE: u64 = 0x4_0000_0000_0000;
 
 fn core() -> Core {
-    Core::discover(
+    Core::new(
         0x3000_0000,
+        2,
         Window {
             token: state::APERTURE,
             base: APERTURE_BASE,
@@ -21,8 +22,8 @@ fn request(serial: u64) -> PlaceRequest {
     PlaceRequest {
         serial,
         requester: 1,
-        recovery: TaskId::new(9),
-        bar: BAR_ANY,
+        recipient: TaskId::new(9),
+        bar: 0,
     }
 }
 
@@ -103,22 +104,22 @@ fn cancelled_delivery_retries_its_cleanup_before_allowing_a_new_binding() {
     state::fail_next_accord();
     let mut core = core();
     assert_eq!(core.place(request(1)).err(), Some(Fail::Denied));
-    assert_eq!(core.release(1), Err(Fail::Conflict));
+    assert_eq!(core.release(1, 1), Err(Fail::Conflict));
     assert!(state::releases().is_empty());
-    assert_eq!(core.disable(2), Err(Fail::Conflict));
-    core.disable(1).unwrap();
+    assert_eq!(core.disable(2, 1), Err(Fail::Conflict));
+    core.disable(1, 1).unwrap();
     state::fail_next_release();
-    assert_eq!(core.release(1), Err(Fail::Denied));
+    assert_eq!(core.release(1, 1), Err(Fail::Denied));
     assert_eq!(core.place(request(2)).err(), Some(Fail::Conflict));
     assert_eq!(state::derives(), 1);
-    core.release(1).unwrap();
+    core.release(1, 1).unwrap();
     assert_eq!(state::releases(), vec![state::DERIVED, state::DERIVED]);
     assert_eq!(core.place(request(1)).err(), Some(Fail::Conflict));
     assert_eq!(core.place(request(2)).unwrap().bar, state::REMOTE);
     assert_eq!(state::derives(), 2);
-    core.release(1).unwrap();
+    core.release(1, 1).unwrap();
     assert_eq!(state::releases(), vec![state::DERIVED, state::DERIVED]);
-    core.enable(2).unwrap();
+    core.enable(2, 1).unwrap();
 }
 
 #[test]
@@ -126,7 +127,7 @@ fn exact_bar_root_is_a_child_of_the_wide_aperture() {
     state::reset();
     let mut core = core();
     let placement = core.place(request(1)).unwrap();
-    assert_eq!(placement.pages(), 4);
+    assert_eq!(placement.pages, 4);
     assert_eq!(placement.size, state::BAR_SIZE);
     let (source, _, _, _) = state::derived();
     assert_eq!(source, state::APERTURE);

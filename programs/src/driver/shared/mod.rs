@@ -4,9 +4,12 @@
 //! platform（受限平台窗的接收侧）· retention（声明保留租约的接收侧）。
 
 pub mod context;
+pub mod coords;
 pub mod device;
 pub mod dma;
 pub mod fail;
+pub mod lookup;
+pub mod order;
 pub mod peer;
 pub mod platform;
 pub mod retention;

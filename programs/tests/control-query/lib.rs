@@ -252,6 +252,16 @@ pub mod system {
                 pub fn state(&self, _: String) -> Result<table::State, verdict::Fail> {
                     Ok(table::State::Ready)
                 }
+                pub fn publisher(
+                    &self,
+                    namespace: abi::Mark,
+                    mark: abi::Mark,
+                ) -> Result<crate::TaskId, verdict::Fail> {
+                    if namespace != abi::Mark::new(0x11) || mark != abi::Mark::new(0x22) {
+                        return Err(verdict::Fail::Denied);
+                    }
+                    Ok(crate::TaskId::new(0x33))
+                }
                 pub fn task(&self, name: &str) -> Option<crate::TaskId> {
                     match self.table.rows.iter().find(|row| row.name == name)?.slot {
                         table::Slot::Live { task, .. } => Some(task),
@@ -427,6 +437,37 @@ mod tests {
         assert!(resources.read::<request::Inbox>().unwrap().0.is_empty());
         ANSWERS.with(|answers| answers.borrow_mut().pop().unwrap())
     }
+
+    #[test]
+    fn publisher_query_dispatch_uses_marks_and_returns_task() {
+        ANSWERS.with(|answers| answers.borrow_mut().clear());
+        let mut resources = schedule::Resources::new();
+        resources
+            .insert(Control {
+                inputs: Vec::new(),
+                targets: &[],
+                table: Table { rows: Vec::new() },
+            })
+            .unwrap();
+        resources
+            .insert(request::Inbox(alloc::collections::VecDeque::from([
+                request::Incoming {
+                    wire: frame::Wire::Publisher {
+                        namespace: crate::abi::Mark::new(0x11),
+                        mark: crate::abi::Mark::new(0x22),
+                    },
+                    from: TaskId::new(9),
+                    reply: rpc::reply::Sender(core::marker::PhantomData),
+                },
+            ])))
+            .unwrap();
+        request::state(resources.read().unwrap(), resources.write().unwrap()).unwrap();
+        assert!(resources.read::<request::Inbox>().unwrap().0.is_empty());
+        let said = ANSWERS.with(|answers| answers.borrow_mut().pop().unwrap());
+        assert_eq!(said.a, 0);
+        assert_eq!(said.task, TaskId::new(0x33));
+    }
+
     #[test]
     fn mutation_requests_enter_the_assembly_queue_with_the_native_parent() {
         use system::control::lifecycle::{Action, queued};

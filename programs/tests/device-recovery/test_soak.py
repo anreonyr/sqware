@@ -64,7 +64,7 @@ class SoakEvidence(unittest.TestCase):
     def test_dma_must_be_after_active_and_before_execution_stop(self):
         console, events = evidence(128)
         served = "ctl: served used=1 len=513 written_ok=true sector_ok=true status=0\n"
-        before = "hub: binding 1 active (business released)"
+        before = "recovery: binding 1 active"
         start = console.index(before)
         changed = console.replace(served, "", 1)
         changed = changed[:start] + served + changed[start:]
@@ -104,7 +104,7 @@ class SoakEvidence(unittest.TestCase):
     def test_binding_cannot_progress_after_its_receipt(self):
         console, events = evidence(128)
         with self.assertRaisesRegex(AssertionError, "final generation"):
-            self.check(console + "hub: binding 1 closed and released device 8\n", events)
+            self.check(console + "hub: binding 1 closed and released device 41\n", events)
 
     def test_one_resident_cannot_exit_before_the_last_generation(self):
         console, events = evidence(128)

@@ -13,8 +13,10 @@ use env::{Mark, PieToken, TaskId, TeamId};
 use env::wire::Span as _;
 use wire::message::Message;
 
+pub mod publisher;
 pub mod vocab;
 
+pub use self::publisher::PublisherAsk;
 pub use self::vocab::*;
 /// 一问：动作码 ＋ 名字 ＋ **回信孔那一格**
 /// `back` 是**运输**那一格（往哪回），不是动作的荷载——它排最后，谁都不许把它当第二个名字使
@@ -92,6 +94,8 @@ pub enum Req {
     State(String),
     /// 命名程序当前存活的任务。
     Task(String),
+    /// Trusted static publisher for one namespace mark and resource mark.
+    Publisher { namespace: Mark, mark: Mark },
     /// `RECOVER`：由声明的监督者请求重新拉起一个已完整退休的目标。
     Recover(String),
     EmbarkInstance(TaskId),
@@ -103,6 +107,15 @@ pub enum Req {
 
 impl Req {
     pub fn store(self, back: PieToken, out: &mut [u8]) -> Option<usize> {
+        if let Req::Publisher { namespace, mark } = &self {
+            return PublisherAsk {
+                op: PUBLISHER,
+                namespace: *namespace,
+                mark: *mark,
+                back,
+            }
+            .store_at(out, 0);
+        }
         let instance = match &self {
             Req::EmbarkInstance(task) => Some((INSTANCE_EMBARK, *task)),
             Req::DebarkInstance(task) => Some((INSTANCE_DEBARK, *task)),
@@ -141,6 +154,8 @@ pub enum Wire {
     State(String),
     /// 命名程序当前存活的任务。
     Task(String),
+    /// Trusted static publisher for one namespace mark and resource mark.
+    Publisher { namespace: Mark, mark: Mark },
     /// `RECOVER`：由声明的监督者请求重新拉起一个已完整退休的目标。
     Recover(String),
     EmbarkInstance(TaskId),
@@ -153,6 +168,19 @@ pub enum Wire {
 impl Wire {
     /// 解一问：`(读出来的动作, 回信孔那一格)`
     pub fn take(bytes: &[u8]) -> Option<(Option<Wire>, PieToken)> {
+        if bytes.first().copied() == Some(PUBLISHER) {
+            let (q, at) = PublisherAsk::fetch_at(bytes, 0)?;
+            if at != bytes.len() || q.op != PUBLISHER {
+                return None;
+            }
+            return Some((
+                Some(Wire::Publisher {
+                    namespace: q.namespace,
+                    mark: q.mark,
+                }),
+                q.back,
+            ));
+        }
         if matches!(bytes.first().copied(), Some(INSTANCE_EMBARK..=INSTANCE_STATE | INSTANCE_RELEASE)) {
             let (q, at) = InstanceAsk::fetch_at(bytes, 0)?;
             if at != bytes.len() {

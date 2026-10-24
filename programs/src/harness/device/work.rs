@@ -17,9 +17,10 @@ use system_client::operator;
 use wire::Message;
 
 use crate::driver::iommu::api::ENTRY_PATH as IOMMU_ENTRY;
-use crate::driver::pci::virtio::{Caps, Virtio};
+use crate::driver::virtio::{Caps, Virtio};
 use crate::driver::shared::dma::{self, HubDma};
 use crate::driver::shared::peer::Peer;
+use crate::driver::shared::lookup;
 use crate::harness::device::layout::{self, Block};
 
 use super::control::{self, Call as CtlCall, Command};
@@ -45,6 +46,11 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         .map_err(|_| "work: operator session")?;
     let tree = operator::Face::of(session);
     let hub = HubDma::find(&tree, Wait::AtMost(MS))?;
+    if hub.host() != env::unit::sire() { return Err("work: Hub is not the owner"); }
+    let mut rejected = None;
+    let state = lookup::state(&tree, system, &mut rejected, Wait::AtMost(MS))?;
+    let coordinator = state.publisher(system_api::namespace::SERVICE,
+        hub_api::coordination::call::ENTRY, Wait::AtMost(MS)).map_err(|_| "work: device publisher")?;
     // 报活孔：内核只允许主人自己交来的那一枚。
     let sensor = env::hole::unseal(hub_api::ALIVE_MARK, HoleLimits::default())
         .map_err(|_| "work: sensor")?;
@@ -101,6 +107,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     let claim_sender =
         ipc::rpc::request::Sender::<hub_api::DmaCall>::from_raw(door, hub_api::DmaCall::BACK)
             .map_err(|_| "work: claim face")?;
+    if claim_sender.peer() != hub.host() { return Err("work: device door owner"); }
     let said = claim_sender
         .call(ipc::time::Deadline::new(Wait::AtMost(MS)), |back| {
             hub_api::DmaWire::Claim(hub_api::DmaClaim {
@@ -153,10 +160,13 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     if size != layout::SPAN as usize {
         return Err("work: window is not the scene window");
     }
-    let iommu = Peer::<crate::driver::iommu::api::Call>::find(
+    let iommu = lookup::peer::<crate::driver::iommu::api::Call>(
         &tree,
+        &state,
         Path::new(IOMMU_ENTRY),
+        crate::driver::iommu::api::ENTRY,
         crate::driver::iommu::api::Call::BACK,
+        &mut rejected,
         Wait::AtMost(MS),
     )?;
     // 收到的窗已量到 `layout::SPAN`；只收窄权限，范围由普通 Accord 继承。
@@ -173,7 +183,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     ));
     if mode == Mode::After {
         // 等放行（Hub 把坐标推来 = 发布与 MASTER 都过了），然后按控制器说的收场。
-        let coords = await_coords(hub.host(), serial)?;
+        let coords = await_coords(coordinator, serial)?;
         crate::debug::put(&alloc::format!(
             "work: released iova={:#x} pages={}",
             coords.iova,
@@ -185,7 +195,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         return Ok(());
     }
     // 正常那一档：按坐标立队列，然后按控制器的命令敲门铃。
-    let coords = await_coords(hub.host(), serial)?;
+    let coords = await_coords(coordinator, serial)?;
     let bar = find_bar(serial).ok_or("work: bar missing")?;
     let bar_dock = Dock::open(bar).map_err(|_| "work: bar mapping")?;
     if bar_dock.view().size() != coords.pages as usize * env::PAGE_SIZE {

@@ -21,6 +21,16 @@ class ConfirmationEvidence(unittest.TestCase):
             with self.subTest(old=old), self.assertRaises(AssertionError):
                 completed(console.replace(old, new), events, "release")
 
+    def test_stop_gate_requires_the_actual_device_driver_and_pci_trigger(self):
+        console, events = evidence("reset")
+        for changed in (
+            console.replace("confirmation: device stop gate armed from=8 pci=6 serial=1\n", ""),
+            console.replace("gate armed from=8", "gate armed from=4"),
+            console.replace("gate armed from=8 pci=6", "gate armed from=8 pci=7"),
+        ):
+            with self.subTest(console=changed), self.assertRaises(AssertionError):
+                completed(changed, events, "reset")
+
     def test_kernel_reference_proof_is_required_at_both_boundaries(self):
         console, events = evidence("release")
         for at in (0, 1):

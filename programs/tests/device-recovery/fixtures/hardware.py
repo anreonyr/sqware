@@ -31,7 +31,7 @@ PENDING = (
         "ctl: served used=1 len=513 written_ok=true sector_ok=true status=0\n",
     )
     + "iommu: binding 1 invalidate fence expired frames held=6\n"
-    "hub: binding 1 step failed party=3 op=3 code=4 (holding)\n"
+    "recovery: binding 1 stage Invalidate failed party=3 op=3 code=4\n"
 )
 REAPED = EVENTS[:2]
 

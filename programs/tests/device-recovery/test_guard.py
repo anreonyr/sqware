@@ -89,7 +89,7 @@ class GuardDeathEvidence(unittest.TestCase):
 
     def test_actual_dma_evidence_is_required(self):
         for prefix in ("iommu: binding 1 published", "pci: endpoint bus-master on=",
-                       "hub: binding 1 active", "work: rang the in-flight"):
+                       "recovery: binding 1 active", "work: rang the in-flight"):
             console = "\n".join(line for line in CONSOLE.splitlines()
                                 if not line.startswith(prefix)) + "\n"
             with self.subTest(prefix=prefix), self.assertRaises(AssertionError):

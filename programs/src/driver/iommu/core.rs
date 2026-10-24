@@ -115,6 +115,11 @@ impl Core {
         })
     }
 
+    /// The actual IOVA base accepted for the current binding.
+    pub fn iova(&self) -> Option<u64> {
+        self.binding.as_ref().map(|binding| binding.range.base())
+    }
+
     /// ① 取得必要帧引用：来源是执行方实际交进来的那一枚窗（内核给出的 `vestor`）。
     ///
     /// 同号同参重试复用原记录；同时只有一笔绑定；旧号一律拒。

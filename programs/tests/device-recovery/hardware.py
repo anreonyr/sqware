@@ -99,7 +99,7 @@ def run(conn, capture):
             evidence.update(base=base, bad=bad, original=original, broken=broken)
             Path(str(hold) + ".resume").write_text("real command queue fault configured\n")
             wait(
-                lambda: "hub: binding 1 step failed party=3 op=3 code=4 (holding)" in text(),
+                lambda: "recovery: binding 1 stage Invalidate failed party=3 op=3 code=4" in text(),
                 "native invalidation did not report its real fence failure",
             )
             log = text()

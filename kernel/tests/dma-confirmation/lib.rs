@@ -20,8 +20,8 @@ mod fixture;
 mod injection;
 #[path = "../../../programs/src/driver/iommu/api.rs"]
 mod iommu;
-#[path = "../../../programs/src/driver/recovery/api.rs"]
-mod recovery;
+#[path = "../../../programs/src/driver/pci/api.rs"]
+mod pci;
 
 static SERIAL: Mutex<()> = Mutex::new(());
 thread_local! {
@@ -65,7 +65,7 @@ mod machine {
 fn configure(enabled: bool, op: u8) {
     let root = env::TaskId::new(41);
     assert!(!fixture::reject(
-        root, root, true, &injection::command(enabled, 100, 200, u64::from(op), 1, 200),
+        root, root, true, &injection::command(enabled, 100, 200, u64::from(op), 1, 200, 0),
     ));
 }
 
@@ -83,8 +83,7 @@ fn reject(bytes: &[u8]) -> bool {
 }
 
 #[test]
-fn real_iommu_and_recovery_frames_match_without_assuming_buffer_capacity_is_wire_length() {
-    use env::wire::Span;
+fn real_iommu_frames_match_without_assuming_buffer_capacity_is_wire_length() {
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
     REFERENCES.with(|count| count.set(2));
     for op in (iommu::INVALIDATE..=iommu::RELEASE).step_by(2) {
@@ -96,14 +95,6 @@ fn real_iommu_and_recovery_frames_match_without_assuming_buffer_capacity_is_wire
         configure(false, op);
         assert!(!reject(&bytes));
     }
-    configure(true, recovery::STOP);
-    let mut bytes = [0u8; recovery::Step::LEN];
-    let count = recovery::Step {
-        op: recovery::STOP, serial: 1, back: env::PieToken::NONE,
-    }.store_at(&mut bytes, 0).unwrap();
-    assert_eq!(count, 17);
-    assert!(reject(&bytes[..count]));
-    configure(false, recovery::STOP);
 }
 
 #[test]
@@ -128,7 +119,7 @@ fn nonroot_or_other_owned_command_cannot_remove_injection() {
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
     REFERENCES.with(|count| count.set(2));
     configure(true, iommu::RELEASE);
-    let bytes = injection::command(false, 100, 200, u64::from(iommu::RELEASE), 1, 200);
+    let bytes = injection::command(false, 100, 200, u64::from(iommu::RELEASE), 1, 200, 0);
     let root = env::TaskId::new(41);
     assert!(!fixture::reject(root, root, false, &bytes));
     assert!(!fixture::reject(env::TaskId::new(42), root, true, &bytes));
@@ -152,7 +143,7 @@ fn reference_failure_reaches_the_primitive_and_keeps_the_same_handle() {
     REFERENCES.with(|count| count.set(2));
     let root = env::TaskId::new(41);
     let command = |enabled| injection::command(
-        enabled, 100, 200, injection::REFERENCE_RELEASE, 1, 200,
+        enabled, 100, 200, injection::REFERENCE_RELEASE, 1, 200, 0,
     );
     assert!(!fixture::reject(root, root, true, &command(true)));
     assert!(!reject(&request(iommu::RELEASE)), "RPC delivery must remain real");
@@ -165,4 +156,57 @@ fn reference_failure_reaches_the_primitive_and_keeps_the_same_handle() {
     REFERENCES.with(|count| count.set(1));
     fixture::reference_released(env::TaskId::new(200), 777);
     REFERENCES.with(|count| count.set(2));
+}
+
+#[test]
+fn before_stop_gate_uses_real_pci_and_coordination_frames_and_exact_task_pairs() {
+    use env::wire::Span;
+    use hub_api::coordination::{Release, RELEASE};
+    let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
+    REFERENCES.with(|count| count.set(2));
+    let root = env::TaskId::new(41);
+    let configure = |enabled| {
+        assert!(!fixture::reject(root, root, true,
+            &injection::command(enabled, 100, 300, injection::BEFORE_DEVICE_STOP, 1, 200, 400)));
+    };
+    let gate = |from, to, bytes: &[u8]| fixture::reject(
+        env::TaskId::new(to), env::TaskId::new(from), false, bytes);
+    let mut disable = [0u8; pci::Toggle::LEN];
+    let len = pci::Toggle { op: pci::DISABLE, serial: 1, requester: 8, back: env::PieToken::NONE }
+        .store_at(&mut disable, 0).unwrap();
+    assert_eq!(len, 21, "buffer capacity is not wire length");
+    let disable = &disable[..len];
+    let mut release = [0u8; Release::LEN];
+    let len = Release { op: RELEASE, hub: env::TaskId::new(100), serial: 1, key: 7,
+        execution: env::TaskId::new(500), reason: 1, back: env::PieToken::NONE }
+        .store_at(&mut release, 0).unwrap();
+    assert_eq!(len, 42);
+    configure(true);
+    assert!(!gate(100, 300, &release), "cleanup starts before the gate");
+    for (from, to) in [(301, 400), (300, 401)] {
+        assert!(!gate(from, to, disable));
+        assert!(!gate(100, 300, &release), "a foreign trigger cannot arm the gate");
+    }
+    for (offset, value) in [(0, pci::ENABLE), (1, 2)] {
+        let mut invalid = disable.to_vec();
+        invalid[offset] = value;
+        assert!(!gate(300, 400, &invalid));
+        assert!(!gate(100, 300, &release));
+    }
+    assert!(!gate(300, 400, disable), "the actual Disable request is delivered");
+    assert!(!gate(101, 300, &release));
+    assert!(!gate(100, 301, &release));
+    assert!(!gate(100, 300, &release[..41]));
+    for offset in [0, 1, 9] {
+        let mut invalid = release;
+        invalid[offset] = 9;
+        assert!(!gate(100, 300, &invalid));
+    }
+    assert!(gate(100, 300, &release));
+    assert!(gate(100, 300, &release), "gate persists while references are retained");
+    configure(false);
+    assert!(!gate(100, 300, &release));
+    configure(true);
+    assert!(!gate(100, 300, &release), "re-arming clears the old Disable receipt");
+    configure(false);
 }

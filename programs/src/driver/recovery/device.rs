@@ -2,7 +2,7 @@
 
 use env::TaskId;
 
-use crate::driver::pci::virtio::Caps;
+use crate::driver::virtio::Caps;
 
 pub struct Device {
     pub serial: u64,

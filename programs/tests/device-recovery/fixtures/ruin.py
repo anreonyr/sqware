@@ -4,10 +4,12 @@ CONSOLE = """boot: entry task=1
 system: minted recovery tid=8
 ctl: constructed device-work tid=10 owner=hub
 ctl: binding 1 auxiliary=11 alive=true
-pci: space task=7 ecam=0x29000 requester=8 bar=4
+pci: space task=7 ecam=0x29000 functions=65536
+pci: ready functions=1
+recovery: ready hub=4 pci=7 requester=8 key=41
 iommu: binding 1 published requester=8 held=6 ddtp=0x1234
 pci: endpoint bus-master on=0x4
-hub: binding 1 active (business released) iova=0x200200000
+recovery: binding 1 active iova=0x200200000 execution=10
 work: rang the in-flight request doorbell
 ruin: requested recovery
 hub: binding 1 execution domain stopped (tid=10)
@@ -18,7 +20,7 @@ recovery: binding 1 stopped reset=1 status=0 queue_enable=0
 iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0
 iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true
 recovery: binding 1 detached
-hub: binding 1 closed and released device 8
+hub: binding 1 closed and released device 41
 ctl: drained read sector_ok=true status=0 used=0 len=0
 ctl: binding 1 auxiliary=11 alive=false
 ctl: in-flight binding settled by static Driver Ruin

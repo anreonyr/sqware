@@ -6,7 +6,7 @@ pub mod grant;
 pub mod marks;
 pub mod observe;
 
-pub use frame::{ASK_MARK, BACK, DENIED, Fail, Req, Request, Said, State, Wire};
+pub use frame::{ASK_MARK, BACK, DENIED, Fail, PublisherAsk, Req, Request, Said, State, Wire};
 pub use grant::{Grant, grant_of};
 pub use interface::{INTERFACE_ID, REGISTRY};
 pub use marks::DECLARATIONS as MARK_DECLARATIONS;

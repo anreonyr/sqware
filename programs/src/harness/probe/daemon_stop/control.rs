@@ -11,6 +11,7 @@ use crate::harness::probe::daemon_root::Request;
 use crate::harness::probe::daemon_target::api;
 use crate::harness::probe::daemon_target::ask::Ask;
 use crate::harness::probe::daemon_target::beat::Beat;
+use crate::driver::shared::peer::Peer;
 
 const MS: usize = 3000;
 const ACK_MS: usize = 10_000;
@@ -31,6 +32,8 @@ pub fn run() -> Result<(), &'static str> {
         old_helper.get(),
         before,
     ));
+    let state = state_face(&tree)?;
+    publisher(&tree, &state, old_task)?;
     let ack =
         establish::lend(env::unit::sire(), super::ACK).map_err(|_| "daemon-stop: ack hole")?;
     request((old_task, old_helper, before), ack.seed())?;
@@ -47,7 +50,7 @@ pub fn run() -> Result<(), &'static str> {
         old_task.get(),
         old_helper.get(),
     ));
-    stable(&tree, old_task)?;
+    stable(&tree, &state, old_task)?;
     Ok(())
 }
 
@@ -190,7 +193,7 @@ fn request(
         .map_err(|_| "daemon-stop: request send")
 }
 
-fn stable(tree: &operator::Face, old_task: TaskId) -> Result<(), &'static str> {
+fn state_face(tree: &operator::Face) -> Result<Face, &'static str> {
     let wait = Wait::AtMost(MS);
     let service = tree
         .resolve(system_api::namespace::SERVICE, wait)
@@ -202,14 +205,106 @@ fn stable(tree: &operator::Face, old_task: TaskId) -> Result<(), &'static str> {
         .tile_from(service, &road, wait)
         .and_then(|tile| tile.token(wait))
         .map_err(|_| "daemon-stop: stable state face")?;
-    let face = Face::of(entry).map_err(|_| "daemon-stop: stable state client")?;
-    if face.host() != env::unit::sire() {
-        return Err("daemon-stop: state face host");
+    let face = Face::of_owned(entry, env::unit::sire())
+        .map_err(|_| "daemon-stop: stable state client")?;
+    if establish::marked_as(entry) != Some(ctl::Grant::State.mark()) {
+        return Err("daemon-stop: state face mark");
     }
+    checked_entry(tree, &road, entry, face.host())?;
+    Ok(face)
+}
+
+fn checked_entry(
+    tree: &operator::Face,
+    road: &system_api::operator::Path,
+    entry: PieToken,
+    expected: TaskId,
+) -> Result<(), &'static str> {
+    type ControlPeer = Peer<ctl::Call>;
+    let mark = ctl::Grant::State.mark();
+    let fake = env::hole::unseal(mark, env::HoleLimits::default())
+        .map_err(|_| "daemon-stop: fake state creation")?;
+    let fake_owner = establish::opened_by(fake).ok_or("daemon-stop: fake state owner")?;
+    let baseline = Face::of(fake).is_ok() && ControlPeer::open(fake, ctl::Call::BACK).is_ok();
+    let rejected = [
+        Face::of_owned(fake, expected).is_err(),
+        ControlPeer::open_checked(fake, (expected, mark), ctl::Call::BACK).is_err(),
+        ControlPeer::open_checked(entry, (fake_owner, mark), ctl::Call::BACK).is_err(),
+        ControlPeer::open_checked(
+            entry,
+            (expected, env::Mark::of("daemon-stop/unrelated")),
+            ctl::Call::BACK,
+        ).is_err(),
+    ];
+    env::pie::release(fake, env::ReleaseMode::Revoke)
+        .map_err(|_| "daemon-stop: fake state release")?;
+    if !baseline || fake_owner != env::unit::self_id() || rejected.iter().any(|value| !value) {
+        return Err("daemon-stop: checked entry accepted a foreign identity");
+    }
+    let peer = ControlPeer::open_checked(entry, (expected, mark), ctl::Call::BACK)
+        .map_err(|_| "daemon-stop: checked state entry")?;
+    if peer.host() != expected {
+        return Err("daemon-stop: checked state host");
+    }
+    let absent = system_api::operator::Path::new("daemon-stop/no-such-entry");
+    if !matches!(
+        ControlPeer::find_checked(tree, absent, (TaskId::new(0), mark), ctl::Call::BACK, Wait::POLL),
+        Err(("peer: expected identity", None))
+    ) {
+        return Err("daemon-stop: invalid identity performed lookup");
+    }
+    let mut reclaimed = 0;
+    for identity in [(fake_owner, mark), (expected, env::Mark::of("daemon-stop/unrelated"))] {
+        let token = match ControlPeer::find_checked(
+            tree, road, identity, ctl::Call::BACK, Wait::AtMost(MS),
+        ) {
+            Err((_, Some(token))) => token,
+            _ => return Err("daemon-stop: rejected lookup lost reference"),
+        };
+        if establish::opened_by(token) != Some(expected) || token == entry {
+            return Err("daemon-stop: rejected lookup reference identity");
+        }
+        env::pie::release(token, env::ReleaseMode::Revoke)
+            .map_err(|_| "daemon-stop: rejected lookup release")?;
+        if establish::opened_by(token).is_some() {
+            return Err("daemon-stop: rejected lookup reference retained");
+        }
+        reclaimed += 1;
+    }
+    ControlPeer::open_checked(entry, (expected, mark), ctl::Call::BACK)
+        .map_err(|_| "daemon-stop: lookup cleanup damaged original entry")?;
+    crate::debug::put(&alloc::format!(
+        "daemon-ctl-stop: checked entry host={} rejected={} fake_owner={} reclaimed={}",
+        peer.host().get(), rejected.len() + 3, fake_owner.get(), reclaimed,
+    ));
+    Ok(())
+}
+
+fn publisher(tree: &operator::Face, face: &Face, old: TaskId) -> Result<(), &'static str> {
+    let expected = face
+        .publisher(system_api::namespace::SERVICE, api::ENTRY_MARK, Wait::AtMost(MS))
+        .map_err(|_| "daemon-stop: publisher query")?;
+    let entry = lookup(tree, Wait::AtMost(MS))?
+        .ok_or("daemon-stop: publisher entry")?;
+    let owner = establish::opened_by(entry).ok_or("daemon-stop: publisher owner")?;
+    let mark = establish::marked_as(entry).ok_or("daemon-stop: publisher mark")?;
+    if expected != old || owner != expected || mark != api::ENTRY_MARK {
+        return Err("daemon-stop: publisher mismatch");
+    }
+    crate::debug::put(&alloc::format!(
+        "daemon-ctl-stop: publisher task={} host={} entry_owner={} entry_mark={} expected_mark={}",
+        expected.get(), face.host().get(), owner.get(), mark.get(), api::ENTRY_MARK.get(),
+    ));
+    Ok(())
+}
+
+fn stable(tree: &operator::Face, face: &Face, old_task: TaskId) -> Result<(), &'static str> {
+    let wait = Wait::AtMost(MS);
     let start = env::chrono::clock();
     let until = start.saturating_add(STABLE_NS);
     let mut checks = 0usize;
     let mut missing = 0usize;
+    let mut revoked = 0usize;
     while env::chrono::clock() < until {
         if !matches!(
             face.service("fixturetarget".into()).state(wait),
@@ -218,6 +313,13 @@ fn stable(tree: &operator::Face, old_task: TaskId) -> Result<(), &'static str> {
             return Err("daemon-stop: target resurrected");
         }
         checks += 1;
+        if !matches!(
+            face.publisher(system_api::namespace::SERVICE, api::ENTRY_MARK, wait),
+            Err(ControlFail::NotReady)
+        ) {
+            return Err("daemon-stop: publisher still authorized");
+        }
+        revoked += 1;
         match lookup(tree, Wait::AtMost(25))? {
             None => missing += 1,
             Some(entry) if establish::opened_by(entry) == Some(old_task) => {
@@ -235,6 +337,10 @@ fn stable(tree: &operator::Face, old_task: TaskId) -> Result<(), &'static str> {
         checks,
         missing,
         env::chrono::clock().saturating_sub(start),
+    ));
+    crate::debug::put(&alloc::format!(
+        "daemon-ctl-stop: publisher revoked checks={} host={} target={}",
+        revoked, face.host().get(), old_task.get(),
     ));
     Ok(())
 }
