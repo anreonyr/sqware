@@ -36,8 +36,8 @@ pub fn run() -> Result<(), env::Reason> {
             ipc::session::establish::find(root, system_api::control::Grant::Ruin.mark()).unwrap(),
         )
         .unwrap();
-        crate::debug::put("ruin: requested recovery");
-        ruin.service("recovery".into())
+        crate::debug::put("ruin: requested virtio-blk");
+        ruin.service("virtio-blk".into())
             .ruin(env::Wait::AtMost(5000))
             .expect("ruin: static Driver retirement");
         let state = system_client::control::Face::of(
@@ -46,12 +46,12 @@ pub fn run() -> Result<(), env::Reason> {
         .unwrap();
         assert_eq!(
             state
-                .service("recovery".into())
+                .service("virtio-blk".into())
                 .state(env::Wait::AtMost(1000)),
             Ok(system_api::control::State::Dead),
             "ruin: successful reply without Dead state",
         );
-        crate::debug::put("ruin: recovery dead after reply");
+        crate::debug::put("ruin: virtio-blk dead after reply");
     });
     resources
         .insert(Caller {

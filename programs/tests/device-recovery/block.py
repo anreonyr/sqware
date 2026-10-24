@@ -67,7 +67,7 @@ def serve(path, disk):
                 if op != 0 or length == 0 or offset + length > len(image):
                     raise AssertionError(f"unexpected NBD operation {op} at {offset}+{length}")
                 active = console.exists() and (
-                    "recovery: binding 1 active iova=0x"
+                    "virtio-blk: binding 1 active iova=0x"
                     in console.read_text(errors="replace")
                 )
                 if not held and active:

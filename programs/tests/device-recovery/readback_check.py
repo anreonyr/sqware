@@ -23,8 +23,8 @@ def check(console_path, events_path, capture_path):
     assert main in retired and auxiliary in retired and driver not in retired
     one(failed, FAILURE)
     one(failed, r"iommu: binding 1 invalidated frames held=6 \(not released\)")
-    for forbidden in ("recovery: binding 1 stopped", "iommu: binding 1 queues stopped",
-                      "iommu: binding 1 released", "recovery: binding 1 detached", "hub: binding 1 closed"):
+    for forbidden in ("virtio-blk: binding 1 stopped", "iommu: binding 1 queues stopped",
+                      "iommu: binding 1 released", "virtio-blk: binding 1 detached", "hub: binding 1 closed"):
         assert forbidden not in failed, f"premature cleanup: {forbidden}"
     data = json.loads(capture.with_suffix(".readback.json").read_text())
     assert (data["ecam"], data["ecam_size"]) == ecam_region(capture.with_suffix(".dts").read_text())
@@ -94,12 +94,12 @@ def check(console_path, events_path, capture_path):
     ordered = (
         r"iommu: binding 1 invalidated frames held=6 \(not released\)",
         r"pci: binding 1 disabling bus-master", FAILURE,
-        r"recovery: binding 1 stopped reset=1 status=0 queue_enable=0",
+        r"virtio-blk: binding 1 stopped reset=1 status=0 queue_enable=0",
         r"iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0",
         r"iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true",
-        r"recovery: binding 1 detached", rf"hub: binding 1 closed and released device {key}",
+        r"virtio-blk: binding 1 detached", rf"hub: binding 1 closed and released device {key}",
         r"ctl: closed binding 1 failure party=4 op=2 code=4",
-        r"recovery: binding 2 active iova=0x[0-9a-f]+ execution=\d+",
+        r"virtio-blk: binding 2 active iova=0x[0-9a-f]+ execution=\d+",
         r"ctl: stale iova submitted sentinel_held=true status_held=true",
         rf"hub: binding 2 closed and released device {key}",
         r"exit tid=\d+ reason=0x0 note: device-ctl: done",

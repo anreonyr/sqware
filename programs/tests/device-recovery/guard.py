@@ -74,7 +74,7 @@ def run(conn, capture):
         wait(held, "NBD did not hold the guest read")
         wait(lambda: "work: rang the in-flight request doorbell" in text(),
              "missing in-flight doorbell")
-        wait(lambda: re.search(r"^guard: ready target=(pci|iommu|recovery) task=\d+ team=\d+$",
+        wait(lambda: re.search(r"^guard: ready target=(pci|iommu|virtio-blk) task=\d+ team=\d+$",
                                text(), re.MULTILINE) is not None,
              "missing guard ready")
         if resume.exists():

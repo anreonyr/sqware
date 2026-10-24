@@ -16,7 +16,7 @@ def check(console_path, events_path, generations=1):
     retired, last = executions(console_path, events_path, 2 * generations)
     assert last == {"halt": "halt"}, "incomplete execution trace"
     ready = re.findall(
-        r"^recovery: ready hub=(\d+) pci=(\d+) requester=(\d+) key=(\d+)$",
+        r"^virtio-blk: ready hub=(\d+) pci=(\d+) requester=(\d+) key=(\d+)$",
         console, re.MULTILINE,
     )
     assert len(ready) == 2, "both physical devices must enroll"
@@ -31,7 +31,7 @@ def check(console_path, events_path, generations=1):
     )
     assert len(domains) == 2 and len({row[0] for row in domains}) == 2
     assert len({row[1] for row in domains}) == 1
-    driver = one(console, r"system: minted recovery tid=(\d+)")[1]
+    driver = one(console, r"system: minted virtio-blk tid=(\d+)")[1]
     assert all(row[1] == driver for row in domains), "Domain owner is not the actual Driver"
     assert {row[2] for row in domains} == {row[2] for row in ready}
     windows = one(console, r"dual: windows a=0x([0-9a-f]+) b=0x([0-9a-f]+) bytes=24576")
@@ -96,20 +96,20 @@ def check(console_path, events_path, generations=1):
             rf"hub: binding {a} execution domain stopped \(tid=\d+\)",
             rf"iommu: binding {a} invalidated frames held=6 \(not released\)",
             rf"pci: binding {a} disabling bus-master",
-            rf"recovery: binding {a} stopped reset=1 status=0 queue_enable=0",
+            rf"virtio-blk: binding {a} stopped reset=1 status=0 queue_enable=0",
             rf"iommu: binding {a} quiesced shared engine on .* engine_off=false",
             rf"iommu: binding {a} released shared .* frames=0 engine_off=false",
-            rf"recovery: binding {a} detached",
+            rf"virtio-blk: binding {a} detached",
             rf"hub: binding {a} closed and released device {a_key}",
             rf"dual: read serial={b} pattern=165 round=1 used=2 len=513 sector_ok=true status=0",
             rf"work: binding {b} " + (r"requesting Close::Normal" if generation % 2 == 0 else "exiting without Close"),
             rf"hub: binding {b} execution domain stopped \(tid=\d+\)",
             rf"iommu: binding {b} invalidated frames held=6 \(not released\)",
             rf"pci: binding {b} disabling bus-master",
-            rf"recovery: binding {b} stopped reset=1 status=0 queue_enable=0",
+            rf"virtio-blk: binding {b} stopped reset=1 status=0 queue_enable=0",
             rf"iommu: binding {b} queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0",
             rf"iommu: binding {b} released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true",
-            rf"recovery: binding {b} detached",
+            rf"virtio-blk: binding {b} detached",
             rf"hub: binding {b} closed and released device {b_key}",
         ]
         positions = [one(segment, pattern).start() for pattern in ordered]
@@ -128,7 +128,7 @@ def check(console_path, events_path, generations=1):
     assert len(work_tasks | auxiliaries) == 4 * generations
     for task in map(int, re.findall(r"^system: minted \S+ tid=(\d+)$", console, re.MULTILINE)):
         assert task in retired, f"static task {task} was not reaped"
-    for service in ("hub", "pci", "iommu", "recovery"):
+    for service in ("hub", "pci", "iommu", "virtio-blk"):
         task = int(one(console, rf"system: minted {service} tid=(\d+)")[1])
         assert retired[task] > max(retired[tid] for tid in work_tasks | auxiliaries)
     assert 1 in retired and retired[1] == max(retired.values()), "root retired before all owned tasks"

@@ -63,7 +63,7 @@ pub const PACKAGES: &[Package] = &[
     package!("iommu-dma"),
     package!("iommu"),
     package!("pci"),
-    package!("recovery"),
+    package!("virtio-blk"),
     package!("device-work"),
     package!("device-work-before"),
     package!("device-work-after"),

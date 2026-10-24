@@ -664,7 +664,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
       "^iommu: space task=[0-9]+ iommu=0x[0-9a-f]+ retain=[0-9]+ ddtp=0x0 \\(off\\)$"
       "^pci: space task=[0-9]+ ecam=0x[0-9a-f]+ functions=[0-9]+$"
       "^pci: ready functions=[0-9]+$"
-      "^recovery: ready hub=[0-9]+ pci=[0-9]+ requester=[0-9]+ key=[0-9]+$"
+      "^virtio-blk: ready hub=[0-9]+ pci=[0-9]+ requester=[0-9]+ key=[0-9]+$"
       # 执行实例由控制器用受限构造建出（owner = Hub），再由 Hub 放行；
       # 停止与核销也归 Hub（实例面按真实 owner 核）。
       "^ctl: constructed device-work tid=[0-9]+ owner=hub$"
@@ -677,18 +677,18 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
       "^pci: endpoint bus-master on=0x4$"
       # Hub 放行业务：发布之后才 Active（执行侧从它那一条孔拿到坐标）。
       "^iommu: binding 1 published requester=[0-9]+ held=6"
-      "^recovery: binding 1 active iova=0x[0-9a-f]+ execution=[0-9]+$"
+      "^virtio-blk: binding 1 active iova=0x[0-9a-f]+ execution=[0-9]+$"
       # 固定工作负载：真读一个扇区、花纹对得上、状态是 OK（判据在控制器那一侧）。
       "^ctl: served used=1 len=513 written_ok=true sector_ok=true status=0$"
       # 收场：先整域停执行方 CPU 控制，再按真实停链协调。
       "^hub: binding 1 execution domain stopped \\(tid=[0-9]+\\)$"
       "^iommu: binding 1 invalidated frames held=6 \\(not released\\)$"
       "^pci: endpoint bus-master off=0x0$"
-      "^recovery: binding 1 stopped reset=1 status=0 queue_enable=0$"
+      "^virtio-blk: binding 1 stopped reset=1 status=0 queue_enable=0$"
       "^iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0$"
       # 每一个字段都钉死：把停链换成空实现，这几格就回不到 0；帧在停链期间一直持着。
       "^iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true$"
-      "^recovery: binding 1 detached$"
+      "^virtio-blk: binding 1 detached$"
       "^hub: binding 1 closed and released device [0-9]+$"
       # 整机也真的收场（与普通 product 同一格）：任务都退了、没有残余持有。
       "^exit tid=1 reason=0x0 note: system: done$"
@@ -706,7 +706,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
         "^hub: execution instance launched tid=[0-9]+$"
         "^ctl: alpha exit requested \\(hub recovers owner death\\)$"
         "^ctl: rebind probe claimed serial=2 \\(device free again\\)$"
-        "^recovery: binding 2 active iova=0x[0-9a-f]+ execution=[0-9]+$"
+        "^virtio-blk: binding 2 active iova=0x[0-9a-f]+ execution=[0-9]+$"
         "^work: rang the stale iova doorbell$"
         "^ctl: stale iova submitted sentinel_held=true status_held=true$"
         "^iommu: binding 2 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=[1-9][0-9]* last_did=[0-9]+$"
@@ -724,7 +724,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     }
     let pci = ($console | parse -r '^pci: space task=(?<task>[0-9]+) ecam=0x[0-9a-f]+ functions=(?<functions>[0-9]+)$')
     let pci_ready = ($console | parse -r '^pci: ready functions=(?<functions>[0-9]+)$')
-    let drivers = ($console | parse -r '^recovery: ready hub=(?<hub>[0-9]+) pci=(?<pci>[0-9]+) requester=(?<requester>[0-9]+) key=(?<key>[0-9]+)$')
+    let drivers = ($console | parse -r '^virtio-blk: ready hub=(?<hub>[0-9]+) pci=(?<pci>[0-9]+) requester=(?<requester>[0-9]+) key=(?<key>[0-9]+)$')
     let hubs = ($console | parse -r '^system: minted hub tid=(?<task>[0-9]+)$')
     mut requester = ""
     mut key = ""
@@ -761,12 +761,12 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     let ordered = [
       ["^hub: binding 1 execution domain stopped" "^iommu: binding 1 invalidated"]
       ["^iommu: binding 1 invalidated" "^pci: endpoint bus-master off=0x0$"]
-      ["^pci: endpoint bus-master off=0x0$" "^recovery: binding 1 stopped"]
-      ["^recovery: binding 1 stopped" "^iommu: binding 1 queues stopped"]
+      ["^pci: endpoint bus-master off=0x0$" "^virtio-blk: binding 1 stopped"]
+      ["^virtio-blk: binding 1 stopped" "^iommu: binding 1 queues stopped"]
       ["^iommu: binding 1 queues stopped" "^iommu: binding 1 released"]
       ["^iommu: binding 1 invalidated" "^iommu: binding 1 released"]
-      ["^iommu: binding 1 released" "^recovery: binding 1 detached"]
-      ["^recovery: binding 1 detached" $"^hub: binding 1 closed and released device ($key)$"]
+      ["^iommu: binding 1 released" "^virtio-blk: binding 1 detached"]
+      ["^virtio-blk: binding 1 detached" $"^hub: binding 1 closed and released device ($key)$"]
     ]
     for $pair in $ordered {
       let before = ($console | enumerate | where {|row| $row.item =~ $pair.0 } | get index | first)
@@ -786,7 +786,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
     let pci = ($console | parse -r '^pci: space task=(?<task>[0-9]+) ecam=0x[0-9a-f]+ functions=(?<functions>[0-9]+)$')
     let pci_ready = ($console | parse -r '^pci: ready functions=(?<functions>[0-9]+)$')
-    let drivers = ($console | parse -r '^recovery: ready hub=(?<hub>[0-9]+) pci=(?<pci>[0-9]+) requester=(?<requester>[0-9]+) key=(?<key>[0-9]+)$')
+    let drivers = ($console | parse -r '^virtio-blk: ready hub=(?<hub>[0-9]+) pci=(?<pci>[0-9]+) requester=(?<requester>[0-9]+) key=(?<key>[0-9]+)$')
     let hubs = ($console | parse -r '^system: minted hub tid=(?<task>[0-9]+)$')
     mut key = ""
     if ($pci | length) != 1 or ($pci_ready | length) != 1 or ($drivers | length) != 1 or ($hubs | length) != 1 {
@@ -803,7 +803,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     mut want = [
       "^pci: space task=[0-9]+ ecam=0x[0-9a-f]+ functions=[0-9]+$"
       "^pci: ready functions=[0-9]+$"
-      "^recovery: ready hub=[0-9]+ pci=[0-9]+ requester=[0-9]+ key=[0-9]+$"
+      "^virtio-blk: ready hub=[0-9]+ pci=[0-9]+ requester=[0-9]+ key=[0-9]+$"
       "^work: claimed serial=1$"
       "^ctl: constructed device-work-(before|after) tid=[0-9]+ owner=hub$"
       "^ctl: binding 1 auxiliary=[0-9]+ alive=true$"
@@ -811,7 +811,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
       "^hub: execution instance launched tid=[0-9]+$"
       "^hub: binding 1 execution domain stopped \\(tid=[0-9]+\\)$"
       "^iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true$"
-      "^recovery: binding 1 detached$"
+      "^virtio-blk: binding 1 detached$"
       $"^hub: binding 1 closed and released device ($key)$"
       "^exit tid=1 reason=0x0 note: system: done$"
       "^task: all tasks exited, system halted$"

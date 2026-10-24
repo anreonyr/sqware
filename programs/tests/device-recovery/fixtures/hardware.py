@@ -20,7 +20,7 @@ PENDING = (
     "system: minted iommu tid=7\n"
     "system: minted device-ctl-fault tid=9\n"
     + CONSOLE.split("iommu: binding 1 invalidated")[0]
-    .replace("ruin: requested recovery\n", "")
+    .replace("ruin: requested virtio-blk\n", "")
     .replace(
         "iommu: binding 1 published",
         "iommu: binding 1 acquired requester=8 pages=6 iova=0x200200000\n"
@@ -31,7 +31,7 @@ PENDING = (
         "ctl: served used=1 len=513 written_ok=true sector_ok=true status=0\n",
     )
     + "iommu: binding 1 invalidate fence expired frames held=6\n"
-    "recovery: binding 1 stage Invalidate failed party=3 op=3 code=4\n"
+    "virtio-blk: binding 1 stage Invalidate failed party=3 op=3 code=4\n"
 )
 REAPED = EVENTS[:2]
 

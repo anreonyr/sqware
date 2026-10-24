@@ -139,7 +139,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         )
         .unwrap();
     schedule
-        .add_system("receive", 2, crate::system::control::receive)
+        .add_plan("control.poll", 2, crate::system::control::poll().unwrap())
         .unwrap();
     schedule
         .add_system("instances", 3, crate::system::control::answer_instances)
@@ -183,7 +183,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
             .read::<crate::system::control::unit::Control>()
             .unwrap()
             .instances()
-            .all(|item| item.team().is_none());
+            .all(|item| item.settled());
         if done.load(Ordering::Acquire) && clean {
             break;
         }
@@ -223,7 +223,7 @@ fn shared_prefix_retirement(assembly: &Fixture, operator: &Operator) {
         namespace::{Preparation, Prepare, ResourceInput},
         operator::Layout,
     };
-    use system_api::operator::PathBuf;
+    use system_api::operator::{EntryTarget, PathBuf};
 
     let layouts = assembly.resources.read::<Layout>().unwrap();
     let system = layouts.as_ref().expect("loader: namespace layout missing");
@@ -250,15 +250,31 @@ fn shared_prefix_retirement(assembly: &Fixture, operator: &Operator) {
     );
     system.prepare_resources(&mut first).unwrap();
     system.prepare_resources(&mut second).unwrap();
+    let first_entry = operator
+        .seek_from(unit, system_api::operator::Path::new("namespace-cleanup/first"), WAIT)
+        .unwrap();
+    let second_entry = operator
+        .seek_from(unit, system_api::operator::Path::new("namespace-cleanup/second"), WAIT)
+        .unwrap();
+    let EntryTarget::Node(first_id) = first_entry.target else {
+        panic!("loader: first placement is not a node");
+    };
+    let EntryTarget::Node(second_id) = second_entry.target else {
+        panic!("loader: second placement is not a node");
+    };
+    let parent_pane = operator
+        .pane_from(unit, system_api::operator::Path::new("namespace-cleanup"), WAIT)
+        .unwrap();
     assert!(system.retire_resources(&mut first).unwrap());
     assert_eq!(
-        operator.seek_from(
-            unit,
-            system_api::operator::Path::new("namespace-cleanup/first"),
-            WAIT
-        ),
+        parent_pane.name(first_id, WAIT),
         Err(system_api::operator::Fail::Unknown),
         "retired placement leaf must disappear"
+    );
+    assert_eq!(
+        parent_pane.list(WAIT).unwrap().as_slice(),
+        &[second_id],
+        "retiring one placement must leave exactly its live sibling"
     );
     let parent = operator
         .seek_from(
@@ -267,25 +283,26 @@ fn shared_prefix_retirement(assembly: &Fixture, operator: &Operator) {
             WAIT,
         )
         .unwrap();
-    assert!(
+    assert_eq!(parent, parent_pane.entry());
+    assert_eq!(
         operator
             .seek_from(
                 unit,
                 system_api::operator::Path::new("namespace-cleanup/second"),
                 WAIT
-            )
-            .is_ok(),
+            ),
+        Ok(second_entry),
         "retiring one task must preserve its live sibling"
     );
     assert!(system.retire_resources(&mut second).unwrap());
     assert_eq!(
-        operator.seek_from(
-            unit,
-            system_api::operator::Path::new("namespace-cleanup/second"),
-            WAIT
-        ),
+        parent_pane.name(second_id, WAIT),
         Err(system_api::operator::Fail::Unknown),
         "retired sibling leaf must disappear"
+    );
+    assert!(
+        parent_pane.list(WAIT).unwrap().as_slice().is_empty(),
+        "retired placement leaves must not remain in their shared parent"
     );
     assert_eq!(
         operator.seek_from(

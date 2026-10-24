@@ -137,11 +137,7 @@ impl Control {
                 }
             }
         }
-        self.instances.retain(|item| {
-            item.team().is_some()
-                || matches!(item.receipt, Receipt::Returned(_))
-                || !unit::join_task(item.owner, Wait::POLL).unwrap_or(true)
-        });
+        self.instances.retain(|item| item.retains_after_reap());
     }
 
     pub(crate) fn instance_wait(&self, mut wait: Wait) -> Wait {

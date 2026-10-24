@@ -17,7 +17,7 @@ def evidence(step):
         failure = (
             "confirmation: device stop gate armed from=8 pci=6 serial=1\n"
             "confirmation: transport rejected from=8 to=6 op=3 serial=1 references=2 ticks=3\n"
-            "recovery: binding 1 stage Disable failed party=2 op=3 code=0\n"
+            "virtio-blk: binding 1 stage Disable failed party=2 op=3 code=0\n"
             "ctl: confirmation failed party=2 op=3 code=0 state=Closing\n"
             "confirmation: injection removed hits=5 references=2 ticks=5\n"
         )
@@ -29,7 +29,7 @@ def evidence(step):
         )
         failure = (
             rejected
-            + f"recovery: binding 1 stage {stage} failed party={party} op={op} code={code}\n"
+            + f"virtio-blk: binding 1 stage {stage} failed party={party} op={op} code={code}\n"
             + f"ctl: confirmation failed party={party} op={op} code={code} state=Closing\n"
             + (
                 "confirmation: failed reference still owned reference=777 pages=6\n"
@@ -46,7 +46,7 @@ def evidence(step):
         "system: minted pci tid=6\n"
         "system: minted iommu tid=7\n"
         "system: minted device-ctl-confirmation tid=9\n"
-        + BASE.replace("ruin: requested recovery\n", "")
+        + BASE.replace("ruin: requested virtio-blk\n", "")
         .replace(
             "work: rang the in-flight request doorbell\n",
             "work: rang the doorbell\n"
@@ -59,7 +59,7 @@ def evidence(step):
         .replace(
             "ctl: in-flight binding settled by static Driver Ruin\n"
             "exit tid=9 reason=0x0 note: device-ctl-ruin: done\n"
-            "ruin: recovery dead after reply\n"
+            "ruin: virtio-blk dead after reply\n"
             "exit tid=1 reason=0x0 note: iommu-ruin: done\n",
             "ctl: confirmation retry settled; original failure preserved\n"
             "exit tid=9 reason=0x0 note: device-ctl-confirmation: done\n"

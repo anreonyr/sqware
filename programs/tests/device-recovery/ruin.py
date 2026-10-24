@@ -66,10 +66,10 @@ def run(conn, capture, mode="ruin"):
                 raise AssertionError("guest read completed without a resume receipt")
             for forbidden in [
                 "pci: endpoint bus-master off=0x0",
-                "recovery: binding 1 stopped",
+                "virtio-blk: binding 1 stopped",
                 "iommu: binding 1 released",
                 "hub: binding 1 closed",
-                "ruin: recovery dead after reply",
+                "ruin: virtio-blk dead after reply",
                 "system: forced shutdown admitted after DMA settlement",
                 "system: forced shutdown admitted after retirement settlement",
                 "task: all tasks exited, system halted",
@@ -84,7 +84,7 @@ def run(conn, capture, mode="ruin"):
         capture.with_suffix(".held-diagnose.jsonl").write_text(trace)
         resume.write_text(f"{mode} pending with frame references held\n")
         completion = (
-            "system: frame Step(Idle)" if mode == "forced" else "ruin: recovery dead after reply"
+            "system: frame Step(Idle)" if mode == "forced" else "ruin: virtio-blk dead after reply"
         )
         wait(lambda: completion in text(console), f"{mode} did not complete after resume")
         reader.join(timeout=10)

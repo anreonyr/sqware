@@ -30,20 +30,20 @@ pub mod caps;
 pub mod virtio_device;
 #[path = "../../src/driver/pci/api.rs"]
 pub mod pci_api;
-#[path = "../../src/driver/recovery/api.rs"]
-pub mod recovery_api;
-#[path = "../../src/driver/recovery/client/mod.rs"]
+#[path = "../../src/driver/virtio/blk/recovery/api.rs"]
+pub mod api;
+#[path = "../../src/driver/virtio/blk/client/mod.rs"]
 mod client;
 #[path = "../../src/driver/shared/coords.rs"]
 mod coords;
 #[path = "../../src/harness/device/command.rs"]
 mod command;
-#[path = "../../src/driver/recovery/attach_request.rs"]
+#[path = "../../src/driver/virtio/blk/recovery/attach_request.rs"]
 pub mod attach_request;
-#[path = "../../src/driver/recovery/device.rs"]
-pub mod device;
-#[path = "../../src/driver/recovery/core.rs"]
-pub mod recovery_core;
+#[path = "../../src/driver/virtio/blk/recovery/attachment.rs"]
+pub mod attachment;
+#[path = "../../src/driver/virtio/blk/recovery/executor.rs"]
+pub mod executor;
 
 pub mod debug {
     pub fn put(_: &str) {}
@@ -62,9 +62,12 @@ pub mod driver {
         pub mod device {
             pub use crate::virtio_device::{queue_enable, reset, reset_begin, status};
         }
-    }
-    pub mod recovery {
-        pub use crate::{attach_request, device, recovery_api as api};
+
+        pub mod blk {
+            pub mod recovery {
+                pub use crate::{api, attach_request, attachment, executor};
+            }
+        }
     }
     pub mod shared {
         pub use hub_api::coord as dma;

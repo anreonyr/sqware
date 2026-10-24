@@ -180,7 +180,28 @@ mod boundaries {
         assert!(!core.contains("raw::pies("));
         assert!(!core.contains("hub_api::iova_base"));
         let work = fs::read_to_string(src.join("harness/device/work.rs")).unwrap();
-        assert!(!work.contains("raw::pies("));
+        // The Before fixture alone may verify the exact BAR gift that already reached it.
+        assert_eq!(
+            work.matches("raw::pies(").count(),
+            1,
+            "only the Before fixture may scan local gifts"
+        );
+        let before = work.find("if mode == Mode::Before").unwrap();
+        let window = work.find("let window = await_window").unwrap();
+        assert!(work[before..window].contains("await_bar_gift("));
+        assert_eq!(
+            work.matches("await_bar_gift(").count(),
+            2,
+            "gift verification is defined and called once"
+        );
+        let gift = work.find("fn await_bar_gift(").unwrap();
+        let gift_end = work[gift + 1..]
+            .find("\nfn ")
+            .map_or(work.len(), |end| gift + 1 + end);
+        assert!(
+            work[gift..gift_end].contains("raw::pies("),
+            "the local scan belongs to the Before fixture's gift verifier"
+        );
         assert!(!work.contains("find_window("));
         assert!(!work.contains("find_bar("));
         let control = fs::read_to_string(src.join("harness/device/control.rs")).unwrap();

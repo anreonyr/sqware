@@ -9,7 +9,7 @@ import subprocess
 import threading
 import time
 
-FAILURE = "recovery: binding 1 stage Stop failed party=4 op=2 code=4"
+FAILURE = "virtio-blk: binding 1 stage Stop failed party=4 op=2 code=4"
 
 
 def ecam_region(dts):
@@ -113,7 +113,7 @@ def run(conn, capture):
             # succeeds only if production readback actually reports Unavailable.
             until = time.monotonic() + 2
             while FAILURE not in text():
-                assert "recovery: binding 1 stopped" not in text(), "missed actual reset/readback window"
+                assert "virtio-blk: binding 1 stopped" not in text(), "missed actual reset/readback window"
                 assert time.monotonic() < until, "actual reset readback did not reject status"
                 command("writeb", status, 1)
             evidence["failed_status"] = command("readb", status)
@@ -121,8 +121,8 @@ def run(conn, capture):
             assert evidence["failed_status"] == 1
             failed = text()
             assert "iommu: binding 1 invalidated frames held=6 (not released)" in failed
-            for forbidden in ("recovery: binding 1 stopped", "iommu: binding 1 queues stopped",
-                              "iommu: binding 1 released", "recovery: binding 1 detached",
+            for forbidden in ("virtio-blk: binding 1 stopped", "iommu: binding 1 queues stopped",
+                              "iommu: binding 1 released", "virtio-blk: binding 1 detached",
                               "hub: binding 1 closed"):
                 assert forbidden not in failed, f"advanced without reset confirmation: {forbidden}"
             capture.with_suffix(".failed-console").write_text(failed)

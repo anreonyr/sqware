@@ -11,20 +11,22 @@ use wire::Message;
 use crate::driver::iommu::api as iommu;
 use crate::driver::iommu::domain_id::DomainId;
 use crate::driver::pci::api as pci;
-use crate::driver::recovery::api as recovery;
-use crate::driver::recovery::core::{AttachRequest, Core};
-use crate::driver::recovery::exchange::Exchange;
-use crate::driver::recovery::operation::Operation;
-use crate::driver::recovery::peers::Peers;
-use crate::driver::recovery::profile::Profile;
-use crate::driver::recovery::stage::Stage;
+use crate::driver::virtio::blk::client;
+use crate::driver::virtio::blk::exchange::Exchange;
+use crate::driver::virtio::blk::operation::Operation;
+use crate::driver::virtio::blk::peers::Peers;
+use crate::driver::virtio::blk::polled::Polled;
+use crate::driver::virtio::blk::profile::Profile;
+use crate::driver::virtio::blk::recovery::api;
+use crate::driver::virtio::blk::recovery::attach_request::AttachRequest;
+use crate::driver::virtio::blk::recovery::executor::Executor;
+use crate::driver::virtio::blk::stage::Stage;
 use crate::driver::shared::dma::{self, Coords};
-use super::{client, polled::Polled};
 
 const MS: usize = 3000;
 
 pub struct Coordinator {
-    pub core: Core,
+    pub executor: Executor,
     pub operation: Option<Operation>,
     pub last_serial: u64,
     pub profile: Profile,
@@ -32,9 +34,9 @@ pub struct Coordinator {
 }
 
 impl Coordinator {
-    pub fn new(core: Core, profile: Profile, domain: DomainId) -> Self {
+    pub fn new(executor: Executor, profile: Profile, domain: DomainId) -> Self {
         Self {
-            core,
+            executor,
             operation: None,
             last_serial: 0,
             profile,
@@ -229,7 +231,7 @@ impl Coordinator {
                 true
             }
             Err(_) => {
-                self.fail(PARTY_RECOVERY, recovery::ATTACH, 0);
+                self.fail(PARTY_RECOVERY, api::ATTACH, 0);
                 false
             }
         }
@@ -298,7 +300,7 @@ impl Coordinator {
             return false;
         };
         let Some(bar) = op.bar else {
-            self.fail(PARTY_RECOVERY, recovery::ATTACH, 0);
+            self.fail(PARTY_RECOVERY, api::ATTACH, 0);
             return false;
         };
         let request = AttachRequest {
@@ -311,13 +313,13 @@ impl Coordinator {
             multiplier: op.caps.2,
             device: op.caps.3,
         };
-        match self.core.attach(request) {
+        match self.executor.attach(request) {
             Ok(()) => {
                 self.stage(Stage::Acquire);
                 true
             }
             Err(fail) => {
-                self.fail(PARTY_RECOVERY, recovery::ATTACH, recovery::fail_to_code(Some(fail)));
+                self.fail(PARTY_RECOVERY, api::ATTACH, api::fail_to_code(Some(fail)));
                 false
             }
         }
@@ -392,10 +394,10 @@ impl Coordinator {
         if op.stage == Stage::Active {
             return false;
         }
-        let bar = match self.core.bar_grant(op.serial) {
+        let bar = match self.executor.bar_grant(op.serial) {
             Ok(bar) => bar,
             Err(error) => {
-                self.fail(PARTY_RECOVERY, pci::ENABLE, recovery::fail_to_code(Some(error)));
+                self.fail(PARTY_RECOVERY, pci::ENABLE, api::fail_to_code(Some(error)));
                 return false;
             }
         };
@@ -426,7 +428,7 @@ impl Coordinator {
         let (serial, iova, execution) = (op.serial, op.iova, op.execution);
         self.stage(Stage::Active);
         crate::debug::put(&alloc::format!(
-            "recovery: binding {} active iova={:#x} execution={}",
+            "virtio-blk: binding {} active iova={:#x} execution={}",
             serial,
             iova,
             execution.get(),
@@ -455,14 +457,14 @@ impl Coordinator {
         let Some(serial) = self.operation.as_ref().map(|op| op.serial) else {
             return false;
         };
-        match self.core.stop(serial) {
+        match self.executor.stop(serial) {
             Ok(Some(_)) => {
                 self.stage(Stage::Quiesce);
                 true
             }
             Ok(None) => false,
             Err(fail) => {
-                self.fail(PARTY_RECOVERY, recovery::STOP, recovery::fail_to_code(Some(fail)));
+                self.fail(PARTY_RECOVERY, api::STOP, api::fail_to_code(Some(fail)));
                 false
             }
         }
@@ -504,13 +506,13 @@ impl Coordinator {
         let Some(serial) = self.operation.as_ref().map(|op| op.serial) else {
             return false;
         };
-        match self.core.detach(serial) {
+        match self.executor.detach(serial) {
             Ok(()) => {
                 self.stage(Stage::CloseHandoff);
                 true
             }
             Err(fail) => {
-                self.fail(PARTY_RECOVERY, recovery::DETACH, recovery::fail_to_code(Some(fail)));
+                self.fail(PARTY_RECOVERY, api::DETACH, api::fail_to_code(Some(fail)));
                 false
             }
         }
@@ -519,14 +521,14 @@ impl Coordinator {
     fn close_handoff(&mut self) -> bool {
         if let Some((entry, _)) = self.operation.as_ref().and_then(|op| op.client) {
             if env::pie::release(entry, env::ReleaseMode::Revoke).is_err() {
-                self.fail(PARTY_RECOVERY, recovery::DETACH, 0);
+                self.fail(PARTY_RECOVERY, api::DETACH, 0);
                 return false;
             }
             self.operation.as_mut().unwrap().client = None;
         }
         if let Some((writer, _)) = self.operation.as_ref().and_then(|op| op.handoff) {
             if env::pie::release(writer, env::ReleaseMode::Revoke).is_err() {
-                self.fail(PARTY_RECOVERY, recovery::DETACH, 0);
+                self.fail(PARTY_RECOVERY, api::DETACH, 0);
                 return false;
             }
         }
@@ -669,7 +671,7 @@ impl Coordinator {
             op.closing = false;
             self.last_serial = op.serial;
             crate::debug::put(&alloc::format!(
-                "recovery: binding {} closed by coordinator",
+                "virtio-blk: binding {} closed by coordinator",
                 op.serial
             ));
         }
@@ -685,7 +687,7 @@ impl Coordinator {
         if let Some(operation) = self.operation.as_mut() {
             if operation.first_failure.is_none() {
                 crate::debug::put(&alloc::format!(
-                    "recovery: binding {} stage {:?} failed party={} op={} code={}",
+                    "virtio-blk: binding {} stage {:?} failed party={} op={} code={}",
                     operation.serial,
                     operation.stage,
                     party,

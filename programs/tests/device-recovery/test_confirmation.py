@@ -40,7 +40,7 @@ class ConfirmationEvidence(unittest.TestCase):
             with self.subTest(console=changed), self.assertRaises(AssertionError):
                 completed(changed, events, "reset")
 
-        failure = "recovery: binding 1 stage Disable failed party=2 op=3 code=0\n"
+        failure = "virtio-blk: binding 1 stage Disable failed party=2 op=3 code=0\n"
         controller = "ctl: confirmation failed party=2 op=3 code=0 state=Closing\n"
         removed = "confirmation: injection removed hits=5 references=2 ticks=5\n"
         early_disable = console.replace(
@@ -50,12 +50,12 @@ class ConfirmationEvidence(unittest.TestCase):
         )
         early_stop = console.replace(removed + "pci: binding 1 disabling bus-master\n"
             "pci: endpoint bus-master off=0x0\n"
-            "recovery: binding 1 stopped reset=1 status=0 queue_enable=0\n",
+            "virtio-blk: binding 1 stopped reset=1 status=0 queue_enable=0\n",
             removed + "pci: binding 1 disabling bus-master\n"
             "pci: endpoint bus-master off=0x0\n",
         ).replace(
             rejected,
-            "recovery: binding 1 stopped reset=1 status=0 queue_enable=0\n" + rejected,
+            "virtio-blk: binding 1 stopped reset=1 status=0 queue_enable=0\n" + rejected,
         )
         reordered = console.replace(armed + rejected, rejected + armed)
         order_variants = (

@@ -1,31 +1,31 @@
 """Synthetic console, kernel trace and backend records for checker tests."""
 
 CONSOLE = """boot: entry task=1
-system: minted recovery tid=8
+system: minted virtio-blk tid=8
 ctl: constructed device-work tid=10 owner=hub
 ctl: binding 1 auxiliary=11 alive=true
 pci: space task=7 ecam=0x29000 functions=65536
 pci: ready functions=1
-recovery: ready hub=4 pci=7 requester=8 key=41
+virtio-blk: ready hub=4 pci=7 requester=8 key=41
 iommu: binding 1 published requester=8 held=6 ddtp=0x1234
 pci: endpoint bus-master on=0x4
-recovery: binding 1 active iova=0x200200000 execution=10
+virtio-blk: binding 1 active iova=0x200200000 execution=10
 work: rang the in-flight request doorbell
-ruin: requested recovery
+ruin: requested virtio-blk
 hub: binding 1 execution domain stopped (tid=10)
 iommu: binding 1 invalidated frames held=6 (not released)
 pci: binding 1 disabling bus-master
 pci: endpoint bus-master off=0x0
-recovery: binding 1 stopped reset=1 status=0 queue_enable=0
+virtio-blk: binding 1 stopped reset=1 status=0 queue_enable=0
 iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0
 iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true
-recovery: binding 1 detached
+virtio-blk: binding 1 detached
 hub: binding 1 closed and released device 41
 ctl: drained read sector_ok=true status=0 used=0 len=0
 ctl: binding 1 auxiliary=11 alive=false
 ctl: in-flight binding settled by static Driver Ruin
 exit tid=9 reason=0x0 note: device-ctl-ruin: done
-ruin: recovery dead after reply
+ruin: virtio-blk dead after reply
 exit tid=1 reason=0x0 note: iommu-ruin: done
 task: all tasks exited, system halted
 memory: frame_allocations before=85 after=85

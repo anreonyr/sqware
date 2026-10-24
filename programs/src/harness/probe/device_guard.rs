@@ -21,7 +21,7 @@ use guard::Guard;
 pub(crate) const REQUEST: env::Mark = env::Mark::of("device-guard/request");
 
 const CONTROLLER: &str = "device-ctl-guard";
-const TARGETS: [&str; 3] = ["pci", "iommu", "recovery"];
+const TARGETS: [&str; 3] = ["pci", "iommu", "virtio-blk"];
 
 /// Run the guard death scene from the deployment bootstrap image.
 pub fn run() -> Result<(), env::Reason> {
@@ -29,7 +29,7 @@ pub fn run() -> Result<(), env::Reason> {
     let target = match boot.catalog.deployment() {
         "iommu-guard-pci" => "pci",
         "iommu-guard-iommu" => "iommu",
-        "iommu-guard-recovery" => "recovery",
+        "iommu-guard-virtio-blk" => "virtio-blk",
         _ => return Err(9usize),
     };
     crate::debug::put(&alloc::format!(

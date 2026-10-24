@@ -95,7 +95,7 @@ pub fn accord(token: PieToken) -> Result<PieToken, env::PieFail> {
     STATE.with(|state| {
         let mut state = state.borrow_mut();
         let region = region(&mut state.regions, token);
-        assert!(region.mapped, "recovery mapping must precede the child grant");
+        assert!(region.mapped, "attachment mapping must precede the child grant");
         if state.grant_fail {
             return Err(env::PieFail::OoM);
         }

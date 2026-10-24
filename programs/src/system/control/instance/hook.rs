@@ -33,11 +33,12 @@ pub fn select(
     mut jobs: ResMut<crate::system::assembly::Jobs>,
     mut dispatch: ResMut<Dispatch<Key, &'static str>>,
 ) -> Result<Progress, Fail> {
-    while let Some((task, team, state, started, expected, consumed)) = control
+    while let Some((task, team, state, started, expected, reclaimed)) = control
         .instances
         .get(jobs.next_hook())
         .map(|item| (item.task, item.team(), item.state, item.started, item.reference,
-            matches!(item.receipt, Receipt::Consumed | Receipt::Reported)))
+            matches!(item.receipt, Receipt::Consumed | Receipt::Reported)
+                || item.pruned_owner_receipt()))
     {
         let next = jobs.next_hook() + 1;
         jobs.advance_hook(next);
@@ -50,7 +51,7 @@ pub fn select(
         let key = match state {
             State::Starting if !started => Some(Key::Prepare),
             State::Stopping
-                if consumed || team.is_some_and(|team| {
+                if reclaimed || team.is_some_and(|team| {
                     matches!(
                         unit::join(env::UnitTarget::Team(team), Wait::POLL, false),
                         Ok(env::JoinReply::Complete)
@@ -196,7 +197,11 @@ pub fn reclaim(
     {
         return Ok(Progress::Done);
     }
-    match item.receipt.consume() {
+    match if item.consume_pruned_owner_receipt() {
+        Ok(true)
+    } else {
+        item.receipt.consume()
+    } {
         Ok(consumed) => {
             if consumed { control.reclaimed_at = env::chrono::clock(); }
             Ok(Progress::Done)

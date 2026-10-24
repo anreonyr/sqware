@@ -7,7 +7,7 @@ status/queue reads and the real block-hold sequence are explicit records.
 import copy
 import json
 
-FAILURE = "recovery: binding 1 stage Stop failed party=4 op=2 code=4"
+FAILURE = "virtio-blk: binding 1 stage Stop failed party=4 op=2 code=4"
 
 DTS = """
 / {
@@ -24,10 +24,10 @@ FAILED_CONSOLE = """boot: entry task=1
 system: minted hub tid=4
 system: minted iommu tid=5
 system: minted pci tid=6
-system: minted recovery tid=7
+system: minted virtio-blk tid=7
 system: minted device-ctl-fault tid=8
 pci: space task=6 ecam=0x2c000 functions=65536
-recovery: ready hub=4 pci=6 requester=8 key=1
+virtio-blk: ready hub=4 pci=6 requester=8 key=1
 ctl: constructed device-work tid=9 owner=hub
 ctl: binding 1 auxiliary=10 alive=true
 pci: endpoint requester=8 bar=4 address=0x400000000 size=0x4000 bus-master off=0x0
@@ -39,41 +39,41 @@ CONSOLE = """boot: entry task=1
 system: minted hub tid=4
 system: minted iommu tid=5
 system: minted pci tid=6
-system: minted recovery tid=7
+system: minted virtio-blk tid=7
 system: minted device-ctl-fault tid=8
 pci: space task=6 ecam=0x2c000 functions=65536
-recovery: ready hub=4 pci=6 requester=8 key=1
+virtio-blk: ready hub=4 pci=6 requester=8 key=1
 ctl: constructed device-work tid=9 owner=hub
 ctl: binding 1 auxiliary=10 alive=true
 pci: endpoint requester=8 bar=4 address=0x400000000 size=0x4000 bus-master off=0x0
 iommu: binding 1 invalidated frames held=6 (not released)
 pci: binding 1 disabling bus-master
-recovery: binding 1 stage Stop failed party=4 op=2 code=4
-recovery: binding 1 stopped reset=1 status=0 queue_enable=0
+virtio-blk: binding 1 stage Stop failed party=4 op=2 code=4
+virtio-blk: binding 1 stopped reset=1 status=0 queue_enable=0
 iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0
 iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true
-recovery: binding 1 detached
-recovery: binding 1 closed by coordinator
+virtio-blk: binding 1 detached
+virtio-blk: binding 1 closed by coordinator
 hub: binding 1 closed and released device 1
 ctl: binding 1 auxiliary=10 alive=false
 ctl: closed binding 1 failure party=4 op=2 code=4
 ctl: constructed device-work tid=11 owner=hub
 ctl: binding 2 auxiliary=12 alive=true
-recovery: binding 2 active iova=0x200200000 execution=11
+virtio-blk: binding 2 active iova=0x200200000 execution=11
 ctl: stale iova submitted sentinel_held=true status_held=true
 hub: binding 2 execution domain stopped (tid=11)
 iommu: binding 2 invalidated frames held=6 (not released)
 pci: binding 2 disabling bus-master
-recovery: binding 2 stopped reset=1 status=0 queue_enable=0
+virtio-blk: binding 2 stopped reset=1 status=0 queue_enable=0
 iommu: binding 2 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=127 last_did=8
 iommu: binding 2 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true
-recovery: binding 2 detached
-recovery: binding 2 closed by coordinator
+virtio-blk: binding 2 detached
+virtio-blk: binding 2 closed by coordinator
 hub: binding 2 closed and released device 1
 ctl: binding 2 auxiliary=12 alive=false
 exit tid=8 reason=0x0 note: device-ctl: done
 system: retired name=device-ctl-fault task=8 team=7
-system: retired name=recovery task=7 team=6
+system: retired name=virtio-blk task=7 team=6
 system: retired name=iommu task=5 team=4
 system: retired name=pci task=6 team=5
 system: retired name=hub task=4 team=3

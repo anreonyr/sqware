@@ -32,7 +32,7 @@ class DualEvidence(unittest.TestCase):
     def test_one_device_or_one_domain_is_not_dual_evidence(self):
         variants = {
             "device": CONSOLE.replace(
-                "recovery: ready hub=4 pci=6 requester=16 key=2\n", ""),
+                "virtio-blk: ready hub=4 pci=6 requester=16 key=2\n", ""),
             "domain": CONSOLE.replace(
                 "iommu: domain 2 established owner=7 requester=16\n", ""),
         }
@@ -80,7 +80,7 @@ class DualEvidence(unittest.TestCase):
                 "work: binding 2 exiting without Close",
                 "work: binding 2 requesting Close::Normal"),
             "no-stop": CONSOLE.replace(
-                "recovery: binding 1 stopped reset=1 status=0 queue_enable=0\n", ""),
+                "virtio-blk: binding 1 stopped reset=1 status=0 queue_enable=0\n", ""),
             "engine-not-shared": CONSOLE.replace(
                 "iommu: binding 1 released shared ddtp=0x23fd6002 cqcsr=0x10001 "
                 "fqcsr=0x10001 pqcsr=0x0 queue_enable=1 frames=0 engine_off=false",
@@ -94,8 +94,8 @@ class DualEvidence(unittest.TestCase):
     def test_foreign_key_or_domain_owner_is_rejected(self):
         variants = {
             "key": CONSOLE.replace(
-                "recovery: ready hub=4 pci=6 requester=16 key=2",
-                "recovery: ready hub=4 pci=6 requester=16 key=9"),
+                "virtio-blk: ready hub=4 pci=6 requester=16 key=2",
+                "virtio-blk: ready hub=4 pci=6 requester=16 key=9"),
             "owner": CONSOLE.replace(
                 "iommu: domain 2 established owner=7 requester=16",
                 "iommu: domain 2 established owner=8 requester=16"),

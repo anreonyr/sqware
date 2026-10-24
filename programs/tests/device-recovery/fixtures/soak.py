@@ -6,10 +6,10 @@ def evidence(count):
         "system: minted hub tid=4",
         "system: minted pci tid=6",
         "system: minted iommu tid=7",
-        "system: minted recovery tid=8",
+        "system: minted virtio-blk tid=8",
         "pci: space task=6 ecam=0x29000 functions=1",
         "pci: ready functions=1",
-        "recovery: ready hub=4 pci=6 requester=8 key=41",
+        "virtio-blk: ready hub=4 pci=6 requester=8 key=41",
     ]
     events = []
     for serial in range(1, count + 1):
@@ -17,15 +17,15 @@ def evidence(count):
         lines.extend((
             f"ctl: constructed device-work tid={main} owner=hub",
             f"ctl: binding {serial} auxiliary={auxiliary} alive=true",
-            f"recovery: binding {serial} active iova={0x200000000 + serial * 0x200000:#x} execution={main}",
+            f"virtio-blk: binding {serial} active iova={0x200000000 + serial * 0x200000:#x} execution={main}",
             "ctl: served used=1 len=513 written_ok=true sector_ok=true status=0",
             f"hub: binding {serial} execution domain stopped (tid={main})",
             f"iommu: binding {serial} invalidated frames held=6 (not released)",
             f"pci: binding {serial} disabling bus-master",
-            f"recovery: binding {serial} stopped reset=1 status=0 queue_enable=0",
+            f"virtio-blk: binding {serial} stopped reset=1 status=0 queue_enable=0",
             f"iommu: binding {serial} queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0",
             f"iommu: binding {serial} released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true",
-            f"recovery: binding {serial} detached",
+            f"virtio-blk: binding {serial} detached",
             f"hub: binding {serial} closed and released device 41",
             f"ctl: binding {serial} auxiliary={auxiliary} alive=false",
             f"ctl: generation {serial} capabilities=12 launch=1 command=1",

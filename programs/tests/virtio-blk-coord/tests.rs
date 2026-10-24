@@ -5,12 +5,12 @@ use env::{PieToken, TaskId};
 use hub_api::coordination::{Prepare, Release, Wire, PREPARE, RELEASE};
 use hub_api::{BindingState, Failure, PARTY_PCI};
 
-use crate::driver::recovery::coord::Coordinator;
-use crate::driver::recovery::core::Core;
-use crate::driver::recovery::operation::Operation;
-use crate::driver::recovery::peers::Peers;
-use crate::driver::recovery::profile::Profile;
-use crate::driver::recovery::stage::Stage;
+use crate::driver::virtio::blk::coord::Coordinator;
+use crate::driver::virtio::blk::operation::Operation;
+use crate::driver::virtio::blk::peers::Peers;
+use crate::driver::virtio::blk::profile::Profile;
+use crate::driver::virtio::blk::recovery::executor::Executor;
+use crate::driver::virtio::blk::stage::Stage;
 use crate::fixtures::action::Action;
 use crate::fixtures::handoff;
 use crate::fixtures::group::Group;
@@ -45,9 +45,9 @@ fn setup() -> Bench {
         pci: Peer::new(script.clone()),
         iommu: Peer::new(script.clone()),
     };
-    let core = Core::new(peers.pci.host());
+    let executor = Executor::new(peers.pci.host());
     Bench {
-        coord: Coordinator::new(core, profile(KEY, 3), crate::domain_id::DomainId::new(ENGINE, DOMAIN)),
+        coord: Coordinator::new(executor, profile(KEY, 3), crate::domain_id::DomainId::new(ENGINE, DOMAIN)),
         peers,
         script,
         stages: Vec::new(),
@@ -68,8 +68,8 @@ fn group() -> Group {
     let coords = [(KEY, 3, 23u64), (8, 4, 24u64)]
         .into_iter()
         .map(|(key, requester, domain)| {
-            let core = Core::new(peers.pci.host());
-            Coordinator::new(core, profile(key, requester), crate::domain_id::DomainId::new(ENGINE, domain))
+            let executor = Executor::new(peers.pci.host());
+            Coordinator::new(executor, profile(key, requester), crate::domain_id::DomainId::new(ENGINE, domain))
         })
         .collect();
     Group { coords, peers, script, stages: vec![Vec::new(), Vec::new()] }
@@ -376,7 +376,7 @@ fn successful_prepare_then_release_uses_exact_order() {
             Action::PciRelease,
         ]
     );
-    assert_eq!(bench.coord.core.attached(), 0);
+    assert_eq!(bench.coord.executor.attached(), 0);
 }
 
 #[test]
@@ -439,22 +439,22 @@ fn lost_acquire_ack_then_release_runs_iommu_cleanup_and_keeps_binding() {
 }
 
 #[test]
-fn attach_error_after_core_owns_map_still_stops_and_detaches() {
+fn attach_error_after_executor_owns_map_still_stops_and_detaches() {
     let mut bench = setup();
     state::STATE.with(|state| state.borrow_mut().grant_fail = true);
     let said = bench.prepare(5);
     assert_eq!(said.state, BindingState::Preparing.code());
     assert_eq!(stage(&bench.coord), Some(Stage::Attach));
     assert!(op(&bench.coord).bar.is_some());
-    assert_eq!(bench.coord.core.attached(), 1);
-    assert_eq!(bench.coord.core.bar_grant(5), Err(crate::recovery_api::Fail::Conflict));
+    assert_eq!(bench.coord.executor.attached(), 1);
+    assert_eq!(bench.coord.executor.bar_grant(5), Err(crate::api::Fail::Conflict));
     assert_eq!(state::STATE.with(|state| state.borrow().opens), 1);
 
     state::STATE.with(|state| state.borrow_mut().grant_fail = false);
     bench.release();
     assert_eq!(stage(&bench.coord), Some(Stage::Done));
     assert!(bench.script.borrow().actions.contains(&Action::CoreStop));
-    assert_eq!(bench.coord.core.attached(), 0);
+    assert_eq!(bench.coord.executor.attached(), 0);
 }
 
 #[test]
@@ -800,8 +800,8 @@ fn one_pending_coordinator_does_not_block_another_with_shared_peers() {
     assert_eq!(op(&group.coords[1]).serial, 6);
     assert_eq!(op(&group.coords[1]).iova, 0x2_0020_0000);
     assert_eq!(stage(&group.coords[0]), Some(Stage::Place));
-    assert_eq!(group.coords[0].core.attached(), 0);
-    assert_eq!(group.coords[1].core.attached(), 1);
+    assert_eq!(group.coords[0].executor.attached(), 0);
+    assert_eq!(group.coords[1].executor.attached(), 1);
 
     group.script.borrow_mut().hold_pci = None;
     let first = group.prepare(0, 5);
@@ -873,12 +873,12 @@ fn independent_floors_domains_and_sources_survive_neighbour_progress() {
     assert_eq!(group.coords[0].last_serial, 5);
     assert_eq!(stage(&group.coords[1]), Some(Stage::Active));
     assert_eq!(group.coords[1].last_serial, 0);
-    assert_eq!(group.coords[0].core.attached(), 0);
-    assert_eq!(group.coords[1].core.attached(), 1);
+    assert_eq!(group.coords[0].executor.attached(), 0);
+    assert_eq!(group.coords[1].executor.attached(), 1);
     assert_eq!(op(&group.coords[1]).serial, 6);
     assert_eq!(op(&group.coords[1]).iova, 0x2_0020_0000);
 
     let late = group.turn(0, prepare(5, EXEC, KEY));
     assert_eq!(late.status, hub_api::fail_to_code(Some(hub_api::Fail::Conflict)));
-    assert_eq!(group.coords[1].core.attached(), 1, "the neighbour keeps its binding");
+    assert_eq!(group.coords[1].executor.attached(), 1, "the neighbour keeps its binding");
 }

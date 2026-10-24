@@ -11,14 +11,14 @@ CONSOLE = """boot: entry task=1
 system: minted hub tid=4
 system: minted iommu tid=5
 system: minted pci tid=6
-system: minted recovery tid=7
+system: minted virtio-blk tid=7
 system: minted device-ctl-dual tid=8
 pci: space task=6 ecam=0x2c000 functions=65536
 iommu: domain 1 established owner=7 requester=8
-recovery: ready hub=4 pci=6 requester=8 key=1
+virtio-blk: ready hub=4 pci=6 requester=8 key=1
 iommu: domain 2 established owner=7 requester=16
-recovery: ready hub=4 pci=6 requester=16 key=2
-recovery: serving hub=4 pci=6 devices=2
+virtio-blk: ready hub=4 pci=6 requester=16 key=2
+virtio-blk: serving hub=4 pci=6 devices=2
 ctl: constructed device-work tid=9 owner=hub
 ctl: binding 1 auxiliary=10 alive=true
 pci: endpoint requester=8 bar=4 address=0x400000000 size=0x4000 bus-master off=0x0
@@ -36,10 +36,10 @@ work: binding 1 requesting Close::Normal
 hub: binding 1 execution domain stopped (tid=9)
 iommu: binding 1 invalidated frames held=6 (not released)
 pci: binding 1 disabling bus-master
-recovery: binding 1 stopped reset=1 status=0 queue_enable=0
+virtio-blk: binding 1 stopped reset=1 status=0 queue_enable=0
 iommu: binding 1 quiesced shared engine on cqcsr=0x10001 fqcsr=0x10001 pqcsr=0x0 queue_enable=1 faults=0 last_did=0 engine_off=false
 iommu: binding 1 released shared ddtp=0x23fd6002 cqcsr=0x10001 fqcsr=0x10001 pqcsr=0x0 queue_enable=1 frames=0 engine_off=false
-recovery: binding 1 detached
+virtio-blk: binding 1 detached
 hub: binding 1 closed and released device 1
 ctl: binding 1 auxiliary=10 alive=false
 dual: read serial=2 pattern=165 round=1 used=2 len=513 sector_ok=true status=0
@@ -47,17 +47,17 @@ work: binding 2 exiting without Close
 hub: binding 2 execution domain stopped (tid=11)
 iommu: binding 2 invalidated frames held=6 (not released)
 pci: binding 2 disabling bus-master
-recovery: binding 2 stopped reset=1 status=0 queue_enable=0
+virtio-blk: binding 2 stopped reset=1 status=0 queue_enable=0
 iommu: binding 2 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0
 iommu: binding 2 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true
-recovery: binding 2 detached
+virtio-blk: binding 2 detached
 hub: binding 2 closed and released device 2
 ctl: binding 2 auxiliary=12 alive=false
 dual: generation 1 settled a=1 b=2 capabilities=17 launch=1 command=2 a_fault=false b_fault=true
 dual: completed generations=1
 exit tid=8 reason=0x0 note: device-ctl-dual: done
 system: retired name=device-ctl-dual task=8 team=7
-system: retired name=recovery task=7 team=6
+system: retired name=virtio-blk task=7 team=6
 system: retired name=iommu task=5 team=4
 system: retired name=pci task=6 team=5
 system: retired name=hub task=4 team=3

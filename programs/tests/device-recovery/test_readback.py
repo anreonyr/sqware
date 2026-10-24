@@ -104,7 +104,7 @@ class ReadbackEvidence(unittest.TestCase):
                   if event.get("kind") != {"room": {"reap": {"tid": 10}}}]
         no_hold = FAILED_CONSOLE.replace(
             "iommu: binding 1 invalidated frames held=6 (not released)\n", "")
-        early = FAILED_CONSOLE + "recovery: binding 1 stopped reset=1 status=0 queue_enable=0\n"
+        early = FAILED_CONSOLE + "virtio-blk: binding 1 stopped reset=1 status=0 queue_enable=0\n"
         for name, kwargs in {
             "main": {"prefix": no_main},
             "aux": {"prefix": no_aux},

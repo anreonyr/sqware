@@ -66,7 +66,7 @@ class BlockFixture(unittest.TestCase):
     def test_boot_read_then_held_dma(self):
         self.request()
         self.reply()
-        self.console.write_text("recovery: binding 1 active iova=0x100000 execution=10\n")
+        self.console.write_text("virtio-blk: binding 1 active iova=0x100000 execution=10\n")
         self.request()
         state = pathlib.Path(str(self.path) + ".json")
         until = time.monotonic() + 2

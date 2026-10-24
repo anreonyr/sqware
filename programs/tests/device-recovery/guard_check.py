@@ -11,16 +11,16 @@ import json
 import re
 from pathlib import Path
 
-TARGETS = ("pci", "iommu", "recovery")
+TARGETS = ("pci", "iommu", "virtio-blk")
 FORBIDDEN = (
     "iommu: binding 1 invalidated",
     "pci: binding 1 disabling bus-master",
     "pci: endpoint bus-master off=0x0",
     "hub: binding 1 execution domain stopped",
-    "recovery: binding 1 stopped",
+    "virtio-blk: binding 1 stopped",
     "iommu: binding 1 queues stopped",
     "iommu: binding 1 released",
-    "recovery: binding 1 detached",
+    "virtio-blk: binding 1 detached",
     "hub: binding 1 closed",
     "task: all tasks exited, system halted",
     "critical guard returned after slay",
@@ -80,7 +80,7 @@ def verify(console, held_console, events, held_events, block, feed, target, hart
     assert all(record.start() < submitted.start() for record in drivers.values())
     published = one(console, r"^iommu: binding 1 published requester=\d+ held=6 ddtp=0x[0-9a-f]+$")
     master = one(console, r"^pci: endpoint bus-master on=0x4$")
-    active = one(console, r"^recovery: binding 1 active iova=0x[0-9a-f]+ execution=\d+$")
+    active = one(console, r"^virtio-blk: binding 1 active iova=0x[0-9a-f]+ execution=\d+$")
     doorbell = one(console, r"^work: rang the in-flight request doorbell$")
     assert published.start() < master.start() < active.start() < doorbell.start() < submitted.start(), (
         "DMA publication/submission out of order"
@@ -107,10 +107,10 @@ def verify(console, held_console, events, held_events, block, feed, target, hart
         "pci: binding 1 disabling bus-master",
         "pci: endpoint bus-master off=0x0",
         "hub: binding 1 execution domain stopped",
-        "recovery: binding 1 stopped",
+        "virtio-blk: binding 1 stopped",
         "iommu: binding 1 released",
         "hub: binding 1 closed",
-        "recovery: binding 1 detached",
+        "virtio-blk: binding 1 detached",
     ):
         assert advanced not in prefix, f"pre-trigger binding already advanced: {advanced}"
     for forbidden in FORBIDDEN:

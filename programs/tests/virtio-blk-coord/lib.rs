@@ -19,34 +19,34 @@ pub mod pci_api;
 pub mod iommu_api;
 #[path = "../../src/driver/iommu/domain_id.rs"]
 pub mod domain_id;
-#[path = "../../src/driver/recovery/api.rs"]
-pub mod recovery_api;
-#[path = "../../src/driver/recovery/client/mod.rs"]
+#[path = "../../src/driver/virtio/blk/recovery/api.rs"]
+pub mod api;
+#[path = "../../src/driver/virtio/blk/client/mod.rs"]
 pub mod client;
-#[path = "../../src/driver/recovery/attach_request.rs"]
+#[path = "../../src/driver/virtio/blk/recovery/attach_request.rs"]
 pub mod attach_request;
 #[path = "../../src/driver/shared/coords.rs"]
 pub mod coords;
-#[path = "../../src/driver/recovery/operation.rs"]
+#[path = "../../src/driver/virtio/blk/operation.rs"]
 pub mod operation;
-#[path = "../../src/driver/recovery/exchange.rs"]
+#[path = "../../src/driver/virtio/blk/exchange.rs"]
 pub mod exchange;
-#[path = "../../src/driver/recovery/peers.rs"]
+#[path = "../../src/driver/virtio/blk/peers.rs"]
 pub mod peers;
-#[path = "../../src/driver/recovery/polled.rs"]
+#[path = "../../src/driver/virtio/blk/polled.rs"]
 pub mod polled;
 #[path = "../../../crates/ipc/src/time.rs"]
 pub mod time;
-#[path = "../../src/driver/recovery/profile.rs"]
+#[path = "../../src/driver/virtio/blk/profile.rs"]
 pub mod profile;
-#[path = "../../src/driver/recovery/stage.rs"]
+#[path = "../../src/driver/virtio/blk/stage.rs"]
 pub mod stage;
-#[path = "../../src/driver/recovery/coord.rs"]
+#[path = "../../src/driver/virtio/blk/coord.rs"]
 pub mod coord;
-#[path = "../../src/driver/recovery/core.rs"]
-pub mod recovery_core;
-#[path = "../../src/driver/recovery/device.rs"]
-pub mod recovery_device;
+#[path = "../../src/driver/virtio/blk/recovery/executor.rs"]
+pub mod executor;
+#[path = "../../src/driver/virtio/blk/recovery/attachment.rs"]
+pub mod attachment;
 #[path = "../../src/driver/virtio/registers.rs"]
 pub mod registers;
 #[path = "../../src/driver/virtio/caps.rs"]
@@ -154,6 +154,16 @@ pub mod driver {
                 crate::virtio_device::reset_begin(bar, caps);
             }
         }
+
+        pub mod blk {
+            pub use crate::{
+                client, coord, exchange, operation, peers, polled, profile, stage,
+            };
+
+            pub mod recovery {
+                pub use crate::{api, attach_request, attachment, executor};
+            }
+        }
     }
     pub mod shared {
         pub mod dma {
@@ -166,12 +176,6 @@ pub mod driver {
             }
         }
         pub use crate::fixtures::peer;
-    }
-    pub mod recovery {
-        pub use crate::recovery_api as api;
-        pub use crate::{client, coord, exchange, operation, peers, polled, profile, stage};
-        pub use crate::recovery_core as core;
-        pub use crate::recovery_device as device;
     }
 }
 

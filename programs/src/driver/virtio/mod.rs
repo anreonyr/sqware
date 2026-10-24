@@ -1,5 +1,6 @@
-//! Shared virtio-pci device protocol, independent of the PCI backend.
+//! Shared virtio-pci device protocol and the resident block unit, independent of the PCI backend.
 
+pub mod blk;
 pub mod caps;
 pub mod device;
 mod registers;

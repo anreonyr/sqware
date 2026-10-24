@@ -1,5 +1,9 @@
 # Guard death scene
 
+The evidence below records the earlier `recovery` unit identity. Its current
+full-lifecycle name and guard target are `virtio-blk`; the migration and final
+acceptance are tracked in [driver-device-boundary.md](driver-device-boundary.md).
+
 ## Scope
 
 This scene proves that a deployed PCI, IOMMU, or Recovery static domain is

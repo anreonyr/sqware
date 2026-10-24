@@ -6,10 +6,10 @@ pub fn accord(
 ) -> Result<PieToken, PieFail> {
     assert_eq!(token, BAR);
     assert_eq!(subset, Permission::FETCH | Permission::STORE | Permission::ONLY);
-    // Core measured the mapped BAR as exactly `pages * PAGE_SIZE`; Accord inherits it.
+    // Executor measured the mapped BAR as exactly `pages * PAGE_SIZE`; Accord inherits it.
     STATE.with(|state| {
         let mut state = state.borrow_mut();
-        assert!(state.mapped, "recovery mapping must precede the child grant");
+        assert!(state.mapped, "attachment mapping must precede the child grant");
         if state.grant_fail {
             return Err(PieFail::OoM);
         }

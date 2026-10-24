@@ -16,7 +16,7 @@ use system_api::operator::Path;
 use system_client::operator;
 use wire::Message;
 
-use crate::driver::recovery::client;
+use crate::driver::virtio::blk::client;
 use crate::driver::virtio::{Caps, Virtio};
 use crate::driver::shared::dma::{self, HubDma};
 use crate::driver::shared::peer::Peer;
@@ -147,7 +147,9 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         0,
     )?;
     if mode == Mode::Before {
-        // 不交窗：发布不会发生。等控制器说“收场”。
+        // 等 BAR 授权实际到达后再中止；不交 DMA 窗口。
+        let (_binding, coordinator) = await_binding(&hub, serial)?;
+        await_bar_gift(serial, coordinator)?;
         await_command(command, Command::Close)?;
         crate::debug::put("work: requesting Close::Fault before publish");
         hub.close(Wait::AtMost(MS), serial, hub_api::Close::Fault)?;
@@ -167,20 +169,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     if size != layout::SPAN as usize {
         return Err("work: window is not the scene window");
     }
-    let until = env::chrono::clock().saturating_add(MS as u64 * 1_000_000);
-    let mut latest = None;
-    let (coordinator, entry) = loop {
-        match hub.client(Wait::AtMost(MS), serial) {
-            Ok(Some(endpoint)) => break endpoint,
-            Ok(None) => {},
-            Err(cause) => latest = Some(cause),
-        }
-        if env::chrono::clock() >= until {
-            return Err(latest.unwrap_or("work: binding client timeout"));
-        }
-        let _ = execution::room::park(::core::time::Duration::from_millis(1));
-    };
-    let binding = Peer::<client::Call>::open_checked(entry, (coordinator, client::ENTRY), client::BACK)?;
+    let (binding, coordinator) = await_binding(&hub, serial)?;
     let described = binding.call(Wait::AtMost(MS), |back| client::Wire::Observe(client::Observe {
         op: client::OBSERVE, hub: hub.host(), serial, back,
     }))?;
@@ -333,6 +322,61 @@ fn report(
     (said.status == wire::OK)
         .then_some(())
         .ok_or("work: report refused")
+}
+
+/// 从 Hub 取同一绑定的协调方与客户门牌，并按真实开者/记号开面。
+fn await_binding(
+    hub: &HubDma,
+    serial: u64,
+) -> Result<(Peer<client::Call>, env::TaskId), &'static str> {
+    let until = env::chrono::clock().saturating_add(MS as u64 * 1_000_000);
+    let mut latest = None;
+    let (coordinator, entry) = loop {
+        match hub.client(Wait::AtMost(MS), serial) {
+            Ok(Some(endpoint)) => break endpoint,
+            Ok(None) => {}
+            Err(cause) => latest = Some(cause),
+        }
+        if env::chrono::clock() >= until {
+            return Err(latest.unwrap_or("work: binding client timeout"));
+        }
+        let _ = execution::room::park(::core::time::Duration::from_millis(1));
+    };
+    let binding = Peer::<client::Call>::open_checked(
+        entry,
+        (coordinator, client::ENTRY),
+        client::BACK,
+    )?;
+    Ok((binding, coordinator))
+}
+
+/// Before-publish 场景只核真实 BAR 子授权已到本执行方；不做物理映射，也不额外取得权柄。
+fn await_bar_gift(serial: u64, coordinator: env::TaskId) -> Result<(), &'static str> {
+    let until = env::chrono::clock().saturating_add(MS as u64 * 1_000_000);
+    let mark = dma::binding_mark(serial);
+    let permission = env::Permission::FETCH | env::Permission::STORE | env::Permission::ONLY;
+    loop {
+        let mut gift = None;
+        for info in resource::raw::pies() {
+            if info.alive
+                && info.kind == env::PieKind::Pole
+                && info.mark == mark
+                && info.permission == permission
+                && info.vestor == coordinator
+            {
+                if gift.replace(info.token).is_some() {
+                    return Err("work: ambiguous bar gift");
+                }
+            }
+        }
+        if gift.is_some() {
+            return Ok(());
+        }
+        if env::chrono::clock() >= until {
+            return Err("work: bar gift timeout");
+        }
+        let _ = execution::room::park(::core::time::Duration::from_millis(1));
+    }
 }
 
 fn await_window(token: PieToken) -> Result<PieToken, &'static str> {

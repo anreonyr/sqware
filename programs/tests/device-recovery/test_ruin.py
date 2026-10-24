@@ -42,10 +42,10 @@ class RuinEvidence(unittest.TestCase):
     def test_premature_stop_release_or_reply(self):
         for line in (
             "pci: endpoint bus-master off=0x0",
-            "recovery: binding 1 stopped",
+            "virtio-blk: binding 1 stopped",
             "iommu: binding 1 released",
             "hub: binding 1 closed",
-            "ruin: recovery dead after reply",
+            "ruin: virtio-blk dead after reply",
             "system: forced shutdown admitted after DMA settlement",
             "system: forced shutdown admitted after retirement settlement",
         ):
@@ -53,8 +53,8 @@ class RuinEvidence(unittest.TestCase):
                 pending(HELD + line + "\n", EVENTS[:2])
 
     def test_reversed_stop_chain(self):
-        log = CONSOLE.replace("ruin: requested recovery\n", "")
-        log = "ruin: requested recovery\n" + log
+        log = CONSOLE.replace("ruin: requested virtio-blk\n", "")
+        log = "ruin: requested virtio-blk\n" + log
         with self.assertRaisesRegex(AssertionError, "out of order"):
             completed(log, EVENTS, BACKEND)
 

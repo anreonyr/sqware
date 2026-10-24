@@ -23,6 +23,10 @@ struct Effects {
     embark_busy: bool,
     debark_fail: Option<UnitFail>,
     alive_tasks: Vec<TaskId>,
+    denied_tasks: Vec<TaskId>,
+    denied_teams: Vec<TeamId>,
+    failed_tasks: Vec<TaskId>,
+    failed_teams: Vec<TeamId>,
 }
 thread_local! {
     static EFFECTS: RefCell<Effects> = RefCell::new(Effects::default());
@@ -44,27 +48,47 @@ pub mod unit {
     }
 
     pub fn join(
-        _: crate::UnitTarget,
+        target: crate::UnitTarget,
         _: crate::Wait,
         receive: bool,
     ) -> Result<crate::JoinReply, crate::Error> {
-        Ok(crate::EFFECTS.with(|effects| {
+        crate::EFFECTS.with(|effects| {
             let mut effects = effects.borrow_mut();
+            if let crate::UnitTarget::Team(team) = target {
+                if effects.denied_teams.contains(&team) {
+                    return Err(crate::Error { source: UnitFail::Denied });
+                }
+                if effects.failed_teams.contains(&team) {
+                    return Err(crate::Error { source: UnitFail::Busy });
+                }
+            }
             if !receive {
-                return if effects.alive_tasks.is_empty() {
+                return Ok(if effects.alive_tasks.is_empty() {
                     crate::JoinReply::Complete
                 } else {
                     crate::JoinReply::Pending
-                };
+                });
             }
-            effects
+            Ok(effects
                 .exits
                 .pop_front()
-                .map_or(crate::JoinReply::Pending, crate::JoinReply::Reaped)
-        }))
+                .map_or(crate::JoinReply::Pending, crate::JoinReply::Reaped))
+        })
     }
     pub fn join_task(task: crate::TaskId, _: crate::Wait) -> Result<bool, crate::Error> {
-        Ok(crate::EFFECTS.with(|effects| !effects.borrow().alive_tasks.contains(&task)))
+        crate::EFFECTS.with(|effects| {
+            let effects = effects.borrow();
+            if effects.alive_tasks.contains(&task) {
+                return Ok(false);
+            }
+            if effects.failed_tasks.contains(&task) {
+                return Err(crate::Error { source: UnitFail::Busy });
+            }
+            if effects.denied_tasks.contains(&task) {
+                return Err(crate::Error { source: UnitFail::Denied });
+            }
+            Ok(true)
+        })
     }
     pub fn oust(team: crate::TeamId) -> Result<(), crate::Error> {
         crate::EFFECTS.with(|effects| {
@@ -783,6 +807,215 @@ mod tests {
             Ok(schedule::Progress::Done)
         );
         EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 1));
+    }
+
+    #[test]
+    fn pruned_receipt_waits_for_retirement_dependencies_before_consumption() {
+        use system::control::instance::hook::{self, Key};
+
+        for claimed in [false, true] {
+            let mut control = fixture(State::Stopping);
+            control.instances[0].claimed = claimed;
+            control.instances[0].owner = TaskId::new(7);
+            EFFECTS.with(|effects| {
+                let mut effects = effects.borrow_mut();
+                effects.now = 42;
+                effects.denied_tasks = vec![TaskId::new(2), TaskId::new(7)];
+                effects.denied_teams = vec![TeamId::new(3)];
+            });
+            let mut resources = schedule::Resources::new();
+            resources.insert(control).unwrap();
+            resources.insert(system::assembly::Jobs::default()).unwrap();
+            resources.insert(schedule::Dispatch::<Key, &'static str>::new()).unwrap();
+            let gate = std::cell::Cell::new(false);
+            let mut child = schedule::Schedule::sequence();
+            child.system("dependency", move |control: schedule::Res<Control>| {
+                assert_eq!(control.instances[0].receipt, Receipt::Owner(TeamId::new(3)));
+                assert_eq!(control.instances[0].state, State::Stopping);
+                assert_eq!(control.reclaimed_at, 0);
+                Ok(if gate.replace(true) {
+                    schedule::Progress::Done
+                } else {
+                    schedule::Progress::Pending
+                })
+            }).unwrap();
+            child.system("reclaim", hook::reclaim).unwrap();
+            let mut plan = hook::plan(vec![(Key::Retire, child.build().unwrap())]).unwrap();
+            plan.prepare(&resources);
+            let mut cursor = schedule::Cursor::default();
+            plan.advance(&mut cursor, &resources).unwrap();
+            {
+                let control = resources.read::<Control>().unwrap();
+                assert_eq!(control.instances[0].state, State::Stopping);
+                assert_eq!(control.instances[0].receipt, Receipt::Owner(TeamId::new(3)));
+                assert!(control.instances[0].retains_after_reap());
+                assert_eq!(control.reclaimed_at, 0);
+            }
+            for _ in 0..8 {
+                if resources.read::<Control>().unwrap().instances[0].state == State::Dead {
+                    break;
+                }
+                if plan.advance(&mut cursor, &resources).unwrap() == schedule::Progress::Done {
+                    cursor.reset();
+                }
+            }
+            let control = resources.read::<Control>().unwrap();
+            assert_eq!(control.instances[0].state, State::Dead);
+            assert_eq!(control.instances[0].receipt, Receipt::Consumed);
+            assert_eq!(control.reclaimed_at, 42);
+            assert!(!control.instances[0].retains_after_reap());
+            EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 0));
+        }
+    }
+
+    #[test]
+    fn claimed_owner_dead_pruned_absence_consumes_receipt_until_retire_finishes() {
+        use system::control::instance::hook::{self, Key};
+
+        let mut control = fixture(State::Stopping);
+        let mut instance = control.instances.remove(0);
+        instance.claimed = true;
+        instance.owner = TaskId::new(7);
+        EFFECTS.with(|effects| {
+            let mut effects = effects.borrow_mut();
+            effects.now = 42;
+            effects.denied_tasks.push(TaskId::new(2));
+            effects.denied_teams.push(TeamId::new(3));
+        });
+        assert!(instance.consume_pruned_owner_receipt());
+        assert_eq!(instance.state, State::Stopping);
+        assert_eq!(instance.receipt, Receipt::Consumed);
+        assert!(instance.retains_after_reap());
+        assert!(!instance.consume_pruned_owner_receipt());
+
+        let mut resources = schedule::Resources::new();
+        resources
+            .insert(Control {
+                reclaimed_at: 42,
+                instances: vec![instance],
+            })
+            .unwrap();
+        resources.insert(system::assembly::Jobs::default()).unwrap();
+        resources
+            .insert(schedule::Dispatch::<Key, &'static str>::new())
+            .unwrap();
+        let gate = std::cell::Cell::new(0u8);
+        let mut child = schedule::Schedule::sequence();
+        child
+            .system("effect", move || {
+                if gate.replace(1) == 0 {
+                    Ok(schedule::Progress::Pending)
+                } else {
+                    Ok(schedule::Progress::Done)
+                }
+            })
+            .unwrap();
+        let mut plan = hook::plan(vec![(Key::Retire, child.build().unwrap())]).unwrap();
+        plan.prepare(&resources);
+        let mut cursor = schedule::Cursor::default();
+        plan.advance(&mut cursor, &resources).unwrap();
+        {
+            let control = resources.read::<Control>().unwrap();
+            assert_eq!(control.instances[0].state, State::Stopping);
+            assert_eq!(control.instances[0].receipt, Receipt::Consumed);
+            assert_eq!(control.reclaimed_at, 42);
+        }
+        for _ in 0..8 {
+            if resources.read::<Control>().unwrap().instances[0].state == State::Dead {
+                break;
+            }
+            if plan.advance(&mut cursor, &resources).unwrap() == schedule::Progress::Done {
+                cursor.reset();
+            }
+        }
+        let control = resources.read::<Control>().unwrap();
+        assert_eq!(control.instances[0].state, State::Dead);
+        assert_eq!(control.reclaimed_at, 42);
+    }
+
+    #[test]
+    fn claimed_live_owner_is_not_consumed_by_denied_task_or_team() {
+        let mut control = fixture(State::Stopping);
+        control.instances[0].claimed = true;
+        control.instances[0].owner = TaskId::new(7);
+        EFFECTS.with(|effects| {
+            let mut effects = effects.borrow_mut();
+            effects.now = 42;
+            effects.alive_tasks.push(TaskId::new(7));
+            effects.denied_tasks.push(TaskId::new(2));
+            effects.denied_teams.push(TeamId::new(3));
+        });
+        assert!(!control.instances[0].consume_pruned_owner_receipt());
+        assert_eq!(control.instances[0].state, State::Stopping);
+        assert_eq!(control.instances[0].receipt, Receipt::Owner(TeamId::new(3)));
+        assert_eq!(control.reclaimed_at, 0);
+    }
+
+    #[test]
+    fn claimed_owner_dead_non_denied_errors_do_not_consume() {
+        for (owner_failed, task_failed, team_failed) in
+            [(true, false, false), (false, true, false), (false, false, true)]
+        {
+            let mut control = fixture(State::Stopping);
+            control.instances[0].claimed = true;
+            control.instances[0].owner = TaskId::new(7);
+            EFFECTS.with(|effects| {
+                let mut effects = effects.borrow_mut();
+                effects.now = 42;
+                if !task_failed {
+                    effects.denied_tasks.push(TaskId::new(2));
+                }
+                if !team_failed {
+                    effects.denied_teams.push(TeamId::new(3));
+                }
+                if owner_failed {
+                    effects.failed_tasks.push(TaskId::new(7));
+                }
+                if task_failed {
+                    effects.failed_tasks.push(TaskId::new(2));
+                }
+                if team_failed {
+                    effects.failed_teams.push(TeamId::new(3));
+                }
+            });
+            assert!(!control.instances[0].consume_pruned_owner_receipt());
+            assert_eq!(control.instances[0].state, State::Stopping);
+            assert_eq!(control.instances[0].receipt, Receipt::Owner(TeamId::new(3)));
+            assert_eq!(control.reclaimed_at, 0);
+        }
+    }
+
+    #[test]
+    fn claimed_owner_dead_observable_team_does_not_consume() {
+        let mut control = fixture(State::Stopping);
+        control.instances[0].claimed = true;
+        control.instances[0].owner = TaskId::new(7);
+        EFFECTS.with(|effects| {
+            let mut effects = effects.borrow_mut();
+            effects.now = 42;
+            effects.denied_tasks.push(TaskId::new(2));
+        });
+        assert!(!control.instances[0].consume_pruned_owner_receipt());
+        assert_eq!(control.instances[0].state, State::Stopping);
+        assert_eq!(control.instances[0].receipt, Receipt::Owner(TeamId::new(3)));
+        assert_eq!(control.reclaimed_at, 0);
+    }
+
+    #[test]
+    fn claimed_control_owner_is_not_consumed() {
+        let mut control = fixture(State::Stopping);
+        control.instances[0].claimed = true;
+        control.instances[0].owner = unit::self_id();
+        EFFECTS.with(|effects| {
+            let mut effects = effects.borrow_mut();
+            effects.now = 42;
+            effects.denied_tasks.push(TaskId::new(2));
+            effects.denied_teams.push(TeamId::new(3));
+        });
+        assert!(!control.instances[0].consume_pruned_owner_receipt());
+        assert_eq!(control.instances[0].state, State::Stopping);
+        assert_eq!(control.instances[0].receipt, Receipt::Owner(TeamId::new(3)));
+        assert_eq!(control.reclaimed_at, 0);
     }
 
     #[test]
