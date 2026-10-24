@@ -13,6 +13,12 @@ const FSC_PPN: u64 = (1u64 << 44) - 1;
 /// `tc.V`：这一项有效。
 const TC_VALID: u64 = 1;
 
+pub fn offset(requester: u16) -> Option<usize> {
+    let bytes = core::mem::size_of::<[u64; 8]>();
+    let offset = usize::from(requester) * bytes;
+    (offset + bytes <= env::PAGE_SIZE).then_some(offset)
+}
+
 impl DeviceContext {
     /// 一级翻译的根表 `root`（物理页起址）。
     ///

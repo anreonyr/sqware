@@ -7,6 +7,14 @@ pub struct State {
     pub poles: usize,
     pub references: usize,
     pub views: usize,
+    pub view_address: usize,
+    pub data_reference: bool,
+    pub data_alive: bool,
+    pub window_serial: u64,
+    pub mmio: Vec<u64>,
+    pub held_queue: bool,
+    pub blocked_queue: Option<usize>,
+    pub clock: u64,
 }
 
 thread_local! {

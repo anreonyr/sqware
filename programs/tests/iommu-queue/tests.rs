@@ -8,7 +8,7 @@
 //! - an unanswered fence stays in flight: a retry keeps waiting on the same command
 //!   (the tail does not move) and a late, older completion cannot pass for it;
 //! - the command ring may wrap past its capacity while every cookie stays distinct and
-//!   every slot keeps rotating, and a value that owned the current slot a full lap ago
+//!   caller-selected slots may be reused after completion, and an older value
 //!   still does not pass;
 //! - `disable` reads back quiet CSRs once the device has dropped `ON`.
 //! - **the one-step entries.** `raise`/`lower` program their registers and hand back the
@@ -40,6 +40,7 @@ use crate::device::{self, COMMANDS, Command, Device, FAULTS, FENCE};
 use crate::iommu::queue::{self, CommandQueue, FENCE_DATA};
 use crate::iommu::regs::{self, QUEUE_ON};
 use crate::iommu::{fence, handshake};
+use crate::iommu::ticket::Ticket;
 
 /// Command encoding, as `queue.rs` documents it (its own constants are private):
 /// `IOFENCE.C` with `AV` set carries the completion value in `dword0[63:32]`.
@@ -100,26 +101,28 @@ fn one_command(device: &Device) -> Command {
 
 /// Case 2's starting point: the first fence answered, the second one submitted and in
 /// flight ([`Command`] is that second command, `previous` the first one's cookie).
-fn outstanding() -> (Rc<Device>, CommandQueue, u32, Command) {
+fn outstanding() -> (Rc<Device>, CommandQueue, Ticket, u32, Command) {
     let (device, mut queue) = up();
-    assert!(queue.fence(), "the device answers the first fence");
+    let (mut publish, mut retire) = queue.tickets(0, 1).unwrap();
+    assert!(queue.fence(&mut publish), "the device answers the first fence");
     let previous = one_command(&device).completion();
     device.hold(true);
     let tail = device.tail();
-    assert!(!queue.fence(), "the device holds the second fence");
+    assert!(!queue.fence(&mut retire), "the device holds the second fence");
     assert_eq!(
         device.tail(),
         tail + 1,
         "the second fence was submitted once"
     );
     let in_flight = device.command(tail);
-    (device, queue, previous, in_flight)
+    (device, queue, retire, previous, in_flight)
 }
 
 #[test]
 fn the_first_fence_lands_its_own_cookie_in_the_first_slot() {
     let (device, mut queue) = up();
-    assert!(queue.fence(), "the device answered the fence");
+    let (mut publish, _) = queue.tickets(0, 1).unwrap();
+    assert!(queue.fence(&mut publish), "the device answered the fence");
     let command = one_command(&device);
     assert_eq!(command.index, 0, "the first fence is the first command");
     assert_eq!(command.opcode(), IOFENCE_C);
@@ -171,12 +174,13 @@ fn the_first_fence_lands_its_own_cookie_in_the_first_slot() {
 #[test]
 fn an_unanswered_fence_stays_in_flight_and_is_not_re_issued() {
     let (device, mut queue) = up();
-    assert!(queue.fence(), "the device answers the first fence");
+    let (mut publish, mut retire) = queue.tickets(0, 1).unwrap();
+    assert!(queue.fence(&mut publish), "the device answers the first fence");
     let first = one_command(&device).completion();
     device.hold(true);
     let tail = device.tail();
     let before = device::now();
-    assert!(!queue.fence(), "the device is not answering this fence");
+    assert!(!queue.fence(&mut retire), "the device is not answering this fence");
     assert!(
         device::now() - before >= FENCE_NS,
         "the wait ran out its whole deadline before giving up"
@@ -198,7 +202,7 @@ fn an_unanswered_fence_stays_in_flight_and_is_not_re_issued() {
         "which is not the first fence's"
     );
     assert_eq!(device.slot(in_flight), 4, "and it uses the second slot");
-    assert!(!queue.fence(), "the retry keeps waiting on the same fence");
+    assert!(!queue.fence(&mut retire), "the retry keeps waiting on the same fence");
     assert_eq!(
         device.tail(),
         tail + 1,
@@ -213,13 +217,13 @@ fn an_unanswered_fence_stays_in_flight_and_is_not_re_issued() {
 
 #[test]
 fn a_late_store_of_the_previous_cookie_does_not_pass() {
-    let (device, mut queue, previous, in_flight) = outstanding();
+    let (device, mut queue, mut retire, previous, in_flight) = outstanding();
     let slot = device.slot(in_flight);
     // The first fence's completion turning up late, in the slot this fence watches.
     device.complete(slot, previous);
     assert_eq!(device.completion(slot), previous);
     assert!(
-        !queue.fence(),
+        !queue.fence(&mut retire),
         "an answer that is not this fence's cannot pass for it"
     );
     assert_eq!(
@@ -231,12 +235,12 @@ fn a_late_store_of_the_previous_cookie_does_not_pass() {
 
 #[test]
 fn the_in_flight_fence_passes_once_its_own_cookie_lands() {
-    let (device, mut queue, previous, in_flight) = outstanding();
+    let (device, mut queue, mut retire, previous, in_flight) = outstanding();
     let slot = device.slot(in_flight);
     device.complete(slot, previous);
-    assert!(!queue.fence(), "the older completion is not this fence's");
+    assert!(!queue.fence(&mut retire), "the older completion is not this fence's");
     device.complete(slot, in_flight.completion());
-    assert!(queue.fence(), "the fence's own completion passes it");
+    assert!(queue.fence(&mut retire), "the fence's own completion passes it");
     assert_eq!(
         device.tail(),
         in_flight.index + 1,
@@ -246,13 +250,16 @@ fn the_in_flight_fence_passes_once_its_own_cookie_lands() {
 }
 
 #[test]
-fn a_wrapped_ring_keeps_cookies_distinct_and_slots_rotating() {
+fn a_wrapped_ring_keeps_cookies_distinct_when_completed_slots_are_reused() {
     let (device, mut queue) = up();
     // Two full laps of both rings: the command ring wraps at 256 entries, and so does
     // the completion page's slot rotation. Every one of these is answered by the device.
     let rounds = 2 * ENTRIES + 8;
-    for _ in 0..rounds {
-        assert!(queue.fence(), "the running device answers every fence");
+    for pair in 0..rounds / 2 {
+        let slot = (pair * 2 % ENTRIES) as usize;
+        let (mut publish, mut retire) = queue.tickets(slot, slot + 1).unwrap();
+        assert!(queue.fence(&mut publish), "the device answers publish");
+        assert!(queue.fence(&mut retire), "the device answers retire");
     }
     let seen = device.consumed();
     assert_eq!(seen.len() as u32, rounds);
@@ -289,7 +296,9 @@ fn a_wrapped_ring_keeps_cookies_distinct_and_slots_rotating() {
     // Past the wrap, with the device held: the slot in flight is one that a fence a full
     // lap ago also used. Zero it as the driver does, then land that old value in it.
     device.hold(true);
-    assert!(!queue.fence());
+    let slot_index = (rounds % ENTRIES) as usize;
+    let (mut publish, _) = queue.tickets(slot_index, slot_index + 1).unwrap();
+    assert!(!queue.fence(&mut publish));
     let tail = device.tail();
     assert_eq!(tail, rounds + 1, "the in-flight fence was submitted once");
     let in_flight = device.command(rounds);
@@ -306,19 +315,20 @@ fn a_wrapped_ring_keeps_cookies_distinct_and_slots_rotating() {
     assert_eq!(device.slot(lap_ago), slot, "and it sat in this very slot");
     device.complete(slot, stale);
     assert!(
-        !queue.fence(),
+        !queue.fence(&mut publish),
         "the value that owned this slot a lap ago cannot pass"
     );
     device.complete(slot, in_flight.completion());
-    assert!(queue.fence(), "this fence's own completion passes it");
+    assert!(queue.fence(&mut publish), "this fence's own completion passes it");
     assert_eq!(device.tail(), tail, "neither retry re-issued the command");
 }
 
 #[test]
 fn a_command_that_asks_for_nothing_does_not_move_the_fence_cookie() {
     let (device, mut queue) = up();
-    queue.invalidate_all();
-    assert!(queue.fence(), "the device answers the fence");
+    let (mut publish, _) = queue.tickets(0, 1).unwrap();
+    assert!(queue.invalidate_all());
+    assert!(queue.fence(&mut publish), "the device answers the fence");
     let seen = device.consumed();
     assert_eq!(seen.len(), 2, "the invalidation and the fence");
     assert_eq!(seen[0].opcode(), 1, "IOTINVAL.VMA");
@@ -428,12 +438,13 @@ fn lowering_a_queue_writes_the_zero_and_hands_the_wait_back() {
 #[test]
 fn a_single_fence_step_leaves_the_wait_for_the_next_frame() {
     let (device, mut queue) = up();
-    assert!(queue.fence(), "the device answers the first fence");
+    let (mut publish, mut retire) = queue.tickets(0, 1).unwrap();
+    assert!(queue.fence(&mut publish), "the device answers the first fence");
     device.hold(true);
     let tail = device.tail();
     let before = device::now();
     assert!(
-        matches!(queue.fence_step(), fence::Fence::Waiting),
+        matches!(queue.fence_step(&mut retire), fence::Fence::Waiting),
         "the held device has not answered"
     );
     assert!(
@@ -445,18 +456,19 @@ fn a_single_fence_step_leaves_the_wait_for_the_next_frame() {
         tail + 1,
         "the step submitted the command once"
     );
-    assert!(matches!(queue.fence_step(), fence::Fence::Waiting));
+    assert!(matches!(queue.fence_step(&mut retire), fence::Fence::Waiting));
     assert_eq!(device.tail(), tail + 1, "the next frame does not re-issue");
 }
 
 #[test]
 fn every_frame_waits_on_one_fence_under_one_deadline() {
     let (device, mut queue) = up();
+    let (mut publish, _) = queue.tickets(0, 1).unwrap();
     device.hold(true);
     let before = device::now();
     let mut frames = 0;
     loop {
-        match queue.fence_step() {
+        match queue.fence_step(&mut publish) {
             fence::Fence::Waiting => {
                 frames += 1;
                 assert!(frames < 10_000, "the deadline must arrive");
