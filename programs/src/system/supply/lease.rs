@@ -1,6 +1,8 @@
 use alloc::vec::Vec;
-use env::{Mark, Permission, PieKind, PieToken, TaskId};
+use env::{GrantRange, Mark, Permission, PieKind, PieToken, TaskId};
 use system_api::supply::{self, Delivery, Fail, Key, LeaseId, State};
+
+use super::derivation::Derivation;
 
 pub const MAX_CALLERS: usize = 64;
 /// A provider may retain one delivery root and sixty-four separately revoked roots.
@@ -71,21 +73,19 @@ pub struct FailedRoots {
 pub struct RootAssignment {
     pub shared: PieToken,
     pub index: usize,
-    /// 这一段子分支的**有效窗口**（相对来源起点的绝对页偏移与页数）。
+    /// 本地派生的**有效窗口**（相对来源起点的绝对页偏移与页数）。
     ///
-    /// `None` = 不请求窗口：内核那一侧让子分支**继承**父分支那一段（父不带窗口时才是整段）。
+    /// [`GrantRange::Inherit`] 让子分支**继承**父分支那一段（父不带窗口时才是整段）。
     /// 只有手里就是那枚来源的真实管理者才拿得出这对坐标；合法性（落在父窗口里、非空）归内核。
-    pub window: Option<(usize, usize)>,
+    pub range: GrantRange,
 }
 
+/// 跨任务交付一段子分支；范围总是继承父分支，不能在这里另开窗口。
 pub struct Accord {
     pub token: PieToken,
     pub target: TaskId,
     pub permission: Permission,
     pub mark: Mark,
-    /// 这一枚子分支的**有效窗口**（相对来源起点的绝对页偏移与页数）；`None` = 不请求，
-    /// 那就**继承**父的那一段。合法性（落在父的窗口里、非空）归内核那一侧。
-    pub window: Option<(usize, usize)>,
 }
 
 pub struct DeliveryRequest<'a> {
@@ -743,6 +743,7 @@ pub struct PrivateRoot {
 
 pub trait PieEffects {
     fn inspect(&mut self, token: PieToken) -> Result<env::PieInfo, Fail>;
+    fn derive(&mut self, request: Derivation) -> Result<PieToken, Fail>;
     fn accord(&mut self, request: Accord) -> Result<PieToken, Fail>;
     fn revoke(&mut self, token: PieToken) -> Result<(), Fail>;
 }
@@ -754,23 +755,23 @@ impl PieEffects for NativePieEffects {
         resource::raw::inspect(token).map_err(|_| Fail::SourceLost)
     }
 
+    fn derive(&mut self, request: Derivation) -> Result<PieToken, Fail> {
+        env::pie::derive(
+            request.source,
+            request.permission,
+            request.mark,
+            request.range,
+        )
+        .map_err(|_| Fail::Denied)
+    }
+
     fn accord(&mut self, request: Accord) -> Result<PieToken, Fail> {
-        match request.window {
-            Some((offset, count)) => env::pie::accord_window(
-                request.token,
-                request.target,
-                request.permission,
-                request.mark,
-                offset,
-                count,
-            ),
-            None => env::pie::accord(
-                request.token,
-                request.target,
-                request.permission,
-                request.mark,
-            ),
-        }
+        env::pie::accord(
+            request.token,
+            request.target,
+            request.permission,
+            request.mark,
+        )
         .map_err(|_| Fail::Denied)
     }
 
@@ -792,7 +793,7 @@ impl PrivateRoot {
         let RootAssignment {
             shared,
             index,
-            window,
+            range,
         } = assignment;
         let source = effects.inspect(shared).map_err(|_| Fail::Denied)?;
         if !source.alive
@@ -811,12 +812,11 @@ impl PrivateRoot {
             return Err(Fail::Denied);
         }
         let lease_mark = lease_mark(request.id, request.origin, index);
-        let token = effects.accord(Accord {
-            token: shared,
-            target: request.owner,
+        let token = effects.derive(Derivation {
+            source: shared,
             permission: child,
             mark: lease_mark,
-            window,
+            range,
         })?;
         let valid = effects.inspect(token).is_ok_and(|derived| {
             derived.alive
@@ -862,9 +862,6 @@ impl PrivateRoot {
             target,
             permission,
             mark: slot,
-            // 交付不请求窗口：这一段跟的是**这一条分支**的窗口（内核那一侧继承），
-            // 故“再授出只能是同一段或更窄”不用这一层操心。
-            window: None,
         })?;
         Delivery::with_description(seed, description).ok_or(Fail::Bad)
     }

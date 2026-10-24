@@ -236,6 +236,37 @@ mod tests {
     }
 
     #[test]
+    fn retirement_frame_keeps_only_request_and_pending_or_done() {
+        use system_api::retirement::{self, Retirement};
+        let back = token(0x0102_0304_0506_0708);
+        for value in [Retirement::ask(back), Retirement::pending(), Retirement::done(),
+            Retirement::ask_for(TaskId::new(7), back), Retirement::pending_for(TaskId::new(7)),
+            Retirement::done_for(TaskId::new(7))] {
+            let mut bytes = Retirement::EMPTY;
+            let len = value.store(&mut bytes).unwrap();
+            assert_eq!(Retirement::fetch(&bytes[..len]), Some(value));
+            assert!(Retirement::fetch(&bytes[..len + 1]).is_none());
+        }
+        assert!(!Retirement::pending().settled());
+        assert!(Retirement::done().settled());
+        assert_eq!(system_api::retirement::Call::BACK, retirement::DECLARATIONS[0].mark);
+        assert_eq!(system_api::retirement::DECLARATIONS.len(), 1);
+        assert_eq!(env::marks::conflict(system_api::retirement::REGISTRY), None);
+    }
+
+    #[test]
+    fn owner_release_has_a_distinct_opcode_and_uses_the_ruin_grant() {
+        let task = TaskId::new(7);
+        let back = token(9);
+        let mut bytes = <Request as Message>::EMPTY;
+        let len = Req::ReleaseInstance(task).store(back, &mut bytes).unwrap();
+        assert_eq!(bytes[0], 11);
+        assert_eq!(Wire::take(&bytes[..len]), Some((Some(Wire::ReleaseInstance(task)), back)));
+        assert_eq!(Grant::for_wire(&Wire::ReleaseInstance(task)), Grant::Ruin);
+        for end in 0..len { assert_eq!(Wire::take(&bytes[..end]), None); }
+    }
+
+    #[test]
     fn identity_exports_preserve_actual_entry_revision_and_validation_boundaries() {
         use system_api::identity::{export, IdentityObject, IdentityName, PrincipalId, OperatorEntryRef};
         let request = export::Request {

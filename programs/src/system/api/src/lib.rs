@@ -3,9 +3,11 @@
 extern crate alloc;
 
 pub mod control;
+pub mod bootstrap;
 pub mod identity;
 pub mod namespace;
 pub mod operator;
+pub mod retirement;
 pub mod supply;
 
 #[mold::interface(id = "sqware.system.loader.v1")]
@@ -35,6 +37,8 @@ pub mod loader {
         Back,
         #[channel(key = "image", legacy = "loader-image")]
         Image,
+        #[channel(key = "bootstrap", legacy = "system-bootstrap")]
+        Bootstrap,
     }
 
     #[grants]

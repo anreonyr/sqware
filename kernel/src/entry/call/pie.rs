@@ -1,6 +1,6 @@
 use alloc::sync::Arc;
 
-use env::{Mark, PieCall, PieFail, PieInfo, PieToken, ReleaseMode, TaskId, VirtAddr};
+use env::{GrantRange, Mark, PieCall, PieFail, PieInfo, PieToken, ReleaseMode, TaskId, VirtAddr};
 
 use crate::core::memory::address::{PageCount, PageOffset};
 use crate::core::memory::address::VirtAddr as KVirt;
@@ -41,14 +41,12 @@ pub(crate) fn dispatch(frame: &mut TrapContext, call: PieCall, ident: Arc<TaskId
                     .map(usize::from),
             );
         }
-        PieCall::AccordWindow {
+        PieCall::Derive {
             src,
-            dst,
             subset,
             mark,
-            offset,
-            count,
-        } => accord_window(frame, src, dst, subset, mark, offset, count),
+            range,
+        } => derive(frame, src, subset, mark, range),
     }
 }
 
@@ -69,30 +67,26 @@ fn accord(
     answer(frame, r);
 }
 
-/// 带有效窗口的 `Accord`：`offset`/`count` 用相对来源起点的绝对页说。
-fn accord_window(
+/// 本地精确派生：目标就是调用者，范围继承父窗口或按来源起点收窄。
+fn derive(
     frame: &mut TrapContext,
     src_token: PieToken,
-    dst_id: TaskId,
     subset: Permission,
     mark: Mark,
-    offset: usize,
-    count: usize,
+    range: GrantRange,
 ) {
     let r = (|| -> Result<usize, PieFail> {
-        let count = PageCount::new(count).ok_or(PieFail::NotAligned)?;
+        let window = match range {
+            GrantRange::Inherit => None,
+            GrantRange::Pages { offset, count } => {
+                let count = PageCount::new(count).ok_or(PieFail::NotAligned)?;
+                Some((PageOffset::new(offset), count))
+            }
+        };
         let caller = current().running_task().ok_or(PieFail::Denied)?;
         let src = pend::locate(&caller, src_token).ok_or(PieFail::Denied)?;
         gate::usable(&src)?;
-        let dst = muster(dst_id).ok_or(PieFail::Denied)?;
-        pend::accord_window(
-            &caller,
-            src_token,
-            dst.as_weak(),
-            subset,
-            mark,
-            Some((PageOffset::new(offset), count)),
-        )
+        pend::derive(&caller, src_token, subset, mark, window)
     })();
     answer(frame, r);
 }

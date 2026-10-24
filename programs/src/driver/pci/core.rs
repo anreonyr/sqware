@@ -4,8 +4,9 @@
 //! `disable` 清 MASTER 并回读，但它**不等于**端点已无在途（那一档归设备恢复方）。
 //! 本域不解释设备协议（virtio 寄存器归设备那一侧），只读设备自己的能力表。
 
-use env::{Permission, TaskId};
+use env::{GrantRange, Permission, PieToken, TaskId};
 use resource::dock::Dock;
+use resource::raw::Capability;
 
 use crate::driver::pci::api;
 use crate::driver::pci::ecam::{self, Ecam};
@@ -33,6 +34,10 @@ pub struct Core {
     caps: Caps,
     /// 从引导账交来的 PCI 窗口：BAR 就从这段里落位。
     aperture: Window,
+    /// 当前 BAR 的本地精确派生根；aperture 比 BAR 宽，远端只收这一段。
+    local: Option<Capability>,
+    /// 本地派生已成功、远端交付尚未成功的那一笔；重试复用同一句柄。
+    pending: Option<Placement>,
     placement: Option<Placement>,
     floor: u64,
 }
@@ -57,6 +62,8 @@ impl Core {
             bar,
             caps,
             aperture,
+            local: None,
+            pending: None,
             placement: None,
             floor: 0,
         })
@@ -96,6 +103,12 @@ impl Core {
         if self.placement.is_some() {
             return Ok(self.placement.as_ref().unwrap());
         }
+        if let Some(pending) = self.pending.as_ref() {
+            if pending.serial != request.serial || pending.recovery != request.recovery {
+                return Err(api::Fail::Conflict);
+            }
+            return self.deliver();
+        }
         let scan = Ecam::new(self.ecam, self.requester);
         // 落位之前先核 MASTER 是关的（回读，不拿复位默认值当前提）。
         let before = scan.read16(ecam::COMMAND);
@@ -107,16 +120,30 @@ impl Core {
         let first = ((endpoint.address() - self.aperture.base) / env::PAGE_SIZE as u64) as usize;
         let count = (endpoint.size() as usize).div_ceil(env::PAGE_SIZE);
         let pages = u32::try_from(count).map_err(|_| api::Fail::Denied)?;
-        // 精确窗口：从 aperture 那一枚派生，直接种进恢复方的表。
-        let bar = env::pie::accord_window(
+        // aperture 比 BAR 宽：先把精确 BAR 派生成本地子能力，再交给恢复方。
+        let local = Capability::derive(
             self.aperture.token,
-            request.recovery,
             BAR_SUBSET,
             api::BAR_MARK,
-            first,
-            count,
+            GrantRange::Pages {
+                offset: first,
+                count,
+            },
         )
         .map_err(|_| api::Fail::Denied)?;
+        // 本地派生根留到这一根 BAR 的实际清理；失败重试不重派、不丢句柄。
+        self.local = Some(local);
+        self.pending = Some(Placement {
+            serial: request.serial,
+            address: endpoint.address(),
+            size: endpoint.size(),
+            pages,
+            caps: self.caps,
+            recovery: request.recovery,
+            bar: PieToken::NONE,
+            master: false,
+            disabled: false,
+        });
         let after = scan.read16(ecam::COMMAND);
         crate::debug::put(&alloc::format!(
             "pci: endpoint requester={} bar={} address={:#x} size={:#x} bus-master off={:#x}",
@@ -126,17 +153,20 @@ impl Core {
             endpoint.size(),
             after & ecam::COMMAND_MASTER,
         ));
-        self.placement = Some(Placement {
-            serial: request.serial,
-            address: endpoint.address(),
-            size: endpoint.size(),
-            pages,
-            caps: self.caps,
-            recovery: request.recovery,
-            bar,
-            master: false,
-            disabled: false,
-        });
+        self.deliver()
+    }
+
+    /// 把当前本地精确根交给恢复方；失败保留同一派生根与待交付记录供原样重试。
+    fn deliver(&mut self) -> Result<&Placement, api::Fail> {
+        let local = self.local.as_ref().ok_or(api::Fail::Denied)?;
+        let pending = self.pending.as_ref().ok_or(api::Fail::Denied)?;
+        let bar = local
+            .grant(pending.recovery, BAR_SUBSET, api::BAR_MARK)
+            .map_err(|_| api::Fail::Denied)?
+            .keep();
+        let mut placement = self.pending.take().ok_or(api::Fail::Denied)?;
+        placement.bar = bar;
+        self.placement = Some(placement);
         self.placement.as_ref().ok_or(api::Fail::Denied)
     }
 
@@ -182,18 +212,21 @@ impl Core {
         if self
             .placement
             .as_ref()
+            .or(self.pending.as_ref())
             .is_some_and(|placement| placement.serial != 0 && placement.serial != serial)
         {
             return Err(api::Fail::Conflict);
         }
         let scan = Ecam::new(self.ecam, self.requester);
-        crate::debug::put(&alloc::format!("pci: binding {serial} disabling bus-master"));
+        crate::debug::put(&alloc::format!(
+            "pci: binding {serial} disabling bus-master"
+        ));
         scan.command_and(ecam::COMMAND_MASTER);
         let seen = scan.read16(ecam::COMMAND);
         if seen & ecam::COMMAND_MASTER != 0 {
             return Err(api::Fail::Unavailable);
         }
-        if let Some(placement) = self.placement.as_mut() {
+        if let Some(placement) = self.placement.as_mut().or(self.pending.as_mut()) {
             placement.master = false;
             placement.disabled = true;
         }
@@ -212,7 +245,27 @@ impl Core {
             .filter(|placement| placement.serial == serial)
     }
 
+    /// 已交付的 BAR 根跨绑定复用；未交付根在确认禁用后释放。
     pub fn release(&mut self, serial: u64) -> Result<(), api::Fail> {
+        if let Some(pending) = self.pending.as_ref() {
+            if pending.serial != serial {
+                return if serial <= self.floor {
+                    Ok(())
+                } else {
+                    Err(api::Fail::Conflict)
+                };
+            }
+            if !pending.disabled || pending.master {
+                return Err(api::Fail::Conflict);
+            }
+            self.local
+                .as_mut()
+                .ok_or(api::Fail::Denied)?
+                .release()
+                .map_err(|_| api::Fail::Denied)?;
+            self.local = None;
+            self.pending = None;
+        }
         if let Some(placement) = self.placement.as_mut() {
             if placement.serial == serial {
                 if !placement.disabled || placement.master {

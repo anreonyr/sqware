@@ -71,6 +71,7 @@ def run(conn, capture, mode="ruin"):
                 "hub: binding 1 closed",
                 "ruin: recovery dead after reply",
                 "system: forced shutdown admitted after DMA settlement",
+                "system: forced shutdown admitted after retirement settlement",
                 "task: all tasks exited, system halted",
             ]:
                 if forbidden in log:

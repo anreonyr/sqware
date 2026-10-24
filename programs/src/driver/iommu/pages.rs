@@ -72,7 +72,7 @@ impl Pages {
     }
 
     /// 这一段所在的**匿名来源**（本域持有）：另起一份保留、或向别的任务
-    /// 授一段窗口（`accord_window`）都以它为准。
+    /// 授出这一段范围都以它为准。
     pub fn source(&self) -> PieToken {
         self.pole.expect("iommu: page source not acquired")
     }

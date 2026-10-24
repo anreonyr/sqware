@@ -10,7 +10,7 @@ impl Grant {
             Wire::Mint(_) => Self::Mint,
             Wire::Embark(_) | Wire::EmbarkInstance(_) => Self::Embark,
             Wire::Debark(_) | Wire::DebarkInstance(_) => Self::Debark,
-            Wire::Ruin(_) | Wire::RuinInstance(_) => Self::Ruin,
+            Wire::Ruin(_) | Wire::RuinInstance(_) | Wire::ReleaseInstance(_) => Self::Ruin,
         }
     }
 

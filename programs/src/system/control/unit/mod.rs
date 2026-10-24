@@ -160,7 +160,7 @@ impl Control {
                 self.instances
                     .iter()
                     .filter(|item| {
-                        item.team.is_some()
+                        item.team().is_some()
                             && matches!(
                                 item.state,
                                 State::Starting | State::Ready | State::Debarked

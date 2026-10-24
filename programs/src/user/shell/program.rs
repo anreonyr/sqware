@@ -13,6 +13,7 @@ pub static PROGRAM: UnitFile = UnitFile {
         ending: None,
 
         construction: &[crate::unit::Construction::image()],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig {
         bindings: crate::user::shell::commands::BINDINGS,

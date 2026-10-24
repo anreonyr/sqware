@@ -36,6 +36,7 @@ pub static PROGRAM: UnitFile = UnitFile {
         ending: Some(Ending::Resident),
 
         construction: &[crate::unit::Construction::unit_owned_by("shell", "login")],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };

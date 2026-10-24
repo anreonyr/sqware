@@ -15,6 +15,7 @@ use lease::StagingLease;
 
 mod builder;
 mod construct;
+pub(crate) mod exit;
 mod kernel;
 mod lease;
 pub(super) mod life;
@@ -49,6 +50,7 @@ pub struct Team {
     pub(crate) space: Arc<Space>,
     pub(crate) id: TeamId,
     pub(crate) sire: TaskWeak,
+    pub(crate) creator: TaskId,
     pub(crate) state: Arc<SpinLock<TeamState>>,
     pub(crate) tasks: Tasks,
     pub(crate) life: Arc<TeamLife>,
@@ -113,6 +115,41 @@ impl Team {
 
     pub(crate) fn ready(&self) -> bool {
         self.state.lock().ready()
+    }
+
+    pub(crate) fn guard(&self, owner: TaskId) -> Result<(), UnitFail> {
+        let _commit = commit();
+        if !self.state.lock().debarked() || self.state.lock().constructing() {
+            return Err(UnitFail::Denied);
+        }
+        if exit::conflicts(&self.life) || self.has_unavailable_members() {
+            return Err(UnitFail::Busy);
+        }
+        exit::arm(&self.life, owner)
+    }
+
+    pub(crate) fn unguard(&self, owner: TaskId) -> Result<(), UnitFail> {
+        let _commit = commit();
+        if !self.state.lock().debarked() || self.state.lock().constructing() {
+            return Err(UnitFail::Denied);
+        }
+        if self.has_unavailable_members() {
+            return Err(UnitFail::Busy);
+        }
+        exit::disarm(&self.life, owner)
+    }
+
+    fn has_unavailable_members(&self) -> bool {
+        let mut unavailable = false;
+        self.life.visit(&mut |node| {
+            for member in node.tasks.lock().iter() {
+                let state = member.state.lock();
+                if state.is_dead() || state.on_hart().is_some() {
+                    unavailable = true;
+                }
+            }
+        });
+        unavailable
     }
 
     pub(crate) fn constructing(&self) -> bool {
@@ -250,6 +287,11 @@ impl Team {
 
     pub(crate) fn sire(&self) -> Option<TaskId> {
         self.sire.upgrade().map(|t| t.ident.id)
+    }
+
+    /// 实际调用 `Unit::Build` 的那一台；内核直建/启动团队为 0。
+    pub(crate) fn creator(&self) -> TaskId {
+        self.creator
     }
 
     /// 新任务的收据：从这棵树往上数，每个有主（`owner != 0`）的节点都算一条，

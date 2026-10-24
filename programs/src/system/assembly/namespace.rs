@@ -293,7 +293,12 @@ impl NamespaceInstallations {
             }
             let delivery = record.delivery.last_mut().ok_or(api::Fail::Dead)?;
             if let Some(root) = delivery.root {
-                pie::release(root, env::ReleaseMode::Revoke).map_err(|_| api::Fail::Dead)?;
+                pie::release(root, env::ReleaseMode::Revoke).map_err(|why| {
+                    crate::debug::put(&alloc::format!(
+                        "system: namespace delivery revoke token={} failed={:?}", root.get(), why.source
+                    ));
+                    api::Fail::Dead
+                })?;
                 delivery.root = None;
                 delivery.entrance = None;
             }

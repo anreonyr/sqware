@@ -15,10 +15,9 @@ const MAPPED: VirtAddr = VirtAddr::wrap(0x6800_0000);
 
 fn branch(fixture: &Fixture, parent: PieToken, offset: usize, count: usize) -> PieToken {
     token_of(
-        pend::accord_window(
+        pend::derive(
             &fixture.task,
             parent,
-            &Arc::downgrade(&fixture.task),
             Permission::FETCH | Permission::VEST,
             Mark::NONE,
             Some((PageOffset::new(offset), PageCount::new(count).unwrap())),

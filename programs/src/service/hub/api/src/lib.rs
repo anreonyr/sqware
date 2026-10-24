@@ -9,7 +9,7 @@ pub mod marks;
 
 pub use coord::{
     binding_mark, coord_mark, iova_base, window_mark, BINDING_MAX, IOVA_BASE, IOVA_LIMIT, IOVA_SPAN,
-    LAUNCH_MARK, STARTUP_MARK,
+    LAUNCH_MARK,
 };
 pub use frame::{code_to_fail, fail_to_code};
 
@@ -70,5 +70,13 @@ mod interface {
             publication = "dma"
         )]
         Dma,
+        /// Generic retirement face: the provider alone maps its own responsibility to Done.
+        #[grant(
+            code = 5,
+            key = "retire",
+            legacy = "hub-entry-retire",
+            publication = "retire"
+        )]
+        Retire,
     }
 }

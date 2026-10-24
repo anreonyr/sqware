@@ -2,7 +2,7 @@
 
 use crate::abi::wait::Wait;
 use crate::wire::program_kind::ProgramKind;
-use crate::wire::{TaskId, TeamId, VirtAddr};
+use crate::wire::{PieToken, TaskId, TeamId, VirtAddr};
 use mold::{Envcall, Fail};
 
 /// Unit 域（class 1：装域 / 创建 task / 血缘）的失败词汇。
@@ -169,4 +169,14 @@ pub enum UnitCall {
     #[slot(42)]
     #[ret(bool)]
     Fall { millis: Wait },
+    #[slot(43)]
+    #[ret(())]
+    Guard { team: TeamId, authority: PieToken },
+    #[slot(44)]
+    #[ret(())]
+    Unguard { team: TeamId, authority: PieToken },
+    #[slot(45)]
+    #[infallible]
+    #[ret(TaskId)]
+    Creator,
 }

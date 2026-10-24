@@ -44,6 +44,11 @@ pub mod directory;
 pub mod dma;
 mod enrollment_failure;
 mod execution;
+mod launch;
+mod launch_phase;
+mod launch_reply;
+mod returned;
+mod return_reply;
 mod grant;
 use self::grant::ship;
 pub mod list;
@@ -62,7 +67,7 @@ struct League {
 pub fn serve() -> Result<(), Start> {
     programs::debug::put("hub: serve enter");
     // 一～七：起手。
-    let (mut ledger, league, plates, mut doors, _dtb, dma, tree, devices, device_anchor, subject) =
+    let (mut ledger, league, plates, mut doors, _dtb, dma, retire, tree, devices, device_anchor, subject) =
         (|| {
             let sire = unit::sire();
 
@@ -118,6 +123,8 @@ pub fn serve() -> Result<(), Start> {
             // DMA 安全绑定那一面：发现、认领、关闭、查看与整机结清共用这一扇门。
             let dma = env::hole::unseal(Grant::Dma.mark(), env::HoleLimits::default())
                 .map_err(|_| Start::Tree(E_HUB))?;
+            let retire = env::hole::unseal(Grant::Retire.mark(), env::HoleLimits::default())
+                .map_err(|_| Start::Tree(E_HUB))?;
             let publisher =
                 system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS))
                     .map_err(|_| Start::Tree(E_HUB))?;
@@ -129,6 +136,7 @@ pub fn serve() -> Result<(), Start> {
                 (Grant::List.name(), list),
                 (Grant::Claim.name(), claim),
                 (Grant::Dma.name(), dma),
+                (Grant::Retire.name(), retire),
             ]
             .into_iter()
             .enumerate()
@@ -193,9 +201,9 @@ pub fn serve() -> Result<(), Start> {
             // 九、挂组那一张表：四枚面 ＋ 每一台那一枚门（**挂在孔上，面由孔推**）。
             let mut doors: Vec<PieToken> = Vec::new();
             doors
-                .try_reserve(4 + ledger.count())
+                .try_reserve(5 + ledger.count())
                 .map_err(|_| Start::Desk(E_HUB))?;
-            doors.extend([bond, list, claim, dma]);
+            doors.extend([bond, list, claim, dma, retire]);
             for class in &classes {
                 doors.extend(ledger.doors(class.clone()).map(|(_, door)| door));
             }
@@ -206,6 +214,7 @@ pub fn serve() -> Result<(), Start> {
                 doors,
                 dtb,
                 dma,
+                retire,
                 tree,
                 devices,
                 device_anchor,
@@ -216,6 +225,7 @@ pub fn serve() -> Result<(), Start> {
     // 十、协调入口那几面：三个硬件域与 Control（树上查回来的门牌）；
     //     再加一本“设备目录”的装置（新设备的门牌与类联盟由它挂出去）。
     let mut peers = None;
+    let mut executions = execution::Executions::try_new().map_err(|_| Start::Room(E_HUB))?;
     let directory = Directory {
         devices: &devices,
         anchor: device_anchor,
@@ -245,7 +255,13 @@ pub fn serve() -> Result<(), Start> {
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
-        let wait = if ledger.executions_pending() || ledger.open_bindings_all().any(|binding| {
+        // Advance launch/return work and admission deadlines before handling a door, so
+        // an expired admission cannot claim in the same wake.
+        if let Some(peers) = peers.as_ref() {
+            execution::receive(&mut ledger, &mut executions);
+            executions.advance(&mut ledger, peers, env::chrono::clock());
+        }
+        let wait = if executions.pending(&ledger) || ledger.open_bindings_all().any(|binding| {
             matches!(
                 binding.state,
                 hub_api::BindingState::Preparing | hub_api::BindingState::Closing
@@ -263,6 +279,8 @@ pub fn serve() -> Result<(), Start> {
                 if token == dma {
                     // DMA 那一面走类型化的一问一答（回信孔由 ipc::rpc 铸、交、核）。
                     drain_dma(&mut ledger, &mut peers, &tree, &directory, token, &mut buf);
+                } else if token == retire {
+                    drain_retirement(&mut ledger, &mut executions, token, &mut buf);
                 } else {
                     // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
                     let hole = Hole::from_raw(token);
@@ -292,7 +310,7 @@ pub fn serve() -> Result<(), Start> {
             debug!("hub: vacated {freed}");
         }
         if let Some(peers) = peers.as_ref() {
-            dma::advance(&mut ledger, peers);
+            dma::advance(&mut ledger, peers, &mut executions);
         }
         for class in ledger.classes().ok_or(Start::Room(E_HUB))? {
             for (_, door) in ledger.doors(class) {
@@ -341,6 +359,61 @@ fn drain_dma(
                 // 单槽取干了。
                 rpc::Fail::Receive(_) => break,
                 // 坏帧 / 读不懂：不猜、也不回话。
+                _ => continue,
+            },
+        }
+    }
+}
+
+/// Generic retirement face: only the assembler (sire) may ask; the provider maps its own
+/// outstanding responsibility count to Pending/Done. No lifecycle is copied here.
+///
+/// A non-zero target is Control's proof that one execution domain stopped. It only
+/// advances Hub resources bound to that exact task. The global target additionally waits
+/// for every owner receipt Hub accepted, but never for a release reply while answering a
+/// per-instance resource request.
+fn drain_retirement(
+    ledger: &mut Ledger,
+    executions: &mut execution::Executions,
+    entry: PieToken,
+    buffer: &mut [u8],
+) {
+    let receiver = RequestReceiver::<system_api::retirement::Call>::from_raw(
+        entry,
+        system_api::retirement::Call::BACK,
+        system_api::retirement::Call::back,
+    );
+    loop {
+        match receiver.receive(buffer, Wait::POLL) {
+            Ok(incoming) => {
+                let target = incoming.request.target;
+                let trusted = incoming.from == unit::sire()
+                    && incoming.request.state == system_api::retirement::ASK;
+                let done = if !trusted {
+                    false
+                } else if target == TaskId::new(0) {
+                    ledger.settle();
+                    executions.settle(ledger);
+                    ledger.open_bindings_all().next().is_none() && executions.idle(ledger)
+                } else {
+                    let open = ledger.stop_target(target, |serial| {
+                        crate::debug::put(&alloc::format!(
+                            "hub: binding {serial} execution domain stopped (tid={})",
+                            target.get()
+                        ));
+                    });
+                    let accepted = executions.target(ledger, target);
+                    open == 0 && accepted && executions.has_return(target)
+                };
+                let reply = if done {
+                    system_api::retirement::Retirement::done_for(target)
+                } else {
+                    system_api::retirement::Retirement::pending_for(target)
+                };
+                let _ = incoming.reply.send(reply);
+            }
+            Err(rejected) => match rejected.fail {
+                rpc::Fail::Receive(_) => break,
                 _ => continue,
             },
         }
@@ -414,6 +487,10 @@ pub(super) fn send_status(mine: Grant, status: u8, back: PieToken) {
         Grant::Dma => {
             let mut tx = Sender::<hub_api::DmaSaid>::from_raw(back);
             let _ = tx.send(hub_api::DmaSaid::of(status));
+        }
+        Grant::Retire => {
+            let mut tx = Sender::<system_api::retirement::Retirement>::from_raw(back);
+            let _ = tx.send(system_api::retirement::Retirement::pending());
         }
     }
 }
@@ -512,9 +589,6 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
             page: dtb,
             door: env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
                 .map_err(|_| Start::Load(E_HUB))?,
-            dma: false,
-            requester: 0,
-            pci: TaskId::new(0),
         },
     )?;
     let interrupt_item = inventory.item(1).ok_or(Start::Load(E_HUB))?;
@@ -533,9 +607,6 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
             page: interrupt,
             door: env::hole::unseal(Grant::Claim.mark(), env::HoleLimits::default())
                 .map_err(|_| Start::Load(E_HUB))?,
-            dma: false,
-            requester: 0,
-            pci: TaskId::new(0),
         },
     )?;
     for (index, device) in devices.iter().enumerate() {
@@ -555,9 +626,6 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
                 line: device.line,
                 page: token,
                 door,
-                dma: false,
-                requester: 0,
-                pci: TaskId::new(0),
             },
         )?;
     }

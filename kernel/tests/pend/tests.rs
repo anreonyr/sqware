@@ -1079,3 +1079,262 @@ fn a_lone_root_preserves_the_bounded_contention_budget() {
     meta.control.busy_for(0);
     assert_eq!(release_without_allocating(&task, token), Ok(1));
 }
+
+fn rooted(task: &Arc<Task>, meta: Mail, permission: Permission) -> PieToken {
+    let pie = pie(meta, permission);
+    let token = pie.token();
+    pend::insert(task, pie).unwrap();
+    token
+}
+
+#[test]
+fn derive_range_wire_roundtrips_and_rejects_invalid_ranges() {
+    use env::{Decode, EnvCall, GrantRange, PieCall};
+
+    let _: fn(PieToken, Permission, Mark, GrantRange) -> env::PieResult<PieToken> =
+        env::pie::derive;
+    let token = PieToken::mint(42);
+    let call = PieCall::Derive {
+        src: token,
+        subset: rights(),
+        mark: Mark::NONE,
+        range: GrantRange::Pages {
+            offset: 2,
+            count: 3,
+        },
+    };
+    assert_eq!(call.slot(), (7usize << 32) | 13);
+    assert_eq!(
+        EnvCall::from_wire(call.slot(), &call.pack()),
+        Ok(EnvCall::Pie(call))
+    );
+    for slot in [11, 12] {
+        assert_eq!(
+            EnvCall::from_wire((7usize << 32) | slot, &[0; 6]),
+            Err(Decode::BadSlot),
+            "slot {slot} must stay unassigned"
+        );
+    }
+
+    let inherit = PieCall::Derive {
+        src: token,
+        subset: rights(),
+        mark: Mark::NONE,
+        range: GrantRange::Inherit,
+    };
+    assert_eq!(
+        EnvCall::from_wire(inherit.slot(), &inherit.pack()),
+        Ok(EnvCall::Pie(inherit))
+    );
+    assert_eq!(&inherit.pack()[3..], &[0, 0, 0]);
+
+    let mut registers = call.pack();
+    for invalid in [
+        (2usize, 2usize, 3usize),
+        (0, 2, 3),
+        (1, 1, 0),
+        (1, usize::MAX, 2),
+        (1, 0, usize::MAX),
+    ] {
+        (registers[3], registers[4], registers[5]) = invalid;
+        assert_eq!(
+            EnvCall::from_wire(call.slot(), &registers),
+            Err(Decode::Invalid),
+            "invalid GrantRange {invalid:?}"
+        );
+    }
+    assert!(GrantRange::pages(0, 0).is_none());
+    assert!(GrantRange::pages(usize::MAX, 2).is_none());
+    assert!(GrantRange::pages(0, usize::MAX).is_none());
+}
+
+#[test]
+fn local_derive_inherits_exact_parent_window_and_only_narrows() {
+    use crate::core::work::mail::PoleMeta;
+    use crate::memory::address::{PageCount, PageOffset};
+
+    let owner = Task::new();
+    let peer = Task::new();
+    let root = rooted(&owner, Mail::Pole(PoleMeta::new(owner.ident.id)), rights());
+    let branch = PieToken::mint(
+        pend::derive(
+            &owner,
+            root,
+            rights(),
+            Mark::NONE,
+            Some((PageOffset::new(1), PageCount::new(3).unwrap())),
+        )
+        .unwrap(),
+    );
+    let child = PieToken::mint(
+        pend::accord(
+            &owner,
+            branch,
+            &Arc::downgrade(&peer),
+            rights(),
+            Mark::NONE,
+        )
+        .unwrap(),
+    );
+    let inherited = PieToken::mint(pend::derive(&peer, child, rights(), Mark::NONE, None).unwrap());
+    let inherited_pie = pend::locate(&peer, inherited).unwrap();
+    assert_eq!(
+        inherited_pie.grant().window(),
+        Some((PageOffset::new(1), PageCount::new(3).unwrap()))
+    );
+    assert_eq!(inherited_pie.sire(), Some(child));
+    assert!(inherited_pie.lord().ptr_eq(&Arc::downgrade(&peer)));
+
+    assert_eq!(
+        pend::derive(
+            &peer,
+            child,
+            rights(),
+            Mark::NONE,
+            Some((PageOffset::new(0), PageCount::new(1).unwrap())),
+        ),
+        Err(PieFail::Denied),
+        "a local derive cannot widen outside its parent window"
+    );
+    let narrow = PieToken::mint(
+        pend::derive(
+            &peer,
+            inherited,
+            rights(),
+            Mark::NONE,
+            Some((PageOffset::new(2), PageCount::new(1).unwrap())),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        pend::locate(&peer, narrow).unwrap().grant().window(),
+        Some((PageOffset::new(2), PageCount::new(1).unwrap()))
+    );
+    assert_eq!(
+        pend::derive(
+            &peer,
+            narrow,
+            rights(),
+            Mark::NONE,
+            Some((PageOffset::new(1), PageCount::new(2).unwrap())),
+        ),
+        Err(PieFail::Denied),
+        "nested local derives stay inside the narrowed window"
+    );
+    let again = PieToken::mint(pend::derive(&peer, narrow, rights(), Mark::NONE, None).unwrap());
+    assert_eq!(
+        pend::locate(&peer, again).unwrap().grant().window(),
+        Some((PageOffset::new(2), PageCount::new(1).unwrap()))
+    );
+    let transferred = grant(&peer, narrow, &owner).unwrap();
+    assert_eq!(
+        pend::locate(&owner, transferred).unwrap().grant().window(),
+        Some((PageOffset::new(2), PageCount::new(1).unwrap()))
+    );
+    assert_eq!(pend::revoke(&peer, &Arc::downgrade(&peer), narrow), Ok(3));
+    assert!(pend::locate(&peer, again).is_none());
+    assert!(pend::locate(&owner, transferred).is_none());
+    assert!(pend::locate(&peer, child).is_some());
+}
+
+#[test]
+fn local_derive_rejects_missing_vest_escalation_and_non_pole_pages() {
+    use crate::core::work::mail::{NoleMeta, PoleMeta};
+    use crate::memory::address::{PageCount, PageOffset};
+
+    let task = Task::new();
+    let token = rooted(&task, Mail::Pole(PoleMeta::new(task.ident.id)), rights());
+    let no_vest = rights() & !Permission::VEST;
+    let child = PieToken::mint(pend::derive(&task, token, no_vest, Mark::NONE, None).unwrap());
+    assert_eq!(pend::locate(&task, child).unwrap().permission(), no_vest);
+    assert_eq!(
+        pend::derive(&task, child, no_vest, Mark::NONE, None),
+        Err(PieFail::Denied),
+        "a derived token without VEST cannot derive again"
+    );
+    assert_eq!(
+        pend::derive(&task, token, rights() | Permission::ONLY, Mark::NONE, None),
+        Err(PieFail::Denied),
+        "a subset cannot add ONLY"
+    );
+    let nole = rooted(&task, Mail::Nole(NoleMeta::new(task.ident.id)), rights());
+    assert_eq!(
+        pend::derive(
+            &task,
+            nole,
+            rights(),
+            Mark::NONE,
+            Some((PageOffset::ZERO, PageCount::new(1).unwrap())),
+        ),
+        Err(PieFail::Denied),
+        "a non-Pole resource has no page window to derive"
+    );
+}
+
+#[test]
+fn local_only_derive_hands_over_and_revoke_restores_source() {
+    use crate::core::work::mail::PoleMeta;
+
+    let task = Task::new();
+    let permission = rights() | Permission::ONLY;
+    let token = rooted(&task, Mail::Pole(PoleMeta::new(task.ident.id)), permission);
+    let child = PieToken::mint(pend::derive(&task, token, permission, Mark::NONE, None).unwrap());
+    let source = pend::locate(&task, token).unwrap();
+    assert_eq!(source.heir().map(|heir| heir.token), Some(child));
+    assert_eq!(pend::available(&source), Err(PieFail::HandedOver));
+    assert_eq!(
+        pend::derive(&task, token, permission, Mark::NONE, None),
+        Err(PieFail::HandedOver)
+    );
+
+    assert_eq!(pend::revoke(&task, &Arc::downgrade(&task), child), Ok(1));
+    assert!(pend::locate(&task, child).is_none());
+    let restored = pend::locate(&task, token).unwrap();
+    assert_eq!(pend::available(&restored), Ok(()));
+    assert!(pend::derive(&task, token, permission, Mark::NONE, None).is_ok());
+}
+
+#[test]
+fn revoking_local_derived_parent_removes_descendants_but_not_siblings() {
+    use crate::core::work::mail::PoleMeta;
+    use crate::memory::address::{PageCount, PageOffset};
+
+    let task = Task::new();
+    let token = rooted(&task, Mail::Pole(PoleMeta::new(task.ident.id)), rights());
+    let first = PieToken::mint(
+        pend::derive(
+            &task,
+            token,
+            rights(),
+            Mark::NONE,
+            Some((PageOffset::new(1), PageCount::new(2).unwrap())),
+        )
+        .unwrap(),
+    );
+    let sibling = PieToken::mint(
+        pend::derive(
+            &task,
+            token,
+            rights(),
+            Mark::NONE,
+            Some((PageOffset::new(4), PageCount::new(2).unwrap())),
+        )
+        .unwrap(),
+    );
+    let descendant = PieToken::mint(
+        pend::derive(
+            &task,
+            first,
+            rights(),
+            Mark::NONE,
+            Some((PageOffset::new(1), PageCount::new(1).unwrap())),
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(pend::revoke(&task, &Arc::downgrade(&task), first), Ok(2));
+    assert!(pend::locate(&task, first).is_none());
+    assert!(pend::locate(&task, descendant).is_none());
+    assert!(pend::locate(&task, sibling).is_some());
+    assert!(pend::locate(&task, token).is_some());
+}

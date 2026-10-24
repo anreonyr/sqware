@@ -9,11 +9,16 @@ pub(crate) fn resources(
 ) -> Result<Resources<'static>, crate::system::app::InstallError> {
     super::config::validate().map_err(crate::system::app::InstallError::Configuration)?;
     let status = boot::status();
-    let deployment = crate::unit::select_deployment(boot.catalog.deployment(), boot.catalog.entry())
-        .map_err(|why| {
-            programs::debug!("system: invalid deployment {}: {why:?}", boot.catalog.deployment());
-            crate::system::app::InstallError::Configuration("invalid deployment selection")
-        })?;
+    let deployment =
+        crate::unit::select_deployment(boot.catalog.deployment(), boot.catalog.entry()).map_err(
+            |why| {
+                programs::debug!(
+                    "system: invalid deployment {}: {why:?}",
+                    boot.catalog.deployment()
+                );
+                crate::system::app::InstallError::Configuration("invalid deployment selection")
+            },
+        )?;
     let inputs = deployment
         .start
         .iter()
@@ -38,6 +43,7 @@ pub(crate) fn resources(
             })
         })
         .collect::<Result<Vec<_>, crate::system::app::InstallError>>()?;
+    let deployed = inputs.iter().map(|input| input.program).collect::<Vec<_>>();
     let mut resources = Resources::new();
     resources.insert(boot.catalog)?.insert(
         Supplies::new(boot.machine, boot.accounts, boot.catalog)
@@ -65,11 +71,14 @@ pub(crate) fn resources(
         .insert(status)?
         .insert(boot::Faces::default())?
         .insert(boot.machine)?
-        .insert(policy::Settle::new(policy::Flow {
-            settling: false,
-            forced: false,
-            done: false,
-        }))?
+        .insert(policy::Settle::new(
+            policy::Flow {
+                settling: false,
+                forced: false,
+                done: false,
+            },
+            &deployed,
+        ))?
         .insert(policy::Activity {
             quiet: env::chrono::clock(),
             walking: false,

@@ -37,9 +37,10 @@ pub enum Mode {
 }
 
 pub fn run(mode: Mode) -> Result<(), &'static str> {
-    // 本台是受限构造出来的：sire 是 owner（Hub），起手引导从它那里拿 System 的号。
-    let sire = env::unit::sire();
-    let system = bootstrap(sire)?;
+    // sire 保持实际 owner；启动网关由内核记录的 creator 交付。
+    let bootstrap = system_client::bootstrap::claim(Wait::AtMost(MS))
+        .map_err(|_| "work: bootstrap")?;
+    let system = bootstrap.system;
     let session = ipc::session::Session::open(system, operator::BERTH, Wait::AtMost(MS))
         .map_err(|_| "work: operator session")?;
     let tree = operator::Face::of(session);
@@ -158,13 +159,12 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         crate::driver::iommu::api::Call::BACK,
         Wait::AtMost(MS),
     )?;
-    env::pie::accord_window(
+    // 收到的窗已量到 `layout::SPAN`；只收窄权限，范围由普通 Accord 继承。
+    env::pie::accord(
         window,
         iommu.host(),
         env::Permission::FETCH.union(env::Permission::STORE),
         dma::window_mark(serial),
-        0,
-        layout::PAGES,
     )
     .map_err(|_| "work: window handover")?;
     crate::debug::put(&alloc::format!(
@@ -248,24 +248,6 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         }
         let _ = execution::room::park(::core::time::Duration::from_millis(1));
     }
-}
-
-/// 起手引导：从 sire（本台的 owner）那里拿 System 的号。
-fn bootstrap(sire: env::TaskId) -> Result<env::TaskId, &'static str> {
-    let hole = establish::claim(sire, hub_api::STARTUP_MARK, Wait::AtMost(MS))
-        .map_err(|_| "work: startup channel")?;
-    let mut bytes = [0u8; 8];
-    let (len, from) = ::resource::raw::Hole::from_raw(hole)
-        .pull(&mut bytes, Wait::AtMost(MS))
-        .map_err(|_| "work: startup frame")?;
-    if from != sire || len != bytes.len() {
-        return Err("work: startup sender");
-    }
-    usize::try_from(u64::from_le_bytes(bytes))
-        .ok()
-        .filter(|raw| *raw != 0)
-        .map(env::TaskId::new)
-        .ok_or("work: system task")
 }
 
 /// 场景那一台设备在树上的类（与 PCI 报名时的一致）。

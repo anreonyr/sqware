@@ -38,10 +38,10 @@ pub use abi::call::tole::{
 pub use abi::call::{
     AcquireSource, Allocation, Bit, ChronoCall, ChronoCallRet, ControlCall, ControlCallRet,
     ControlFail, ControlResult, DBCN_MAX, DebugCall, DebugCallRet, DebugFail, DebugResult,
-    DispatchFail, EnvCall, HoleLimits, MemoryCall, MemoryCallRet, MemoryFail, MemoryResult,
-    NOTE_MAX, Oversize, PieCall, PieCallRet, PieFail, PieInfo, PieResult, Placement, PlacementAt,
-    PlacementError, PullOutcome, ReferenceRange, ReleaseMode, RoomCall, RoomCallRet, RoomFail,
-    RoomResult, UnitCall, UnitCallRet, UnitFail, UnitResult, ViewControl, ViewSelection,
+    DispatchFail, EnvCall, GrantRange, HoleLimits, MemoryCall, MemoryCallRet, MemoryFail,
+    MemoryResult, NOTE_MAX, Oversize, PieCall, PieCallRet, PieFail, PieInfo, PieResult, Placement,
+    PlacementAt, PlacementError, PullOutcome, ReferenceRange, ReleaseMode, RoomCall, RoomCallRet,
+    RoomFail, RoomResult, UnitCall, UnitCallRet, UnitFail, UnitResult, ViewControl, ViewSelection,
 };
 /// **每格一个精确签名的入口**（`#[derive(Envcall)]` 生成，一域一个模块）：
 /// `env::memory::acquire(source, retention)`、`env::hole::seal(token)`、`env::room::park(millis)`…

@@ -8,6 +8,7 @@ pub mod bell;
 mod capability;
 pub mod dock;
 mod hole;
+mod loan;
 pub mod pile;
 pub mod port;
 mod port_open_fail;

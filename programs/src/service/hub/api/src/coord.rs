@@ -42,12 +42,6 @@ pub const fn coord_mark(serial: u64) -> Mark {
 /// （`StateInstance` 的 owner 检查）：不靠报文自报。
 pub const LAUNCH_MARK: Mark = Mark::of("hub-launch");
 
-/// Hub 在放行执行实例之前，把 System 的号交给它的那一枚孔的记号。
-///
-/// 构造出来的那一台的 `sire` 是它的 owner（Hub）；它要从这里拿到 System 的号
-/// 才开得了操作员会话（与 Shell 那一台的引导同形）。
-pub const STARTUP_MARK: Mark = Mark::of("hub-startup");
-
 /// 本绑定的 IOVA 窗起址；`serial` 越界 ⇒ `None`（不猜一个回绕过的窗）。
 pub const fn iova_base(serial: u64) -> Option<u64> {
     if serial == 0 || serial >= BINDING_MAX {

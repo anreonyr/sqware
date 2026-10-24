@@ -1,7 +1,7 @@
 extern crate self as env;
 
 pub use abi::{
-    AcquireSource, Allocation, Bit, FlatReference, HoleCondition, HoleFail, HoleResult, HoleLimits, Mark,
+    AcquireSource, Allocation, Bit, FlatReference, GrantRange, HoleCondition, HoleFail, HoleResult, HoleLimits, Mark,
     MemoryFail, MemoryResult, Oversize, PAGE_SIZE, Permission, PieFail, PieInfo, PieKind,
     PieResult, PieToken, PoleFail, PoleResult, PullOutcome, ReleaseMode, ToleEventSource, TaskId, VirtAddr, Wait,
     make_fail,
@@ -50,22 +50,18 @@ pub mod pie {
         }
     }
 
-    pub fn accord_window(
+    pub fn derive(
         src: PieToken,
-        peer: TaskId,
         permission: Permission,
         mark: Mark,
-        offset: usize,
-        count: usize,
+        range: crate::GrantRange,
     ) -> PieResult<PieToken> {
-        let remote = token();
-        record(Event::AccordWindow(
-            src, peer, permission, mark, offset, count, remote,
-        ));
-        if crate::test_backend::fail(Op::Accord) {
+        let child = token();
+        record(Event::Derive(src, permission, mark, range, child));
+        if crate::test_backend::fail(Op::Derive) {
             Err(make_fail(PieFail::Denied))
         } else {
-            Ok(remote)
+            Ok(child)
         }
     }
 
@@ -229,6 +225,7 @@ pub mod test_backend {
         Release,
         Seal,
         Accord,
+        Derive,
         Revoke,
     }
 
@@ -242,7 +239,7 @@ pub mod test_backend {
         Release(PieToken),
         Seal(PieToken),
         Accord(PieToken, TaskId, Permission, Mark, PieToken),
-        AccordWindow(PieToken, TaskId, Permission, Mark, usize, usize, PieToken),
+        Derive(PieToken, Permission, Mark, abi::GrantRange, PieToken),
         Revoke(TaskId, PieToken),
         Pull(PieToken),
         Wait(PieToken, HoleCondition, Wait),
@@ -331,6 +328,8 @@ pub mod test_backend {
 
 #[path = "../../src/capability.rs"]
 pub mod capability;
+#[path = "../../src/loan.rs"]
+pub mod loan;
 #[path = "../../src/hole.rs"]
 #[allow(dead_code)]
 pub(crate) mod hole_handle;

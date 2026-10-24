@@ -2,6 +2,10 @@
 extern crate alloc;
 extern crate self as system_client;
 
+pub mod debug {
+    pub fn put(_: &str) {}
+}
+
 pub mod operator {
     #[derive(Clone, Copy)]
     pub struct GrantInfo {

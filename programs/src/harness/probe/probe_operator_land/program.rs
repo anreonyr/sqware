@@ -35,6 +35,7 @@ pub static PROBE_OPERATOR_LAND: UnitFile = UnitFile {
         ending: Some(Ending::Transient),
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };

@@ -1,0 +1,18 @@
+[package]
+name = "shell-adapter-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+env = { path = "../../../crates/env" }
+lisp = { path = "../../../crates/lisp" }
+pipe-api = { path = "../../src/service/pipe/api" }
+shell-api = { path = "../../src/user/shell/api" }
+stream = { path = "../../../crates/stream" }
+system-api = { path = "../../src/system/api" }

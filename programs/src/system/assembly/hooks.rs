@@ -16,20 +16,69 @@ pub(crate) fn children() -> Result<alloc::vec::Vec<(Key, Plan<&'static str>)>, B
     prepare.system("namespace.coordinates", namespace_coordinates)?;
     prepare.system("namespace", prepare_namespace)?;
     prepare.system("identity.exports", identity_exports)?;
+    prepare.system("channels", channels)?;
     prepare.system("supply", super::supply::prepare)?;
+    prepare.system("bootstrap", bootstrap)?;
     let mut retire = Schedule::sequence();
+    retire.system("retirement", retirement_dependencies)?;
     retire.system("identity.exports", retire_exports)?;
     retire.system("namespace", retire_namespace)?;
     retire.system("constructor", retire_constructor)?;
     retire.system("claim", retire_claim)?;
     retire.system("supply", release_supply)?;
     retire.system("identity", unbind)?;
+    retire.system("bootstrap", release_bootstrap)?;
     retire.system("reclaim", hook::reclaim)?;
     Ok(alloc::vec![
         (Key::Prepare, prepare.build()?),
         (Key::Retire, retire.build()?)
     ])
 }
+fn channels(mut jobs: ResMut<Jobs>) -> Result<Progress, &'static str> {
+    let reference = jobs.active_hook_reference().ok_or("instance channel reference")?;
+    let launch = jobs.launches.iter_mut()
+        .find(|launch| launch.instance.reference == reference)
+        .ok_or("instance channel installation")?;
+    if let Some(program) = launch.installation.delivery.program {
+        launch.installation.service.as_mut().ok_or("instance channel service")?
+            .connect(program).map_err(|_| "instance channels")?;
+    }
+    Ok(Progress::Done)
+}
+
+fn retirement_dependencies(
+    mut jobs: ResMut<Jobs>,
+    layout: Res<crate::system::app::operator::Layout>,
+    namespaces: Res<crate::system::assembly::namespace::NamespaceInstallations>,
+) -> Result<Progress, &'static str> {
+    let reference = jobs
+        .active_hook_reference()
+        .ok_or("instance retirement reference")?;
+    let launch = jobs
+        .launches
+        .iter_mut()
+        .find(|launch| launch.instance.reference == reference)
+        .ok_or("instance retirement launch")?;
+    if launch.installation.retirement.is_empty() {
+        return Ok(Progress::Done);
+    }
+    let system = layout.as_ref().ok_or("instance retirement layout")?;
+    for participant in &mut launch.installation.retirement {
+        participant.discover(system, &namespaces);
+        participant.advance();
+    }
+    Ok(if launch
+        .installation
+        .retirement
+        .iter()
+        .all(|participant| participant.done)
+    {
+        Progress::Done
+    } else {
+        Progress::Pending
+    })
+}
+
 fn release_supply(
     jobs: Res<Jobs>,
     mut supplies: ResMut<crate::system::app::supplies::Supplies>,
@@ -38,6 +87,13 @@ fn release_supply(
     supplies
         .release_target(task)
         .map_err(|_| "instance supply release")?;
+    Ok(Progress::Done)
+}
+fn bootstrap(mut jobs: ResMut<Jobs>) -> Result<Progress, &'static str> {
+    super::bootstrap::advance(&mut jobs, env::unit::self_id())
+}
+fn release_bootstrap(mut jobs: ResMut<Jobs>) -> Result<Progress, &'static str> {
+    super::bootstrap::release(&mut jobs)?;
     Ok(Progress::Done)
 }
 fn launch(jobs: &Jobs, task: Option<env::TaskId>) -> Result<&Delivery, &'static str> {
@@ -118,7 +174,7 @@ fn namespace_coordinates(
     mut namespaces: ResMut<super::namespace::NamespaceInstallations>,
 ) -> Result<Progress, &'static str> {
     let task = jobs.active_hook_task().ok_or("instance hook target")?;
-    let team = control.instance(task).and_then(|instance| instance.team);
+    let team = control.instance(task).and_then(|instance| instance.team());
     namespaces
         .coordinates(super::namespace::Coordinates { task, team })
         .map_err(|_| "instance namespace coordinates")?;
@@ -133,7 +189,12 @@ fn retire_namespace(
     let system = layout.as_ref().ok_or("operator layout unavailable")?;
     let done = namespaces
         .retire_task(system, task)
-        .map_err(|_| "instance namespace retire")?;
+        .map_err(|why| {
+            crate::debug::put(&alloc::format!(
+                "system: namespace retire task={} failed={why:?}", task.get()
+            ));
+            "instance namespace retire"
+        })?;
     Ok(if done {
         Progress::Done
     } else {

@@ -49,7 +49,7 @@ pub fn tasks(control: Res<Control>, mut wanted: ResMut<Interests>) -> Result<Pro
             .into(),
     });
     for item in control.instances() {
-        if let Some(team) = item.team {
+        if let Some(team) = item.team() {
             if !item.claimed {
                 wanted.subs.push(Source::Join {
                     target: team.into(),

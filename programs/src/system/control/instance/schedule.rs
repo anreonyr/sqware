@@ -5,9 +5,8 @@ use crate::system::control::unit::Control;
 use ::schedule::{Progress, Res, ResMut};
 
 pub fn reap(mut control: ResMut<Control>, settle: Res<Settle>) -> Result<Progress, Fail> {
-    // 退场门：只有 Hub 结清全部绑定之后 `settling` 才为真，故这里不会抢在
-    // 恢复责任结清之前把执行实例收掉。
-    control.reap_instances(settle.flow.settling);
+    // 关闭新建准入后即停止动态执行域，退休提供方最后才结清。
+    control.reap_instances(settle.flow.settling || settle.closing());
     Ok(Progress::Done)
 }
 pub fn pending(

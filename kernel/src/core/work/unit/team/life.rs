@@ -15,6 +15,7 @@ pub(crate) struct TeamLife {
     pub tasks: Arc<SpinLock<Vec<Arc<Member>>>>,
     pub children: SpinLock<Vec<Arc<TeamLife>>>,
     pub life: Arc<Life>,
+    pub(crate) exit: super::exit::ExitPolicy,
 }
 
 impl TeamLife {

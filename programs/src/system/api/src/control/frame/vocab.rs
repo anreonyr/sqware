@@ -118,3 +118,4 @@ pub const INSTANCE_STATE: u8 = 9;
 
 /// 查询命名程序当前存活的任务。
 pub const TASK: u8 = 10;
+pub const INSTANCE_RELEASE: u8 = 11;

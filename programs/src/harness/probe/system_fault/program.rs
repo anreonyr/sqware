@@ -14,6 +14,7 @@ pub static ENTRY: UnitFile = UnitFile {
         ending: None,
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };
@@ -34,6 +35,7 @@ pub static DEPENDENT: UnitFile = UnitFile {
         ending: Some(Ending::Resident),
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };
@@ -54,6 +56,7 @@ pub static CHILD: UnitFile = UnitFile {
         ending: Some(Ending::Resident),
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };
@@ -72,6 +75,7 @@ pub static FAULT_UNIT: UnitFile = UnitFile {
         ending: None,
 
         construction: &[],
+        retirement: &[],
     },
     supply: crate::unit::SupplyConfig { bindings: &[] },
 };

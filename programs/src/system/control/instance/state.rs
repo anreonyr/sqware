@@ -5,7 +5,7 @@ pub struct Instance {
     pub reference: crate::system::assembly::InstanceRef,
     pub owner: TaskId,
     pub task: TaskId,
-    pub team: Option<TeamId>,
+    pub receipt: super::receipt::Receipt,
     pub state: State,
     pub claimed: bool,
     pub started: bool,
@@ -14,17 +14,25 @@ pub struct Instance {
 }
 
 impl Instance {
+    pub(crate) fn settled(&self) -> bool {
+        self.state == State::Dead && !matches!(self.receipt, super::receipt::Receipt::Returned(_))
+    }
+
+    pub(crate) fn team(&self) -> Option<TeamId> {
+        (self.state != State::Dead).then(|| self.receipt.team()).flatten()
+    }
+
     pub(crate) fn claim(&mut self, now: u64) -> Option<TeamId> {
         if self.claimed {
             return (matches!(self.state, State::Debarked | State::Ready)
                 || self.state == State::Starting && self.started)
-                .then_some(self.team)
+                .then_some(self.team())
                 .flatten();
         }
         if now >= self.claim_until || self.state != State::Debarked {
             return None;
         }
-        let team = self.team?;
+        let team = self.team()?;
         self.claimed = true;
         Some(team)
     }
@@ -49,6 +57,8 @@ impl Instance {
     }
 
     pub(crate) fn stop(&mut self) {
-        self.state = State::Stopping;
+        if self.state != State::Dead {
+            self.state = State::Stopping;
+        }
     }
 }
