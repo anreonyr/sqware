@@ -19,6 +19,8 @@ pub struct Peer<C> {
 }
 
 impl<C> Peer<C> {
+    pub fn host(&self) -> env::TaskId { env::TaskId::new(10) }
+
     pub fn new(shared: Rc<RefCell<Script>>) -> Self {
         Self {
             shared,

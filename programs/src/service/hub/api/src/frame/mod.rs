@@ -14,6 +14,7 @@ pub use wire::OK;
 pub mod bond;
 pub mod claim;
 pub mod dma;
+mod dma_said;
 pub mod inventory;
 pub mod list;
 pub mod vocab;

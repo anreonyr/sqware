@@ -128,6 +128,70 @@ invocation rejected a string-to-integer conversion error after the guest runner
 succeeded; the corrected verifier rechecked the preserved evidence and the later
 pool runs passed the complete runner/verifier path.
 
-Core still admits one binding and still uses the existing wire/resource-delivery
-path. Per-Domain collections, address allocation, explicit delivery and real
-equal-IOVA two-device composition remain the next integration work.
+That preparation checkpoint still admitted one binding and used the prior wire
+and resource-delivery path. The following checkpoint replaces those paths.
+
+## Persistent Domains and explicit delivery in PR12
+
+One IOMMU Core now owns the shared engine and a persistent collection of Domains.
+Each Domain belongs to the actual Driver caller and requester, has an opaque
+`DomainId { engine, key }`, and retains its own Holds, current binding and retired
+serial floor. Every mapping operation carries that Domain and the full Hub binding
+identity. A later closure in another Domain cannot reject an earlier pending
+binding. The first authenticated binding pins each Domain's Hub.
+
+Acquire validates an explicitly delivered IOMMU-local token and allocates its
+range once, before taking the data Reference. Exact retries keep the same range,
+completion records and Reference, including after the Work grant is withdrawn.
+The private allocator starts at 8 GiB, advances by 2 MiB and stops before the
+positive Sv39 limit. Separate Domains can return the same numeric IOVA. The
+Domain-qualified range does not encode this private allocation policy. Hub no
+longer computes addresses or limits binding serials by an address-space formula.
+
+Each Domain retires through its own DC-zero and actual completion-cookie proof.
+Another active Domain keeps the shared queues running. The last Quiesce lowers
+the engine and verifies actual Off before the data Reference is released; the
+final pool still requires Off, no Busy, quiet queues and no sticky error. A
+partially released binding remains responsible for any remaining engine proof.
+Unpublished close-before-Acquire also reads back its actual idle engine; it does
+not stop another Domain's engine.
+
+Hub forwards only the authenticated device source and an opaque per-binding
+client token. Work uses the class client to learn the actual IOMMU target, gifts
+the DMA window directly, and reports the returned target-local token. Supply is
+authenticated by the actual Work sender and full binding and is immutable on
+retry. Window and BAR delivery preserve their target-local grant receipts;
+Work no longer scans its resource table for these resources. Activation carries
+the actual allocated range to the controller, which also retains the old actual
+address for the stale-translation probe.
+
+Final verification used source SHA-256
+`856360d2801729f163c95571eaf35881c5577287bcd477d5551bb23433df8f0f`:
+
+- 218 Rust host tests passed: Core/Pages 52, queue 29, retention 45, Recovery
+  coordination 15, device recovery/protocol 8, Hub API 4, Hub coordination 10,
+  kernel confirmation 6, structural 22, capability import 8, image/entry 19.
+- 105 Python verifier tests passed; workspace check passed with five existing
+  warnings. Logs are `target/driver-composition/iommu-domains/host-domain-final-*`.
+- Native runner and independent verifier both returned 0 for product 4/8 harts,
+  and 8-hart before/after-publication abort, hardware Fence repair, actual
+  Reference Release Busy, Ruin and forced shutdown. Frame allocations restored
+  85→85, 153→153, or 155→155 for the confirmation feature build. Evidence is
+  `target/driver-composition/iommu-domains/native-domain-final-*/`.
+- The real CQ fault expired and repaired the same `0x10f00fef` completion cookie;
+  no completion-memory write was used to manufacture success.
+- Readonly Flash review accepted the final ownership and retry contract after
+  checking kernel cull semantics and unknown-acknowledgement cleanup. The root
+  ran the checks; Flash did not independently rerun native tests.
+
+Failed evidence remains available: an initial invocation enabled release debug
+assertions without the scene filter and was terminated as an invalid invocation.
+The initial before-publication run completed and restored frames but its verifier
+rejected the missing empty-binding release readback. The actual readback was
+added, two host regressions protect idle/error and shared-engine behavior, and
+all final native cases were rerun on the source above. Assertions were retained.
+
+The Driver still selects one device profile. Its device collection, independent
+pending RPCs, two-real-device/equal-IOVA proof and final frozen 4/8-hart plus
+1024-generation acceptance remain open. Reset-readback fault injection also
+remains unproven; the older reset scene is a transport gate before DeviceStop.

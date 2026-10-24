@@ -74,11 +74,16 @@ fn close_inspect_settle_round_trip() {
 }
 
 #[test]
-fn said_keeps_its_layout_and_never_carries_a_device_list() {
-    let said = DmaSaid::bound(9, BindingState::Preparing);
+fn said_carries_only_binding_progress_source_and_opaque_client() {
+    let mut said = DmaSaid::bound(9, BindingState::Preparing);
+    said.source = env::TaskId::new(17);
+    said.client = token(29);
     let mut bytes = DmaSaid::EMPTY;
     let len = said.store(&mut bytes).unwrap();
-    assert_eq!(len, 1 + 1 + 1 + 1 + 1 + 1 + 8);
+    assert_eq!(len, 1 + 1 + 1 + 1 + 1 + 1 + 8 + 8 + 8);
+    assert_eq!(&bytes[14..22], &17u64.to_le_bytes());
+    assert_eq!(&bytes[22..30], &29u64.to_le_bytes());
     assert_eq!(DmaSaid::fetch(&bytes[..len]), Some(said));
     assert!(DmaSaid::fetch(&bytes[..len - 1]).is_none());
+    assert!(DmaSaid::fetch(&bytes[..len + 1]).is_none());
 }

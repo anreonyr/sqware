@@ -18,7 +18,7 @@ mod tick;
 mod fixture;
 #[path = "../../../programs/src/harness/probe/device_confirmation/injection.rs"]
 mod injection;
-#[path = "../../../programs/src/driver/iommu/api.rs"]
+#[path = "../../../programs/src/driver/iommu/api/mod.rs"]
 mod iommu;
 #[path = "../../../programs/src/driver/pci/api.rs"]
 mod pci;
@@ -72,7 +72,8 @@ fn configure(enabled: bool, op: u8) {
 fn request(op: u8) -> Vec<u8> {
     use env::wire::Span;
     let mut bytes = vec![0u8; iommu::Step::LEN];
-    let count = iommu::Step { op, serial: 1, reason: 0, back: env::PieToken::NONE }
+    let count = iommu::Step { op, engine: env::TaskId::new(200), key: 77,
+        hub: env::TaskId::new(99), serial: 1, reason: 0, back: env::PieToken::NONE }
         .store_at(&mut bytes, 0).unwrap();
     bytes.truncate(count);
     bytes
@@ -89,7 +90,7 @@ fn real_iommu_frames_match_without_assuming_buffer_capacity_is_wire_length() {
     for op in (iommu::INVALIDATE..=iommu::RELEASE).step_by(2) {
         configure(true, op);
         let bytes = request(op);
-        assert_eq!(bytes.len(), 18);
+        assert_eq!(bytes.len(), 42);
         assert!(reject(&bytes));
         assert!(reject(&bytes), "failure persists until explicit removal");
         configure(false, op);
@@ -106,9 +107,9 @@ fn caller_target_operation_serial_and_minimum_length_are_all_required() {
     assert!(!fixture::reject(env::TaskId::new(201), env::TaskId::new(100), false, &bytes));
     assert!(!fixture::reject(env::TaskId::new(200), env::TaskId::new(101), false, &bytes));
     assert!(!reject(&request(iommu::INVALIDATE)));
-    assert!(!reject(&bytes[..8]));
+    for end in 0..bytes.len() { assert!(!reject(&bytes[..end])); }
     let mut stale = bytes.clone();
-    stale[1..9].copy_from_slice(&2u64.to_le_bytes());
+    stale[25..33].copy_from_slice(&2u64.to_le_bytes());
     assert!(!reject(&stale));
     assert!(reject(&bytes));
     configure(false, iommu::RELEASE);

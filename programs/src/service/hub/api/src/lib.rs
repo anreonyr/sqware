@@ -10,7 +10,7 @@ pub mod grant;
 pub mod marks;
 
 pub use coord::{
-    binding_mark, coord_mark, iova_base, window_mark, BINDING_MAX, IOVA_BASE, IOVA_LIMIT, IOVA_SPAN,
+    binding_mark, coord_mark, window_mark,
     LAUNCH_MARK,
 };
 pub use frame::{code_to_fail, fail_to_code};

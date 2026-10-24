@@ -8,14 +8,30 @@ pub fn hold(held: bool) {
     state::STATE.with_borrow_mut(|state| state.held_queue = held);
 }
 
+pub fn block_lower(csr: usize, blocked: bool) {
+    state::STATE.with_borrow_mut(|state| {
+        state.blocked_lower = blocked.then_some(csr);
+    });
+    if !blocked {
+        regs::write32(base(), csr, 0);
+    }
+}
+
 pub fn completion(slot: usize) -> u32 {
-    let address = state::STATE.with_borrow(|state| state.view_address + layout::FENCE * PAGE_SIZE + slot * 4);
+    let address =
+        state::STATE.with_borrow(|state| state.view_address + layout::FENCE * PAGE_SIZE + slot * 4);
     unsafe { core::ptr::read_volatile(address as *const u32) }
 }
 
 pub fn complete(slot: usize, value: u32) {
-    let address = state::STATE.with_borrow(|state| state.view_address + layout::FENCE * PAGE_SIZE + slot * 4);
+    let address =
+        state::STATE.with_borrow(|state| state.view_address + layout::FENCE * PAGE_SIZE + slot * 4);
     unsafe { core::ptr::write_volatile(address as *mut u32, value) };
+}
+
+pub fn word(page: usize, slot: usize) -> u64 {
+    let address = state::STATE.with_borrow(|state| state.view_address + page * PAGE_SIZE + slot * 8);
+    unsafe { core::ptr::read_volatile(address as *const u64) }
 }
 
 pub fn consume(count: u32) {
@@ -23,11 +39,14 @@ pub fn consume(count: u32) {
     let (address, bytes) = state::STATE.with_borrow(|state| (state.view_address, state.view_bytes));
     let mut head = regs::read32(base, regs::CQH);
     let tail = regs::read32(base, regs::CQT);
-    let commands = ((regs::read64(base, regs::CQB) & regs::PPN_FIELD) >> regs::PPN_SHIFT) as usize * PAGE_SIZE;
+    let commands =
+        ((regs::read64(base, regs::CQB) & regs::PPN_FIELD) >> regs::PPN_SHIFT) as usize * PAGE_SIZE;
     let command_offset = commands.checked_sub(PAGE_SIZE).unwrap();
     assert!(command_offset + PAGE_SIZE <= bytes);
     for _ in 0..count {
-        if head == tail { break; }
+        if head == tail {
+            break;
+        }
         let command = (address + command_offset + (head % 256) as usize * 16) as *const u64;
         let word = unsafe { core::ptr::read_volatile(command) };
         if word & 0x7f == 2 && word & (1 << 10) != 0 {
@@ -42,11 +61,19 @@ pub fn consume(count: u32) {
 }
 
 pub fn clock() -> u64 {
-    let (time, address, held, blocked) = state::STATE.with_borrow_mut(|state| {
+    let (time, address, held, blocked, lower) = state::STATE.with_borrow_mut(|state| {
         state.clock += 1_000_000;
-        (state.clock, state.view_address, state.held_queue, state.blocked_queue)
+        (
+            state.clock,
+            state.view_address,
+            state.held_queue,
+            state.blocked_queue,
+            state.blocked_lower,
+        )
     });
-    if address == 0 { return time; }
+    if address == 0 {
+        return time;
+    }
     let base = base();
     for csr in [regs::CQCSR, regs::FQCSR] {
         let seen = regs::read32(base, csr);
@@ -54,6 +81,11 @@ pub fn clock() -> u64 {
             regs::write32(base, csr, (seen | regs::QUEUE_ON) & !regs::QUEUE_MEM_FAULT);
         }
     }
-    if !held && regs::read32(base, regs::CQCSR) & regs::QUEUE_ON != 0 { consume(256); }
+    if let Some(csr) = lower {
+        regs::write32(base, csr, regs::QUEUE_ENABLE | regs::QUEUE_ON);
+    }
+    if !held && regs::read32(base, regs::CQCSR) & regs::QUEUE_ON != 0 {
+        consume(256);
+    }
     time
 }

@@ -32,6 +32,12 @@ pub mod virtio_device;
 pub mod pci_api;
 #[path = "../../src/driver/recovery/api.rs"]
 pub mod recovery_api;
+#[path = "../../src/driver/recovery/client/mod.rs"]
+mod client;
+#[path = "../../src/driver/shared/coords.rs"]
+mod coords;
+#[path = "../../src/harness/device/command.rs"]
+mod command;
 #[path = "../../src/driver/recovery/attach_request.rs"]
 pub mod attach_request;
 #[path = "../../src/driver/recovery/device.rs"]
@@ -74,3 +80,4 @@ pub mod driver {
 }
 
 mod cleanup;
+mod protocol;

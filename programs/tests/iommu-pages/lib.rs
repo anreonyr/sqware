@@ -18,6 +18,8 @@ pub mod memory;
 pub mod pie;
 #[path = "fixtures/raw.rs"]
 pub mod raw;
+#[path = "fixtures/source.rs"]
+pub mod source;
 #[path = "fixtures/state.rs"]
 mod state;
 
@@ -32,10 +34,20 @@ pub mod dock;
 mod core_fixture;
 #[path = "fixtures/platform.rs"]
 pub mod platform;
-#[path = "../../src/driver/iommu/api.rs"]
+#[path = "../../src/driver/iommu/api/mod.rs"]
 pub mod api;
+#[path = "../../src/driver/iommu/acquire.rs"]
+pub mod acquire;
 #[path = "../../src/driver/iommu/binding.rs"]
 pub mod binding;
+#[path = "../../src/driver/iommu/domain.rs"]
+pub mod domain;
+#[path = "../../src/driver/iommu/domain_id.rs"]
+pub mod domain_id;
+#[path = "../../src/driver/iommu/domain_range.rs"]
+pub mod domain_range;
+#[path = "../../src/driver/iommu/engine.rs"]
+pub mod engine;
 #[path = "../../src/driver/iommu/cache_step.rs"]
 pub mod cache_step;
 #[path = "../../src/driver/iommu/invalidation.rs"]
@@ -69,14 +81,15 @@ pub mod settled;
 
 pub mod driver {
     pub mod iommu {
-        pub use crate::{api, binding, context, cookie, fence, handshake, hold, invalidation, layout,
-            iommu_core as core, pages, phase, queue, references, regs, settled, table, ticket};
+        pub use crate::{acquire, api, binding, context, cookie, domain, domain_id, domain_range,
+            engine, fence, handshake, hold, invalidation, layout, iommu_core as core, pages, phase,
+            queue, references, regs, settled, table, ticket};
         pub mod order { pub fn sync() {} }
     }
     pub mod shared {
         pub use crate::platform;
         pub mod dma {
-            pub use hub_api::{IOVA_SPAN, iova_base, window_mark};
+            pub use hub_api::window_mark;
         }
     }
 }
@@ -91,3 +104,6 @@ mod cleanup;
 mod translation;
 mod coordination;
 mod contexts;
+mod domains;
+mod provider_wire;
+mod ranges;

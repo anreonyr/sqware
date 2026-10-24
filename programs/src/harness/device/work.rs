@@ -16,11 +16,10 @@ use system_api::operator::Path;
 use system_client::operator;
 use wire::Message;
 
-use crate::driver::iommu::api::ENTRY_PATH as IOMMU_ENTRY;
+use crate::driver::recovery::client;
 use crate::driver::virtio::{Caps, Virtio};
 use crate::driver::shared::dma::{self, HubDma};
 use crate::driver::shared::peer::Peer;
-use crate::driver::shared::lookup;
 use crate::harness::device::layout::{self, Block};
 
 use super::control::{self, Call as CtlCall, Command};
@@ -47,10 +46,6 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     let tree = operator::Face::of(session);
     let hub = HubDma::find(&tree, Wait::AtMost(MS))?;
     if hub.host() != env::unit::sire() { return Err("work: Hub is not the owner"); }
-    let mut rejected = None;
-    let state = lookup::state(&tree, system, &mut rejected, Wait::AtMost(MS))?;
-    let coordinator = state.publisher(system_api::namespace::SERVICE,
-        hub_api::coordination::call::ENTRY, Wait::AtMost(MS)).map_err(|_| "work: device publisher")?;
     // 报活孔：内核只允许主人自己交来的那一枚。
     let sensor = env::hole::unseal(hub_api::ALIVE_MARK, HoleLimits::default())
         .map_err(|_| "work: sensor")?;
@@ -144,6 +139,8 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         u8::from(mode != Mode::Before),
         auxiliary,
         sensor,
+        0,
+        0,
     )?;
     if mode == Mode::Before {
         // 不交窗：发布不会发生。等控制器说“收场”。
@@ -152,31 +149,60 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         hub.close(Wait::AtMost(MS), serial, hub_api::Close::Fault)?;
         return Ok(());
     }
-    // 交窗：从控制器手里拿那一枚（按本次绑定的记号认），再交进 IOMMU。
-    await_command(command, Command::Window)?;
-    let window = find_window(serial).ok_or("work: window missing")?;
+    let window = await_window(command)?;
+    let info = resource::raw::inspect(window).map_err(|_| "work: window token")?;
+    if !info.alive || info.kind != env::PieKind::Pole
+        || info.mark != dma::window_mark(serial)
+        || info.permission != (env::Permission::FETCH | env::Permission::STORE | env::Permission::VEST)
+        || info.vestor != ctl.host()
+    {
+        return Err("work: window grant");
+    }
     let dock = Dock::open(window).map_err(|_| "work: window mapping")?;
     let (base, size) = (dock.view().base(), dock.view().size());
     if size != layout::SPAN as usize {
         return Err("work: window is not the scene window");
     }
-    let iommu = lookup::peer::<crate::driver::iommu::api::Call>(
-        &tree,
-        &state,
-        Path::new(IOMMU_ENTRY),
-        crate::driver::iommu::api::ENTRY,
-        crate::driver::iommu::api::Call::BACK,
-        &mut rejected,
-        Wait::AtMost(MS),
-    )?;
+    let until = env::chrono::clock().saturating_add(MS as u64 * 1_000_000);
+    let mut latest = None;
+    let (coordinator, entry) = loop {
+        match hub.client(Wait::AtMost(MS), serial) {
+            Ok(Some(endpoint)) => break endpoint,
+            Ok(None) => {},
+            Err(cause) => latest = Some(cause),
+        }
+        if env::chrono::clock() >= until {
+            return Err(latest.unwrap_or("work: binding client timeout"));
+        }
+        let _ = execution::room::park(::core::time::Duration::from_millis(1));
+    };
+    let binding = Peer::<client::Call>::open_checked(entry, (coordinator, client::ENTRY), client::BACK)?;
+    let described = binding.call(Wait::AtMost(MS), |back| client::Wire::Observe(client::Observe {
+        op: client::OBSERVE, hub: hub.host(), serial, back,
+    }))?;
+    if described.status != wire::OK || described.iommu == env::TaskId::new(0) {
+        return Err("work: binding target");
+    }
     // 收到的窗已量到 `layout::SPAN`；只收窄权限，范围由普通 Accord 继承。
-    env::pie::accord(
+    let source = env::pie::accord(
         window,
-        iommu.host(),
+        described.iommu,
         env::Permission::FETCH.union(env::Permission::STORE),
         dma::window_mark(serial),
     )
     .map_err(|_| "work: window handover")?;
+    let until = env::chrono::clock().saturating_add(MS as u64 * 1_000_000);
+    loop {
+        match binding.call(Wait::AtMost(MS), |back| client::Wire::Supply(client::Supply {
+            op: client::SUPPLY, hub: hub.host(), serial, source,
+            access: env::Access::FETCH_STORE.bits().bits(), back,
+        })) {
+            Ok(said) if said.status == wire::OK && said.iommu == described.iommu => break,
+            Ok(_) => return Err("work: source refused"),
+            Err(_) if env::chrono::clock() < until => {},
+            Err(_) => return Err("work: source supply timeout"),
+        }
+    }
     crate::debug::put(&alloc::format!(
         "work: window handed to iommu base={base:#x} pages={}",
         layout::PAGES
@@ -184,10 +210,12 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     if mode == Mode::After {
         // 等放行（Hub 把坐标推来 = 发布与 MASTER 都过了），然后按控制器说的收场。
         let coords = await_coords(coordinator, serial)?;
+        if coords.bytes != size as u64 { return Err("work: DMA range length"); }
+        report(&ctl, serial, 4, auxiliary, sensor, coords.iova, coords.bytes)?;
         crate::debug::put(&alloc::format!(
             "work: released iova={:#x} pages={}",
             coords.iova,
-            coords.pages
+            coords.bar_pages
         ));
         await_command(command, Command::Close)?;
         crate::debug::put("work: requesting Close::Fault after publish");
@@ -196,9 +224,16 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     }
     // 正常那一档：按坐标立队列，然后按控制器的命令敲门铃。
     let coords = await_coords(coordinator, serial)?;
-    let bar = find_bar(serial).ok_or("work: bar missing")?;
-    let bar_dock = Dock::open(bar).map_err(|_| "work: bar mapping")?;
-    if bar_dock.view().size() != coords.pages as usize * env::PAGE_SIZE {
+    let info = resource::raw::inspect(coords.bar).map_err(|_| "work: bar token")?;
+    if !info.alive || info.kind != env::PieKind::Pole
+        || info.mark != dma::binding_mark(serial)
+        || info.permission != (env::Permission::FETCH | env::Permission::STORE | env::Permission::ONLY)
+        || info.vestor != coordinator
+    {
+        return Err("work: bar grant");
+    }
+    let bar_dock = Dock::open(coords.bar).map_err(|_| "work: bar mapping")?;
+    if bar_dock.view().size() != coords.bar_pages as usize * env::PAGE_SIZE {
         return Err("work: bar is not the exact bar");
     }
     let caps = Caps::from_parts(
@@ -216,6 +251,8 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         layout::iova(coords.iova, 2),
     );
     let queue = virtio.setup_queue(desc, avail, used)?;
+    if coords.bytes != size as u64 { return Err("work: DMA range length"); }
+    report(&ctl, serial, 4, auxiliary, sensor, coords.iova, coords.bytes)?;
     let block = Block::at(base);
     crate::debug::put(&alloc::format!(
         "work: queue={queue} status={} iova={:#x}",
@@ -241,14 +278,14 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
                 Command::Probe => {
                     virtio.notify();
                     crate::debug::put("work: rang the stale iova doorbell");
-                    report(&ctl, serial, 2, auxiliary, sensor)?;
+                    report(&ctl, serial, 2, auxiliary, sensor, coords.iova, coords.bytes)?;
                 }
                 Command::Submit => {
                     virtio.notify();
                     crate::debug::put("work: rang the in-flight request doorbell");
-                    report(&ctl, serial, 3, auxiliary, sensor)?;
+                    report(&ctl, serial, 3, auxiliary, sensor, coords.iova, coords.bytes)?;
                 }
-                Command::Window => {}
+                Command::Window(_) => {}
             }
         }
         let now = block.used_index();
@@ -270,6 +307,8 @@ fn report(
     want: u8,
     auxiliary: env::TaskId,
     sensor: PieToken,
+    iova: u64,
+    bytes: u64,
 ) -> Result<(), &'static str> {
     let said = ctl.call(Wait::AtMost(MS), |back| {
         control::Wire::Report(control::Report {
@@ -279,6 +318,8 @@ fn report(
             back,
             auxiliary,
             sensor,
+            iova,
+            bytes,
         })
     })?;
     (said.status == wire::OK)
@@ -286,21 +327,17 @@ fn report(
         .ok_or("work: report refused")
 }
 
-/// 在本域表里按记号认一枚（窗口／BAR 都由别人交来）。
-fn find_window(serial: u64) -> Option<PieToken> {
-    resource::raw::pies()
-        .find(|info| {
-            info.alive && info.kind == env::PieKind::Pole && info.mark == dma::window_mark(serial)
-        })
-        .map(|info| info.token)
-}
-
-fn find_bar(serial: u64) -> Option<PieToken> {
-    resource::raw::pies()
-        .find(|info| {
-            info.alive && info.kind == env::PieKind::Pole && info.mark == dma::binding_mark(serial)
-        })
-        .map(|info| info.token)
+fn await_window(token: PieToken) -> Result<PieToken, &'static str> {
+    let until = env::chrono::clock().saturating_add(MS as u64 * 1_000_000);
+    loop {
+        if let Some(Command::Window(window)) = poll_command(token) {
+            return Ok(window);
+        }
+        if env::chrono::clock() >= until {
+            return Err("work: window command timeout");
+        }
+        let _ = execution::room::park(::core::time::Duration::from_millis(1));
+    }
 }
 
 /// 等一条命令（有界）。
@@ -319,9 +356,9 @@ fn await_command(token: PieToken, want: Command) -> Result<(), &'static str> {
 
 /// 非阻塞地取一条命令（孔是单槽）。
 fn poll_command(token: PieToken) -> Option<Command> {
-    let mut bytes = [0u8; 2];
+    let mut bytes = [0u8; Command::LEN];
     match ::resource::raw::Hole::from_raw(token).pull(&mut bytes, Wait::POLL) {
-        Ok((1, _)) => Command::of_code(bytes[0]),
+        Ok((len, _)) => Command::fetch(&bytes[..len]),
         _ => None,
     }
 }
