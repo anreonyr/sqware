@@ -12,3 +12,6 @@ path = "lib.rs"
 [dev-dependencies]
 abi = { package = "env", path = "../../../crates/env" }
 hub-api = { path = "../../src/service/hub/api" }
+wire = { path = "../../../crates/wire" }
+mold = { path = "../../../crates/mold" }
+schedule = { path = "../../../crates/schedule" }

@@ -107,8 +107,9 @@ pub fn acceptance() {
     let (programmed, ddtp_on) = ddtp;
 
     // ④ 队列仍开着时才能等到完成记录：先失效旧翻译，再让硬件写下完成数。
-    queues.invalidate_all();
-    let fenced = queues.fence();
+    let (mut publish, _) = queues.tickets(0, 1).expect("iommu-probe: fence ticket");
+    assert!(queues.invalidate_all(), "iommu-probe: invalidation queue full");
+    let fenced = queues.fence(&mut publish);
     let (command_head, fault_head) = queues.heads();
     let (command_csr_after, fault_csr_after) = queues.status();
     let (command_base, fault_base) = queues.bases();
@@ -194,8 +195,9 @@ fn windows(base: usize, pages: &Pages, context: &DeviceContext, queues: &mut Com
         queues.enable().expect("iommu-probe: window queues");
         regs::ddtp_set(base, regs::DDTP_MODE_1LVL, Some(pages.physical(DDT)))
             .expect("iommu-probe: window directory");
-        queues.invalidate_all();
-        assert!(queues.fence(), "iommu-probe: window fence");
+        let (mut publish, _) = queues.tickets(0, 1).expect("iommu-probe: window ticket");
+        assert!(queues.invalidate_all(), "iommu-probe: window invalidation queue full");
+        assert!(queues.fence(&mut publish), "iommu-probe: window fence");
         let response = regs::translate(base, DEVICE_ID, iova, false);
         assert_eq!(response & regs::TR_FAULT, 0, "iommu-probe: window translation");
         assert_eq!(

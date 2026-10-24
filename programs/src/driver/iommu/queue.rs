@@ -15,9 +15,9 @@
 
 use super::fence::Fence;
 use super::handshake::Handshake;
-use super::outstanding::Outstanding;
 use super::pages::Pages;
 use super::regs;
+use super::ticket::Ticket;
 
 /// 命令项 16 字节；故障记录 32 字节。
 const COMMAND_BYTES: usize = 16;
@@ -27,17 +27,10 @@ const COMMAND_LOG2SZ: u64 = 7;
 const FAULT_LOG2SZ: u64 = 6;
 const COMMAND_ENTRIES: u32 = 2 << COMMAND_LOG2SZ;
 const FAULT_ENTRIES: u32 = 2 << FAULT_LOG2SZ;
-/// IOFENCE.C 完成记录的基准值：完成记录里出现 `基准 ＋ 本域自增计数` 才算硬件执行过
-/// **那一条**命令。
-///
-/// 固定值不行：上一次 `IOFENCE` 写下的那 4 字节会留在完成记录页里，下一次若只等
-/// “看到某个固定值”，一枚迟到的旧存储就会冒充本次完成。
-/// **不绑命令尾**：`CQT` 是被队列尺寸掩过码的环下标，每 256 次就回同一格，故它不单调。
-/// 改用**本域自增的 u32 计数**（单调、不重复到 2³²）＋在完成记录页里**轮换的槽**：
-/// 迟到的旧存储落在旧槽上，而本次只读自己那一格。
+/// First completion value; ticket values increase without wrapping.
 pub const FENCE_DATA: u32 = 0x10F0_0FEE;
-/// 完成记录页里轮换的槽数（每槽 4 字节，页内绰绰有余）。
-const FENCE_SLOTS: u32 = 256;
+/// Completion slots available in one retained page.
+pub const FENCE_SLOTS: usize = 1024;
 /// 完成记录地址在命令里按 4 字节格给（地址 >> 2）。
 const FENCE_ADDRESS_SHIFT: u32 = 2;
 /// 命令操作码：IOTINVAL（功能 VMA）/ IOFENCE（功能 C）。
@@ -58,7 +51,7 @@ const FENCE_NS: u64 = 2_000_000_000;
 /// 等一台队列立起来 / 停下来与 `DDTP` 握手的上限（纳秒）。
 const HANDSHAKE_NS: u64 = 2_000_000_000;
 
-/// 在途的那一条 `IOFENCE.C`（见 [`Outstanding`]）；重试只继续等它。
+/// The single submitter for the shared command and fault queues.
 pub struct CommandQueue {
     base: usize,
     commands: usize,
@@ -67,10 +60,7 @@ pub struct CommandQueue {
     command_page: usize,
     fault_page: usize,
     fence_page: usize,
-    /// 在途的那一条 `IOFENCE.C`（见 [`Outstanding`]）；重试只继续等它。
-    pending: Option<Outstanding>,
-    /// 本域自增的完成值计数（单调，不与被掩过码的环下标挂钩）。
-    cookie: u32,
+    next_cookie: Option<u32>,
 }
 
 impl CommandQueue {
@@ -83,8 +73,7 @@ impl CommandQueue {
             command_page: pages.physical(commands),
             fault_page: pages.physical(faults),
             fence_page: pages.physical(fence),
-            pending: None,
-            cookie: 0,
+            next_cookie: Some(FENCE_DATA),
         }
     }
 
@@ -153,61 +142,68 @@ impl CommandQueue {
     }
 
     /// 让这个 IOMMU 忘掉此前翻译出来的那些项。
-    pub fn invalidate_all(&mut self) {
-        self.submit(IOTINVAL_VMA, 0);
+    pub fn invalidate_all(&mut self) -> bool {
+        self.submit(IOTINVAL_VMA, 0)
     }
 
-    /// 提交一条 `IOFENCE.C`（或**继续等**已在途的那一条）直到硬件写下本次的完成值。
-    ///
-    /// 完成值 = `FENCE_DATA + 本域自增计数`，落在完成记录页里**轮换的一槽**上：每次
-    /// 提交一个新值、一个新槽，并在提交前把那一槽清零。于是迟到的旧存储（旧槽或
-    /// 旧值）都对不上本次；`CQT` 被掩过码也不再影响唯一性。
-    /// 期限内没等到则返 `false` 并**保留那条在途命令**：下一次调用继续等它，
-    /// 不重提新命令、不把已有的完成丢掉。
-    pub fn fence(&mut self) -> bool {
+    /// Reserve a publish/retire pair before acquiring a mapping's frame reference.
+    /// The caller owns the slots until both commands have completed.
+    pub fn tickets(&mut self, publish: usize, retire: usize) -> Option<(Ticket, Ticket)> {
+        if publish >= FENCE_SLOTS || retire >= FENCE_SLOTS || publish == retire {
+            return None;
+        }
+        let first = super::cookie::reserve(&mut self.next_cookie, 2)?;
+        let make = |slot, cookie| Ticket {
+            queue: self.fence,
+            slot: slot * 4,
+            cookie,
+            handshake: None,
+        };
+        Some((make(publish, first), make(retire, first + 1)))
+    }
+
+    /// Wait on this ticket without consuming another operation's completion.
+    pub fn fence(&mut self, ticket: &mut Ticket) -> bool {
+        let capacity_wait = Handshake::new(FENCE_NS);
         loop {
-            match self.fence_step() {
+            match self.fence_step(ticket) {
                 Fence::Settled => return true,
                 Fence::Expired => return false,
                 Fence::Waiting => {}
             }
+            if ticket.handshake.is_none() && capacity_wait.expired() {
+                return false;
+            }
         }
     }
 
-    /// `IOFENCE.C` 的**一步**：没有在途的就提交一条（提交只做一次），
-    /// 然后**单次读**它自己那一格。
-    ///
-    /// 在途那一条连同它的期限一起保留：重复调用只继续等它，**既不重发也不重置时限**。
-    /// 「还没到」是 [`Fence::Waiting`]（下一帧接着读），「过了期限还没到」是
-    /// [`Fence::Expired`]（那条命令仍在途，只是这一次等到头了）。
-    pub fn fence_step(&mut self) -> Fence {
-        if self.pending.is_none() {
-            let slot = (self.cookie % FENCE_SLOTS) as usize * 4;
-            let cookie = FENCE_DATA.wrapping_add(self.cookie);
-            self.cookie = self.cookie.wrapping_add(1);
-            // 旧完成（含可能迟到的旧存储）不得冒充本次。
-            // SAFETY: 完成记录页是本域刚取的可写页。
-            unsafe { core::ptr::write_volatile((self.fence + slot) as *mut u32, 0) };
+    /// Submit once, then read the same real completion under the same deadline.
+    pub fn fence_step(&mut self, ticket: &mut Ticket) -> Fence {
+        if ticket.queue != self.fence {
+            return Fence::Expired;
+        }
+        if ticket.handshake.is_none() {
+            if self.full() {
+                return Fence::Waiting;
+            }
+            // SAFETY: tickets() bounds the slot to the retained completion page.
+            unsafe { core::ptr::write_volatile((self.fence + ticket.slot) as *mut u32, 0) };
             super::order::sync();
             let dword0 =
-                IOFENCE_C | IOFENCE_NOTIFY | IOFENCE_PR | IOFENCE_PW | ((cookie as u64) << 32);
-            let dword1 = ((self.fence_page + slot) as u64) >> FENCE_ADDRESS_SHIFT;
-            self.submit(dword0, dword1);
-            self.pending = Some(Outstanding {
-                slot,
-                cookie,
-                handshake: Handshake::new(FENCE_NS),
-            });
+                IOFENCE_C | IOFENCE_NOTIFY | IOFENCE_PR | IOFENCE_PW | ((ticket.cookie as u64) << 32);
+            let dword1 = ((self.fence_page + ticket.slot) as u64) >> FENCE_ADDRESS_SHIFT;
+            if !self.submit(dword0, dword1) {
+                return Fence::Waiting;
+            }
+            ticket.handshake = Some(Handshake::new(FENCE_NS));
         }
-        let pending = self.pending.as_ref().expect("just submitted");
-        let record = (self.fence + pending.slot) as *const u32;
+        let (record, cookie) = ticket.completion();
         // SAFETY: 完成记录页是本域刚取的可写页。
         let seen = unsafe { core::ptr::read_volatile(record) };
-        if seen == pending.cookie {
-            self.pending = None;
+        if seen == cookie {
             return Fence::Settled;
         }
-        if pending.handshake.expired() {
+        if ticket.handshake.as_ref().expect("submitted ticket").expired() {
             return Fence::Expired;
         }
         Fence::Waiting
@@ -262,9 +258,19 @@ impl CommandQueue {
     /// 尾取自 `CQT`（硬件消费到哪它才知道），故本层不藏自己的计数。**这一读一写
     /// 不是并发互斥**：同一时刻只应有一个提交者（本域就是 System 自己的执行权），
     /// 多个句柄靠回读尾只保证“不藏分叉的本地计数”，不保证两个提交者不撞槽。
-    fn submit(&mut self, dword0: u64, dword1: u64) {
+    fn full(&self) -> bool {
+        let tail = regs::read32(self.base, regs::CQT);
+        let head = regs::read32(self.base, regs::CQH);
+        (tail.wrapping_add(1) % COMMAND_ENTRIES) == (head % COMMAND_ENTRIES)
+    }
+
+    fn submit(&mut self, dword0: u64, dword1: u64) -> bool {
+        if self.full() {
+            return false;
+        }
         let tail = regs::read32(self.base, regs::CQT);
         self.submit_at(tail, dword0, dword1);
+        true
     }
 
     /// 在指定尾上写一项并推门铃（调用方已经拿过尾，故可与它写下的完成值绑定）。

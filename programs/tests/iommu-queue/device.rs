@@ -85,6 +85,7 @@ pub struct Device {
 impl Device {
     /// Take the window and make this the device the fake clock ticks.
     pub fn new() -> Rc<Self> {
+        ON_CLOCK.with(|hook| *hook.borrow_mut() = None);
         let device = Rc::new(Self {
             pages: Pages::take(4),
             state: RefCell::new(State {
@@ -240,6 +241,7 @@ thread_local! {
     static CLOCK: Cell<u64> = const { Cell::new(0) };
     static STEP: Cell<u64> = const { Cell::new(1_000_000) };
     static CURRENT: RefCell<Option<Rc<Device>>> = const { RefCell::new(None) };
+    static ON_CLOCK: RefCell<Option<Box<dyn FnMut(u64)>>> = const { RefCell::new(None) };
 }
 
 /// The fake clock: one millisecond per read, and one device step per read.
@@ -254,6 +256,9 @@ pub fn clock() -> u64 {
         clock.set(now);
         now
     });
+    ON_CLOCK.with_borrow_mut(|hook| {
+        if let Some(hook) = hook.as_mut() { hook(now); }
+    });
     if let Some(device) = CURRENT.with(|current| current.borrow().clone()) {
         device.tick();
     }
@@ -263,4 +268,8 @@ pub fn clock() -> u64 {
 /// The fake time, for cases that assert a wait really ran out its deadline.
 pub fn now() -> u64 {
     CLOCK.with(|clock| clock.get())
+}
+
+pub fn on_clock(hook: impl FnMut(u64) + 'static) {
+    ON_CLOCK.with(|current| *current.borrow_mut() = Some(Box::new(hook)));
 }

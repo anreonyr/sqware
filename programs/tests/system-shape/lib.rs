@@ -156,10 +156,10 @@ mod boundaries {
             .collect();
         driver_files.sort();
         let mut expected = vec![
-            "api.rs", "binding.rs", "bindings.rs", "context.rs", "core.rs", "fence.rs",
-            "handshake.rs", "main.rs", "marks.rs", "mod.rs", "order.rs", "outstanding.rs", "pages.rs",
+            "api.rs", "binding.rs", "bindings.rs", "context.rs", "cookie.rs", "core.rs", "fence.rs",
+            "handshake.rs", "main.rs", "marks.rs", "mod.rs", "order.rs", "pages.rs",
             "phase.rs", "program.rs", "queue.rs", "references.rs", "regs.rs", "serve.rs",
-            "settled.rs", "table.rs",
+            "settled.rs", "table.rs", "ticket.rs",
         ];
         expected.sort();
         assert_eq!(
