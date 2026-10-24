@@ -2,11 +2,13 @@
 
 ## Selection
 
-`programs/src/unit/deployment.rs` carries `Deployment.guarded`. The 27 deployment
-literals are explicit: the thirteen `iommu-*` scenes whose `start` contains the
-three trusted domains declare `guarded: &["pci", "iommu", "recovery"]`; every
-other deployment declares `guarded: &[]`. Hardware names appear only in these
-deployment declarations.
+`programs/src/unit/deployment.rs` carries `Deployment.guarded`. Device deployments
+that start the three trusted domains explicitly declare
+`guarded: &["pci", "iommu", "virtio-blk"]`; other deployments declare an empty
+selection. Hardware names appear only in these deployment declarations.
+The current Driver naming and final acceptance are recorded in
+[driver-device-boundary.md](driver-device-boundary.md); historical native evidence
+retains the unit names used by its own source checkpoint.
 
 `Deployment::guarded` validates the declaration through
 `programs/src/unit/guard_selection.rs`: names must be unique, present in that

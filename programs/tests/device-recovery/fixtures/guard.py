@@ -6,12 +6,12 @@ system: activate pci tid=7
 pci: space task=7 ecam=0x29000 functions=1
 pci: ready functions=1
 system: minted iommu tid=8
-system: minted recovery tid=9
-recovery: ready hub=4 pci=7 requester=8 key=41
+system: minted virtio-blk tid=9
+virtio-blk: ready hub=4 pci=7 requester=8 key=41
 guard: armed target=pci task=7 team=3
 iommu: binding 1 published requester=8 held=6 ddtp=0x1000
 pci: endpoint bus-master on=0x4
-recovery: binding 1 active iova=0x100000 execution=10
+virtio-blk: binding 1 active iova=0x100000 execution=10
 work: rang the in-flight request doorbell
 guard: submitted controller=10
 guard: critical domains protected=3

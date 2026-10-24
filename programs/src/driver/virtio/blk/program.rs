@@ -4,8 +4,8 @@
 use crate::unit::{Dependency, Ending, Identity, Ready, UnitFile};
 
 pub static PROGRAM: UnitFile = UnitFile {
-    name: "recovery",
-    loader: crate::unit::LoaderConfig::supervisor("recovery"),
+    name: "virtio-blk",
+    loader: crate::unit::LoaderConfig::supervisor("virtio-blk"),
     operator: crate::unit::OperatorConfig {
         namespace: &[crate::unit::operator::Namespace {
             key: system_api::namespace::SERVICE,

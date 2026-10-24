@@ -8,13 +8,13 @@ CONSOLE = (
     "system: minted iommu tid=7\n"
     "system: minted device-ctl-forced tid=9\n"
     + RUIN.replace(
-        "ruin: requested recovery\n",
+        "ruin: requested virtio-blk\n",
         "ctl: awaiting forced global shutdown with in-flight read\n"
         "system: idle deadline reached; awaiting DMA settlement\n",
     ).replace(
         "ctl: in-flight binding settled by static Driver Ruin\n"
         "exit tid=9 reason=0x0 note: device-ctl-ruin: done\n"
-        "ruin: recovery dead after reply\n"
+        "ruin: virtio-blk dead after reply\n"
         "exit tid=1 reason=0x0 note: iommu-ruin: done\n",
         "ctl: drained read verified; awaiting global retirement\n"
         "system: forced shutdown admitted after DMA settlement\n"

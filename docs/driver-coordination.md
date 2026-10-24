@@ -1,5 +1,9 @@
 # Driver coordination checkpoint
 
+This records the earlier coordination checkpoint. Current program names and the
+recovery-executor boundary are tracked in [driver-device-boundary.md](driver-device-boundary.md);
+the historical names and native evidence below retain their original identity.
+
 The coordination face carries a Hub-qualified binding identity and execution
 task to an independently scheduled driver. It does not authorize its sender or
 prove CPU retirement. The current integration moves concrete hardware calls into

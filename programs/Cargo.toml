@@ -156,7 +156,7 @@ path = "src/driver/iommu/main.rs"
 test = false
 bench = false
 
-# PCI 驱动与设备恢复方（β）：各一张镜像、各自独立 Task/Space。
+# PCI 驱动与 VirtIO block 驱动（β）：各一张镜像、各自独立 Task/Space。
 [[bin]]
 name = "prog-pci"
 path = "src/driver/pci/main.rs"
@@ -164,8 +164,8 @@ test = false
 bench = false
 
 [[bin]]
-name = "prog-recovery"
-path = "src/driver/recovery/main.rs"
+name = "prog-virtio-blk"
+path = "src/driver/virtio/blk/main.rs"
 test = false
 bench = false
 

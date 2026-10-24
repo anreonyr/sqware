@@ -64,7 +64,7 @@ class SoakEvidence(unittest.TestCase):
     def test_dma_must_be_after_active_and_before_execution_stop(self):
         console, events = evidence(128)
         served = "ctl: served used=1 len=513 written_ok=true sector_ok=true status=0\n"
-        before = "recovery: binding 1 active"
+        before = "virtio-blk: binding 1 active"
         start = console.index(before)
         changed = console.replace(served, "", 1)
         changed = changed[:start] + served + changed[start:]

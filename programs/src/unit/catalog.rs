@@ -118,8 +118,8 @@ pub mod probe_watch_after;
 pub mod probe_watch_gone;
 #[path = "../harness/bench/rig/rig/program.rs"]
 pub mod rig;
-#[path = "../driver/recovery/program.rs"]
-pub mod recovery;
+#[path = "../driver/virtio/blk/program.rs"]
+pub mod virtio_blk;
 #[path = "../driver/router/program.rs"]
 pub mod router;
 #[path = "../driver/rtc/program.rs"]
@@ -178,11 +178,11 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &system_fault::FAULT_UNIT,
     &system_fault::DEPENDENT,
     &system_fault::CHILD,
-    // 产品那一侧那三台：**常驻驱动**（PCI／IOMMU／设备恢复），各自独立 Task/Space，
+    // 产品那一侧那三台：**常驻驱动**（PCI／IOMMU／VirtIO block），各自独立 Task/Space，
     // 由各景的启动单静态起；它们不在普通设备库存里拿平台窗，两扇/三扇窗都由声明供给定向交到。
     &iommu::PROGRAM,
     &pci::PROGRAM,
-    &recovery::PROGRAM,
+    &virtio_blk::PROGRAM,
     // 场景工作负载与控制器。
     &device::WORK,
     &device::WORK_BEFORE,

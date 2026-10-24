@@ -104,7 +104,7 @@ class HardwareEvidence(unittest.TestCase):
         for line in (
             "iommu: binding 1 invalidated",
             "pci: binding 1 disabling",
-            "recovery: binding 1 stopped",
+            "virtio-blk: binding 1 stopped",
             "iommu: binding 1 queues stopped",
             "iommu: binding 1 released",
             "hub: binding 1 closed",

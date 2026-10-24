@@ -1,10 +1,10 @@
-//! 本设备的常驻 BAR 恢复映射、能力表布局与当前执行绑定。
+//! BAR attachment, grant and reset metadata; Executor retains the actual mapping.
 
 use env::{PieToken, TaskId};
 
 use crate::driver::virtio::Caps;
 
-pub struct Device {
+pub struct Attachment {
     pub serial: u64,
     pub execution: TaskId,
     pub pages: u32,

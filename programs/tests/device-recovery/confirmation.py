@@ -24,7 +24,7 @@ def completed(console, events, step):
     }[step]
     services = {
         service: int(one(console, rf"system: minted {service} tid=(\d+)")[1])
-        for service in ("hub", "pci", "iommu", "recovery", "device-ctl-confirmation")
+        for service in ("hub", "pci", "iommu", "virtio-blk", "device-ctl-confirmation")
     }
     _, key = identity(console)
     chain = [
@@ -32,25 +32,25 @@ def completed(console, events, step):
         r"iommu: binding 1 invalidated frames held=6 \(not released\)",
         r"pci: binding 1 disabling bus-master",
         r"pci: endpoint bus-master off=0x0",
-        r"recovery: binding 1 stopped reset=1 status=0 queue_enable=0",
+        r"virtio-blk: binding 1 stopped reset=1 status=0 queue_enable=0",
         r"iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0",
         r"iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true",
-        r"recovery: binding 1 detached",
+        r"virtio-blk: binding 1 detached",
         rf"hub: binding 1 closed and released device {key}",
     ]
-    opened = one(console, r"recovery: binding 1 active iova=0x[0-9a-f]+ execution=\d+").start()
+    opened = one(console, r"virtio-blk: binding 1 active iova=0x[0-9a-f]+ execution=\d+").start()
     served = one(console,
         r"ctl: served used=1 len=513 written_ok=true sector_ok=true status=0").start()
 
     if step == "reset":
         armed = one(console,
-            rf"confirmation: device stop gate armed from={services['recovery']} "
+            rf"confirmation: device stop gate armed from={services['virtio-blk']} "
             rf"pci={services['pci']} serial=1")
         rejected = one(console,
-            rf"confirmation: transport rejected from={services['recovery']} "
+            rf"confirmation: transport rejected from={services['virtio-blk']} "
             rf"to={services['pci']} op=3 serial=1 references=2 ticks=(\d+)")
         failure = one(console,
-            r"recovery: binding 1 stage Disable failed party=2 op=3 code=0")
+            r"virtio-blk: binding 1 stage Disable failed party=2 op=3 code=0")
         controller = one(console,
             r"ctl: confirmation failed party=2 op=3 code=0 state=Closing")
         removed = one(console,
@@ -96,7 +96,7 @@ def completed(console, events, step):
         else:
             rejected = one(
                 console,
-                rf"confirmation: transport rejected from={services['recovery']} "
+                rf"confirmation: transport rejected from={services['virtio-blk']} "
                 rf"to={services[target]} op={op} serial=1 references=2 ticks=(\d+)",
             )
             injected_tick = int(rejected[1])
@@ -108,7 +108,7 @@ def completed(console, events, step):
             *[one(console, pattern).start() for pattern in chain[:boundary]],
             rejected.start(),
             one(console,
-                rf"recovery: binding 1 stage {stage} failed party={party} op={op} code={code}"
+                rf"virtio-blk: binding 1 stage {stage} failed party={party} op={op} code={code}"
             ).start(),
             one(console,
                 rf"ctl: confirmation failed party={party} op={op} code={code} state=Closing"
@@ -137,7 +137,7 @@ def completed(console, events, step):
     assert max(retired[main], retired[auxiliary]) < injected_tick, "alpha Team not stopped"
     for service, task in services.items():
         assert retired[task] > int(removed[2]), f"{service} retired while confirmation unavailable"
-    assert beta == services["recovery"]
+    assert beta == services["virtio-blk"]
     assert not re.search(r"^exit tid=\d+ reason=0xffffffff", console, re.MULTILINE), "fixture failed"
     assert "user fault killed:" not in console, "unexpected native fault"
     cause = (

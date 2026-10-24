@@ -1,4 +1,4 @@
-//! Device recovery effects and their original failure codes.
+//! Device executor effects and their original failure codes.
 
 use wire::OK;
 

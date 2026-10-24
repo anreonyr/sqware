@@ -15,14 +15,14 @@ def one(console, pattern):
 def tasks(console):
     main = int(one(console, r"ctl: constructed device-work tid=(\d+) owner=hub")[1])
     auxiliary = int(one(console, r"ctl: binding 1 auxiliary=(\d+) alive=true")[1])
-    beta = int(one(console, r"system: minted recovery tid=(\d+)")[1])
+    beta = int(one(console, r"system: minted virtio-blk tid=(\d+)")[1])
     assert len({main, auxiliary, beta}) == 3, "execution and recovery must be distinct"
     return main, auxiliary, beta
 
 
 def identity(console):
     pci = one(console, r"pci: space task=(\d+) ecam=0x[0-9a-f]+ functions=\d+")
-    ready = one(console, r"recovery: ready hub=\d+ pci=(\d+) requester=(\d+) key=(\d+)")
+    ready = one(console, r"virtio-blk: ready hub=\d+ pci=(\d+) requester=(\d+) key=(\d+)")
     assert ready[1] == pci[1], "Driver ready PCI task mismatch"
     return ready[2], ready[3]
 
@@ -44,11 +44,11 @@ def pending(console, events, mode="ruin"):
     if mode == "forced":
         one(console, r"ctl: awaiting forced global shutdown with in-flight read")
         assert re.search(r"^system: idle deadline reached; awaiting (?:DMA|retirement) settlement$", console, re.MULTILINE)
-        for service in ("hub", "pci", "iommu", "recovery", "device-ctl-forced"):
+        for service in ("hub", "pci", "iommu", "virtio-blk", "device-ctl-forced"):
             task = int(one(console, rf"system: minted {service} tid=(\d+)")[1])
             assert task not in reaps(events), f"{service} reaped before DMA settlement"
     else:
-        one(console, r"ruin: requested recovery")
+        one(console, r"ruin: requested virtio-blk")
     one(console, rf"hub: binding 1 execution domain stopped \(tid={main}\)")
     one(console, r"iommu: binding 1 invalidated frames held=6 \(not released\)")
     one(console, r"pci: binding 1 disabling bus-master")
@@ -57,12 +57,12 @@ def pending(console, events, mode="ruin"):
     assert beta not in retired, "static Driver reaped while DMA read held"
     for forbidden in (
         "pci: endpoint bus-master off=0x0",
-        "recovery: binding 1 stopped",
+        "virtio-blk: binding 1 stopped",
         "iommu: binding 1 queues stopped",
         "iommu: binding 1 released",
-        "recovery: binding 1 detached",
+        "virtio-blk: binding 1 detached",
         "hub: binding 1 closed",
-        "ruin: recovery dead after reply",
+        "ruin: virtio-blk dead after reply",
         "system: forced shutdown admitted after DMA settlement",
         "system: forced shutdown admitted after retirement settlement",
         "system: frame Step(Idle)",
@@ -79,20 +79,20 @@ def completed(console, events, backend, mode="ruin"):
     ordered = (
         r"iommu: binding 1 published requester=" + requester + r" held=6 ddtp=0x[0-9a-f]+",
         r"pci: endpoint bus-master on=0x4",
-        r"recovery: binding 1 active iova=0x[0-9a-f]+ execution=\d+",
+        r"virtio-blk: binding 1 active iova=0x[0-9a-f]+ execution=\d+",
         r"work: rang the in-flight request doorbell",
         (
             r"ctl: awaiting forced global shutdown with in-flight read"
-            if mode == "forced" else r"ruin: requested recovery"
+            if mode == "forced" else r"ruin: requested virtio-blk"
         ),
         rf"hub: binding 1 execution domain stopped \(tid={main}\)",
         r"iommu: binding 1 invalidated frames held=6 \(not released\)",
         r"pci: binding 1 disabling bus-master",
         r"pci: endpoint bus-master off=0x0",
-        r"recovery: binding 1 stopped reset=1 status=0 queue_enable=0",
+        r"virtio-blk: binding 1 stopped reset=1 status=0 queue_enable=0",
         r"iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0",
         r"iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true",
-        r"recovery: binding 1 detached",
+        r"virtio-blk: binding 1 detached",
         rf"hub: binding 1 closed and released device {key}",
         *(
             (
@@ -100,7 +100,7 @@ def completed(console, events, backend, mode="ruin"):
                 r"system: frame Step\(Idle\)",
             )
             if mode == "forced" else (
-                r"ruin: recovery dead after reply",
+                r"ruin: virtio-blk dead after reply",
                 rf"exit tid={root} reason=0x0 note: iommu-ruin: done",
             )
         ),
@@ -122,7 +122,7 @@ def completed(console, events, backend, mode="ruin"):
     assert all(tid in retired for tid in (main, auxiliary, beta)), "missing native reap"
     assert max(retired[main], retired[auxiliary]) < retired[beta], "Driver reaped before alpha Team"
     if mode == "forced":
-        for service in ("hub", "pci", "iommu", "recovery", "device-ctl-forced"):
+        for service in ("hub", "pci", "iommu", "virtio-blk", "device-ctl-forced"):
             task = int(one(console, rf"system: minted {service} tid=(\d+)")[1])
             assert task in retired, f"missing global retirement: {service}"
             assert max(retired[main], retired[auxiliary]) < retired[task]

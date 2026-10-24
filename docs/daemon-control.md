@@ -334,6 +334,9 @@ required observation feature remain archived as failures.
 
 ## Remaining broader refactor
 
+These were the remaining items at the Daemon checkpoint. Later integration and
+its final acceptance are tracked in [driver-device-boundary.md](driver-device-boundary.md).
+
 - move concrete hardware coordination out of Hub and make PCI discovery generic;
 - complete Domain/IOVA and asynchronous multi-device composition;
 - run the final two-device/two-Domain and fixed-source 4/8-hart + 1024-cycle

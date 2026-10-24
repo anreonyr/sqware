@@ -81,7 +81,7 @@ fn prepare(mut state: ResMut<State>, control: Res<Control>) -> Result<Progress, 
         return Err(app::Fault::Room);
     }
     let hub = control.task("hub").ok_or(app::Fault::Room)?;
-    let coordinator = control.task("recovery").ok_or(app::Fault::Room)?;
+    let coordinator = control.task("virtio-blk").ok_or(app::Fault::Room)?;
     let target = control.task(state.target).ok_or(app::Fault::Room)?;
     let retainer = control.task("iommu").ok_or(app::Fault::Room)?;
     let bytes = injection::command(

@@ -99,12 +99,12 @@ def run(conn, capture):
             evidence.update(base=base, bad=bad, original=original, broken=broken)
             Path(str(hold) + ".resume").write_text("real command queue fault configured\n")
             wait(
-                lambda: "recovery: binding 1 stage Invalidate failed party=3 op=3 code=4" in text(),
+                lambda: "virtio-blk: binding 1 stage Invalidate failed party=3 op=3 code=4" in text(),
                 "native invalidation did not report its real fence failure",
             )
             log = text()
             assert "iommu: binding 1 invalidate fence expired frames held=6" in log
-            for forbidden in ("pci: binding 1 disabling", "recovery: binding 1 stopped", "iommu: binding 1 released"):
+            for forbidden in ("pci: binding 1 disabling", "virtio-blk: binding 1 stopped", "iommu: binding 1 released"):
                 assert forbidden not in log, f"advanced without fence confirmation: {forbidden}"
             capture.with_suffix(".failed-console").write_text(log)
             trace = Path("sqware-diagnose.jsonl").read_text().rpartition("\n")[0] + "\n"

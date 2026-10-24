@@ -824,7 +824,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             .read::<Control>()
             .unwrap()
             .instances()
-            .all(|item| item.team().is_none());
+            .all(|item| item.settled());
         let registered = assembly
             .resources
             .read::<crate::system::assembly::namespace::NamespaceInstallations>()

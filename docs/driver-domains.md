@@ -3,6 +3,7 @@
 The production Core owns persistent Domains with independent bindings and IOVA
 allocation. Domain and explicit-delivery contracts are recorded below; current
 multi-device Driver evidence is in [driver-devices.md](driver-devices.md).
+The subsequent naming and fixture checkpoint is [driver-device-boundary.md](driver-device-boundary.md).
 The full refactor and final frozen-source acceptance remain unfinished.
 
 ## Command-completion foundation

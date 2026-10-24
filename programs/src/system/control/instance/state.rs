@@ -1,6 +1,6 @@
 pub const INSTANCE_CAP: usize = 256;
 use crate::system::control::unit::table::State;
-use env::{TaskId, TeamId};
+use env::{TaskId, TeamId, UnitFail, Wait, unit};
 pub struct Instance {
     pub reference: crate::system::assembly::InstanceRef,
     pub owner: TaskId,
@@ -60,5 +60,50 @@ impl Instance {
         if self.state != State::Dead {
             self.state = State::Stopping;
         }
+    }
+
+    // Build places these ids in Control's tree; live members prevent pruning.
+    pub(crate) fn pruned_owner_receipt(&self) -> bool {
+        let super::receipt::Receipt::Owner(team) = self.receipt else {
+            return false;
+        };
+        if self.state != State::Stopping
+            || self.owner == unit::self_id()
+            || self.reference.task != self.task
+        {
+            return false;
+        }
+        let owner_gone = match unit::join_task(self.owner, Wait::POLL) {
+            Ok(true) => true,
+            Err(error) if error.source == UnitFail::Denied => true,
+            _ => false,
+        };
+        let main_pruned = matches!(
+            unit::join_task(self.task, Wait::POLL),
+            Err(error) if error.source == UnitFail::Denied
+        );
+        let team_pruned = matches!(
+            unit::join(env::UnitTarget::Team(team), Wait::POLL, false),
+            Err(error) if error.source == UnitFail::Denied
+        );
+        owner_gone && main_pruned && team_pruned
+    }
+
+    pub(crate) fn consume_pruned_owner_receipt(&mut self) -> bool {
+        if !self.pruned_owner_receipt() {
+            return false;
+        }
+        self.receipt = super::receipt::Receipt::Consumed;
+        true
+    }
+
+    pub(crate) fn retains_after_reap(&self) -> bool {
+        self.team().is_some()
+            || matches!(self.receipt, super::receipt::Receipt::Returned(_))
+            || matches!(
+                (self.state, self.receipt),
+                (State::Stopping, super::receipt::Receipt::Consumed)
+            )
+            || !unit::join_task(self.owner, Wait::POLL).unwrap_or(true)
     }
 }
