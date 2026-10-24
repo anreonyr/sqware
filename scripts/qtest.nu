@@ -633,7 +633,7 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
       "512 iova=0x240000000"
       "126975 iova=0x3fffe00000"
     ] {
-      let window = $"^iommu-probe: window serial=($coordinate) response=0x[0-9a-f]+ previous=0x[0-9a-f]+ stale_response=0x[0-9a-f]+ ddtp_off=0x0 cqcsr=0x0 fqcsr=0x0$"
+      let window = $"^iommu-probe: window boundary=($coordinate) response=0x[0-9a-f]+ previous=0x[0-9a-f]+ stale_response=0x[0-9a-f]+ ddtp_off=0x0 cqcsr=0x0 fqcsr=0x0$"
       if ($console | where {|line| $line =~ $window } | length) != 1 {
         print $"本景未成功完成：缺少唯一的窗口翻译与旧窗拒绝读数 ($coordinate)"
         $code = 1

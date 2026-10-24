@@ -3,6 +3,7 @@
 //! Hub owns claims and binding identity; Control supplies the stopped-target proof.
 
 pub mod api;
+pub mod client;
 pub mod coord;
 pub mod core;
 pub mod device;

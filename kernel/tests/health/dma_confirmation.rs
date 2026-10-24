@@ -78,7 +78,7 @@ pub(crate) fn reject(owner: TaskId, from: TaskId, root: bool, bytes: &[u8]) -> b
     }
     if !ENABLED.load(Ordering::Acquire) { return false; }
     let before_stop = OP.load(Ordering::Relaxed) == injection::BEFORE_DEVICE_STOP;
-    let serial_at = if before_stop { 9 } else { 1 };
+    let serial_at = if before_stop { 9 } else { 25 };
     if before_stop {
         // The gate target is the same authenticated task that calls PCI Disable.
         if from.get() == TO.load(Ordering::Relaxed)
@@ -98,7 +98,7 @@ pub(crate) fn reject(owner: TaskId, from: TaskId, root: bool, bytes: &[u8]) -> b
     }
     if from.get() != FROM.load(Ordering::Relaxed)
         || owner.get() != TO.load(Ordering::Relaxed)
-        || bytes.len() < 9
+        || bytes.len() != 42
         || (!before_stop && u64::from(bytes[0]) != OP.load(Ordering::Relaxed))
         || word(bytes, serial_at) != SERIAL.load(Ordering::Relaxed)
     {

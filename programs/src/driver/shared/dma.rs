@@ -1,9 +1,4 @@
-//! DMA 绑定那一面的坐标与 Hub 那一面的客户。
-//!
-//! 绑定编号由 Hub 签发；坐标本身（窗口记号、坐标孔记号、IOVA 窗起址）定义在
-//! `hub_api::coord`（那一本账的契约里）；本模块只把它转出来并给出客户面。
-//! 认领不在这里：它走**设备门牌**（见 `hub_api::frame::dma`），本面只管
-//! 登记（PCI）、关闭/查看/结清与放行时推坐标。
+//! Hub 的设备登记、绑定进度与逐绑定客户入口。
 
 use env::{PieToken, TaskId, Wait};
 use hub_api::{
@@ -16,9 +11,8 @@ use ipc::time::Deadline;
 use system_api::operator::Path;
 use system_client::operator::Face;
 
-/// 坐标由 Hub 那一本账的契约给（各域按同一个绑定号算出同一组数）。
 pub use hub_api::{
-    binding_mark, coord_mark, iova_base, window_mark, BINDING_MAX, IOVA_BASE, IOVA_LIMIT, IOVA_SPAN,
+    binding_mark, coord_mark, window_mark,
 };
 
 pub use super::coords::Coords;
@@ -121,6 +115,16 @@ impl HubDma {
         })?;
         let state = BindingState::of_code(said.state).ok_or("hub: binding state")?;
         Ok((state, said.failure()))
+    }
+
+    pub fn client(&self, wait: Wait, serial: u64) -> Result<Option<(TaskId, PieToken)>, &'static str> {
+        let said = self.call(wait, |back| DmaWire::Inspect(hub_api::Inspect {
+            op: DMA_INSPECT, serial, back,
+        }))?;
+        if said.serial != serial || said.source == TaskId::new(0) {
+            return Err("hub: binding source");
+        }
+        Ok((said.client != PieToken::NONE).then_some((said.source, said.client)))
     }
 
     /// 整机退场门：关闭执行实例与开放绑定，答未结清责任数。

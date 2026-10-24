@@ -8,6 +8,7 @@ thread_local! {
     static RELEASES: Cell<usize> = const { Cell::new(0) };
     static RELEASE_OK: Cell<bool> = const { Cell::new(true) };
     static PUSH_OK: Cell<bool> = const { Cell::new(true) };
+    static LAST: Cell<Option<crate::coords::Coords>> = const { Cell::new(None) };
 }
 
 pub fn reset() {
@@ -16,6 +17,7 @@ pub fn reset() {
     RELEASES.with(|value| value.set(0));
     RELEASE_OK.with(|value| value.set(true));
     PUSH_OK.with(|value| value.set(true));
+    LAST.with(|value| value.set(None));
 }
 
 pub fn fail() {
@@ -29,6 +31,7 @@ pub fn gives() -> usize {
 pub fn push_ok(okay: bool) { PUSH_OK.with(|value| value.set(okay)); }
 pub fn release_ok(okay: bool) { RELEASE_OK.with(|value| value.set(okay)); }
 pub fn releases() -> usize { RELEASES.with(Cell::get) }
+pub fn last() -> Option<crate::coords::Coords> { LAST.with(Cell::get) }
 pub fn release() -> Result<(), ()> {
     if !RELEASE_OK.with(Cell::get) { return Err(()); }
     RELEASES.with(|value| value.set(value.get() + 1));
@@ -51,7 +54,10 @@ impl Hole {
         Self
     }
 
-    pub fn push(&self, _: &[u8], _: env::Wait) -> Result<(), ()> {
-        if PUSH_OK.with(Cell::get) { Ok(()) } else { Err(()) }
+    pub fn push(&self, bytes: &[u8], _: env::Wait) -> Result<(), ()> {
+        if !PUSH_OK.with(Cell::get) { return Err(()); }
+        let coords = <crate::coords::Coords as wire::Message>::fetch(bytes).unwrap();
+        LAST.with(|value| value.set(Some(coords)));
+        Ok(())
     }
 }

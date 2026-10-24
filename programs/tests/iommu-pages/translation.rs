@@ -1,4 +1,9 @@
+use crate::domain::{FIRST_IOVA, IOVA_LIMIT, IOVA_STRIDE};
 use crate::{PAGE_SIZE, PieToken, pages::Pages, table};
+
+fn table_base(index: u64) -> usize {
+    (FIRST_IOVA + index * IOVA_STRIDE) as usize
+}
 
 fn take() -> Pages {
     let mut pages = Pages::default();
@@ -12,14 +17,14 @@ fn word(pages: &Pages, page: usize, slot: usize) -> u64 {
 }
 
 #[test]
-fn serials_beyond_64_cross_root_paths_and_reach_the_last_sv39_window() {
+fn private_iova_windows_cross_root_paths_and_reach_the_last_sv39_window() {
     let mut pages = take();
     let physical = [0x4000_0000, 0x6000_0000, 0x7000_0000];
-    for serial in [1, 63, 64, 511, 512, hub_api::BINDING_MAX - 1] {
+    for serial in [1, 63, 64, 511, 512, 126_975] {
         for page in 0..3 {
             pages.fill(page, 0);
         }
-        let base = hub_api::iova_base(serial).unwrap() as usize;
+        let base = table_base(serial);
         table::map_physical(&pages, 0, 1, 2, base, &physical).unwrap();
         let root = (base >> 30) & 511;
         let middle = (base >> 21) & 511;
@@ -48,11 +53,11 @@ fn noncanonical_wrapping_empty_or_cross_leaf_windows_do_not_write_any_pte() {
         pages.fill(page, 0xa5);
     }
     for (base, physical) in [
-        (hub_api::IOVA_LIMIT as usize, vec![0x4000_0000]),
+        (IOVA_LIMIT as usize, vec![0x4000_0000]),
         (usize::MAX & !(PAGE_SIZE - 1), vec![0x4000_0000; 2]),
         (0, vec![]),
         (1, vec![0x4000_0000]),
-        (hub_api::IOVA_SPAN as usize - PAGE_SIZE, vec![0x4000_0000; 2]),
+        (IOVA_STRIDE as usize - PAGE_SIZE, vec![0x4000_0000; 2]),
     ] {
         assert!(table::map_physical(&pages, 0, 1, 2, base, &physical).is_err());
     }

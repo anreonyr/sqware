@@ -6,14 +6,18 @@ extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
 
-pub use abi::{Access, Frame, Mark, PieToken, ReleaseMode, TaskId, Wait, WireCodes, wire};
+pub use abi::{Access, Frame, Mark, PAGE_SIZE, PieToken, ReleaseMode, TaskId, Wait, WireCodes, wire};
 
 #[path = "../../src/driver/pci/api.rs"]
 pub mod pci_api;
-#[path = "../../src/driver/iommu/api.rs"]
+#[path = "../../src/driver/iommu/api/mod.rs"]
 pub mod iommu_api;
+#[path = "../../src/driver/iommu/domain_id.rs"]
+pub mod domain_id;
 #[path = "../../src/driver/recovery/api.rs"]
 pub mod recovery_api;
+#[path = "../../src/driver/recovery/client/mod.rs"]
+pub mod client;
 #[path = "../../src/driver/recovery/attach_request.rs"]
 pub mod attach_request;
 #[path = "../../src/driver/shared/coords.rs"]
@@ -38,6 +42,9 @@ mod fixtures;
 pub mod raw { pub use crate::fixtures::handoff::Hole; }
 pub mod session {
     pub mod establish {
+        pub fn lend(_: env::TaskId, _: env::Mark) -> Result<crate::fixtures::endpoint::Endpoint, ()> {
+            Ok(crate::fixtures::endpoint::Endpoint)
+        }
         pub fn give(_: env::TaskId, _: env::Mark) -> Result<env::PieToken, ()> {
             crate::fixtures::handoff::give()
         }
@@ -45,14 +52,14 @@ pub mod session {
 }
 pub mod driver {
     pub mod pci { pub use crate::pci_api as api; }
-    pub mod iommu { pub use crate::iommu_api as api; }
+    pub mod iommu { pub use crate::iommu_api as api; pub use crate::domain_id; }
     pub mod shared {
         pub mod dma { pub use crate::coords::Coords; pub use hub_api::coord_mark; }
         pub use crate::fixtures::peer;
     }
     pub mod recovery {
         pub use crate::recovery_api as api;
-        pub use crate::{coord, operation, profile, stage};
+        pub use crate::{client, coord, operation, profile, stage};
         pub use crate::fixtures::core;
     }
 }

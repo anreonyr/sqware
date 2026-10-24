@@ -8,9 +8,11 @@ use ipc::rpc::request::Receiver;
 use ipc::session::establish;
 use system_client::operator;
 
+use crate::driver::iommu::acquire::AcquireRequest;
 use crate::driver::iommu::api::{self, Call};
 use crate::driver::iommu::bindings::{REGION, REGION_SUBSET, RETENTION};
-use crate::driver::iommu::core::{AcquireRequest, Core};
+use crate::driver::iommu::core::Core;
+use crate::driver::iommu::domain_id::DomainId;
 use crate::driver::shared::context::{Context, Step};
 use crate::driver::shared::lookup;
 use crate::driver::shared::platform;
@@ -49,7 +51,7 @@ fn run(entry: PieToken, tree: &operator::Face, mut core: Core) -> Result<(), &'s
     let mut buffer = [0u8; api::Wire::LEN];
     let mut state = None;
     let mut rejected_state = None;
-    let mut coordinator = None;
+    let mut driver = None;
     loop {
         lookup::reclaim(&mut rejected_state);
         let incoming = match receiver.receive(&mut buffer, Wait::Forever) {
@@ -76,61 +78,95 @@ fn run(entry: PieToken, tree: &operator::Face, mut core: Core) -> Result<(), &'s
         if state.is_none() {
             state = lookup::state(tree, env::unit::sire(), &mut rejected_state, Wait::AtMost(MS)).ok();
         }
-        if coordinator.is_none() {
-            coordinator = state.as_ref().and_then(|state| state.publisher(
+        if driver.is_none() {
+            driver = state.as_ref().and_then(|state| state.publisher(
                 system_api::namespace::SERVICE, hub_api::coordination::call::ENTRY, Wait::AtMost(MS)
             ).ok());
         }
-        let said = turn(&mut core, coordinator.unwrap_or(TaskId::new(0)), incoming.from, incoming.request);
+        let said = turn(&mut core, driver.unwrap_or(TaskId::new(0)), incoming.from, incoming.request);
         let _ = incoming.reply.send(said);
     }
 }
 
-/// 一问 → 一答；不是协调入口发来的，一律拒。
-fn turn(core: &mut Core, coordinator: TaskId, from: TaskId, wire: api::Wire) -> api::Said {
-    if from != coordinator {
+/// 一问 → 一答；不是实际 Driver 发来的，一律拒。核心拿到的 caller 就是内核盖章的发送者。
+fn turn(core: &mut Core, driver: TaskId, from: TaskId, wire: api::Wire) -> api::Said {
+    if from != driver {
         return api::Said::of(api::fail_to_code(Some(api::Fail::Denied)));
     }
     match wire {
-        api::Wire::Acquire(acquire) => {
-            let request = AcquireRequest {
-                serial: acquire.serial,
-                requester: acquire.requester,
-                execution: acquire.execution,
-                iova: acquire.iova,
-                access: acquire.access,
-            };
-            match core.acquire(request) {
-                Ok(()) => api::Said {
-                    status: wire::OK,
-                    iova: core.iova().unwrap_or(0),
-                    ..api::Said::NONE
-                },
+        api::Wire::Establish(establish) => {
+            match core.establish(from, establish.requester) {
+                Ok(domain) => reply(core, domain, Ok(::schedule::Progress::Done)),
                 Err(fail) => api::Said::of(api::fail_to_code(Some(fail))),
             }
         }
-        api::Wire::Publish(step) => step_reply(core.publish(step.serial), core.held()),
-        api::Wire::Invalidate(step) => step_reply(core.invalidate(step.serial), core.held()),
-        api::Wire::Quiesce(step) => step_reply(core.quiesce(step.serial), core.held()),
-        api::Wire::Release(step) => step_reply(core.release(step.serial, step.reason), core.held()),
+        api::Wire::Acquire(acquire) => {
+            let domain = DomainId::new(acquire.engine, acquire.key);
+            let request = AcquireRequest {
+                domain,
+                binding: hub_api::BindingId {
+                    hub: acquire.hub,
+                    serial: acquire.serial,
+                },
+                execution: acquire.execution,
+                source: acquire.source,
+                access: acquire.access,
+            };
+            let result = core.acquire(from, request).map(|()| ::schedule::Progress::Done);
+            reply(core, domain, result)
+        }
+        api::Wire::Publish(step) => {
+            let (domain, binding) = step_parts(&step);
+            let result = core.publish(from, domain, binding);
+            reply(core, domain, result)
+        }
+        api::Wire::Invalidate(step) => {
+            let (domain, binding) = step_parts(&step);
+            let result = core.invalidate(from, domain, binding);
+            reply(core, domain, result)
+        }
+        api::Wire::Quiesce(step) => {
+            let (domain, binding) = step_parts(&step);
+            let result = core.quiesce(from, domain, binding);
+            reply(core, domain, result)
+        }
+        api::Wire::Release(step) => {
+            let (domain, binding) = step_parts(&step);
+            let result = core.release(from, domain, binding, step.reason);
+            reply(core, domain, result)
+        }
     }
 }
 
-/// 一步的答：完成／还要再推／失败；两者都带上此刻还持有几页帧。
-fn step_reply(result: Result<::schedule::Progress, api::Fail>, held: u32) -> api::Said {
-    match result {
-        Ok(::schedule::Progress::Done) => api::Said {
-            status: wire::OK,
-            pending: 0,
-            held,
-            iova: 0,
+fn step_parts(step: &api::Step) -> (DomainId, hub_api::BindingId) {
+    (
+        DomainId::new(step.engine, step.key),
+        hub_api::BindingId {
+            hub: step.hub,
+            serial: step.serial,
         },
-        Ok(::schedule::Progress::Pending) => api::Said {
-            status: wire::OK,
-            pending: 1,
-            held,
-            iova: 0,
-        },
-        Err(fail) => api::Said::of(api::fail_to_code(Some(fail))),
+    )
+}
+
+/// 一步的答：完成／还要再推／失败；都带上本 Domain 的私有分配与此刻持有几页帧。
+fn reply(
+    core: &Core,
+    domain: DomainId,
+    result: Result<::schedule::Progress, api::Fail>,
+) -> api::Said {
+    let (iova, bytes) = core.range(domain).unwrap_or((0, 0));
+    let (status, pending) = match result {
+        Ok(::schedule::Progress::Done) => (wire::OK, 0),
+        Ok(::schedule::Progress::Pending) => (wire::OK, 1),
+        Err(fail) => (api::fail_to_code(Some(fail)), 0),
+    };
+    api::Said {
+        status,
+        pending,
+        held: core.held(),
+        engine: domain.engine(),
+        key: domain.key(),
+        iova,
+        bytes,
     }
 }

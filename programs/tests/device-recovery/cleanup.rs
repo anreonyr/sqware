@@ -69,9 +69,12 @@ fn failed_child_grant_retries_same_mapping_and_conflicting_replay_is_rejected() 
     STATE.with(|state| state.borrow_mut().grant_fail = true);
     assert_eq!(core.attach(request(1)), Err(Fail::Unavailable));
     assert_eq!(core.attached(), 1);
+    assert_eq!(core.bar_grant(1), Err(Fail::Conflict));
     STATE.with(|state| state.borrow_mut().grant_fail = false);
     assert_eq!(core.attach(request(1)), Ok(()));
     assert_eq!(core.attach(request(1)), Ok(()));
+    assert_eq!(core.bar_grant(1), Ok(crate::PieToken::mint(9)));
+    assert_eq!(core.bar_grant(2), Err(Fail::Conflict));
     let mut conflict = request(1);
     conflict.multiplier += 1;
     assert_eq!(core.attach(conflict), Err(Fail::Conflict));
@@ -85,7 +88,9 @@ fn failed_child_grant_retries_same_mapping_and_conflicting_replay_is_rejected() 
     assert_eq!(core.stop(1), Ok(0));
     assert_eq!(core.detach(1), Ok(()));
     assert_eq!(core.attached(), 0);
+    assert_eq!(core.bar_grant(1), Err(Fail::Conflict));
     assert_eq!(core.attach(request(2)), Ok(()));
+    assert_eq!(core.bar_grant(2), Ok(crate::PieToken::mint(9)));
     STATE.with(|state| {
         let state = state.borrow();
         assert_eq!((state.opens, state.shuts, state.grants), (1, 0, 2));

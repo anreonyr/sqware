@@ -3,14 +3,16 @@ use wire::Message;
 
 /// Device protocol offsets and the IOMMU-accepted address for one activation.
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-#[frame(len = 32)]
+#[frame(len = 48)]
 pub struct Coords {
-    pub pages: u32,
+    pub bar_pages: u32,
     pub common: u32,
     pub notify: u32,
     pub multiplier: u32,
     pub device: u32,
     pub iova: u64,
+    pub bar: env::PieToken,
+    pub bytes: u64,
 }
 
 impl Message for Coords {

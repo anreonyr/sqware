@@ -3,7 +3,7 @@
 //! `attach` 必须在发布之前、且**恢复映射已在手里**之后才把精确 BAR 子授权交给执行方；
 //! 业务 CPU 控制切断之前本域不写设备寄存器（`stop` 才写）。本域不解释 IOMMU、不碰 ECAM。
 
-use env::{Permission, PieKind, TaskId};
+use env::{Permission, PieKind, PieToken, TaskId};
 use resource::dock::Dock;
 
 use crate::driver::virtio;
@@ -84,25 +84,25 @@ impl Core {
             pages: request.pages,
             caps,
             stopped: false,
-            granted: false,
+            bar_grant: None,
         });
         Self::grant(self.device.as_mut().unwrap(), mapping)
     }
 
     fn grant(device: &mut Device, mapping: &Dock) -> Result<(), api::Fail> {
-        if device.granted {
+        if device.bar_grant.is_some() {
             return Ok(());
         }
         // 映射已量到正好 `pages * PAGE_SIZE`；普通 Accord 继承这一段。
         // 恢复映射跨绑定保留；每次执行只重交子授权。
-        env::pie::accord(
+        let receipt = env::pie::accord(
             mapping.pie_token(),
             device.execution,
             BAR_SUBSET,
             dma::binding_mark(device.serial),
         )
         .map_err(|_| api::Fail::Unavailable)?;
-        device.granted = true;
+        device.bar_grant = Some(receipt);
         device.stopped = false;
         crate::debug::put(&alloc::format!(
             "recovery: binding {} attached bar={:#x} pages={} execution={}",
@@ -112,6 +112,13 @@ impl Core {
             device.execution.get(),
         ));
         Ok(())
+    }
+
+    pub fn bar_grant(&self, serial: u64) -> Result<PieToken, api::Fail> {
+        self.device.as_ref()
+            .filter(|device| device.serial == serial)
+            .and_then(|device| device.bar_grant)
+            .ok_or(api::Fail::Conflict)
     }
 
     fn close_mapping(&mut self) -> Result<(), api::Fail> {
@@ -172,7 +179,7 @@ impl Core {
             }
             device.serial = 0;
             device.execution = TaskId::new(0);
-            device.granted = false;
+            device.bar_grant = None;
         }
         self.floor = serial;
         crate::debug::put(&alloc::format!("recovery: binding {serial} detached"));

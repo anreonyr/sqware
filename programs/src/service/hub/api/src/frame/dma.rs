@@ -9,6 +9,7 @@ use alloc::string::String;
 use env::wire::Span as _;
 use env::{PieToken, TaskId};
 use wire::Message;
+pub use super::dma_said::DmaSaid;
 
 /// 七个动作在报文里的码（与那一族同名）。
 pub const DMA_ENROLL: u8 = 1;
@@ -17,7 +18,7 @@ pub const DMA_CLOSE: u8 = 3;
 pub const DMA_INSPECT: u8 = 4;
 pub const DMA_SETTLE: u8 = 5;
 
-/// Hub 签发的绑定身份。`serial` 和 IOVA 不复用，地址范围耗尽终判 `Full`。
+/// Hub 签发的绑定身份；序号不复用，序号耗尽终判 `Full`。
 /// 未结清记录始终保留；最近 32 笔结清结果可查询，淘汰后查询返回 `Unknown`。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct BindingId {
@@ -216,89 +217,6 @@ impl Message for DmaWire {
 
     fn fetch(bytes: &[u8]) -> Option<Self> {
         DmaWire::take(bytes)
-    }
-}
-
-/// 一答：状态 ＋ 绑定进度 ＋ 失败记录 ＋ 未结清笔数。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-#[frame(len = 16)]
-pub struct DmaSaid {
-    pub status: u8,
-    pub state: u8,
-    pub party: u8,
-    pub op: u8,
-    pub code: u8,
-    pub count: u8,
-    pub serial: u64,
-}
-
-impl DmaSaid {
-    /// 空的一张（失败那一答用它）。
-    pub const NONE: Self = Self {
-        status: 0,
-        state: 0,
-        party: 0,
-        op: 0,
-        code: 0,
-        count: 0,
-        serial: 0,
-    };
-
-    pub const fn of(status: u8) -> Self {
-        Self {
-            status,
-            ..Self::NONE
-        }
-    }
-
-    /// 一张签好的绑定编号。
-    pub const fn bound(serial: u64, state: BindingState) -> Self {
-        Self {
-            status: wire::OK,
-            state: state.code(),
-            serial,
-            ..Self::NONE
-        }
-    }
-
-    /// 一份进度：状态 ＋ 原始失败（没失败时失败方与码都是 0）。
-    pub const fn progress(serial: u64, state: BindingState, failure: Option<Failure>) -> Self {
-        let (party, op, code) = match failure {
-            Some(failure) => (failure.party, failure.op, failure.code),
-            None => (0, 0, 0),
-        };
-        Self {
-            status: wire::OK,
-            state: state.code(),
-            party,
-            op,
-            code,
-            serial,
-            ..Self::NONE
-        }
-    }
-
-    pub fn failure(&self) -> Option<Failure> {
-        (self.party != 0).then_some(Failure {
-            party: self.party,
-            op: self.op,
-            code: self.code,
-        })
-    }
-}
-
-impl Message for DmaSaid {
-    type In = Self;
-    type Buf = [u8; Self::LEN];
-    const EMPTY: Self::Buf = [0; Self::LEN];
-
-    fn store(&self, out: &mut [u8]) -> Option<usize> {
-        self.store_at(out, 0)
-    }
-
-    fn fetch(bytes: &[u8]) -> Option<Self> {
-        let (value, end) = <Self as env::wire::Span>::fetch_at(bytes, 0)?;
-        (end == bytes.len()).then_some(value)
     }
 }
 

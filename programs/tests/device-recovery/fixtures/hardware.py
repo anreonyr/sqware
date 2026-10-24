@@ -43,6 +43,8 @@ def proof():
     cookie = 0x10f00fef
     destination = 0x8fefd004
     fence = (cookie << 32) | 0x3402
+    directory = 3 | (1 << 33) | (8 << 40)
+    invalidate = 1 | (1 << 32) | (9 << 12)
     queue = (original >> 10) << 12
     operations = []
 
@@ -55,19 +57,20 @@ def proof():
     op("writeq", base + 0x18, broken)
     op("writel", base + 0x48, 0x101)
     op("readq", base + 0x18, reply=broken)
-    op("readq", queue, reply=1)
-    op("readq", queue + 16, reply=fence)
-    op("readq", queue + 24, reply=destination >> 2)
+    op("readq", queue, reply=directory)
+    op("readq", queue + 16, reply=invalidate)
+    op("readq", queue + 32, reply=fence)
+    op("readq", queue + 40, reply=destination >> 2)
     op("readl", destination, reply=0)
     op("writel", base + 0x48, 0)
     op("writeq", base + 0x18, original)
     op("writel", base + 0x48, 0x701)
     op("readq", base + 0x18, reply=original)
-    op("writel", base + 0x24, 2)
+    op("writel", base + 0x24, 3)
     op("readl", destination, reply=cookie)
     return dict(
         base=base, bad=0x90000000, original=original, broken=broken,
-        fault=0x10101, head=0, tail=2, invalidate=1, fence=fence,
+        fault=0x10101, head=0, tail=3, directory=directory, invalidate=invalidate, fence=fence,
         destination=destination, cookie=cookie, before=0, after=cookie,
         operations=operations,
     )

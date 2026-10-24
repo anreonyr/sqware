@@ -228,24 +228,17 @@ mod binding {
     }
 
     #[test]
-    fn rebindings_use_each_iova_once_until_the_actual_address_space_is_full() {
+    fn binding_serials_continue_beyond_the_former_address_limit_with_bounded_history() {
         let mut ledger = ledger();
-        let mut previous = 0;
-        for id in 1..hub_api::BINDING_MAX {
+        let previous_limit = ((1u64 << 38) - (1 << 33)) / (1 << 21);
+        for id in 1..=previous_limit + 2 {
             let serial = claim(&mut ledger, 9, id).unwrap();
             assert_eq!(serial, id);
-            let iova = hub_api::iova_base(serial).unwrap();
-            assert!(iova > previous);
-            previous = iova;
             ledger.finish(serial);
         }
-        assert_eq!(previous + hub_api::IOVA_SPAN, hub_api::IOVA_LIMIT);
-        assert_eq!(claim(&mut ledger, 9, hub_api::BINDING_MAX), Err(Fail::Full));
-        assert_eq!(claim(&mut ledger, 9, hub_api::BINDING_MAX), Err(Fail::Full));
-        assert!(ledger.binding(hub_api::BINDING_MAX).is_none());
         assert_eq!(claim(&mut ledger, 9, 1), Err(Fail::Conflict));
-        assert_eq!(claim(&mut ledger, 9, hub_api::BINDING_MAX - 1), Ok(hub_api::BINDING_MAX - 1));
-        assert_eq!((1..hub_api::BINDING_MAX).filter(|serial| ledger.binding(*serial).is_some()).count(), 32);
+        assert_eq!(claim(&mut ledger, 9, previous_limit + 2), Ok(previous_limit + 2));
+        assert_eq!((1..=previous_limit + 2).filter(|serial| ledger.binding(*serial).is_some()).count(), 32);
         assert_eq!(ledger.admissions().count(), 1);
         assert_eq!(ledger.open_bindings(identity(0)), 0);
     }

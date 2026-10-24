@@ -13,22 +13,19 @@ mod tests {
     }
 
     #[test]
-    fn iova_windows_cover_positive_sv39_without_reuse_or_overflow() {
-        use hub_api::{BINDING_MAX, IOVA_BASE, IOVA_LIMIT, IOVA_SPAN, iova_base};
-        assert_eq!(IOVA_LIMIT, 1 << 38);
-        assert_eq!(BINDING_MAX, (IOVA_LIMIT - IOVA_BASE) / IOVA_SPAN);
-        assert_eq!(iova_base(0), None);
-        assert_eq!(iova_base(BINDING_MAX), None);
-        assert_eq!(iova_base(u64::MAX), None);
-        for serial in 1..BINDING_MAX {
-            let base = iova_base(serial).unwrap();
-            assert_eq!(base, IOVA_BASE + serial * IOVA_SPAN);
-            assert!(base.is_multiple_of(IOVA_SPAN));
-            assert!(base + IOVA_SPAN <= IOVA_LIMIT);
+    fn binding_marks_preserve_full_width_serials_without_address_limits() {
+        assert_eq!(hub_api::binding_mark(1), Mark::new(0x5043_4900_0000_0001));
+        assert_eq!(hub_api::window_mark(1), Mark::new(0x5749_4e00_0000_0001));
+        assert_eq!(hub_api::coord_mark(1), Mark::new(0x434f_4f00_0000_0001));
+        assert_eq!(hub_api::binding_mark(u64::MAX), Mark::new(0x5043_48ff_ffff_ffff));
+        assert_eq!(hub_api::window_mark(u64::MAX), Mark::new(0x5749_4dff_ffff_ffff));
+        assert_eq!(hub_api::coord_mark(u64::MAX), Mark::new(0x434f_4eff_ffff_ffff));
+        for mark in [hub_api::binding_mark, hub_api::window_mark, hub_api::coord_mark] {
+            let serials = [1, 64, 511, 512, 126975, 126976, u64::MAX];
+            for (at, serial) in serials.iter().enumerate() {
+                for other in &serials[at + 1..] { assert_ne!(mark(*serial), mark(*other)); }
+            }
         }
-        assert_eq!(iova_base(BINDING_MAX - 1).unwrap() + IOVA_SPAN, IOVA_LIMIT);
-        assert!(iova_base(64).is_some());
-        assert_ne!(iova_base(511).unwrap() >> 30, iova_base(512).unwrap() >> 30);
     }
 
     #[test]

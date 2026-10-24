@@ -156,8 +156,9 @@ mod boundaries {
             .collect();
         driver_files.sort();
         let mut expected = vec![
-            "api.rs", "binding.rs", "bindings.rs", "context.rs", "cookie.rs", "core.rs", "fence.rs",
-            "handshake.rs", "main.rs", "marks.rs", "mod.rs", "order.rs", "pages.rs",
+            "acquire.rs", "binding.rs", "bindings.rs", "cache_step.rs", "context.rs", "cookie.rs", "core.rs",
+            "domain.rs", "domain_id.rs", "domain_range.rs", "engine.rs", "fence.rs",
+            "handshake.rs", "invalidation.rs", "layout.rs", "main.rs", "marks.rs", "mod.rs", "order.rs", "pages.rs",
             "phase.rs", "program.rs", "queue.rs", "references.rs", "regs.rs", "serve.rs",
             "settled.rs", "table.rs", "ticket.rs",
         ];
@@ -166,18 +167,31 @@ mod boundaries {
             driver_files, expected,
             "the production IOMMU keeps exactly one bin and no scene variants"
         );
-        // 五手就是那五手（不多不少）；持有账是本域真正的账（hold 被生产核心使用）。
         let core = fs::read_to_string(iommu_dir.join("core.rs")).unwrap();
-        for step in ["pub fn acquire", "pub fn publish", "pub fn invalidate", "pub fn quiesce", "pub fn release"] {
+        for step in ["pub fn establish", "pub fn acquire", "pub fn publish", "pub fn invalidate", "pub fn quiesce", "pub fn release"] {
             assert!(core.contains(step), "missing step {step}");
         }
-        assert!(core.contains("Holds::new()"));
-        assert!(core.contains("holds.register("));
-        assert!(core.contains("holds.retry("));
+        let domain = fs::read_to_string(iommu_dir.join("domain.rs")).unwrap();
+        assert!(domain.contains("Holds::new()"));
+        assert!(core.contains("Domain::new("));
+        let compact: String = core.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(compact.contains("holds.register("));
+        assert!(compact.contains("holds.retry("));
+        assert!(!core.contains("raw::pies("));
+        assert!(!core.contains("hub_api::iova_base"));
+        let work = fs::read_to_string(src.join("harness/device/work.rs")).unwrap();
+        assert!(!work.contains("raw::pies("));
+        assert!(!work.contains("find_window("));
+        assert!(!work.contains("find_bar("));
+        let control = fs::read_to_string(src.join("harness/device/control.rs")).unwrap();
+        assert!(!control.contains("iova_base("));
+        let hub_coord = fs::read_to_string(src.join("service/hub/api/src/coord.rs")).unwrap();
+        assert!(!hub_coord.contains("IOVA"));
         // Hub 那一本账：主人死亡只转收场（不空格、不重绑）；观察兄弟不用 join 当已停。
         let bindings = fs::read_to_string(src.join("service/hub/core/bindings.rs")).unwrap();
         assert!(bindings.contains("pub fn owner_gone"));
         assert!(bindings.contains("Fail::Taken"));
+        assert!(!bindings.contains("iova_base"));
         assert!(!bindings.contains("Cell::Vacant"));
         let dma = fs::read_to_string(src.join("service/hub/serve/dma.rs")).unwrap();
         assert!(!dma.contains("join_task("));

@@ -76,7 +76,8 @@ pub fn acceptance() {
         .take(retention, PAGES)
         .expect("iommu-probe: retained pages");
     let data = pages.physical(DATA);
-    let context = DeviceContext::first_stage(pages.physical(ROOT));
+    let context = DeviceContext::first_stage(pages.physical(ROOT), 1)
+        .expect("iommu-probe: translation context");
     for (index, word) in context.words().iter().enumerate() {
         let at = pages.at(DDT, DEVICE_ID as usize * 64 + index * 8) as *mut u64;
         // SAFETY: DDT 页是本域刚取的可写页，DC 项按 64 字节排。
@@ -180,7 +181,10 @@ pub fn acceptance() {
 
 fn windows(base: usize, pages: &Pages, context: &DeviceContext, queues: &mut CommandQueue) {
     let mut previous = IOVA;
-    for serial in [64, 511, 512, hub_api::BINDING_MAX - 1] {
+    for (boundary, iova) in [
+        (64, 0x208000000), (511, 0x23fe00000),
+        (512, 0x240000000), (126975, 0x3fffe00000),
+    ] {
         let before = regs::read64(base, regs::DDTP);
         assert_eq!(before & (0xf | regs::DDTP_BUSY), regs::DDTP_MODE_OFF);
         for page in [DDT, ROOT, MIDDLE, LEAF] {
@@ -189,7 +193,6 @@ fn windows(base: usize, pages: &Pages, context: &DeviceContext, queues: &mut Com
         for (index, word) in context.words().iter().enumerate() {
             pages.put64(DDT, DEVICE_ID as usize * 64 + index * 8, *word);
         }
-        let iova = hub_api::iova_base(serial).expect("iommu-probe: window serial") as usize;
         table::map_pages(pages, ROOT, MIDDLE, LEAF, iova, DATA, 1).unwrap();
         crate::driver::iommu::order::sync();
         queues.enable().expect("iommu-probe: window queues");
@@ -212,7 +215,7 @@ fn windows(base: usize, pages: &Pages, context: &DeviceContext, queues: &mut Com
         assert!(queue::quiet(commands, regs::QUEUE_ON) && !queue::command_error(commands));
         assert!(queue::quiet(faults, regs::QUEUE_ON) && !queue::queue_error(faults));
         note(&format!(
-            "iommu-probe: window serial={serial} iova={iova:#x} response={response:#x} previous={previous:#x} stale_response={stale:#x} ddtp_off={stopped:#x} cqcsr={commands:#x} fqcsr={faults:#x}",
+            "iommu-probe: window boundary={boundary} iova={iova:#x} response={response:#x} previous={previous:#x} stale_response={stale:#x} ddtp_off={stopped:#x} cqcsr={commands:#x} fqcsr={faults:#x}",
         ));
         previous = iova;
     }

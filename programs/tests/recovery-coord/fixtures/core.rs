@@ -34,6 +34,10 @@ impl Core {
         }
     }
 
+    pub fn bar_grant(&self, _: u64) -> Result<env::PieToken, Fail> {
+        Ok(env::PieToken::mint(9))
+    }
+
     pub fn detach(&mut self, _: u64) -> Result<(), Fail> {
         let mut script = self.shared.borrow_mut();
         script.action(Action::CoreDetach);

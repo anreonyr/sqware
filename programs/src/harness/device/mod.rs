@@ -8,6 +8,8 @@
 //! 不进任何生产协议；驱动器只按 Hub 的协调帧做事。
 
 mod auxiliary;
+mod command;
 pub mod control;
 pub mod layout;
+mod report;
 pub mod work;

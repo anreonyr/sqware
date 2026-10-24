@@ -118,14 +118,16 @@ def run(conn, capture):
             queue = (original >> 10) << 12
             last = queue + ((tail - 1) % entries) * 16
             prior = queue + ((tail - 2) % entries) * 16
+            directory_at = queue + ((tail - 3) % entries) * 16
+            directory = command("readq", directory_at)
             invalidate = command("readq", prior)
             fence = command("readq", last)
             destination = command("readq", last + 8) << 2
             cookie = fence >> 32
-            assert invalidate & 0x7f == 1 and fence & 0x7f == 2, "not IOTINVAL then IOFENCE"
+            assert directory & 0x7f == 3 and invalidate & 0x7f == 1 and fence & 0x7f == 2, "not IODIR then IOTINVAL then IOFENCE"
             before = command("readl", destination)
             assert before == 0 and cookie != 0, "completion was already present"
-            evidence.update(head=head, tail=tail, fault=fault, invalidate=invalidate,
+            evidence.update(head=head, tail=tail, fault=fault, directory=directory, invalidate=invalidate,
                             fence=fence, destination=destination, cookie=cookie, before=before)
             command("writel", base + CQCSR, 0)
             wait(lambda: command("readl", base + CQCSR) & (ENABLE | ON | BUSY) == 0, "repair queue still on")

@@ -16,15 +16,23 @@
 //! “取得帧引用 → 发布翻译 → 撤销 → 关队列 → 解除引用”。
 //! PCI、设备恢复与设备协议都不在本域：本域不解释 virtio 寄存器，也不决定何时停端点。
 
+pub mod acquire;
 pub mod api;
 pub mod binding;
 pub mod bindings;
+mod cache_step;
 pub mod context;
 mod cookie;
 pub mod core;
+pub mod domain;
+pub mod domain_id;
+pub mod domain_range;
+pub mod engine;
 pub mod fence;
 pub mod handshake;
 pub mod hold;
+pub mod invalidation;
+pub(crate) mod layout;
 pub mod order;
 pub mod pages;
 pub mod phase;
