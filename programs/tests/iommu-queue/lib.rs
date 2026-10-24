@@ -25,6 +25,7 @@ extern crate self as env;
 
 pub mod device;
 pub mod iommu;
+pub use iommu::pages::PAGE_SIZE;
 
 pub mod chrono {
     /// The queue's only clock. Each read steps the fake time and lets the fake device
@@ -39,3 +40,6 @@ mod tests;
 
 #[cfg(test)]
 mod completion;
+
+#[cfg(test)]
+mod invalidation;

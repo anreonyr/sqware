@@ -97,3 +97,37 @@ the stricter cookie predicate, retained-handle retry, early-enable close path an
 startup rollback. Host and native checks were executed by the root writer, not
 independently rerun by Flash. This checkpoint establishes single-binding ticket
 ownership; the remaining Domain integration and full final acceptance are open.
+
+## Shared-engine preparation in PR12
+
+Cache barriers now retain their immutable requester and PSCID and independently
+admit `IODIR.INVAL_DDT`, scoped `IOTINVAL.VMA`, and their own `IOFENCE.C`.
+Queue capacity exhaustion returns Pending and preserves the unsubmitted suffix.
+Queue provenance is checked before the first invalidation write. The actual
+retire record remains mandatory; global queue quiet is still required until
+per-Domain retirement is implemented.
+
+Device contexts encode their 20-bit PSCID in TA bits 31:12. The implementation
+currently derives a distinct PSCID from each validated requester; that identifier
+is separate from the future opaque DomainId. These cache namespaces and the
+separate directory invalidation follow the
+[ratified IOMMU specification](https://github.com/riscv-non-isa/riscv-iommu/blob/v1.0/iommu_in_memory_queues.adoc).
+Neither DDTP Off nor translation invalidation alone replaces context invalidation.
+
+The retained pool now has four shared pages and three distinct table pages for
+each of the 64 contexts: 196 pages. Actual four/eight-hart normal DMA and eight-hart
+CQ-fault/Fence-repair runs acquired that pool, completed DMA, and restored frame
+allocations 85→85 or 153→153. The hardware verifier reads all three real commands,
+checks their requester/PSCID against native identity, and observes the same actual
+completion cookie without writing guest completion memory.
+
+Current selected host checks passed: queue 29, Core/Pages 29, structural 22,
+and 105 Python verifier cases. Native evidence is in
+`target/driver-composition/iommu-domains/native-pool196-*/`. An earlier verifier
+invocation rejected a string-to-integer conversion error after the guest runner
+succeeded; the corrected verifier rechecked the preserved evidence and the later
+pool runs passed the complete runner/verifier path.
+
+Core still admits one binding and still uses the existing wire/resource-delivery
+path. Per-Domain collections, address allocation, explicit delivery and real
+equal-IOVA two-device composition remain the next integration work.

@@ -211,12 +211,17 @@ impl Device {
 
     /// One step of the device: take the commands the queue rang in for.
     pub fn tick(&self) {
+        self.consume(COMMAND_ENTRIES);
+    }
+
+    pub fn consume(&self, limit: u32) {
         let mut state = self.state.borrow_mut();
         if state.held {
             return;
         }
         let tail = regs::read32(self.base(), regs::CQT);
-        while state.head != tail {
+        for _ in 0..limit {
+            if state.head == tail { break; }
             let command = self.command(state.head);
             if command.opcode() == IOFENCE_C && command.dword0 & NOTIFY != 0 {
                 let at = self.completion_address(command);

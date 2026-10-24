@@ -18,6 +18,8 @@ use crate::driver::iommu::hold::{
     Close as HoldClose, DeviceRange, Failure as HoldFailure, Holds, Registration, Scope,
 };
 use crate::driver::iommu::order;
+use crate::driver::iommu::invalidation::Invalidation;
+use crate::driver::iommu::layout::{self, DDT, COMMANDS, FAULTS, FENCE, PAGES};
 use crate::driver::iommu::pages::Pages;
 use crate::driver::iommu::phase::Phase;
 use crate::driver::iommu::queue::{self, CommandQueue};
@@ -27,16 +29,6 @@ use crate::driver::iommu::settled::Settled;
 use crate::driver::iommu::table;
 use crate::driver::shared::dma;
 use crate::driver::shared::platform::Window;
-
-/// 本域那一窗保留页的布局。
-const DDT: usize = 0;
-const ROOT: usize = 1;
-const MIDDLE: usize = 2;
-const LEAF: usize = 3;
-const COMMANDS: usize = 4;
-const FAULTS: usize = 5;
-const FENCE: usize = 6;
-const PAGES: usize = 7;
 
 /// 一次取得帧引用的请求（协调入口核过之后转给核心）。
 pub struct AcquireRequest {
@@ -93,6 +85,7 @@ impl Core {
             env::unit::self_id().get(),
             retention.get(),
         ));
+        crate::debug::put(&alloc::format!("iommu: retained engine pool pages={} contexts={}", pages.count(), context::CAPACITY));
         Ok(Self {
             _region: dock,
             base,
@@ -186,6 +179,10 @@ impl Core {
             .map_err(|_| api::Fail::Unavailable)?;
         physical.resize(pages, 0);
         let (publish, retire) = self.queues.tickets(0, 1).ok_or(api::Fail::Unavailable)?;
+        let settled = Settled::new(range, self.base, self.pages.at(DDT, 0) as *const u64, requester, &retire);
+        let pscid = u32::from(requester) + 1;
+        let publish = Invalidation::new(requester, pscid, publish).ok_or(api::Fail::Denied)?;
+        let retire = Invalidation::new(requester, pscid, retire).ok_or(api::Fail::Denied)?;
         // 持有账：先备下这一段（带本域停机凭据），再取帧引用；
         // 失败就把这一段从账上退掉，不留半个记录。
         if self
@@ -193,13 +190,7 @@ impl Core {
             .attach(Scope::new(
                 range,
                 request.execution,
-                Some(alloc::boxed::Box::new(Settled::new(
-                    range,
-                    self.base,
-                    self.pages.at(DDT, 0) as *const u64,
-                    requester,
-                    &retire,
-                ))),
+                Some(alloc::boxed::Box::new(settled)),
             ))
             .is_err()
         {
@@ -313,19 +304,21 @@ impl Core {
                     return Err(api::Fail::Unavailable);
                 }
                 // No retired IOVA path may alias the leaf page reused by this binding.
-                for page in [DDT, ROOT, MIDDLE, LEAF] {
+                let (root, middle, leaf) = layout::tables(binding.requester).ok_or(api::Fail::Denied)?;
+                for page in [DDT, root, middle, leaf] {
                     pages.fill(page, 0);
                 }
-                let context = context::DeviceContext::first_stage(pages.physical(ROOT));
+                let context = context::DeviceContext::first_stage(pages.physical(root), u32::from(binding.requester) + 1)
+                    .ok_or(api::Fail::Denied)?;
                 let offset = context::offset(binding.requester).ok_or(api::Fail::Denied)?;
                 for (index, word) in context.words().iter().enumerate() {
                     pages.put64(DDT, offset + index * 8, *word);
                 }
                 table::map_physical(
                     pages,
-                    ROOT,
-                    MIDDLE,
-                    LEAF,
+                    root,
+                    middle,
+                    leaf,
                     binding.range.base() as usize,
                     &binding.physical,
                 )
@@ -333,9 +326,6 @@ impl Core {
                 order::sync();
                 regs::ddtp_set(*base, regs::DDTP_MODE_1LVL, Some(pages.physical(DDT)))
                     .map_err(|_| api::Fail::Unavailable)?;
-                if !queues.invalidate_all() {
-                    return Err(api::Fail::Unavailable);
-                }
                 Ok(())
             })();
             let ended = holds.publish_end(
@@ -357,7 +347,7 @@ impl Core {
             }
             binding.programmed = true;
         }
-        match queues.fence_step(&mut binding.publish) {
+        match binding.publish.step(queues) {
             Fence::Settled => {
                 binding.phase = Phase::Published;
                 crate::debug::put(&alloc::format!(
@@ -424,12 +414,9 @@ impl Core {
                 return Err(api::Fail::Unavailable);
             }
             order::sync();
-            if !queues.invalidate_all() {
-                return Ok(::schedule::Progress::Pending);
-            }
             binding.programmed = false;
         }
-        match queues.fence_step(&mut binding.retire) {
+        match binding.retire.step(queues) {
             Fence::Settled => {
                 binding.phase = Phase::Invalidated;
                 crate::debug::put(&alloc::format!(

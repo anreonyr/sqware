@@ -19,12 +19,15 @@
 pub mod api;
 pub mod binding;
 pub mod bindings;
+mod cache_step;
 pub mod context;
 mod cookie;
 pub mod core;
 pub mod fence;
 pub mod handshake;
 pub mod hold;
+pub mod invalidation;
+pub(crate) mod layout;
 pub mod order;
 pub mod pages;
 pub mod phase;

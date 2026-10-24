@@ -35,7 +35,12 @@ pub const FENCE_SLOTS: usize = 1024;
 const FENCE_ADDRESS_SHIFT: u32 = 2;
 /// 命令操作码：IOTINVAL（功能 VMA）/ IOFENCE（功能 C）。
 const IOTINVAL_VMA: u64 = 1;
+const IOTINVAL_PSCID_VALID: u64 = 1 << 32;
+const IOTINVAL_PSCID_SHIFT: u32 = 12;
 const IOFENCE_C: u64 = 2;
+const IODIR_INVAL_DDT: u64 = 3;
+const IODIR_DEVICE_VALID: u64 = 1 << 33;
+const IODIR_DEVICE_SHIFT: u32 = 40;
 /// `IOFENCE.C` 那几个位：AV[10] 带完成记录、PR[12] 等已发出的读、PW[13] 等已发出的写。
 ///
 /// 编码照规范（`opcode[6:0] func3[9:7] AV[10] WSI[11] PR[12] PW[13] rsvd[31:14] DATA[63:32]`），
@@ -146,6 +151,21 @@ impl CommandQueue {
         self.submit(IOTINVAL_VMA, 0)
     }
 
+    /// Evict the device-directory context before invalidating its translations.
+    pub fn invalidate_context(&mut self, requester: u16) -> bool {
+        if super::context::offset(requester).is_none() { return false; }
+        self.submit(IODIR_INVAL_DDT | IODIR_DEVICE_VALID | (u64::from(requester) << IODIR_DEVICE_SHIFT), 0)
+    }
+
+    pub fn invalidate_translations(&mut self, pscid: u32) -> bool {
+        if pscid >= super::context::PSCID_LIMIT { return false; }
+        self.submit(IOTINVAL_VMA | IOTINVAL_PSCID_VALID | (u64::from(pscid) << IOTINVAL_PSCID_SHIFT), 0)
+    }
+
+    pub(super) fn accepts(&self, ticket: &Ticket) -> bool {
+        ticket.queue == self.fence
+    }
+
     /// Reserve a publish/retire pair before acquiring a mapping's frame reference.
     /// The caller owns the slots until both commands have completed.
     pub fn tickets(&mut self, publish: usize, retire: usize) -> Option<(Ticket, Ticket)> {
@@ -179,7 +199,7 @@ impl CommandQueue {
 
     /// Submit once, then read the same real completion under the same deadline.
     pub fn fence_step(&mut self, ticket: &mut Ticket) -> Fence {
-        if ticket.queue != self.fence {
+        if !self.accepts(ticket) {
             return Fence::Expired;
         }
         if ticket.handshake.is_none() {

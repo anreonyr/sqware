@@ -76,7 +76,8 @@ pub fn acceptance() {
         .take(retention, PAGES)
         .expect("iommu-probe: retained pages");
     let data = pages.physical(DATA);
-    let context = DeviceContext::first_stage(pages.physical(ROOT));
+    let context = DeviceContext::first_stage(pages.physical(ROOT), 1)
+        .expect("iommu-probe: translation context");
     for (index, word) in context.words().iter().enumerate() {
         let at = pages.at(DDT, DEVICE_ID as usize * 64 + index * 8) as *mut u64;
         // SAFETY: DDT 页是本域刚取的可写页，DC 项按 64 字节排。

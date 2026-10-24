@@ -83,26 +83,26 @@ fn closing_a_pending_publish_requires_the_separate_retire_completion() {
     core_fixture::hold(true);
     assert_eq!(core.publish(1), Ok(Pending));
     assert_eq!(core.invalidate(1), Ok(Pending));
-    assert_eq!(regs::read32(core.base(), regs::CQT), 4);
-    core_fixture::consume(2);
+    assert_eq!(regs::read32(core.base(), regs::CQT), 6);
+    core_fixture::consume(3);
     assert_eq!(core_fixture::completion(0), FENCE_DATA);
     assert_eq!(core_fixture::completion(1), 0);
     assert_eq!(core.invalidate(1), Ok(Pending), "publish completion cannot retire");
     assert_eq!(core.held(), 2);
     assert_eq!(core.quiesce(1), Err(Fail::Conflict));
-    core_fixture::consume(2);
+    core_fixture::consume(3);
     assert_eq!(core_fixture::completion(1), FENCE_DATA + 1);
     assert_eq!(core.invalidate(1), Ok(Done));
     finish(&mut core, 1);
 }
 
 #[test]
-fn full_publish_fails_closed_and_invalidate_retries_without_losing_the_reference() {
+fn full_publish_and_invalidate_wait_for_capacity_without_losing_the_reference() {
     let mut core = start();
     core.acquire(request(1)).unwrap();
     core_fixture::hold(true);
     regs::write32(core.base(), regs::CQT, 255);
-    assert_eq!(core.publish(1), Err(Fail::Unavailable));
+    assert_eq!(core.publish(1), Ok(Pending));
     assert_eq!(core.invalidate(1), Ok(Pending));
     assert_eq!(regs::read32(core.base(), regs::CQT), 255);
     assert_eq!(core.held(), 2);

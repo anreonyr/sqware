@@ -8,7 +8,7 @@ use env::{PieToken, TaskId};
 
 use super::hold::DeviceRange;
 use super::phase::Phase;
-use super::ticket::Ticket;
+use super::invalidation::Invalidation;
 
 pub struct Binding {
     pub serial: u64,
@@ -24,8 +24,8 @@ pub struct Binding {
     pub source: PieToken,
     /// 那一窗每一页的真实物理起址（发布时写进 Sv39 叶项）。
     pub physical: Vec<u64>,
-    pub publish: Ticket,
-    pub retire: Ticket,
+    pub publish: Invalidation,
+    pub retire: Invalidation,
     /// 目录项与页表写过了吗（重试不重写）。
     pub programmed: bool,
     /// 本轮队列抬起来了吗（重试不重抬）。

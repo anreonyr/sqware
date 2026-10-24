@@ -36,6 +36,12 @@ pub mod platform;
 pub mod api;
 #[path = "../../src/driver/iommu/binding.rs"]
 pub mod binding;
+#[path = "../../src/driver/iommu/cache_step.rs"]
+pub mod cache_step;
+#[path = "../../src/driver/iommu/invalidation.rs"]
+pub mod invalidation;
+#[path = "../../src/driver/iommu/layout.rs"]
+pub mod layout;
 #[path = "../../src/driver/iommu/context.rs"]
 pub mod context;
 #[path = "../../src/driver/iommu/core.rs"]
@@ -63,7 +69,7 @@ pub mod settled;
 
 pub mod driver {
     pub mod iommu {
-        pub use crate::{api, binding, context, cookie, fence, handshake, hold,
+        pub use crate::{api, binding, context, cookie, fence, handshake, hold, invalidation, layout,
             iommu_core as core, pages, phase, queue, references, regs, settled, table, ticket};
         pub mod order { pub fn sync() {} }
     }
@@ -84,3 +90,4 @@ pub mod pole { pub fn shut(_: crate::PieToken) -> abi::PoleResult<()> { Ok(()) }
 mod cleanup;
 mod translation;
 mod coordination;
+mod contexts;

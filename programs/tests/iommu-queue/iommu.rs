@@ -19,6 +19,15 @@ pub mod ticket;
 #[path = "../../src/driver/iommu/cookie.rs"]
 pub mod cookie;
 
+#[path = "../../src/driver/iommu/context.rs"]
+pub mod context;
+
+#[path = "../../src/driver/iommu/cache_step.rs"]
+pub mod cache_step;
+
+#[path = "../../src/driver/iommu/invalidation.rs"]
+pub mod invalidation;
+
 #[path = "../../src/driver/iommu/queue.rs"]
 pub mod queue;
 

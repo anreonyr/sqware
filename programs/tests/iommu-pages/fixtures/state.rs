@@ -8,6 +8,7 @@ pub struct State {
     pub references: usize,
     pub views: usize,
     pub view_address: usize,
+    pub view_bytes: usize,
     pub data_reference: bool,
     pub data_alive: bool,
     pub window_serial: u64,
