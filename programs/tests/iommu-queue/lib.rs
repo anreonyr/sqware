@@ -36,3 +36,6 @@ pub mod chrono {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod completion;

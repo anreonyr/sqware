@@ -233,8 +233,9 @@ pub fn acceptance() {
         .enable()
         .unwrap_or_else(|fail| panic!("iommu-dma: {fail}"));
     // ⑥ 发布之前先失效＋IOFENCE：表与翻译缓存都到位了才接上设备目录表。
-    queues.invalidate_all();
-    let fenced = queues.fence();
+    let (mut publish, mut retire) = queues.tickets(0, 1).expect("iommu-dma: fence tickets");
+    assert!(queues.invalidate_all(), "iommu-dma: publish invalidation queue full");
+    let fenced = queues.fence(&mut publish);
     order::sync();
     let programmed = regs::ddtp_set(base, regs::DDTP_MODE_1LVL, Some(pages.physical(DDT)))
         .unwrap_or_else(|(name, seen)| panic!("{name}: ddtp={seen:#x}"));
@@ -290,8 +291,8 @@ pub fn acceptance() {
 
     // ⑨ 服务没了之后，控制者**自己**收口：失效＋IOFENCE、DDTP 落 Off 并回读确认，
     //    再由自己那一枚窗口打响门铃——这一下不经过任何服务。
-    queues.invalidate_all();
-    let fenced_before_off = queues.fence();
+    assert!(queues.invalidate_all(), "iommu-dma: retire invalidation queue full");
+    let fenced_before_off = queues.fence(&mut retire);
     order::sync();
     let stopped = regs::ddtp_set(base, regs::DDTP_MODE_OFF, None)
         .unwrap_or_else(|(name, seen)| panic!("{name}: ddtp={seen:#x}"));
@@ -317,7 +318,8 @@ pub fn acceptance() {
     let disabled = refused & regs::TR_FAULT != 0 && regs::cause(refused) == regs::DMA_DISABLED;
 
     // ⑩ 收口：IOFENCE 先可执行并完成，再停两台队列；确认到位之后才归还保留与撤图。
-    let fenced_late = queues.fence();
+    let (mut late, _) = queues.tickets(2, 3).expect("iommu-dma: late fence ticket");
+    let fenced_late = queues.fence(&mut late);
     let (command_csr, fault_csr) = queues.disable();
     let page_csr = regs::read32(base, regs::PQCSR);
     let commands_off = queue::quiet(command_csr, regs::QUEUE_ON);

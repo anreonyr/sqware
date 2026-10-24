@@ -10,6 +10,7 @@ pub use abi::{
     Access, AcquireSource, FlatReference, PAGE_SIZE, PieToken, Placement, ReferenceRange,
     ReleaseMode, TeamId, ViewControl,
 };
+pub use abi::{Frame, Mark, Permission, PieInfo, PieKind, PoleResult, TaskId, WireCodes, wire};
 
 #[path = "fixtures/memory.rs"]
 pub mod memory;
@@ -21,9 +22,65 @@ pub mod raw;
 mod state;
 
 #[path = "../../src/driver/iommu/pages.rs"]
-mod pages;
+pub mod pages;
 #[path = "../../src/driver/iommu/table.rs"]
-mod table;
+pub mod table;
+
+#[path = "../../../crates/resource/src/dock.rs"]
+pub mod dock;
+#[path = "fixtures/core.rs"]
+mod core_fixture;
+#[path = "fixtures/platform.rs"]
+pub mod platform;
+#[path = "../../src/driver/iommu/api.rs"]
+pub mod api;
+#[path = "../../src/driver/iommu/binding.rs"]
+pub mod binding;
+#[path = "../../src/driver/iommu/context.rs"]
+pub mod context;
+#[path = "../../src/driver/iommu/core.rs"]
+pub mod iommu_core;
+#[path = "../../src/driver/iommu/hold/mod.rs"]
+pub mod hold;
+#[path = "../../src/driver/iommu/phase.rs"]
+pub mod phase;
+#[path = "../../src/driver/iommu/queue.rs"]
+pub mod queue;
+#[path = "../../src/driver/iommu/fence.rs"]
+pub mod fence;
+#[path = "../../src/driver/iommu/handshake.rs"]
+pub mod handshake;
+#[path = "../../src/driver/iommu/ticket.rs"]
+pub mod ticket;
+#[path = "../../src/driver/iommu/cookie.rs"]
+pub mod cookie;
+#[path = "../../src/driver/iommu/regs.rs"]
+pub mod regs;
+#[path = "../../src/driver/iommu/references.rs"]
+pub mod references;
+#[path = "../../src/driver/iommu/settled.rs"]
+pub mod settled;
+
+pub mod driver {
+    pub mod iommu {
+        pub use crate::{api, binding, context, cookie, fence, handshake, hold,
+            iommu_core as core, pages, phase, queue, references, regs, settled, table, ticket};
+        pub mod order { pub fn sync() {} }
+    }
+    pub mod shared {
+        pub use crate::platform;
+        pub mod dma {
+            pub use hub_api::{IOVA_SPAN, iova_base, window_mark};
+        }
+    }
+}
+
+pub mod chrono { pub fn clock() -> u64 { crate::core_fixture::clock() } }
+pub mod unit { pub fn self_id() -> crate::TaskId { crate::TaskId::new(5) } }
+pub mod debug { pub fn put(_: &str) {} }
+pub mod order { pub fn sync() {} }
+pub mod pole { pub fn shut(_: crate::PieToken) -> abi::PoleResult<()> { Ok(()) } }
 
 mod cleanup;
 mod translation;
+mod coordination;
