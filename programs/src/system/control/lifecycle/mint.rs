@@ -20,6 +20,14 @@ pub fn pre(active: Res<Active>, mut control: ResMut<Control>) -> Result<Progress
         control.enlist(p).map_err(|_| Fail::Full)?;
     }
     control.pending.try_reserve(1).map_err(|_| Fail::Full)?;
+    match super::intent::change(
+        job.key.request.directive.action,
+        job.key.request.directive.origin,
+    ) {
+        Some(true) => control.request_run(p.name())?,
+        Some(false) => control.request_stop(p.name())?,
+        None => {}
+    }
     Ok(Progress::Done)
 }
 pub fn post(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
@@ -46,7 +54,7 @@ pub fn failed(
         let job = &tracked.operation;
         if tracked.complete
             && job.progress.failure.is_some()
-            && matches!(job.key.request.action, Action::Mint)
+            && matches!(job.key.request.directive.action, Action::Mint)
             && job.progress.execution.task.is_none()
             && control
                 .table

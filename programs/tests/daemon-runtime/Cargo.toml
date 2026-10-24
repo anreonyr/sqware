@@ -1,0 +1,13 @@
+[package]
+name = "daemon-runtime-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dev-dependencies]
+system-api = { path = "../../src/system/api" }

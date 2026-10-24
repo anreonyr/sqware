@@ -1,5 +1,6 @@
 use super::super::unit::{Control, guard};
-use super::{Action, Active, Instance};
+use super::{Action, Active, Instance, authority};
+use crate::system::app::policy::Settle;
 use crate::system::control::unit::task::Readiness;
 use crate::system::{
     control::identity::Roster,
@@ -22,6 +23,14 @@ pub(crate) fn pre(
         .is_some_and(|r| r.state == State::Debarked)
     {
         job.progress.execution.task = control.task(p.name());
+        match super::intent::change(
+            job.key.request.directive.action,
+            job.key.request.directive.origin,
+        ) {
+            Some(true) => control.request_run(p.name())?,
+            Some(false) => control.request_stop(p.name())?,
+            None => {}
+        }
         return Ok(Progress::Done);
     }
     let at = control
@@ -42,7 +51,7 @@ pub(crate) fn pre(
         .instance
         .as_mut()
         .ok_or(Fail::NotReady)?;
-    let identity_install = match job.key.request.action {
+    let identity_install = match job.key.request.directive.action {
         Action::Embark {
             parent: Some(parent),
         } => roster.inherit(instance.service.task(), parent),
@@ -61,7 +70,10 @@ pub(crate) fn pre(
         p.name()
     ));
     instance.identity_install = Some(identity_install);
-    if matches!(job.key.request.action, Action::Embark { parent: None }) {
+    if matches!(
+        job.key.request.directive.action,
+        Action::Embark { parent: None }
+    ) {
         control.table.mark_static(instance.service.task());
     }
     instance.service.connect(p).map_err(|why| {
@@ -71,42 +83,64 @@ pub(crate) fn pre(
         ));
         Fail::NotReady
     })?;
+    match super::intent::change(
+        job.key.request.directive.action,
+        job.key.request.directive.origin,
+    ) {
+        Some(true) => control.request_run(p.name())?,
+        Some(false) => control.request_stop(p.name())?,
+        None => {}
+    }
     Ok(Progress::Done)
 }
 
-pub fn run(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
-    let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    let name = job.key.request.name.as_str();
-    let deadline = job.progress.execution.deadline;
-    let Some(instance) = job.progress.execution.instance.as_mut() else {
-        control.resume(name)?;
-        return Ok(Progress::Done);
-    };
-    if instance.launched {
-        return Ok(Progress::Done);
-    }
-    if control.guard_required(name) && !control.guard_held(name) {
-        let team = control
-            .task_team(instance.service.task())
-            .ok_or(Fail::Unknown)?;
-        let authority = control.guard_token.ok_or(Fail::NotReady)?;
-        match guard::arm(team, authority).map_err(|_| Fail::NotReady)? {
-            Progress::Done => {
-                control.hold_guard(name);
-                guard::resume(team).map_err(|_| Fail::NotReady)?;
-            }
-            Progress::Pending if env::chrono::clock() < deadline => {
-                return Ok(Progress::Pending);
-            }
-            _ => return Err(Fail::NotReady),
+pub fn run(
+    mut active: ResMut<Active>,
+    mut control: ResMut<Control>,
+    settle: Res<Settle>,
+) -> Result<Progress, Fail> {
+    let (name, task) = {
+        let job = active.0.as_mut().ok_or(Fail::Unknown)?;
+        let name = job.key.request.name.clone();
+        let deadline = job.progress.execution.deadline;
+        let Some(instance) = job.progress.execution.instance.as_mut() else {
+            control.resume(&name)?;
+            return Ok(Progress::Done);
+        };
+        if instance.launched {
+            return Ok(Progress::Done);
         }
-    }
+        let task = instance.service.task();
+        if control.guard_required(&name) && !control.guard_held(&name) {
+            let team = control.task_team(task).ok_or(Fail::Unknown)?;
+            let authority = control.guard_token.ok_or(Fail::NotReady)?;
+            match guard::arm(team, authority).map_err(|_| Fail::NotReady)? {
+                Progress::Done => {
+                    control.hold_guard(&name);
+                    guard::resume(team).map_err(|_| Fail::NotReady)?;
+                }
+                Progress::Pending if env::chrono::clock() < deadline => {
+                    return Ok(Progress::Pending);
+                }
+                _ => return Err(Fail::NotReady),
+            }
+        }
+        (name, task)
+    };
+    authority::verify_effect(&active, &control, &settle)?;
     crate::debug::put(&alloc::format!(
         "system: activate {} tid={}",
         name,
-        instance.service.task().get()
+        task.get()
     ));
-    env::unit::embark_task(instance.service.task()).map_err(|_| Fail::NotReady)?;
+    env::unit::embark_task(task).map_err(|_| Fail::NotReady)?;
+    let job = active.0.as_mut().ok_or(Fail::Unknown)?;
+    let instance = job
+        .progress
+        .execution
+        .instance
+        .as_mut()
+        .ok_or(Fail::NotReady)?;
     instance.launched = true;
     Ok(Progress::Done)
 }

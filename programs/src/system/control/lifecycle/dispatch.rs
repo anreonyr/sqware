@@ -23,8 +23,8 @@ pub fn select(
         };
         break tracked;
     };
-    let key = match tracked.operation.key.request.action {
-        Action::Mint => Key::Mint,
+    let key = match tracked.operation.key.request.directive.action {
+        Action::Mint | Action::Recover => Key::Mint,
         Action::Embark { .. } => Key::Embark,
         Action::Debark => Key::Debark,
         Action::Ruin => Key::Ruin,

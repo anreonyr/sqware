@@ -420,6 +420,94 @@ mod tests {
     }
 
     #[test]
+    fn daemon_is_one_rtc_only_supervised_process_in_product_scenes() {
+        const SCENES: &[&str] = &[
+            "product",
+            "iommu-product",
+            "iommu-product-fault",
+            "iommu-product-before",
+            "iommu-product-after",
+            "daemon-rtc",
+            "daemon-target",
+            "daemon-stop",
+        ];
+        for deployment in unit::DEPLOYMENTS {
+            let count = deployment
+                .start
+                .iter()
+                .filter(|name| **name == "daemon")
+                .count();
+            assert_eq!(
+                count,
+                usize::from(SCENES.contains(&deployment.name)),
+                "daemon count in {}",
+                deployment.name
+            );
+            let supervised = deployment
+                .targets
+                .iter()
+                .find(|target| target.name == "supervised");
+            assert_eq!(
+                supervised.is_some(),
+                SCENES.contains(&deployment.name),
+                "supervised group presence in {}",
+                deployment.name
+            );
+        }
+        for scene in SCENES {
+            let deployment = unit::Deployment::find(scene).unwrap();
+            let order = order_of(deployment, unit::PROGRAMS).unwrap();
+            let daemon = order.iter().position(|name| *name == "daemon").unwrap();
+            let provider = if matches!(*scene, "daemon-target" | "daemon-stop") {
+                "fixturetarget"
+            } else {
+                "rtc"
+            };
+            let provider_at = order.iter().position(|name| *name == provider).unwrap();
+            assert!(
+                daemon > provider_at,
+                "daemon must start after {provider} in {scene}"
+            );
+            let supervised = deployment
+                .targets
+                .iter()
+                .find(|target| target.name == "supervised")
+                .unwrap();
+            assert_eq!(
+                supervised.members,
+                [provider],
+                "supervised group in {scene}"
+            );
+            assert!(
+                supervised
+                    .members
+                    .iter()
+                    .all(|member| !deployment.guarded.contains(member))
+            );
+            assert!(
+                deployment
+                    .targets
+                    .iter()
+                    .any(|target| target.name == unit::SCENE
+                        && target.members.contains(&"daemon")),
+                "daemon missing from {scene} scene target"
+            );
+            assert!(
+                bins_for(deployment)
+                    .unwrap()
+                    .iter()
+                    .any(|(image, _)| *image == "daemon")
+            );
+            assert!(
+                bins_for(deployment)
+                    .unwrap()
+                    .iter()
+                    .any(|(image, _)| *image == provider)
+            );
+        }
+    }
+
+    #[test]
     fn package_names_are_unique_and_exclude_scene_targets() {
         for (index, package) in unit::PACKAGES.iter().enumerate() {
             assert!(!package.name.is_empty());
@@ -477,6 +565,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: Some(&[unit::Dependency::Unit("cycle-b")]),
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
@@ -494,6 +583,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: Some(&[unit::Dependency::Target(unit::SCENE)]),
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
@@ -550,6 +640,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: None,
                 ending: None,
                 ready: unit::Ready::OnSpawn,
@@ -569,6 +660,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: None,
                 ending: None,
                 ready: unit::Ready::OnSpawn,
@@ -586,6 +678,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: None,
                 ending: None,
                 ready: unit::Ready::OnSpawn,
@@ -641,6 +734,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: None,
                 ending: None,
                 ready: unit::Ready::OnSpawn,
@@ -679,6 +773,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: None,
                 ending: None,
                 ready: unit::Ready::OnSpawn,
@@ -719,6 +814,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: Some(&[unit::Dependency::Bootstrap(unit::Bootstrap::Identity)]),
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
@@ -755,6 +851,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: Some(&[unit::Dependency::Target("after-b")]),
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,
@@ -772,6 +869,7 @@ mod tests {
                 grants: &[],
             },
             control: unit::ControlConfig {
+                supervision: None,
                 after: Some(&[unit::Dependency::Target("after-a")]),
                 ending: Some(unit::Ending::Transient),
                 ready: unit::Ready::OnSpawn,

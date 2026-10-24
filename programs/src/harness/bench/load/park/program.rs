@@ -12,6 +12,7 @@ pub static PARK: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: None,
         ready: crate::unit::Ready::OnSpawn,
         ending: None,

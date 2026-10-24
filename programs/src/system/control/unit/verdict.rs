@@ -66,4 +66,5 @@ pub enum Fail {
     BadImage,
     Full,
     NotReady,
+    Denied,
 }

@@ -748,4 +748,90 @@ mod revised_ownership {
         assert!(!repo.join("programs/src/system/launch/activation.rs").exists());
         assert!(!repo.join("programs/src/system/control/unit/material.rs").exists());
     }
+
+    #[test]
+    fn daemon_is_one_rtc_only_resident_supervision_process() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let declaration =
+            fs::read_to_string(repo.join("programs/src/service/daemon/program.rs")).unwrap();
+        for required in [
+            "name: \"daemon\"",
+            "supervision: Some(\"supervised\")",
+            "Dependency::Target(\"supervised\")",
+            "Ending::Resident",
+            "Ready::Signal(crate::unit::READY_MARK)",
+        ] {
+            assert!(declaration.contains(required), "daemon declaration missing {required}");
+        }
+        let catalog = fs::read_to_string(repo.join("programs/src/unit/catalog.rs")).unwrap();
+        assert_eq!(catalog.matches("daemon::PROGRAM").count(), 1);
+        let packages = fs::read_to_string(repo.join("programs/src/unit/package.rs")).unwrap();
+        assert_eq!(packages.matches("package!(\"daemon\")").count(), 1);
+        assert!(fs::read_to_string(repo.join("programs/Cargo.toml"))
+            .unwrap()
+            .contains("name = \"prog-daemon\""));
+
+        let root = repo.join("programs/src/service/daemon");
+        let mut runtime = String::new();
+        for entry in fs::read_dir(&root).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|extension| extension == "rs") {
+                runtime.push_str(&fs::read_to_string(&path).unwrap());
+            }
+            if path.is_dir() {
+                for entry in fs::read_dir(path).unwrap() {
+                    let path = entry.unwrap().path();
+                    if path.extension().is_some_and(|extension| extension == "rs") {
+                        runtime.push_str(&fs::read_to_string(path).unwrap());
+                    }
+                }
+            }
+        }
+        for forbidden in [
+            "Grant::State",
+            "Grant::Mint",
+            "Grant::Embark",
+            "Grant::Debark",
+            "Grant::Ruin",
+            "join_task",
+            "slay_team",
+            "oust",
+            "set_run_requested",
+            "Settle",
+            "closing",
+            "hub::",
+            "pci::",
+            "iommu::",
+            "uart::",
+            "rtc::",
+        ] {
+            assert!(!runtime.contains(forbidden), "daemon owns {forbidden}");
+        }
+        for required in [
+            "control::SUPERVISION",
+            "control::RECOVER",
+            "establish::opened_by",
+            "establish::marked_as",
+            "READY_MARK",
+        ] {
+            assert!(runtime.contains(required), "daemon missing {required}");
+        }
+
+        fn names_daemon(root: &Path) -> bool {
+            for entry in fs::read_dir(root).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    if names_daemon(&path) {
+                        return true;
+                    }
+                } else if path.extension().is_some_and(|extension| extension == "rs")
+                    && fs::read_to_string(path).unwrap().contains("\"daemon\"")
+                {
+                    return true;
+                }
+            }
+            false
+        }
+        assert!(!names_daemon(&repo.join("programs/src/system")), "System names the daemon");
+    }
 }

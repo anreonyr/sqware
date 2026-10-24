@@ -30,6 +30,7 @@ pub static PROGRAM: UnitFile = UnitFile {
     },
     identity: Identity::DEFAULT,
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: Some(&[
             Dependency::Bootstrap(crate::unit::Bootstrap::Operator),
             Dependency::Bootstrap(crate::unit::Bootstrap::Identity),

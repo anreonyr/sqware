@@ -13,6 +13,7 @@ pub static PROBE_OWNER: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: Some(&[
             crate::unit::Dependency::Bootstrap(crate::unit::Bootstrap::Operator),
             crate::unit::Dependency::Unit("uart"),

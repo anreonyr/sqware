@@ -13,6 +13,7 @@ pub static PASSER: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: Some(&[]),
         ready: crate::unit::Ready::OnSpawn,
         ending: Some(Ending::Transient),

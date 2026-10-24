@@ -54,6 +54,7 @@ pub fn answer(
                     crate::system::control::unit::verdict::Fail::Unknown => call::Fail::Unknown,
                     crate::system::control::unit::verdict::Fail::BadImage => call::Fail::BadImage,
                     crate::system::control::unit::verdict::Fail::NotReady => call::Fail::NotReady,
+                    crate::system::control::unit::verdict::Fail::Denied => call::Fail::Denied,
                 }))),
             );
         }
@@ -137,6 +138,9 @@ pub fn answer(
                                         }
                                         crate::system::control::unit::verdict::Fail::NotReady => {
                                             call::Fail::NotReady
+                                        }
+                                        crate::system::control::unit::verdict::Fail::Denied => {
+                                            call::Fail::Denied
                                         }
                                     },
                                 )),

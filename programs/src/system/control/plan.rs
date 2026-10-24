@@ -1,4 +1,4 @@
-use super::lifecycle::Action;
+use super::lifecycle::{Action, Directive, Origin, Request};
 use super::unit::Control;
 use super::{
     endpoint::{self, request as answer},
@@ -15,6 +15,7 @@ pub(crate) fn poll() -> Result<Plan<Fail>, BuildError> {
         .system("instances.receive", endpoint::receive_instances)?
         .system("requests.receive", answer::receive)?
         .system("requests.state", answer::state)?
+        .system("observe.receive", endpoint::receive_observe)?
         .build()
 }
 pub(crate) fn commands(hooks: super::ActivationHooks) -> Result<Plan<Fail>, BuildError> {
@@ -60,7 +61,14 @@ pub fn ruin_rest(
         for name in control.closing_service_names() {
             if !operations.contains(name) {
                 operations
-                    .submit_lifecycle(name.into(), Action::Ruin)
+                    .submit_lifecycle(Request {
+                        name: name.into(),
+                        directive: Directive {
+                            action: Action::Ruin,
+                            origin: Origin::Closing,
+                        },
+                        back: None,
+                    })
                     .map_err(|_| Fail::Room)?;
             }
         }

@@ -58,6 +58,7 @@ pub static PROBE_WATCH: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: Some(&[crate::unit::Dependency::Bootstrap(
             crate::unit::Bootstrap::Operator,
         )]),

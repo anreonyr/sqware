@@ -31,12 +31,21 @@ pub(crate) fn mint(
     let service = control
         .attach_service(input.program.name(), built)
         .map_err(|_| Fail::Full)?;
-    job.progress.execution.task = Some(service.task());
+    let task = service.task();
+    job.progress.execution.task = Some(task);
     job.progress.execution.instance = Some(Instance {
         service,
         launched: false,
         identity_install: None,
     });
+    let team = control.task_team(task).ok_or(Fail::Unknown)?;
+    crate::debug::put(&alloc::format!(
+        "system: static construct name={} task={} team={} owner={}",
+        input.program.name(),
+        task.get(),
+        team.get(),
+        env::unit::self_id().get(),
+    ));
     Ok(Progress::Done)
 }
 fn namespace(
@@ -221,6 +230,10 @@ pub(crate) fn supply(
 }
 pub(crate) fn hooks() -> Result<crate::system::control::ActivationHooks, ::schedule::BuildError> {
     let mut construct = ::schedule::Schedule::sequence();
+    construct.system(
+        "authorize",
+        crate::system::control::lifecycle::authority::recheck,
+    )?;
     construct.system("construct", mint)?;
     let mut prepare = ::schedule::Schedule::sequence();
     prepare.system("namespace.coordinates", namespace_coordinates)?;

@@ -144,7 +144,7 @@ pub mod system {
                 &mut self,
                 mut request: super::control::lifecycle::Request,
             ) -> Result<
-                JobId,
+                (JobId, bool),
                 (
                     super::control::unit::verdict::Fail,
                     super::control::lifecycle::Request,
@@ -155,7 +155,10 @@ pub mod system {
                         continue;
                     }
                     if matches!(
-                        (work.operation.key.request.action, request.action),
+                        (
+                            work.operation.key.request.directive.action,
+                            request.directive.action
+                        ),
                         (
                             super::control::lifecycle::Action::Ruin,
                             super::control::lifecycle::Action::Ruin
@@ -164,7 +167,7 @@ pub mod system {
                         if let Some(back) = request.back.take() {
                             work.operation.key.waiters.push(back);
                         }
-                        return Ok(work.operation.key.id);
+                        return Ok((work.operation.key.id, true));
                     }
                     return Err((super::control::unit::verdict::Fail::NotReady, request));
                 }
@@ -173,7 +176,7 @@ pub mod system {
                 };
                 self.operations
                     .push_back(super::control::lifecycle::Tracked::new(id, request));
-                Ok(id)
+                Ok((id, false))
             }
         }
     }
@@ -219,6 +222,7 @@ pub mod system {
                     BadImage,
                     Full,
                     NotReady,
+                    Denied,
                 }
                 pub fn walking(_: &super::table::Table) -> bool {
                     false
@@ -266,16 +270,37 @@ pub mod system {
             }
         }
         pub mod lifecycle {
-            #[derive(Clone, Copy)]
+            pub mod origin {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../src/system/control/lifecycle/origin.rs"
+                ));
+            }
+            pub use origin::Origin;
+            pub mod directive {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../src/system/control/lifecycle/directive.rs"
+                ));
+            }
+            pub use directive::Directive;
+            pub fn accept_intent(
+                _: &mut super::unit::Control,
+                _: &str,
+                _: Option<Directive>,
+            ) {
+            }
+            #[derive(Clone, Copy, PartialEq, Eq, Debug)]
             pub enum Action {
                 Mint,
+                Recover,
                 Embark { parent: Option<crate::TaskId> },
                 Debark,
                 Ruin,
             }
             pub struct Request {
                 pub name: String,
-                pub action: Action,
+                pub directive: Directive,
                 pub back: Option<crate::rpc::reply::Sender<system_api::control::frame::Said>>,
             }
             #[cfg(test)]
@@ -287,7 +312,7 @@ pub mod system {
                     .map(|job| {
                         (
                             job.operation.key.request.name.clone(),
-                            job.operation.key.request.action,
+                            job.operation.key.request.directive.action,
                             job.operation.key.request.back.is_some(),
                         )
                     })
@@ -414,13 +439,25 @@ mod tests {
             reply: rpc::reply::Sender(core::marker::PhantomData),
         };
         resources
+            .insert(system::control::unit::Control {
+                inputs: Vec::new(),
+                targets: &[],
+                table: system::control::unit::table::Table { rows: Vec::new() },
+            })
+            .unwrap();
+        resources
             .insert(request::Inbox(alloc::collections::VecDeque::from([
                 incoming(frame::Wire::Mint("provider".into())),
                 incoming(frame::Wire::Embark("consumer".into())),
                 incoming(frame::Wire::Mint("provider".into())),
             ])))
             .unwrap();
-        request::enqueue(resources.write().unwrap(), resources.write().unwrap()).unwrap();
+        request::enqueue(
+            resources.write().unwrap(),
+            resources.write().unwrap(),
+            resources.write().unwrap(),
+        )
+        .unwrap();
         assert!(resources.read::<request::Inbox>().unwrap().0.is_empty());
         let jobs = resources.read::<system::assembly::Jobs>().unwrap();
         let queued = queued(&jobs.operations);

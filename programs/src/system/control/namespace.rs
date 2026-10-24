@@ -86,12 +86,22 @@ impl Endpoints {
                 validate_root(token, grant.mark())?;
                 token
             };
+            let public = matches!(
+                grant,
+                system_api::control::Grant::State
+                    | system_api::control::Grant::Observe
+                    | system_api::control::Grant::Recover
+            );
             bindings.push(BindingInput {
-                name: grant.name().into(),
+                name: if grant == system_api::control::Grant::Observe {
+                    "supervision".into()
+                } else {
+                    grant.name().into()
+                },
                 mark: grant.mark(),
                 resource: token,
                 view,
-                permit: if grant == system_api::control::Grant::State {
+                permit: if public {
                     Permit::Public
                 } else {
                     Permit::Identity(system_api::identity::Selector::Exact(principal))

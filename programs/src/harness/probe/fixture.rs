@@ -5,7 +5,7 @@ use crate::system::{
     app::bootstrap::Boot,
     control::identity::Roster,
     control::{
-        lifecycle::{Action, Active, Key, schedule as lifecycle},
+        lifecycle::{Action, Active, Directive, Key, Origin, Request, schedule as lifecycle},
         unit::verdict,
         unit::{Control, start},
     },
@@ -159,7 +159,14 @@ impl Fixture {
             .resources
             .write::<crate::system::assembly::Jobs>()
             .map_err(|_| ())?
-            .submit_lifecycle(name.into(), action)
+            .submit_lifecycle(Request {
+                name: name.into(),
+                directive: Directive {
+                    action,
+                    origin: Origin::External,
+                },
+                back: None,
+            })
             .map_err(|_| ())?;
         loop {
             if self.plans[1]

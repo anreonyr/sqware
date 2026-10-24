@@ -21,6 +21,7 @@ pub static PROBE_DENIED: UnitFile = UnitFile {
         ],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: Some(&[
             crate::unit::Dependency::Bootstrap(crate::unit::Bootstrap::Operator),
             crate::unit::Dependency::Bootstrap(crate::unit::Bootstrap::Identity),

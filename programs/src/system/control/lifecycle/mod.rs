@@ -11,6 +11,18 @@ mod embark;
 mod mint;
 mod ruin;
 
+pub(crate) mod authority;
+mod authority_verify;
+mod directive;
+mod intent;
+mod origin;
+pub(crate) mod takeover;
+mod transition;
+
+pub use directive::Directive;
+pub use origin::Origin;
+pub(crate) use intent::accepted as accept_intent;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Key {
     Mint,
@@ -18,16 +30,17 @@ pub enum Key {
     Debark,
     Ruin,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
     Mint,
+    Recover,
     Embark { parent: Option<TaskId> },
     Debark,
     Ruin,
 }
 pub struct Request {
     pub name: String,
-    pub action: Action,
+    pub directive: Directive,
     pub back: Option<ReplySender<Said>>,
 }
 pub struct Instance {
@@ -60,6 +73,7 @@ pub struct Tracked {
     pub complete: bool,
 }
 mod dispatch;
+mod finish;
 pub(crate) mod schedule;
 
 impl Tracked {
@@ -84,41 +98,6 @@ impl Tracked {
             cursor: Cursor::default(),
             complete: false,
         }
-    }
-
-    pub(super) fn finish(
-        &mut self,
-        result: Result<::schedule::Progress, Fail>,
-    ) -> Result<(), crate::system::app::Fault> {
-        match result {
-            Ok(::schedule::Progress::Done) => self.complete = true,
-            Ok(::schedule::Progress::Pending) => {}
-            Err(fail) => {
-                let job = &mut self.operation;
-                if matches!(job.key.request.action, Action::Ruin)
-                    && job.progress.execution.task.is_some()
-                {
-                    programs::debug::put(&alloc::format!(
-                        "system: ruin {} failed {:?}",
-                        job.key.request.name,
-                        fail
-                    ));
-                    return Err(crate::system::app::Fault::Shutdown);
-                }
-                job.progress.failure = Some(fail);
-                if matches!(job.key.request.action, Action::Mint | Action::Embark { .. })
-                    && job.progress.execution.instance.is_some()
-                {
-                    job.key.request.action = Action::Ruin;
-                    job.progress.execution.deadline =
-                        env::chrono::clock() + crate::support::timing::BOOT_MS as u64 * 1_000_000;
-                    self.cursor.reset();
-                } else {
-                    self.complete = true;
-                }
-            }
-        }
-        Ok(())
     }
 }
 

@@ -98,6 +98,8 @@ pub const STATE: u8 = 4;
 
 pub const RUIN: u8 = 5;
 
+pub const RECOVER: u8 = 12;
+
 /// Control 的运行时发布名称。
 pub const NAME: &str = "control";
 

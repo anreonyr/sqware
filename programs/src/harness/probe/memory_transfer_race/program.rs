@@ -16,6 +16,7 @@ pub static ENTRY: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: None,
         ready: crate::unit::Ready::OnSpawn,
         ending: None,
@@ -35,6 +36,7 @@ pub static UNIT: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: None,
         ready: crate::unit::Ready::OnSpawn,
         ending: None,

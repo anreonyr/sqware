@@ -13,6 +13,7 @@ mod install;
 pub(crate) use install::{Configuration, install};
 
 mod plan;
+mod supervision;
 pub(crate) use plan::{commands, pending, poll, reply, retire_completed};
 
 pub(crate) fn entry(

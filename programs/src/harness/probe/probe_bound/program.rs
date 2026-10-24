@@ -24,6 +24,7 @@ pub static PROBE_BOUND: UnitFile = UnitFile {
         grants: &[],
     },
     control: crate::unit::ControlConfig {
+        supervision: None,
         after: Some(&[crate::unit::Dependency::Bootstrap(
             crate::unit::Bootstrap::Operator,
         )]),
