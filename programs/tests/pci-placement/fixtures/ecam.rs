@@ -23,7 +23,7 @@ impl Ecam {
     }
 
     fn at(&self, register: u16) -> usize {
-        self.base + register as usize
+        self.base + usize::from(self.requester) * 4096 + register as usize
     }
 
     pub fn read8(&self, register: u16) -> u8 {
@@ -74,7 +74,7 @@ impl Ecam {
     pub fn place_bar(&self, index: u8, address: u64, wide: bool) {
         assert_eq!(index, 0);
         assert!(wide);
-        state::place_bar(address);
+        state::place_bar(self.requester, address);
     }
 }
 

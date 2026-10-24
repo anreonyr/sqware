@@ -42,6 +42,8 @@ pub mod bond;
 pub mod claim;
 pub mod directory;
 pub mod dma;
+mod binding_rpc;
+mod coordination;
 mod enrollment_failure;
 mod execution;
 mod launch;
@@ -129,6 +131,9 @@ pub fn serve() -> Result<(), Start> {
                 system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS))
                     .map_err(|_| Start::Tree(E_HUB))?;
             let service_anchor = publisher.anchor().map_err(|_| Start::Tree(E_HUB))?;
+            let dma_publisher = system_client::operator::Capability::injected(2, sire, Wait::AtMost(MS))
+                .map_err(|_| Start::Tree(E_HUB))?;
+            let dma_anchor = dma_publisher.anchor().map_err(|_| Start::Tree(E_HUB))?;
             let endpoint_view =
                 operator_api::ResourceView::new(env::Access::STORE).ok_or(Start::Tree(E_HUB))?;
             for (index, (name, entry)) in [
@@ -141,6 +146,9 @@ pub fn serve() -> Result<(), Start> {
             .into_iter()
             .enumerate()
             {
+                let (publisher, service_anchor) = if name == Grant::Dma.name() {
+                    (&dma_publisher, dma_anchor)
+                } else { (&publisher, service_anchor) };
                 publisher
                     .bind(
                         service_anchor,
@@ -225,6 +233,8 @@ pub fn serve() -> Result<(), Start> {
     // 十、协调入口那几面：三个硬件域与 Control（树上查回来的门牌）；
     //     再加一本“设备目录”的装置（新设备的门牌与类联盟由它挂出去）。
     let mut peers = None;
+    let mut rejected_peers = [None; 3];
+    let mut pending_bindings = Vec::new();
     let mut executions = execution::Executions::try_new().map_err(|_| Start::Room(E_HUB))?;
     let directory = Directory {
         devices: &devices,
@@ -255,6 +265,7 @@ pub fn serve() -> Result<(), Start> {
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
+        peers::reclaim(&mut rejected_peers);
         // Advance launch/return work and admission deadlines before handling a door, so
         // an expired admission cannot claim in the same wake.
         if let Some(peers) = peers.as_ref() {
@@ -278,7 +289,7 @@ pub fn serve() -> Result<(), Start> {
             }) => {
                 if token == dma {
                     // DMA 那一面走类型化的一问一答（回信孔由 ipc::rpc 铸、交、核）。
-                    drain_dma(&mut ledger, &mut peers, &tree, &directory, token, &mut buf);
+                    drain_dma(&mut ledger, &mut peers, &mut rejected_peers, &tree, &directory, token, &mut buf);
                 } else if token == retire {
                     drain_retirement(&mut ledger, &mut executions, token, &mut buf);
                 } else {
@@ -289,8 +300,8 @@ pub fn serve() -> Result<(), Start> {
                         // 其余形状仍走普通设备那一面的招待。
                         if peers
                             .as_ref()
-                            .and_then(|peers| {
-                                dma::claim_at_door(&mut ledger, peers, token, from, &buf[..len])
+                            .and_then(|_| {
+                                dma::claim_at_door(&mut ledger, token, from, &buf[..len])
                             })
                             .is_none()
                         {
@@ -310,7 +321,11 @@ pub fn serve() -> Result<(), Start> {
             debug!("hub: vacated {freed}");
         }
         if let Some(peers) = peers.as_ref() {
-            dma::advance(&mut ledger, peers, &mut executions);
+            let gone = ledger.owner_gone(alive);
+            if gone > 0 {
+                debug!("hub: {gone} binding(s) closing (owner gone)");
+            }
+            coordination::advance(&mut ledger, peers, &mut executions, &mut pending_bindings);
         }
         for class in ledger.classes().ok_or(Start::Room(E_HUB))? {
             for (_, door) in ledger.doors(class) {
@@ -331,6 +346,7 @@ pub fn serve() -> Result<(), Start> {
 fn drain_dma(
     ledger: &mut Ledger,
     peers: &mut Option<Peers>,
+    rejected: &mut [Option<PieToken>; 3],
     tree: &Face,
     directory: &Directory,
     entry: PieToken,
@@ -341,7 +357,7 @@ fn drain_dma(
         match receiver.receive(buffer, Wait::POLL) {
             Ok(incoming) => {
                 if peers.is_none() && matches!(incoming.request, hub_api::DmaWire::Enroll(_)) {
-                    match Peers::find(tree, Wait::AtMost(MS)) {
+                    match Peers::find(tree, Wait::AtMost(MS), rejected) {
                         Ok(found) => *peers = Some(found),
                         Err(reason) => debug!("hub: coordinators unavailable: {reason}"),
                     }
@@ -396,6 +412,7 @@ fn drain_retirement(
                     executions.settle(ledger);
                     ledger.open_bindings_all().next().is_none() && executions.idle(ledger)
                 } else {
+                    let first = !executions.target_received(target);
                     if !executions.target(ledger, target) {
                         let _ = incoming.reply.send(
                             system_api::retirement::Retirement::pending_for(target),
@@ -403,6 +420,7 @@ fn drain_retirement(
                         continue;
                     }
                     let open = ledger.stop_target(target, |serial| {
+                        if !first { return; }
                         crate::debug::put(&alloc::format!(
                             "hub: binding {serial} execution domain stopped (tid={})",
                             target.get()
@@ -570,7 +588,7 @@ fn receive_inventory(system: TaskId) -> Result<Inventory, Start> {
 
 /// Build the machine ledger from the read-only inventory and target-local lease slots.
 fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
-    let mut ledger = Ledger::new();
+    let mut ledger = Ledger::new().with_hub(unit::self_id());
     if inventory.len() < 2 {
         return Err(Start::Load(E_HUB));
     }

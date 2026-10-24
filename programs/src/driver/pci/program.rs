@@ -6,6 +6,9 @@
 
 use crate::unit::{Dependency, Ending, Identity, Ready, UnitFile};
 
+#[path = "marks.rs"]
+mod marks;
+
 #[path = "bindings.rs"]
 mod bindings;
 
@@ -17,14 +20,19 @@ pub static PROGRAM: UnitFile = UnitFile {
             key: system_api::namespace::SERVICE,
             placement: crate::unit::operator::Placement::Shared,
             path: "pci",
-            scope: crate::unit::operator::Scope::Subtree,
-            ops: system_api::operator::Ops::PART
-                .union(system_api::operator::Ops::UNPART)
-                .union(system_api::operator::Ops::BIND)
-                .union(system_api::operator::Ops::UNBIND)
-                .union(system_api::operator::Ops::FIND),
+            scope: crate::unit::operator::Scope::Names(&["entry"]),
+            ops: system_api::operator::Ops::BIND,
             permit: Some(system_api::operator::Permit::Public),
-            source_mark: None,
+            source_mark: Some(marks::ENTRY.get()),
+            bindings: &[],
+        }, crate::unit::operator::Namespace {
+            key: system_api::namespace::SERVICE,
+            placement: crate::unit::operator::Placement::Shared,
+            path: "pci",
+            scope: crate::unit::operator::Scope::Names(&["config"]),
+            ops: system_api::operator::Ops::BIND,
+            permit: Some(system_api::operator::Permit::Public),
+            source_mark: Some(marks::CONFIG.get()),
             bindings: &[],
         }],
     },

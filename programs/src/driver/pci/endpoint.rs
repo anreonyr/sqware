@@ -18,14 +18,20 @@ impl Endpoint {
     /// 恢复权与 IOMMU 约束都就绪之后再做。
     pub fn place(ecam: &Ecam, index: u8, window: (u64, u64)) -> Result<Self, &'static str> {
         let (size, wide) = ecam.bar_size(index).ok_or("pci: endpoint bar")?;
-        if !wide || size == 0 {
+        if size == 0 {
             return Err("pci: endpoint bar width");
         }
-        let address = window.0.div_ceil(size) * size;
+        let alignment = size.max(env::PAGE_SIZE as u64);
+        let address = window.0.checked_add(alignment - 1)
+            .map(|rounded| rounded / alignment * alignment).ok_or("pci: bar placement")?;
         let end = address
             .checked_add(size)
             .ok_or("pci: bar placement")?;
-        if end > window.0 + window.1 {
+        let granted_end = address.checked_add(size.div_ceil(env::PAGE_SIZE as u64) * env::PAGE_SIZE as u64)
+            .ok_or("pci: bar placement")?;
+        if granted_end > window.0.checked_add(window.1).ok_or("pci: bar placement")?
+            || (!wide && end > (1u64 << 32))
+        {
             return Err("pci: bar placement");
         }
         ecam.place_bar(index, address, wide);

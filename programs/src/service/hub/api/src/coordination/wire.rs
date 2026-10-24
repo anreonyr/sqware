@@ -6,7 +6,6 @@ use super::prepare::Prepare;
 use super::release::Release;
 use super::{PREPARE, RELEASE};
 
-const _: () = assert!(Release::LEN <= Prepare::LEN);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wire {
@@ -15,7 +14,7 @@ pub enum Wire {
 }
 
 impl Wire {
-    pub const LEN: usize = Prepare::LEN;
+    pub const LEN: usize = if Prepare::LEN > Release::LEN { Prepare::LEN } else { Release::LEN };
 
     pub fn take(bytes: &[u8]) -> Option<Self> {
         match *bytes.first()? {

@@ -17,13 +17,6 @@ pub const DMA_CLOSE: u8 = 3;
 pub const DMA_INSPECT: u8 = 4;
 pub const DMA_SETTLE: u8 = 5;
 
-/// 设备坐标：PCI 实例及其发现的 requester。**不代表访问权**。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct DeviceId {
-    pub pci: TaskId,
-    pub requester: u32,
-}
-
 /// Hub 签发的绑定身份。`serial` 和 IOVA 不复用，地址范围耗尽终判 `Full`。
 /// 未结清记录始终保留；最近 32 笔结清结果可查询，淘汰后查询返回 `Unknown`。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -105,12 +98,12 @@ pub const PARTY_IOMMU: u8 = 3;
 pub const PARTY_RECOVERY: u8 = 4;
 pub const PARTY_CONTROL: u8 = 5;
 
-/// 设备发现描述。PCI 来源取自内核发送者及获准登记入口，不能由描述自报。
+/// Device registration metadata. Its source is the authenticated kernel sender.
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
-#[frame(len = 79)]
+#[frame(len = 83)]
 pub struct Enroll {
     pub op: u8,
-    pub requester: u32,
+    pub key: u64,
     pub line: u32,
     pub name: String,
     pub class: String,

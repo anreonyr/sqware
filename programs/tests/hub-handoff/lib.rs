@@ -8,6 +8,7 @@ extern crate self as ipc;
 extern crate self as resource;
 
 pub mod backend;
+pub mod coord_backend;
 pub mod raw;
 pub mod rpc;
 

@@ -40,7 +40,7 @@ use crate::driver::iommu::{
 };
 use crate::driver::pci::ecam::{self, Ecam};
 use crate::driver::pci::endpoint::Endpoint;
-use crate::driver::pci::virtio::{self, Caps};
+use crate::driver::virtio::{self, Caps};
 
 use super::handoff::HANDOFF;
 use super::service;
@@ -145,7 +145,12 @@ pub fn acceptance() {
     // ② 发现端点：能力表说四个区在哪一根 BAR，端点把那一段落到 aperture 窗口里。
     let requester = ecam::find(config, VENDOR, &BLOCK).expect("iommu-dma: endpoint absent");
     let scan = Ecam::new(config, requester);
-    let (bar_index, caps) = Caps::read(&scan).expect("iommu-dma: virtio caps");
+    super::pci_probe::zero32(&scan);
+    let mut snapshot = [0u8; 256];
+    for (register, byte) in snapshot.iter_mut().enumerate() {
+        *byte = scan.read8(register as u16);
+    }
+    let (bar_index, layout) = Caps::read(&snapshot).expect("iommu-dma: virtio caps");
     // 量 BAR 那一手的读数先落串口：探尺本身红的时候，现场里要有掩码那几个数。
     let probe = scan.bar_size(bar_index);
     note(&format!(
@@ -153,6 +158,10 @@ pub fn acceptance() {
     ));
     let endpoint = Endpoint::place(&scan, bar_index, (APERTURE_BASE, APERTURE_SIZE))
         .unwrap_or_else(|fail| panic!("{fail}"));
+    super::pci_probe::upper(&scan, bar_index);
+    let (common, notify, multiplier, device) = layout.parts();
+    let caps = Caps::from_parts(common, notify, multiplier, device, endpoint.size() as usize)
+        .expect("iommu-dma: mapped virtio layout");
     // 探针自己把 bus-master 打开（产品那一侧这一步归 IOMMU 驱动在帧持有与约束就绪之后做）。
     scan.command_or(ecam::COMMAND_MASTER);
     note(&format!(

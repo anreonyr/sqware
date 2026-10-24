@@ -1,7 +1,7 @@
 use env::TaskId;
 use hub_api::{Close, Fail};
 
-use super::{Admission, Ledger, Step};
+use super::{Admission, Ledger};
 
 const ADMISSIONS: usize = 256;
 
@@ -77,18 +77,15 @@ impl Ledger {
 
     /// A retirement target is the proof that its execution domain stopped.
     ///
-    /// Close every bound responsibility and move it past `StopCpu` exactly once, calling
-    /// `advanced` with each binding serial that crossed. No admission means there is no
-    /// Hub execution lifecycle to finish.
+    /// Close and enumerate only this target's resource responsibilities. The native
+    /// adapter retains the authenticated target receipt; hardware progress belongs
+    /// to the driver.
     pub fn stop_target(&mut self, task: TaskId, mut advanced: impl FnMut(u64)) -> usize {
         self.close_admission(task);
         for binding in &mut self.bindings {
             if binding.open() && binding.execution == task {
                 binding.close(Close::Normal);
-                if binding.step == Step::StopCpu {
-                    binding.step = Step::Invalidate;
-                    advanced(binding.id.serial);
-                }
+                advanced(binding.id.serial);
             }
         }
         self.open_bindings_for(task)

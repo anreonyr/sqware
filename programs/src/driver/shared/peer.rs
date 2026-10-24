@@ -4,7 +4,7 @@
 //! 契约给，回信孔那一枚由 `ipc::rpc` 铸、交、核（发送者、记号、一次性）。
 
 use env::{Mark, PieToken, TaskId, Wait};
-use ipc::rpc::request::Sender;
+use ipc::rpc::request::{Pending, Sender};
 use ipc::session::establish;
 use ipc::time::Deadline;
 use system_api::operator::Path;
@@ -94,6 +94,16 @@ impl<C: Contract> Peer<C> {
         self.sender
             .call(Deadline::new(wait), build)
             .map_err(|_| "peer: call")
+    }
+
+    pub fn begin(
+        &self,
+        wait: Wait,
+        build: impl FnOnce(PieToken) -> C::Request,
+    ) -> Result<Pending<C>, &'static str> {
+        self.sender
+            .begin(Deadline::new(wait), build)
+            .map_err(|_| "peer: begin")
     }
 }
 

@@ -8,7 +8,7 @@ pub const REMOTE: PieToken = PieToken::mint(43);
 pub const BAR_SIZE: u64 = 4 * crate::PAGE_SIZE as u64;
 
 pub struct State {
-    memory: [u8; 256],
+    memory: [[u8; 256]; 2],
     request_accord: bool,
     request_release: bool,
     derives: usize,
@@ -16,7 +16,8 @@ pub struct State {
     releases: Vec<PieToken>,
     revokes: Vec<(TaskId, PieToken)>,
     derived: Option<(PieToken, Permission, Mark, GrantRange)>,
-    bar_address: u64,
+    roots: Vec<(PieToken, GrantRange)>,
+    bar_address: [u64; 2],
 }
 
 impl Default for State {
@@ -32,7 +33,7 @@ impl Default for State {
         write32(&mut memory, 0x50 + 16, 4);
         capability(&mut memory, 0x60, 0x70, 4, 0x3000, 0x4000);
         Self {
-            memory,
+            memory: [memory; 2],
             request_accord: false,
             request_release: false,
             derives: 0,
@@ -40,7 +41,8 @@ impl Default for State {
             releases: Vec::new(),
             revokes: Vec::new(),
             derived: None,
-            bar_address: 0,
+            roots: Vec::new(),
+            bar_address: [0; 2],
         }
     }
 }
@@ -83,23 +85,23 @@ pub fn fail_next_release() {
 }
 
 pub fn read(at: usize) -> u8 {
-    STATE.with(|state| state.borrow().memory[at & 0xFF])
+    STATE.with(|state| state.borrow().memory[(at >> 12) & 1][at & 0xFF])
 }
 
 pub fn write(at: usize, value: u8) {
-    STATE.with(|state| state.borrow_mut().memory[at & 0xFF] = value);
+    STATE.with(|state| state.borrow_mut().memory[(at >> 12) & 1][at & 0xFF] = value);
 }
 
 pub fn requester() -> u16 {
     1
 }
 
-pub fn place_bar(address: u64) {
-    STATE.with(|state| state.borrow_mut().bar_address = address);
+pub fn place_bar(requester: u16, address: u64) {
+    STATE.with(|state| state.borrow_mut().bar_address[requester as usize] = address);
 }
 
 pub fn bar_address() -> u64 {
-    STATE.with(|state| state.borrow().bar_address)
+    STATE.with(|state| state.borrow().bar_address[1])
 }
 
 pub fn derive(
@@ -111,10 +113,15 @@ pub fn derive(
     STATE.with(|state| {
         let mut state = state.borrow_mut();
         assert_eq!(source, APERTURE);
-        assert!(state.derived.is_none(), "the BAR must be derived once");
+        assert!(
+            state.roots.iter().all(|(_, held)| *held != range),
+            "each exact BAR range must be derived once while its root is live"
+        );
         state.derives += 1;
         state.derived = Some((source, permission, mark, range));
-        Ok(DERIVED)
+        let token = if state.derives == 1 { DERIVED } else { PieToken::mint(42 + state.derives) };
+        state.roots.push((token, range));
+        Ok(token)
     })
 }
 
@@ -131,7 +138,9 @@ pub fn accord(
             state.request_accord = false;
             return Err(crate::make_fail(PieFail::Denied));
         }
-        Ok(REMOTE)
+        let (_, range) = state.roots.iter().find(|(token, _)| *token == source).expect("live BAR root");
+        let GrantRange::Pages { offset, .. } = *range else { panic!("exact BAR pages"); };
+        Ok(if offset == 0 { REMOTE } else { PieToken::mint(100 + offset) })
     })
 }
 
@@ -143,7 +152,8 @@ pub fn release(token: PieToken) -> crate::PieResult<()> {
             state.request_release = false;
             return Err(crate::make_fail(PieFail::Denied));
         }
-        if token == DERIVED {
+        state.roots.retain(|(held, _)| *held != token);
+        if state.roots.is_empty() {
             state.derived = None;
         }
         Ok(())

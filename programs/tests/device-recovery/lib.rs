@@ -22,8 +22,12 @@ pub mod pole;
 pub mod dock;
 #[path = "../../src/driver/pci/ecam.rs"]
 pub mod ecam;
-#[path = "../../src/driver/pci/virtio.rs"]
-pub mod virtio;
+#[path = "../../src/driver/virtio/registers.rs"]
+pub mod registers;
+#[path = "../../src/driver/virtio/caps.rs"]
+pub mod caps;
+#[path = "../../src/driver/virtio/device.rs"]
+pub mod virtio_device;
 #[path = "../../src/driver/pci/api.rs"]
 pub mod pci_api;
 #[path = "../../src/driver/recovery/api.rs"]
@@ -41,13 +45,24 @@ pub mod debug {
 
 pub mod driver {
     pub mod pci {
-        pub use crate::{ecam, pci_api as api, virtio};
+        pub use crate::{ecam, pci_api as api};
+    }
+    pub mod virtio {
+        pub use crate::caps::Caps;
+        pub use crate::virtio_device::{
+            notify_offset, queue_enable, reset, ring, status, Virtio,
+        };
     }
     pub mod recovery {
         pub use crate::{attach_request, device, recovery_api as api};
     }
     pub mod shared {
         pub use hub_api::coord as dma;
+        pub mod order {
+            pub fn sync() {
+                core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+            }
+        }
     }
     pub mod iommu {
         pub mod order {

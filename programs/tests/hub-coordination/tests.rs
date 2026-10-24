@@ -24,6 +24,7 @@ fn release(hub: usize, serial: u64, back: PieToken) -> Release {
         op: coordination::RELEASE,
         hub: TaskId::new(hub),
         serial,
+        key: 0xAABB_CCDD_1122_3344,
         execution: TaskId::new(11),
         reason: 2,
         back,
@@ -76,7 +77,7 @@ fn prepare_truncated_and_trailing_frames_are_rejected() {
     for end in 0..len {
         assert!(Wire::fetch(&bytes[..end]).is_none());
     }
-    let mut extra = [0u8; Prepare::LEN + 1];
+    let mut extra = [0u8; Wire::LEN + 1];
     extra[..len].copy_from_slice(&bytes[..len]);
     assert!(Wire::fetch(&extra[..len + 1]).is_none());
 }

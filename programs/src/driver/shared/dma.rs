@@ -5,10 +5,9 @@
 //! 认领不在这里：它走**设备门牌**（见 `hub_api::frame::dma`），本面只管
 //! 登记（PCI）、关闭/查看/结清与放行时推坐标。
 
-use env::wire::Span as _;
 use env::{PieToken, TaskId, Wait};
 use hub_api::{
-    BindingState, Close, DeviceId, DmaCall, DmaSaid, DmaWire, Enroll, Failure, DMA_BACK,
+    BindingState, Close, DmaCall, DmaSaid, DmaWire, Enroll, Failure, DMA_BACK,
     DMA_CLOSE, DMA_ENROLL, DMA_INSPECT, DMA_SETTLE,
 };
 use ipc::rpc::request::Sender;
@@ -16,42 +15,13 @@ use ipc::session::establish;
 use ipc::time::Deadline;
 use system_api::operator::Path;
 use system_client::operator::Face;
-use wire::Message;
 
 /// 坐标由 Hub 那一本账的契约给（各域按同一个绑定号算出同一组数）。
 pub use hub_api::{
     binding_mark, coord_mark, iova_base, window_mark, BINDING_MAX, IOVA_BASE, IOVA_LIMIT, IOVA_SPAN,
 };
 
-/// Hub 放行业务时推给 α 的那一帧：能力表四格 ＋ 页数 ＋ IOVA 窗起址。
-///
-/// 四个偏移量取自 PCI 读出的 virtio 能力表（PCI 自己的事实）；页数与 IOVA 是本次
-/// 绑定的坐标。它们都是数，不是跨 Space 的地址。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-#[frame(len = 32)]
-pub struct Coords {
-    pub pages: u32,
-    pub common: u32,
-    pub notify: u32,
-    pub multiplier: u32,
-    pub device: u32,
-    pub iova: u64,
-}
-
-impl Message for Coords {
-    type In = Self;
-    type Buf = [u8; Self::LEN];
-    const EMPTY: Self::Buf = [0; Self::LEN];
-
-    fn store(&self, out: &mut [u8]) -> Option<usize> {
-        self.store_at(out, 0)
-    }
-
-    fn fetch(bytes: &[u8]) -> Option<Self> {
-        let (value, end) = <Self as env::wire::Span>::fetch_at(bytes, 0)?;
-        (end == bytes.len()).then_some(value)
-    }
-}
+pub use super::coords::Coords;
 
 /// Hub 那一扇 DMA 面的客户：每一趟自己借回信孔，失败码原样过线。
 pub struct HubDma {
@@ -101,11 +71,11 @@ impl HubDma {
         Ok(said)
     }
 
-    /// 报名一台设备（PCI 那一侧发）。
+    /// Register a device key under this Driver's authenticated sender identity.
     pub fn enroll(
         &self,
         wait: Wait,
-        requester: u32,
+        key: u64,
         line: u32,
         name: &str,
         class: &str,
@@ -113,7 +83,7 @@ impl HubDma {
         self.call(wait, |back| {
             DmaWire::Enroll(Enroll {
                 op: DMA_ENROLL,
-                requester,
+                key,
                 line,
                 name: name.into(),
                 class: class.into(),
@@ -162,13 +132,5 @@ impl HubDma {
             })
         })?;
         Ok(said.count)
-    }
-}
-
-/// 一台已登记设备在册上的坐标（供执行侧认领）。
-pub fn device_id(host: TaskId, requester: u32) -> DeviceId {
-    DeviceId {
-        pci: host,
-        requester,
     }
 }

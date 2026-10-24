@@ -1,7 +1,7 @@
 //! IOMMU 那一台的常驻面：收声明供给、立保留页与目录表，然后一枚一枚答门上的问。
 //!
-//! 五手都只接受**协调入口**（Hub）那一台的请求：发送者由内核给出，不看报文自报。
-//! 本域不决定何时停端点（那是 Hub 与设备恢复方的协调责任），也不解释设备协议。
+//! 请求只接受经 Control 声明认证的设备协调 Driver；发送者由内核给出。
+//! 本域管理翻译与引用，不解释设备协议。
 
 use env::{HoleLimits, PieToken, TaskId, Wait};
 use ipc::rpc::request::Receiver;
@@ -12,7 +12,7 @@ use crate::driver::iommu::api::{self, Call};
 use crate::driver::iommu::bindings::{REGION, REGION_SUBSET, RETENTION};
 use crate::driver::iommu::core::{AcquireRequest, Core};
 use crate::driver::shared::context::{Context, Step};
-use crate::driver::shared::dma::HubDma;
+use crate::driver::shared::lookup;
 use crate::driver::shared::platform;
 use crate::driver::shared::retention;
 
@@ -35,20 +35,23 @@ pub fn serve() -> Result<(), &'static str> {
         Step::Tree => "iommu: tree",
     })?;
     let tree = operator::Face::from(&ctx.session);
-    let hub = HubDma::find(&tree, Wait::AtMost(MS))?;
     // 铸自己那一扇门、落牌、报“答得动了”。
     let entry = env::hole::unseal(api::ENTRY, HoleLimits::default()).map_err(|_| "iommu: entry")?;
     ctx.plate(entry, api::ENTRY_NAME, Wait::AtMost(MS));
     let _ = establish::lend(sire, crate::unit::READY_MARK);
-    crate::debug::put(&alloc::format!("iommu: ready hub={}", hub.host().get()));
-    run(entry, hub.host(), core)
+    crate::debug::put("iommu: ready");
+    run(entry, &tree, core)
 }
 
 /// 常驻那一圈：一枚门、一问一答。门死了就先把硬件收干净再走。
-fn run(entry: PieToken, hub: TaskId, mut core: Core) -> Result<(), &'static str> {
+fn run(entry: PieToken, tree: &operator::Face, mut core: Core) -> Result<(), &'static str> {
     let receiver = Receiver::<Call>::from_raw(entry, Call::BACK, Call::back);
     let mut buffer = [0u8; api::Wire::LEN];
+    let mut state = None;
+    let mut rejected_state = None;
+    let mut coordinator = None;
     loop {
+        lookup::reclaim(&mut rejected_state);
         let incoming = match receiver.receive(&mut buffer, Wait::Forever) {
             Ok(incoming) => incoming,
             Err(rejected) => {
@@ -70,14 +73,22 @@ fn run(entry: PieToken, hub: TaskId, mut core: Core) -> Result<(), &'static str>
                 continue;
             }
         };
-        let said = turn(&mut core, hub, incoming.from, incoming.request);
+        if state.is_none() {
+            state = lookup::state(tree, env::unit::sire(), &mut rejected_state, Wait::AtMost(MS)).ok();
+        }
+        if coordinator.is_none() {
+            coordinator = state.as_ref().and_then(|state| state.publisher(
+                system_api::namespace::SERVICE, hub_api::coordination::call::ENTRY, Wait::AtMost(MS)
+            ).ok());
+        }
+        let said = turn(&mut core, coordinator.unwrap_or(TaskId::new(0)), incoming.from, incoming.request);
         let _ = incoming.reply.send(said);
     }
 }
 
 /// 一问 → 一答；不是协调入口发来的，一律拒。
-fn turn(core: &mut Core, hub: TaskId, from: TaskId, wire: api::Wire) -> api::Said {
-    if from != hub {
+fn turn(core: &mut Core, coordinator: TaskId, from: TaskId, wire: api::Wire) -> api::Said {
+    if from != coordinator {
         return api::Said::of(api::fail_to_code(Some(api::Fail::Denied)));
     }
     match wire {
@@ -92,6 +103,7 @@ fn turn(core: &mut Core, hub: TaskId, from: TaskId, wire: api::Wire) -> api::Sai
             match core.acquire(request) {
                 Ok(()) => api::Said {
                     status: wire::OK,
+                    iova: core.iova().unwrap_or(0),
                     ..api::Said::NONE
                 },
                 Err(fail) => api::Said::of(api::fail_to_code(Some(fail))),
@@ -111,11 +123,13 @@ fn step_reply(result: Result<::schedule::Progress, api::Fail>, held: u32) -> api
             status: wire::OK,
             pending: 0,
             held,
+            iova: 0,
         },
         Ok(::schedule::Progress::Pending) => api::Said {
             status: wire::OK,
             pending: 1,
             held,
+            iova: 0,
         },
         Err(fail) => api::Said::of(api::fail_to_code(Some(fail))),
     }

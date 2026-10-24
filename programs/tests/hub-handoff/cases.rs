@@ -14,6 +14,7 @@ const NOW: u64 = 1_000;
 fn peers() -> Peers {
     Peers {
         control: ControlFace,
+        coord: serve::peers::CoordFace,
     }
 }
 
@@ -153,13 +154,14 @@ fn closing_binding_requests_release_before_hardware_finishes() {
     let mut ledger = ledger();
     ledger.admit(TASK, u64::MAX).unwrap();
     ledger.prepare_enrollment(TaskId::new(2), hub_api::Enroll {
-        op: hub_api::DMA_ENROLL, requester: 0, line: 7,
+        op: hub_api::DMA_ENROLL, key: 0, line: 7,
         name: "disk".into(), class: "virtio-blk".into(), back: env::PieToken::NONE,
     }).unwrap();
-    assert_eq!(ledger.advance_enrollment(0, &mut enrollment::Enrollment), Some(Ok(())));
+    let device = hub_api::DeviceId { source: TaskId::new(2), key: 0 };
+    assert_eq!(ledger.advance_enrollment(device, &mut enrollment::Enrollment), Some(Ok(())));
     let binding = ledger.claim(core::ClaimRequest {
-        from: TASK, id: 1, requester: 0,
-        sensor: env::PieToken::mint(TASK.get()), recovery: TaskId::new(3),
+        from: TASK, id: 1, device,
+        sensor: env::PieToken::mint(TASK.get()),
     }).unwrap();
     ledger.close(binding.serial, hub_api::Close::Normal).unwrap();
     assert_eq!(ledger.open_bindings_for(TASK), 1);
@@ -176,13 +178,13 @@ fn closing_binding_requests_release_before_hardware_finishes() {
     assert!(executions.has_return(TASK));
     assert!(ledger.admission(TASK).is_some());
     assert!(!executions.target_received(TASK));
-    assert_eq!(ledger.binding(binding.serial).unwrap().step, core::Step::StopCpu);
+    assert_eq!(ledger.binding(binding.serial).unwrap().state, hub_api::BindingState::Closing);
     assert!(executions.target(&mut ledger, TASK));
     let mut crossed = 0;
     assert_eq!(ledger.stop_target(TASK, |_| crossed += 1), 1);
     assert_eq!(crossed, 1);
     assert!(executions.target_received(TASK));
-    assert_eq!(ledger.binding(binding.serial).unwrap().step, core::Step::Invalidate);
+    assert_eq!(ledger.binding(binding.serial).unwrap().state, hub_api::BindingState::Closing);
 }
 
 #[test]
@@ -247,13 +249,14 @@ fn rejected_owner_discovery_keeps_target_proof_while_a_binding_is_open() {
     assert!(executions.target(&mut ledger, TASK));
     ledger.admit(TASK, u64::MAX).unwrap();
     ledger.prepare_enrollment(TaskId::new(2), hub_api::Enroll {
-        op: hub_api::DMA_ENROLL, requester: 0, line: 7,
+        op: hub_api::DMA_ENROLL, key: 0, line: 7,
         name: "disk".into(), class: "virtio-blk".into(), back: env::PieToken::NONE,
     }).unwrap();
-    assert_eq!(ledger.advance_enrollment(0, &mut enrollment::Enrollment), Some(Ok(())));
+    let device = hub_api::DeviceId { source: TaskId::new(2), key: 0 };
+    assert_eq!(ledger.advance_enrollment(device, &mut enrollment::Enrollment), Some(Ok(())));
     let binding = ledger.claim(core::ClaimRequest {
-        from: TASK, id: 1, requester: 0,
-        sensor: env::PieToken::mint(TASK.get()), recovery: TaskId::new(3),
+        from: TASK, id: 1, device,
+        sensor: env::PieToken::mint(TASK.get()),
     }).unwrap();
     backend::script_inspect(Ok(Some(fail_said(Fail::Denied))));
     executions.advance(&mut ledger, &peers(), NOW);

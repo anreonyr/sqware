@@ -6,7 +6,7 @@
 use env::PieToken;
 use hub_api::{BindingId, BindingState, Close, DeviceId, Fail, Failure};
 
-use super::binding::{Binding, Step};
+use super::binding::Binding;
 use super::ledger::Ledger;
 use super::ClaimRequest;
 
@@ -14,20 +14,20 @@ use super::ClaimRequest;
 const CLOSED_HISTORY: usize = 32;
 
 impl Ledger {
-    /// 已登记的 DMA 设备（PCI 报上来的）在册上吗。
-    pub fn device(&self, requester: u32) -> Option<DeviceId> {
+    /// Find a published device by its full source-qualified coordinate.
+    pub fn device(&self, id: DeviceId) -> Option<DeviceId> {
         self.cells
             .iter()
             .filter(|cell| cell.ready())
             .filter_map(|cell| cell.device())
-            .find(|device| device.requester == requester)
+            .find(|device| *device == id)
     }
 
     /// 这台设备此刻开着几笔绑定（未结清）。
-    pub fn open_bindings(&self, requester: u32) -> usize {
+    pub fn open_bindings(&self, device: DeviceId) -> usize {
         self.bindings
             .iter()
-            .filter(|binding| binding.open() && binding.device.requester == requester)
+            .filter(|binding| binding.open() && binding.device == device)
             .count()
     }
 
@@ -58,8 +58,8 @@ impl Ledger {
             .iter()
             .find(|binding| binding.execution == request.from && binding.claim == request.id)
         {
-            if binding.device.requester != request.requester
-                || binding.sensor != request.sensor || binding.recovery != request.recovery
+            if binding.device != request.device
+                || binding.sensor != request.sensor
             {
                 return Err(Fail::Conflict);
             }
@@ -68,7 +68,7 @@ impl Ledger {
         if self.settling {
             return Err(Fail::Denied);
         }
-        let Some(device) = self.device(request.requester) else {
+        let Some(device) = self.device(request.device) else {
             return Err(Fail::Unknown);
         };
         let execution = self
@@ -79,7 +79,7 @@ impl Ledger {
         if request.id <= self.admissions[execution].claim_high() {
             return Err(Fail::Conflict);
         }
-        if self.open_bindings(request.requester) > 0 {
+        if self.open_bindings(request.device) > 0 {
             return Err(Fail::Taken);
         }
         let serial = self.serial.checked_add(1).ok_or(Fail::Full)?;
@@ -96,7 +96,6 @@ impl Ledger {
             device,
             request.from,
             request.sensor,
-            request.recovery,
         ));
         Ok(BindingId {
             hub: self.hub,
@@ -172,7 +171,6 @@ impl Ledger {
         };
         let mut binding = self.bindings.remove(at);
         binding.state = BindingState::Closed;
-        binding.step = Step::Done;
         self.bindings.push(binding);
         if self.bindings.iter().filter(|binding| !binding.open()).count() > CLOSED_HISTORY {
             let oldest = self.bindings.iter().position(|binding| !binding.open())

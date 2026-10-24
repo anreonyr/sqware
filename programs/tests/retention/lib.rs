@@ -33,10 +33,10 @@ mod binding {
     use env::{PieToken, TaskId};
     use hub_api::{BindingState, Fail};
 
+    use crate::enrollment::identity;
     use crate::hub_core::{ClaimRequest, Ledger};
 
     const HUB: usize = 1;
-    const RECOVERY: usize = 3;
 
     fn ledger() -> Ledger {
         let mut ledger = Ledger::new().with_hub(TaskId::new(HUB));
@@ -53,9 +53,8 @@ mod binding {
             .claim(ClaimRequest {
                 from: task,
                 id,
-                requester: 0,
+                device: identity(0),
                 sensor: PieToken::mint(from),
-                recovery: TaskId::new(RECOVERY),
             })
             .map(|id| id.serial)
     }
@@ -64,7 +63,7 @@ mod binding {
     fn owner_death_closes_but_does_not_free_the_binding() {
         let mut ledger = ledger();
         let serial = claim(&mut ledger, 9, 1).expect("first claim");
-        assert_eq!(ledger.open_bindings(0), 1);
+        assert_eq!(ledger.open_bindings(identity(0)), 1);
         // 活绑定期：另一个执行实例不能认领同一台。
         assert_eq!(claim(&mut ledger, 10, 1), Err(Fail::Taken));
         // 主人死亡：只转收场（状态变了、责任还在）。
@@ -73,13 +72,13 @@ mod binding {
             ledger.binding(serial).map(|binding| binding.state),
             Some(BindingState::Closing)
         );
-        assert_eq!(ledger.open_bindings(0), 1);
+        assert_eq!(ledger.open_bindings(identity(0)), 1);
         // 收场责任未结清，不允许重绑。
-        assert_eq!(ledger.open_bindings(0), 1);
+        assert_eq!(ledger.open_bindings(identity(0)), 1);
         assert_eq!(claim(&mut ledger, 11, 1), Err(Fail::Taken));
         // 真结清之后才可重绑，且绑定号不复用。
         ledger.finish(serial);
-        assert_eq!(ledger.open_bindings(0), 0);
+        assert_eq!(ledger.open_bindings(identity(0)), 0);
         let again = claim(&mut ledger, 11, 1).expect("rebind after settlement");
         assert_ne!(again, serial);
     }
@@ -95,9 +94,8 @@ mod binding {
             ledger.claim(ClaimRequest {
                 from: TaskId::new(9),
                 id: 7,
-                requester: 1,
+                device: identity(1),
                 sensor: PieToken::mint(9),
-                recovery: TaskId::new(RECOVERY),
             }),
             Err(Fail::Conflict)
         );
@@ -115,7 +113,7 @@ mod binding {
             ledger.binding(serial).map(|binding| binding.state),
             Some(BindingState::Preparing)
         );
-        assert!(ledger.device(0).is_some());
+        assert!(ledger.device(identity(0)).is_some());
     }
 
     #[test]
@@ -140,7 +138,6 @@ mod binding {
     #[test]
     fn first_failure_survives_retries_and_settlement_but_does_not_leak_to_rebinding() {
         use hub_api::{Close, Failure};
-        use crate::hub_core::Step;
 
         let mut ledger = ledger();
         let serial = claim(&mut ledger, 9, 1).unwrap();
@@ -148,11 +145,10 @@ mod binding {
         let later = Failure { party: 4, op: 5, code: 6 };
         ledger.note_failure(serial, first);
         ledger.close(serial, Close::Fault).unwrap();
-        ledger.binding_mut(serial).unwrap().step = Step::Release;
         ledger.note_failure(serial, later);
         ledger.note_failure(u64::MAX, later);
         assert_eq!(ledger.binding(serial).unwrap().failure, Some(first));
-        assert_eq!(ledger.binding(serial).unwrap().step, Step::Release);
+        assert_eq!(ledger.binding(serial).unwrap().state, BindingState::Closing);
         assert!(ledger.binding(u64::MAX).is_none());
 
         ledger.finish(serial);
@@ -203,13 +199,12 @@ mod binding {
         let mut ledger = ledger();
         let serial = claim(&mut ledger, 9, 1).expect("first claim");
         ledger.close(serial, hub_api::Close::Normal).unwrap();
-        ledger.binding_mut(serial).unwrap().step = crate::hub_core::Step::Release;
         assert_eq!(ledger.owner_gone(|_| false), 0);
         ledger.close(serial, hub_api::Close::Fault).unwrap();
         assert_eq!(ledger.settle(), 2);
         assert!(ledger.admission(TaskId::new(9)).unwrap().closed());
         let binding = ledger.binding(serial).unwrap();
-        assert_eq!(binding.step, crate::hub_core::Step::Release);
+        assert_eq!(binding.state, BindingState::Closing);
         assert_eq!(binding.reason, hub_api::Close::Fault);
     }
 
@@ -229,7 +224,7 @@ mod binding {
         assert_eq!(claim(&mut ledger, 9, 1), Err(Fail::Conflict));
         assert!(ledger.binding(first).is_none());
         assert_eq!(claim(&mut ledger, 9, 33), Ok(next));
-        assert_eq!(ledger.open_bindings(0), 0);
+        assert_eq!(ledger.open_bindings(identity(0)), 0);
     }
 
     #[test]
@@ -252,7 +247,7 @@ mod binding {
         assert_eq!(claim(&mut ledger, 9, hub_api::BINDING_MAX - 1), Ok(hub_api::BINDING_MAX - 1));
         assert_eq!((1..hub_api::BINDING_MAX).filter(|serial| ledger.binding(*serial).is_some()).count(), 32);
         assert_eq!(ledger.admissions().count(), 1);
-        assert_eq!(ledger.open_bindings(0), 0);
+        assert_eq!(ledger.open_bindings(identity(0)), 0);
     }
 
     #[test]
@@ -262,8 +257,8 @@ mod binding {
         let pinned = claim(&mut ledger, 9, 1).unwrap();
         for id in 2..=100 {
             let serial = ledger.claim(ClaimRequest {
-                from: TaskId::new(9), id, requester: 1,
-                sensor: PieToken::mint(9), recovery: TaskId::new(RECOVERY),
+                from: TaskId::new(9), id, device: identity(1),
+                sensor: PieToken::mint(9),
             }).unwrap().serial;
             ledger.finish(serial);
             assert!(ledger.binding(pinned).unwrap().open());
@@ -287,8 +282,8 @@ mod binding {
         ledger.released(TaskId::new(9));
         assert!(ledger.admission(TaskId::new(9)).is_none());
         assert_eq!(ledger.claim(ClaimRequest {
-            from: TaskId::new(9), id: 3, requester: 0,
-            sensor: PieToken::mint(9), recovery: TaskId::new(RECOVERY),
+            from: TaskId::new(9), id: 3, device: identity(0),
+            sensor: PieToken::mint(9),
         }), Err(Fail::Denied));
         assert!(ledger.binding(3).is_none());
     }

@@ -20,6 +20,13 @@ def tasks(console):
     return main, auxiliary, beta
 
 
+def identity(console):
+    pci = one(console, r"pci: space task=(\d+) ecam=0x[0-9a-f]+ functions=\d+")
+    ready = one(console, r"recovery: ready hub=\d+ pci=(\d+) requester=(\d+) key=(\d+)")
+    assert ready[1] == pci[1], "Driver ready PCI task mismatch"
+    return ready[2], ready[3]
+
+
 def reaps(events):
     out = {}
     for event in events:
@@ -68,11 +75,11 @@ def completed(console, events, backend, mode="ruin"):
     assert mode in ("ruin", "forced")
     root = int(one(console, r"boot: entry task=([1-9]\d*)")[1])
     main, auxiliary, beta = tasks(console)
-    requester = one(console, r"pci: space task=\d+ ecam=0x[0-9a-f]+ requester=(\d+) bar=\d+")[1]
+    requester, key = identity(console)
     ordered = (
         r"iommu: binding 1 published requester=" + requester + r" held=6 ddtp=0x[0-9a-f]+",
         r"pci: endpoint bus-master on=0x4",
-        r"hub: binding 1 active \(business released\) iova=0x[0-9a-f]+",
+        r"recovery: binding 1 active iova=0x[0-9a-f]+ execution=\d+",
         r"work: rang the in-flight request doorbell",
         (
             r"ctl: awaiting forced global shutdown with in-flight read"
@@ -86,7 +93,7 @@ def completed(console, events, backend, mode="ruin"):
         r"iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0",
         r"iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true",
         r"recovery: binding 1 detached",
-        rf"hub: binding 1 closed and released device {requester}",
+        rf"hub: binding 1 closed and released device {key}",
         *(
             (
                 r"system: forced shutdown admitted after (?:DMA|retirement) settlement",

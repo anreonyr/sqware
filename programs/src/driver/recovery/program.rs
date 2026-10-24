@@ -1,7 +1,5 @@
-//! 设备恢复那一台的装配声明（身子在 `serve.rs`，入口在 `main.rs`）。
-//!
-//! 它是**独立常驻**（Resident）的设备恢复方：不在 α 的 Team 子树里，一笔责任结清
-//! 不要求它退出；它自己没有任何声明供给（精确 BAR 由 PCI 在协调入口的帧里定向交来）。
+//! Resident device Driver with a declared coordination endpoint.
+//! It remains outside the execution Team and acquires exact BAR grants from PCI.
 
 use crate::unit::{Dependency, Ending, Identity, Ready, UnitFile};
 
@@ -12,15 +10,11 @@ pub static PROGRAM: UnitFile = UnitFile {
         namespace: &[crate::unit::operator::Namespace {
             key: system_api::namespace::SERVICE,
             placement: crate::unit::operator::Placement::Shared,
-            path: "recovery",
-            scope: crate::unit::operator::Scope::Subtree,
-            ops: system_api::operator::Ops::PART
-                .union(system_api::operator::Ops::UNPART)
-                .union(system_api::operator::Ops::BIND)
-                .union(system_api::operator::Ops::UNBIND)
-                .union(system_api::operator::Ops::FIND),
+            path: "device",
+            scope: crate::unit::operator::Scope::Names(&["coord"]),
+            ops: system_api::operator::Ops::BIND,
             permit: Some(system_api::operator::Permit::Public),
-            source_mark: None,
+            source_mark: Some(hub_api::coordination::call::ENTRY.get()),
             bindings: &[],
         }],
     },
@@ -32,6 +26,7 @@ pub static PROGRAM: UnitFile = UnitFile {
             Dependency::Bootstrap(crate::unit::Bootstrap::Identity),
             Dependency::Unit("hub"),
             Dependency::Unit("pci"),
+            Dependency::Unit("iommu"),
         ]),
         ready: Ready::Signal(crate::unit::READY_MARK),
         ending: Some(Ending::Resident),

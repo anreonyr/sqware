@@ -60,7 +60,7 @@ class RuinEvidence(unittest.TestCase):
 
     def test_wrong_device(self):
         with self.assertRaises(AssertionError):
-            completed(CONSOLE.replace("released device 8", "released device 9"), EVENTS, BACKEND)
+            completed(CONSOLE.replace("released device 41", "released device 42"), EVENTS, BACKEND)
 
     def test_queue_fault_or_retained_reference(self):
         for old, new in (("faults=0", "faults=1"), ("frames=0", "frames=1")):

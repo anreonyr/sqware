@@ -17,6 +17,8 @@ static SERIAL: AtomicU64 = AtomicU64::new(0);
 static RETAINER: AtomicUsize = AtomicUsize::new(0);
 static HITS: AtomicUsize = AtomicUsize::new(0);
 static REFERENCE: AtomicUsize = AtomicUsize::new(0);
+static TRIGGER: AtomicUsize = AtomicUsize::new(0);
+static READY: AtomicBool = AtomicBool::new(false);
 
 fn word(bytes: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap())
@@ -43,6 +45,8 @@ pub(crate) fn reject(owner: TaskId, from: TaskId, root: bool, bytes: &[u8]) -> b
             OP.store(word(bytes, 32), Ordering::Relaxed);
             SERIAL.store(word(bytes, 40), Ordering::Relaxed);
             RETAINER.store(word(bytes, 48) as usize, Ordering::Relaxed);
+            TRIGGER.store(word(bytes, 56) as usize, Ordering::Relaxed);
+            READY.store(false, Ordering::Release);
             HITS.store(0, Ordering::Relaxed);
             REFERENCE.store(0, Ordering::Relaxed);
         } else {
@@ -69,14 +73,34 @@ pub(crate) fn reject(owner: TaskId, from: TaskId, root: bool, bytes: &[u8]) -> b
             );
         }
         ENABLED.store(enabled, Ordering::Release);
+        if !enabled { READY.store(false, Ordering::Release); }
         return false;
     }
-    if !ENABLED.load(Ordering::Acquire)
-        || from.get() != FROM.load(Ordering::Relaxed)
+    if !ENABLED.load(Ordering::Acquire) { return false; }
+    let before_stop = OP.load(Ordering::Relaxed) == injection::BEFORE_DEVICE_STOP;
+    let serial_at = if before_stop { 9 } else { 1 };
+    if before_stop {
+        // The gate target is the same authenticated task that calls PCI Disable.
+        if from.get() == TO.load(Ordering::Relaxed)
+            && owner.get() == TRIGGER.load(Ordering::Relaxed)
+            && bytes.len() == 21 && bytes[0] == 3
+            && word(bytes, 1) == SERIAL.load(Ordering::Relaxed)
+        {
+            if !READY.swap(true, Ordering::AcqRel) {
+                crate::putln!("confirmation: device stop gate armed from={} pci={} serial={}",
+                    from.get(), owner.get(), word(bytes, 1));
+            }
+            return false;
+        }
+        if !READY.load(Ordering::Acquire) || bytes.len() != 42 || bytes[0] != 2
+            || word(bytes, 1) != from.get() as u64
+        { return false; }
+    }
+    if from.get() != FROM.load(Ordering::Relaxed)
         || owner.get() != TO.load(Ordering::Relaxed)
         || bytes.len() < 9
-        || u64::from(bytes[0]) != OP.load(Ordering::Relaxed)
-        || word(bytes, 1) != SERIAL.load(Ordering::Relaxed)
+        || (!before_stop && u64::from(bytes[0]) != OP.load(Ordering::Relaxed))
+        || word(bytes, serial_at) != SERIAL.load(Ordering::Relaxed)
     {
         return false;
     }
@@ -91,7 +115,7 @@ pub(crate) fn reject(owner: TaskId, from: TaskId, root: bool, bytes: &[u8]) -> b
             from.get(),
             owner.get(),
             bytes[0],
-            word(bytes, 1),
+            word(bytes, serial_at),
             crate::machine::clock::now().as_ticks(),
         );
     }

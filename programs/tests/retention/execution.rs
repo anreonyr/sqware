@@ -6,10 +6,10 @@
 use env::{PieToken, TaskId};
 use hub_api::{BindingState, Fail};
 
-use crate::hub_core::{ClaimRequest, Ledger, Step};
+use crate::hub_core::{ClaimRequest, Ledger};
+use crate::enrollment::identity;
 
 const HUB: usize = 1;
-const RECOVERY: usize = 3;
 const TASK: TaskId = TaskId::new(9);
 
 fn ledger() -> Ledger {
@@ -27,9 +27,8 @@ fn claim_at(ledger: &mut Ledger, task: TaskId, id: u64) -> Result<u64, Fail> {
         .claim(ClaimRequest {
             from: task,
             id,
-            requester: 0,
+            device: identity(0),
             sensor: PieToken::mint(task.get()),
-            recovery: TaskId::new(RECOVERY),
         })
         .map(|binding| binding.serial)
 }
@@ -81,20 +80,21 @@ fn failed_or_foreign_launch_records_nothing() {
 }
 
 #[test]
-fn target_proof_advances_only_its_bound_binding_and_never_repeats_completed_steps() {
+fn target_closure_keeps_the_same_binding_and_fault_reason_on_retry() {
     let mut ledger = ledger();
     admit(&mut ledger, TASK, u64::MAX);
     let serial = claim_at(&mut ledger, TASK, 1).unwrap();
     ledger.close(serial, hub_api::Close::Normal).unwrap();
-    assert_eq!(ledger.binding(serial).unwrap().step, Step::StopCpu);
+    assert_eq!(ledger.binding(serial).unwrap().state, BindingState::Closing);
 
     assert_eq!(ledger.stop_target(TASK, |_| {}), 1);
-    assert_eq!(ledger.binding(serial).unwrap().step, Step::Invalidate);
+    assert_eq!(ledger.binding(serial).unwrap().state, BindingState::Closing);
 
-    // Repeating the same proof must not replay an already completed transition.
-    ledger.binding_mut(serial).unwrap().step = Step::Disable;
+    ledger.close(serial, hub_api::Close::Fault).unwrap();
+    let id = ledger.binding(serial).unwrap().id;
     assert_eq!(ledger.stop_target(TASK, |_| {}), 1);
-    assert_eq!(ledger.binding(serial).unwrap().step, Step::Disable);
+    assert_eq!(ledger.binding(serial).unwrap().id, id);
+    assert_eq!(ledger.binding(serial).unwrap().reason, hub_api::Close::Fault);
     assert!(ledger.admission(TASK).unwrap().closed());
 }
 
@@ -123,7 +123,7 @@ fn settle_retires_unbound_launches_and_keeps_the_receipt_until_release() {
 }
 
 #[test]
-fn target_proof_does_not_advance_another_executions_binding() {
+fn target_closure_does_not_close_another_executions_admission() {
     let other = TaskId::new(10);
     let mut ledger = Ledger::new().with_hub(TaskId::new(HUB));
     crate::enrollment::enroll(&mut ledger, &[0, 1]);
@@ -133,9 +133,8 @@ fn target_proof_does_not_advance_another_executions_binding() {
         .claim(ClaimRequest {
             from: TASK,
             id: 1,
-            requester: 0,
+            device: identity(0),
             sensor: PieToken::mint(TASK.get()),
-            recovery: TaskId::new(RECOVERY),
         })
         .unwrap()
         .serial;
@@ -143,9 +142,8 @@ fn target_proof_does_not_advance_another_executions_binding() {
         .claim(ClaimRequest {
             from: other,
             id: 1,
-            requester: 1,
+            device: identity(1),
             sensor: PieToken::mint(other.get()),
-            recovery: TaskId::new(RECOVERY),
         })
         .unwrap()
         .serial;
@@ -153,8 +151,8 @@ fn target_proof_does_not_advance_another_executions_binding() {
     ledger.close(theirs, hub_api::Close::Normal).unwrap();
 
     assert_eq!(ledger.stop_target(TASK, |_| {}), 1);
-    assert_eq!(ledger.binding(mine).unwrap().step, Step::Invalidate);
-    assert_eq!(ledger.binding(theirs).unwrap().step, Step::StopCpu);
+    assert_eq!(ledger.binding(mine).unwrap().state, BindingState::Closing);
+    assert_eq!(ledger.binding(theirs).unwrap().state, BindingState::Closing);
     assert!(ledger.admission(TASK).unwrap().closed());
     assert!(!ledger.admission(other).unwrap().closed());
 }
@@ -166,10 +164,10 @@ fn settle_closes_bindings_but_does_not_pretend_the_cpu_stopped() {
     let serial = claim_at(&mut ledger, TASK, 1).unwrap();
     assert_eq!(ledger.settle(), 2);
     assert_eq!(ledger.binding(serial).unwrap().state, BindingState::Closing);
-    assert_eq!(ledger.binding(serial).unwrap().step, Step::StopCpu);
+    assert_eq!(ledger.open_bindings_for(TASK), 1);
     assert_eq!(claim_at(&mut ledger, TaskId::new(10), 1), Err(Fail::Denied));
     assert_eq!(ledger.stop_target(TASK, |_| {}), 1);
-    assert_eq!(ledger.binding(serial).unwrap().step, Step::Invalidate);
+    assert_eq!(ledger.open_bindings_for(TASK), 1);
     ledger.finish(serial);
     ledger.released(TASK);
     assert_eq!(ledger.settle(), 0);
