@@ -98,7 +98,7 @@ startup rollback. Host and native checks were executed by the root writer, not
 independently rerun by Flash. This checkpoint establishes single-binding ticket
 ownership; the remaining Domain integration and full final acceptance are open.
 
-## Shared-engine preparation in PR12
+## Shared-engine preparation in PR21
 
 Cache barriers now retain their immutable requester and PSCID and independently
 admit `IODIR.INVAL_DDT`, scoped `IOTINVAL.VMA`, and their own `IOFENCE.C`.
@@ -131,7 +131,7 @@ pool runs passed the complete runner/verifier path.
 That preparation checkpoint still admitted one binding and used the prior wire
 and resource-delivery path. The following checkpoint replaces those paths.
 
-## Persistent Domains and explicit delivery in PR12
+## Persistent Domains and explicit delivery in PR21
 
 One IOMMU Core now owns the shared engine and a persistent collection of Domains.
 Each Domain belongs to the actual Driver caller and requester, has an opaque
