@@ -55,7 +55,14 @@ pub fn turn(
             }
         }
         DmaWire::Inspect(inspect) => match ledger.binding(inspect.serial) {
-            Some(binding) => DmaSaid::progress(binding.id.serial, binding.state, binding.failure),
+            Some(binding) => {
+                let mut said = DmaSaid::progress(binding.id.serial, binding.state, binding.failure);
+                said.source = binding.device.source;
+                if binding.execution == from && binding.open() {
+                    said.client = binding.client.unwrap_or(PieToken::NONE);
+                }
+                said
+            }
             None => DmaSaid::of(code(Fail::Unknown)),
         },
         DmaWire::Settle(_) if from != env::unit::sire() => DmaSaid::of(code(Fail::Denied)),
@@ -81,7 +88,12 @@ pub fn claim_at_door(ledger: &mut Ledger, door: PieToken, from: TaskId, frame: &
         }) {
             Ok(id) => {
                 let binding = ledger.binding(id.serial).expect("claim receipt");
-                DmaSaid::progress(id.serial, binding.state, binding.failure)
+                let mut said = DmaSaid::progress(id.serial, binding.state, binding.failure);
+                said.source = binding.device.source;
+                if binding.open() {
+                    said.client = binding.client.unwrap_or(PieToken::NONE);
+                }
+                said
             }
             Err(fail) => DmaSaid::of(code(fail)),
         },

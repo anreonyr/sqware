@@ -99,6 +99,17 @@ fn receive(ledger: &mut Ledger, executions: &mut Executions, request: BindingRpc
         return;
     };
     let binding = ledger.binding(serial).expect("validated binding reply");
+    if request.op == coordination::PREPARE && binding.state == BindingState::Preparing
+        && matches!(state, BindingState::Preparing | BindingState::Active)
+        && said.client != env::PieToken::NONE
+    {
+        if binding.client.is_some_and(|client| client != said.client) {
+            note(ledger, serial, request.op, hub_api::fail_to_code(Some(Fail::Conflict)));
+            return;
+        }
+        ledger.binding_mut(serial).unwrap().client = Some(said.client);
+    }
+    let binding = ledger.binding(serial).expect("validated binding reply");
     match (request.op, state) {
         (coordination::PREPARE, BindingState::Active) if binding.state == BindingState::Preparing => {
             ledger.binding_mut(serial).unwrap().state = BindingState::Active;

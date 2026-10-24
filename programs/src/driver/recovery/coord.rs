@@ -10,12 +10,14 @@ use resource::raw::Hole;
 use wire::Message;
 
 use crate::driver::iommu::api as iommu;
+use crate::driver::iommu::domain_id::DomainId;
 use crate::driver::pci::api as pci;
 use crate::driver::recovery::api as recovery;
 use crate::driver::recovery::core::{AttachRequest, Core};
 use crate::driver::recovery::operation::Operation;
 use crate::driver::recovery::profile::Profile;
 use crate::driver::recovery::stage::Stage;
+use super::client;
 use crate::driver::shared::dma::{self, Coords};
 use crate::driver::shared::peer::Peer;
 
@@ -29,6 +31,7 @@ pub struct Coordinator {
     pub operation: Option<Operation>,
     pub last_serial: u64,
     pub profile: Profile,
+    pub domain: DomainId,
 }
 
 impl Coordinator {
@@ -38,6 +41,7 @@ impl Coordinator {
         iommu: Peer<iommu::Call>,
         core: Core,
         profile: Profile,
+        domain: DomainId,
     ) -> Self {
         Self {
             hub,
@@ -47,6 +51,7 @@ impl Coordinator {
             operation: None,
             last_serial: 0,
             profile,
+            domain,
         }
     }
 
@@ -59,6 +64,7 @@ impl Coordinator {
                 if let Err(fail) = self.begin(frame) {
                     return DmaSaid::of(fail_to_code(Some(fail)));
                 }
+                if !self.client_entry() { return self.reply(); }
                 self.prepare();
                 self.reply()
             }
@@ -73,6 +79,51 @@ impl Coordinator {
                 self.reply()
             }
         }
+    }
+
+    fn client_entry(&mut self) -> bool {
+        let op = self.operation.as_ref().unwrap();
+        if op.client.is_some() { return true; }
+        match ipc::session::establish::lend(op.execution, client::ENTRY) {
+            Ok(endpoint) => {
+                self.operation.as_mut().unwrap().client = Some((endpoint.rx(), endpoint.seed()));
+                true
+            }
+            Err(_) => {
+                self.fail(PARTY_RECOVERY, recovery::ATTACH, 0);
+                false
+            }
+        }
+    }
+
+    pub fn client(&mut self, from: TaskId, request: client::Wire) -> client::Said {
+        let refused = |fail| client::Said {
+            status: fail_to_code(Some(fail)), iommu: TaskId::new(0),
+        };
+        let Some(op) = self.operation.as_mut() else { return refused(Fail::Unknown); };
+        let identity = request.identity();
+        if from != op.execution || identity.hub != op.hub || identity.serial != op.serial {
+            return refused(Fail::Denied);
+        }
+        if !matches!(op.state(), hub_api::BindingState::Preparing | hub_api::BindingState::Active) {
+            return refused(Fail::Conflict);
+        }
+        if let client::Wire::Supply(frame) = request {
+            let source = (frame.source, frame.access);
+            if frame.source == env::PieToken::NONE
+                || frame.access != env::Access::FETCH_STORE.bits().bits()
+            {
+                return refused(Fail::Denied);
+            }
+            if op.source.is_some_and(|previous| previous != source) {
+                return refused(Fail::Conflict);
+            }
+            if op.source.is_none() && op.state() != hub_api::BindingState::Preparing {
+                return refused(Fail::Conflict);
+            }
+            op.source = Some(source);
+        }
+        client::Said { status: wire::OK, iommu: self.iommu.host() }
     }
 
     fn begin(&mut self, frame: Prepare) -> Result<(), Fail> {
@@ -247,31 +298,28 @@ impl Coordinator {
         let Some(op) = self.operation.as_ref() else {
             return false;
         };
+        if op.source.is_none() { return false; }
         let serial = op.serial;
-        let requester = u32::from(self.profile.requester);
         let execution = op.execution;
-        let iova = match hub_api::iova_base(serial) {
-            Some(iova) => iova,
-            None => {
-                self.fail(PARTY_RECOVERY, iommu::ACQUIRE, 0);
-                return false;
-            }
-        };
-        let access = env::Access::FETCH_STORE.bits().bits();
+        let (source, access) = op.source.unwrap();
         match self.iommu.call(Wait::AtMost(MS), |back| {
             iommu::Wire::Acquire(iommu::Acquire {
                 op: iommu::ACQUIRE,
+                engine: self.domain.engine(),
+                key: self.domain.key(),
+                hub: op.hub,
                 serial,
-                requester,
                 execution,
-                iova,
+                source,
                 access,
                 back,
             })
         }) {
-            Ok(said) if said.status == wire::OK => {
+            Ok(said) if said.status == wire::OK && said.engine == self.domain.engine()
+                && said.key == self.domain.key() && said.iova != 0 && said.bytes != 0 => {
                 if let Some(op) = self.operation.as_mut() {
                     op.iova = said.iova;
+                    op.bytes = said.bytes;
                     op.stage = Stage::Publish;
                 }
                 true
@@ -295,6 +343,7 @@ impl Coordinator {
         match self.iommu.call(Wait::AtMost(MS), |back| {
             iommu::Wire::Publish(iommu::Step {
                 op: iommu::PUBLISH,
+                engine: self.domain.engine(), key: self.domain.key(), hub: self.hub,
                 serial,
                 reason: 0,
                 back,
@@ -363,13 +412,22 @@ impl Coordinator {
         if op.stage == Stage::Active {
             return false;
         }
+        let bar = match self.core.bar_grant(op.serial) {
+            Ok(bar) => bar,
+            Err(error) => {
+                self.fail(PARTY_RECOVERY, pci::ENABLE, recovery::fail_to_code(Some(error)));
+                return false;
+            }
+        };
         let coords = Coords {
-            pages: op.pages,
+            bar_pages: op.pages,
             common: op.caps.0,
             notify: op.caps.1,
             multiplier: op.caps.2,
             device: op.caps.3,
             iova: op.iova,
+            bytes: op.bytes,
+            bar,
         };
         let mut buffer = [0u8; Coords::LEN];
         let Some(len) = coords.store(&mut buffer) else {
@@ -402,6 +460,7 @@ impl Coordinator {
         match self.iommu.call(Wait::AtMost(MS), |back| {
             iommu::Wire::Invalidate(iommu::Step {
                 op: iommu::INVALIDATE,
+                engine: self.domain.engine(), key: self.domain.key(), hub: self.hub,
                 serial,
                 reason: 0,
                 back,
@@ -473,6 +532,7 @@ impl Coordinator {
         match self.iommu.call(Wait::AtMost(MS), |back| {
             iommu::Wire::Quiesce(iommu::Step {
                 op: iommu::QUIESCE,
+                engine: self.domain.engine(), key: self.domain.key(), hub: self.hub,
                 serial,
                 reason: 0,
                 back,
@@ -502,6 +562,7 @@ impl Coordinator {
         match self.iommu.call(Wait::AtMost(MS), |back| {
             iommu::Wire::Release(iommu::Step {
                 op: iommu::RELEASE,
+                engine: self.domain.engine(), key: self.domain.key(), hub: self.hub,
                 serial,
                 reason,
                 back,
@@ -571,6 +632,13 @@ impl Coordinator {
     }
 
     fn close_handoff(&mut self) -> bool {
+        if let Some((entry, _)) = self.operation.as_ref().and_then(|op| op.client) {
+            if env::pie::release(entry, env::ReleaseMode::Revoke).is_err() {
+                self.fail(PARTY_RECOVERY, recovery::DETACH, 0);
+                return false;
+            }
+            self.operation.as_mut().unwrap().client = None;
+        }
         if let Some(writer) = self.operation.as_ref().and_then(|op| op.handoff) {
             if env::pie::release(writer, env::ReleaseMode::Revoke).is_err() {
                 self.fail(PARTY_RECOVERY, recovery::DETACH, 0);
@@ -618,7 +686,11 @@ impl Coordinator {
 
     fn reply(&self) -> DmaSaid {
         match self.operation.as_ref() {
-            Some(op) => DmaSaid::progress(op.serial, op.state(), op.first_failure),
+            Some(op) => {
+                let mut said = DmaSaid::progress(op.serial, op.state(), op.first_failure);
+                said.client = op.client.map(|(_, remote)| remote).unwrap_or(env::PieToken::NONE);
+                said
+            }
             None => DmaSaid::of(fail_to_code(Some(Fail::Unknown))),
         }
     }

@@ -216,7 +216,8 @@ pub fn acceptance() {
     HANDOFF
         .used_at
         .store(pages.at(USED, 2) as usize, Ordering::Relaxed);
-    let context = context::DeviceContext::first_stage(pages.physical(ROOT));
+    let context = context::DeviceContext::first_stage(pages.physical(ROOT), 1)
+        .expect("iommu-dma: translation context");
     for (index, word) in context.words().iter().enumerate() {
         put64(
             &pages,

@@ -7,6 +7,7 @@ impl Fixture for Call {
     fn call(script: &mut Script, request: Wire) -> Result<Said, &'static str> {
         script.iommu.push(request);
         let (action, okay) = match request {
+            Wire::Establish(_) => panic!("domain established before enrollment"),
             Wire::Acquire(_) => (Action::IommuAcquire, script.acquire_ok),
             Wire::Publish(_) => (Action::IommuPublish, script.publish_ok),
             Wire::Invalidate(_) => (Action::IommuInvalidate, script.invalidate_ok),
@@ -19,6 +20,7 @@ impl Fixture for Call {
             status: if matches!(request, Wire::Acquire(_)) { script.iommu_status } else { 0 },
             pending: u8::from(matches!(request, Wire::Publish(_)) && script.publish_pending),
             iova: if matches!(request, Wire::Acquire(_)) { script.iova } else { 0 },
+            engine: env::TaskId::new(10), key: 23, bytes: 6 * env::PAGE_SIZE as u64,
             ..Said::NONE
         })
     }

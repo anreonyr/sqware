@@ -83,7 +83,6 @@ impl Ledger {
             return Err(Fail::Taken);
         }
         let serial = self.serial.checked_add(1).ok_or(Fail::Full)?;
-        hub_api::iova_base(serial).ok_or(Fail::Full)?;
         self.bindings.try_reserve(1).map_err(|_| Fail::Full)?;
         self.serial = serial;
         self.admissions[execution].advance_claim(request.id);

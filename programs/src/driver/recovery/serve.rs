@@ -9,9 +9,10 @@ use system_client::operator;
 
 use crate::driver::pci::{api as pci, inspection};
 use crate::driver::iommu::api as iommu;
+use crate::driver::iommu::domain_id::DomainId;
 use crate::driver::shared::{context::{Context, Step}, lookup, peer::Peer};
 use crate::driver::virtio::Caps;
-use super::{coord::Coordinator, core::Core, profile::Profile};
+use super::{client, coord::Coordinator, core::Core, profile::Profile};
 
 const MS: usize = 2000;
 
@@ -65,6 +66,16 @@ pub fn serve() -> Result<(), &'static str> {
         }
     };
     let profile = discover(&config)?;
+    let domain = loop {
+        match iommu.call(Wait::AtMost(MS), |back| iommu::Wire::Establish(iommu::Establish {
+            op: iommu::ESTABLISH, requester: u32::from(profile.requester), back,
+        })) {
+            Ok(said) if said.status == wire::OK && said.engine == iommu.host() && said.key != 0 =>
+                break DomainId::new(said.engine, said.key),
+            Ok(_) => return Err("recovery: domain refused"),
+            Err(_) => pause(),
+        }
+    };
     loop {
         let said = hub.call(Wait::AtMost(MS), |back| DmaWire::Enroll(Enroll {
             op: DMA_ENROLL, key: profile.key, line: 0,
@@ -82,7 +93,7 @@ pub fn serve() -> Result<(), &'static str> {
         hub.host().get(), pci.host().get(), profile.requester, profile.key,
     ));
     let core = Core::new(pci.host());
-    run(entry, Coordinator::new(hub.host(), pci, iommu, core, profile))
+    run(entry, Coordinator::new(hub.host(), pci, iommu, core, profile, domain))
 }
 
 fn discover(config: &Peer<inspection::Call>) -> Result<Profile, &'static str> {
@@ -108,8 +119,16 @@ fn discover(config: &Peer<inspection::Call>) -> Result<Profile, &'static str> {
 fn run(entry: PieToken, mut coordinator: Coordinator) -> Result<(), &'static str> {
     let receiver = Receiver::<Call>::from_raw(entry, Call::BACK, Call::back);
     let mut buffer = [0u8; coordination::Wire::LEN];
+    let mut client_buffer = [0u8; client::Wire::LEN];
     loop {
-        let incoming = match receiver.receive(&mut buffer, Wait::Forever) {
+        if let Some((local, _)) = coordinator.operation.as_ref().and_then(|op| op.client) {
+            let receiver = Receiver::<client::Call>::from_raw(local, client::BACK, client::Call::back);
+            if let Ok(incoming) = receiver.receive(&mut client_buffer, Wait::POLL) {
+                let said = coordinator.client(incoming.from, incoming.request);
+                let _ = incoming.reply.send(said);
+            }
+        }
+        let incoming = match receiver.receive(&mut buffer, Wait::POLL) {
             Ok(incoming) => incoming,
             Err(rejected) => {
                 if matches!(rejected.fail, ipc::rpc::Fail::Receive(

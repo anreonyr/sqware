@@ -9,6 +9,7 @@ pub struct Binding {
     pub device: DeviceId,
     pub execution: TaskId,
     pub sensor: PieToken,
+    pub client: Option<PieToken>,
     pub state: BindingState,
     /// 本次责任的理由（Fault 可覆盖 Normal，不反向恢复）。
     pub reason: Close,
@@ -29,6 +30,7 @@ impl Binding {
             device,
             execution,
             sensor,
+            client: None,
             state: BindingState::Preparing,
             reason: Close::Normal,
             failure: None,

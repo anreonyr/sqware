@@ -14,9 +14,12 @@ pub struct Operation {
     pub stage: Stage,
     pub bar: Option<PieToken>,
     pub handoff: Option<PieToken>,
+    pub client: Option<(PieToken, PieToken)>,
+    pub source: Option<(PieToken, u32)>,
     pub pages: u32,
     pub caps: (u32, u32, u32, u32),
     pub iova: u64,
+    pub bytes: u64,
 }
 
 impl Operation {
@@ -36,9 +39,12 @@ impl Operation {
             stage: Stage::Place,
             bar: None,
             handoff: None,
+            client: None,
+            source: None,
             pages: 0,
             caps: (0, 0, 0, 0),
             iova: 0,
+            bytes: 0,
         }
     }
 

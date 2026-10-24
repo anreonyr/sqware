@@ -20,7 +20,12 @@ impl DeviceRange {
         self.length
     }
 
-    pub(super) fn overlaps(self, other: Self) -> bool {
-        self.base <= other.base + other.length - 1 && other.base <= self.base + self.length - 1
+    /// 闭区间末地址；构造器已保证 `base + length - 1` 不溢出。
+    const fn end(self) -> u64 {
+        self.base + (self.length - 1)
+    }
+
+    pub(crate) fn overlaps(self, other: Self) -> bool {
+        self.base <= other.end() && other.base <= self.end()
     }
 }

@@ -14,6 +14,8 @@ use system_client::operator;
 use crate::driver::shared::context::{Context, Step};
 use crate::driver::shared::dma::{self, HubDma};
 use crate::harness::device::layout::{self, Block};
+pub use super::command::Command;
+pub use super::report::Report;
 
 /// 本台那一扇门与它铸的那两枚孔的记号。
 pub const ENTRY: env::Mark = env::Mark::of("device-ctl/entry");
@@ -26,18 +28,6 @@ pub const BACK: env::Mark = env::Mark::of("device-ctl-back");
 pub const REPORT: u8 = 1;
 /// 等树 / 等报告 / 等硬件的上限（毫秒）。
 const MS: usize = 3000;
-
-/// α 报上来的认领结果：编号 ＋ 要不要交窗。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-#[frame(len = 48)]
-pub struct Report {
-    pub op: u8,
-    pub serial: u64,
-    pub want: u8,
-    pub back: PieToken,
-    pub auxiliary: TaskId,
-    pub sensor: PieToken,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wire {
@@ -108,48 +98,6 @@ fn reply_to(wire: &Wire) -> PieToken {
 
 #[mold::contract(request = Wire, response = Said, mark = BACK, back = reply_to)]
 pub struct Call;
-
-/// 控制器发给 α 的命令。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Command {
-    /// 窗已经交过去了，可以取用。
-    Window,
-    /// 可以敲门铃了。
-    Ring,
-    /// 收场（按那一景的理由）。
-    Close,
-    /// 退出。
-    Exit,
-    /// 提交负证请求并回报实际敲铃。
-    Probe,
-    /// 提交在途请求并确认实际敲铃。
-    Submit,
-}
-
-impl Command {
-    pub const fn code(self) -> u8 {
-        match self {
-            Self::Window => 1,
-            Self::Ring => 2,
-            Self::Close => 3,
-            Self::Exit => 4,
-            Self::Probe => 5,
-            Self::Submit => 6,
-        }
-    }
-
-    pub const fn of_code(code: u8) -> Option<Self> {
-        match code {
-            1 => Some(Self::Window),
-            2 => Some(Self::Ring),
-            3 => Some(Self::Close),
-            4 => Some(Self::Exit),
-            5 => Some(Self::Probe),
-            6 => Some(Self::Submit),
-            _ => None,
-        }
-    }
-}
 
 /// 本景走哪一条编排。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -331,7 +279,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
     crate::debug::put(&alloc::format!("ctl: report serial={serial} want={want}"));
     if report.want != 0 {
         // 交窗：这根 Pole 正好是整窗，普通 Accord 继承同一范围；含 VEST 供 α 再交 IOMMU。
-        env::pie::accord(
+        let window = env::pie::accord(
             pole,
             alpha,
             env::Permission::FETCH
@@ -340,13 +288,14 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             dma::window_mark(serial),
         )
         .map_err(|_| "ctl: window handover")?;
-        command(writer, Command::Window)?;
+        command(writer, Command::Window(window))?;
     }
+    let iova = if want != 0 { activation(entry, alpha, serial)?.iova } else { 0 };
     match mode {
         Mode::Ruin | Mode::Forced | Mode::Guard => {
             block.fill(layout::DATA, layout::SENTINEL);
             block.put32(layout::STATUS, 0, 0xFF);
-            block.arm(dma::iova_base(serial).ok_or("ctl: iova")?, 0);
+            block.arm(iova, 0);
             command(writer, Command::Submit)?;
             if receive_report(entry, alpha)?.want != 3 {
                 return Err("ctl: in-flight request not submitted");
@@ -394,9 +343,10 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         Mode::Soak { generations } => {
             let started = env::chrono::clock();
             let mut current = report;
+            let mut current_iova = iova;
             let mut baseline = None;
             for generation in 1..=generations {
-                round_one(&block, writer, current.serial)?;
+                round_one(&block, writer, current_iova)?;
                 let fault = generation % 2 == 0;
                 command(writer, if fault { Command::Exit } else { Command::Close })?;
                 await_closed(&hub, current.serial, MS)?;
@@ -437,14 +387,15 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
                 for page in 0..layout::PAGES {
                     block.fill(page, 0);
                 }
-                env::pie::accord(
+                let window = env::pie::accord(
                     pole,
                     replacement,
                     env::Permission::FETCH | env::Permission::STORE | env::Permission::VEST,
                     dma::window_mark(next.serial),
                 )
                 .map_err(|_| "ctl: generation window")?;
-                command(writer, Command::Window)?;
+                command(writer, Command::Window(window))?;
+                current_iova = activation(entry, replacement, next.serial)?.iova;
                 current = next;
             }
             crate::debug::put(&alloc::format!(
@@ -460,7 +411,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             crate::debug::put(&alloc::format!("ctl: binding {serial} settled after abort"));
         }
         Mode::Normal => {
-            round_one(&block, writer, serial)?;
+            round_one(&block, writer, iova)?;
             command(writer, Command::Close)?;
             await_closed(&hub, serial, MS)?;
             check_auxiliary(report, false)?;
@@ -469,7 +420,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             ));
         }
         Mode::Confirmation => {
-            round_one(&block, writer, serial)?;
+            round_one(&block, writer, iova)?;
             let request = establish::give(sire, crate::harness::probe::device_confirmation::REQUEST)
                 .map_err(|_| "ctl: confirmation request")?;
             resource::raw::Hole::from_raw(request).push(&[1], Wait::AtMost(MS))
@@ -526,7 +477,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             crate::debug::put("ctl: confirmation retry settled; original failure preserved");
         }
         Mode::Fault => {
-            round_one(&block, writer, serial)?;
+            round_one(&block, writer, iova)?;
             command(writer, Command::Exit)?;
             crate::debug::put("ctl: alpha exit requested (hub recovers owner death)");
             await_closed(&hub, serial, MS)?;
@@ -550,7 +501,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             if again <= serial {
                 return Err("ctl: binding serial reused");
             }
-            env::pie::accord(
+            let window = env::pie::accord(
                 pole,
                 replacement,
                 env::Permission::FETCH | env::Permission::STORE | env::Permission::VEST,
@@ -563,8 +514,10 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
             block.fill(layout::DATA, layout::SENTINEL);
             block.fill(layout::STATUS, 0xFF);
             // Queue metadata uses the new IOVA; the submitted descriptors deliberately use the retired one.
-            block.arm(dma::iova_base(serial).ok_or("ctl: stale iova")?, 0);
-            command(writer, Command::Window)?;
+            block.arm(iova, 0);
+            command(writer, Command::Window(window))?;
+            let next = activation(entry, replacement, again)?;
+            if next.iova == iova { return Err("ctl: retired range reused in the same domain"); }
             command(writer, Command::Probe)?;
             if receive_report(entry, replacement)?.want != 2 {
                 return Err("ctl: stale request not submitted");
@@ -625,8 +578,17 @@ fn receive_report(entry: PieToken, expected: TaskId) -> Result<Report, &'static 
     Ok(frame)
 }
 
-fn round_one(block: &Block, writer: PieToken, serial: u64) -> Result<(), &'static str> {
-    let iova = dma::iova_base(serial).ok_or("ctl: iova")?;
+fn activation(entry: PieToken, execution: TaskId, serial: u64) -> Result<Report, &'static str> {
+    let report = receive_report(entry, execution)?;
+    if report.want != 4 || report.serial != serial || report.iova == 0
+        || report.iova % PAGE_SIZE as u64 != 0 || report.bytes != layout::SPAN
+    {
+        return Err("ctl: activation range");
+    }
+    Ok(report)
+}
+
+fn round_one(block: &Block, writer: PieToken, iova: u64) -> Result<(), &'static str> {
     block.fill(layout::DATA as usize, 0);
     block.put32(layout::STATUS as usize, 0, 0xFF);
     block.arm(iova, 0);
@@ -656,9 +618,10 @@ fn round_one(block: &Block, writer: PieToken, serial: u64) -> Result<(), &'stati
 
 /// 发一条命令（单槽：推得进就行）。
 fn command(writer: PieToken, command: Command) -> Result<(), &'static str> {
-    let bytes = [command.code()];
+    let mut bytes = [0; Command::LEN];
+    let len = command.store(&mut bytes);
     ::resource::raw::Hole::from_raw(writer)
-        .push(&bytes, Wait::AtMost(MS))
+        .push(&bytes[..len], Wait::AtMost(MS))
         .map_err(|_| "ctl: command push")
 }
 

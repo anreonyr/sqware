@@ -32,15 +32,17 @@ def pending(console, events):
         assert forbidden not in console, f"advanced before hardware completion: {forbidden}"
 
 
-def hardware(data, dts):
+def hardware(data, dts, requester):
     base, bad = regions(dts)
     assert data["base"] == base and data["bad"] == bad, "wrong device tree"
     assert data["original"] != data["broken"]
     assert data["broken"] == ((bad >> 12) << 10) | (data["original"] & 0x1f)
     assert data["fault"] & MEM_FAULT, "no real command memory fault"
     entries = 2 << (data["original"] & 0x1f)
-    assert (data["tail"] - data["head"]) % entries >= 2, "missing outstanding commands"
-    assert data["invalidate"] & 0x7f == 1 and data["fence"] & 0x7f == 2
+    assert (data["tail"] - data["head"]) % entries >= 3, "missing outstanding commands"
+    assert data["directory"] == 3 | (1 << 33) | (requester << 40), "wrong device-directory invalidation"
+    assert data["invalidate"] == 1 | (1 << 32) | ((requester + 1) << 12), "wrong address-space invalidation"
+    assert data["fence"] & 0x7f == 2
     assert data["fence"] >> 32 == data["cookie"] != 0
     assert data["destination"] % 4 == 0
     assert data["before"] == 0 and data["after"] == data["cookie"]
@@ -63,8 +65,10 @@ def hardware(data, dts):
     queue = (data["original"] >> 10) << 12
     last = queue + ((data["tail"] - 1) % entries) * 16
     prior = queue + ((data["tail"] - 2) % entries) * 16
+    directory_at = queue + ((data["tail"] - 3) % entries) * 16
     assert reads[("readq", base + CQB)] == [data["original"], data["broken"], data["original"]]
     assert reads[("readq", prior)] == [data["invalidate"]]
+    assert reads[("readq", directory_at)] == [data["directory"]]
     assert reads[("readq", last)] == [data["fence"]]
     assert reads[("readq", last + 8)] == [data["destination"] >> 2]
     assert completion_reads[0] == 0 and completion_reads[-1] == data["cookie"]
@@ -82,7 +86,7 @@ def hardware(data, dts):
 def check(console_path, events_path, capture_path):
     capture = Path(capture_path)
     console = Path(console_path).read_text()
-    _, key = identity(console)
+    requester, key = identity(console)
     events = [json.loads(line) for line in Path(events_path).read_text().splitlines()]
     failed = capture.with_suffix(".failed-console").read_text()
     failed_events = [
@@ -91,7 +95,7 @@ def check(console_path, events_path, capture_path):
     assert events[:len(failed_events)] == failed_events, "failure snapshot is not this trace's prefix"
     pending(failed, failed_events)
     data = json.loads(capture.with_suffix(".hardware.json").read_text())
-    hardware(data, capture.with_suffix(".dts").read_text())
+    hardware(data, capture.with_suffix(".dts").read_text(), int(requester))
     execution(console_path, events_path)
     ordered = (
         r"iommu: binding 1 invalidate fence expired frames held=6",

@@ -11,7 +11,10 @@ impl View {
             memory: vec![u64::MAX; pages * abi::PAGE_SIZE / 8].into_boxed_slice(),
             live: true,
         };
-        state::STATE.with_borrow_mut(|state| state.view_address = view.address());
+        state::STATE.with_borrow_mut(|state| {
+            state.view_address = view.address();
+            state.view_bytes = pages * abi::PAGE_SIZE;
+        });
         view
     }
 
@@ -26,6 +29,7 @@ impl View {
         state::STATE.with_borrow_mut(|state| {
             state.views -= 1;
             state.view_address = 0;
+            state.view_bytes = 0;
         });
         self.live = false;
         Ok(())

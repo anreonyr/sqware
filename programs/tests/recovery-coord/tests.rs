@@ -26,6 +26,7 @@ fn setup() -> (Coordinator, Rc<RefCell<Script>>) {
         Peer::new(script.clone()),
         Core::new(script.clone()),
         crate::profile::Profile { key: 7, requester: 3, bar: 0, caps: (0x50, 0x60, 0, 0) },
+        crate::domain_id::DomainId::new(TaskId::new(10), 23),
     );
     (coord, script)
 }
@@ -57,6 +58,20 @@ fn op(coord: &Coordinator) -> &Operation {
     coord.operation.as_ref().unwrap()
 }
 
+fn prepare_ready(coord: &mut Coordinator, serial: u64) -> hub_api::DmaSaid {
+    let said = coord.turn(HUB, prepare(serial, EXEC, 7));
+    if coord.operation.as_ref().is_some_and(|op| op.stage == Stage::Acquire && op.source.is_none()) {
+        let supplied = coord.client(EXEC, crate::client::Wire::Supply(crate::client::Supply {
+            op: crate::client::SUPPLY, hub: HUB, serial, source: PieToken::mint(0xd1),
+            access: env::Access::FETCH_STORE.bits().bits(), back: PieToken::mint(1),
+        }));
+        assert_eq!(supplied.status, wire::OK);
+        coord.turn(HUB, prepare(serial, EXEC, 7))
+    } else {
+        said
+    }
+}
+
 fn drive_release(coord: &mut Coordinator, request: Wire) -> hub_api::DmaSaid {
     for _ in 0..16 {
         let previous = coord.operation.as_ref().map(|op| op.stage);
@@ -72,7 +87,7 @@ fn drive_release(coord: &mut Coordinator, request: Wire) -> hub_api::DmaSaid {
 #[test]
 fn successful_prepare_then_release_uses_exact_order() {
     let (mut coord, script) = setup();
-    let said = coord.turn(HUB, prepare(5, EXEC, 7));
+    let said = prepare_ready(&mut coord, 5);
     assert_eq!(said.state, BindingState::Active.code());
     assert_eq!(op(&coord).stage, Stage::Active);
     assert_eq!(op(&coord).iova, 0x2_0000_0000);
@@ -84,8 +99,17 @@ fn successful_prepare_then_release_uses_exact_order() {
     let crate::iommu_api::Wire::Acquire(acquire) = script.borrow().iommu[0] else {
         panic!("IOMMU acquisition");
     };
-    assert_eq!(acquire.requester, 3);
+    assert_eq!(acquire.engine, TaskId::new(10));
+    assert_eq!(acquire.key, 23, "domain key is neither device key nor requester");
+    assert_eq!(acquire.hub, HUB);
+    assert_eq!(acquire.serial, 5);
+    assert_eq!(acquire.source, PieToken::mint(0xd1));
     assert_eq!(handoff::gives(), 1);
+    let coords = handoff::last().unwrap();
+    assert_eq!(coords.bar, PieToken::mint(9));
+    assert_ne!(coords.bar, op(&coord).bar.unwrap(), "Work receipt is not the Driver's PCI token");
+    assert_eq!(coords.bar_pages, 1);
+    assert_eq!((coords.iova, coords.bytes), (script.borrow().iova, 6 * env::PAGE_SIZE as u64));
     assert_eq!(
         script.borrow().actions,
         [
@@ -118,7 +142,7 @@ fn successful_prepare_then_release_uses_exact_order() {
 fn lost_place_ack_then_release_still_runs_all_cleanup() {
     let (mut coord, script) = setup();
     script.borrow_mut().place_ok = false;
-    let said = coord.turn(HUB, prepare(5, EXEC, 7));
+    let said = prepare_ready(&mut coord, 5);
     assert_eq!(said.state, BindingState::Preparing.code());
     assert_eq!(op(&coord).stage, Stage::Place);
     assert_eq!(op(&coord).bar, None);
@@ -143,7 +167,7 @@ fn lost_place_ack_then_release_still_runs_all_cleanup() {
 fn lost_acquire_ack_then_release_runs_iommu_cleanup_and_keeps_binding() {
     let (mut coord, script) = setup();
     script.borrow_mut().acquire_ok = false;
-    let said = coord.turn(HUB, prepare(5, EXEC, 7));
+    let said = prepare_ready(&mut coord, 5);
     assert_eq!(said.state, BindingState::Preparing.code());
     assert_eq!(op(&coord).stage, Stage::Acquire);
     assert_eq!(op(&coord).serial, 5);
@@ -161,7 +185,7 @@ fn lost_acquire_ack_then_release_runs_iommu_cleanup_and_keeps_binding() {
 fn attach_error_after_core_owns_map_still_stops_and_detaches() {
     let (mut coord, script) = setup();
     script.borrow_mut().attach_ok = false;
-    let said = coord.turn(HUB, prepare(5, EXEC, 7));
+    let said = prepare_ready(&mut coord, 5);
     assert_eq!(said.state, BindingState::Preparing.code());
     assert_eq!(op(&coord).stage, Stage::Attach);
     assert!(op(&coord).bar.is_some());
@@ -176,7 +200,7 @@ fn attach_error_after_core_owns_map_still_stops_and_detaches() {
 fn failed_handoff_stays_handoff_and_never_re_enables() {
     let (mut coord, script) = setup();
     handoff::fail();
-    let said = coord.turn(HUB, prepare(5, EXEC, 7));
+    let said = prepare_ready(&mut coord, 5);
     assert_eq!(said.state, BindingState::Preparing.code());
     assert_eq!(op(&coord).stage, Stage::Handoff);
     assert_eq!(
@@ -190,7 +214,7 @@ fn failed_handoff_stays_handoff_and_never_re_enables() {
     );
 
     handoff::reset();
-    let said = coord.turn(HUB, prepare(5, EXEC, 7));
+    let said = prepare_ready(&mut coord, 5);
     assert_eq!(said.state, BindingState::Active.code());
     assert_eq!(op(&coord).stage, Stage::Active);
     assert_eq!(
@@ -267,7 +291,7 @@ fn retry_reuses_retained_bar_and_does_not_place_again() {
     );
 
     script.borrow_mut().attach_ok = true;
-    coord.turn(HUB, prepare(5, EXEC, 7));
+    prepare_ready(&mut coord, 5);
     assert_eq!(
         script.borrow().actions.iter().filter(|a| **a == Action::PciPlace).count(),
         1
@@ -284,7 +308,7 @@ fn retry_reuses_retained_bar_and_does_not_place_again() {
 fn failed_push_reuses_the_same_writer_without_reenabling() {
     let (mut coord, script) = setup();
     handoff::push_ok(false);
-    coord.turn(HUB, prepare(5, EXEC, 7));
+    prepare_ready(&mut coord, 5);
     let writer = op(&coord).handoff;
     assert!(writer.is_some());
     assert_eq!(op(&coord).stage, Stage::Handoff);
@@ -301,7 +325,7 @@ fn failed_push_reuses_the_same_writer_without_reenabling() {
 #[test]
 fn failed_writer_reclamation_retains_its_handle_and_blocks_closed_reply() {
     let (mut coord, script) = setup();
-    coord.turn(HUB, prepare(5, EXEC, 7));
+    prepare_ready(&mut coord, 5);
     let writer = op(&coord).handoff;
     handoff::release_ok(false);
     let said = drive_release(&mut coord, release(5, EXEC, 2));
@@ -314,13 +338,13 @@ fn failed_writer_reclamation_retains_its_handle_and_blocks_closed_reply() {
     drive_release(&mut coord, release(5, EXEC, 2));
     assert_eq!(op(&coord).handoff, None);
     assert_eq!(op(&coord).stage, Stage::Done);
-    assert_eq!(handoff::releases(), 1);
+    assert_eq!(handoff::releases(), 2);
 }
 
 #[test]
 fn cached_bar_responsibility_survives_closed_binding_and_the_next_prepare() {
     let (mut coord, script) = setup();
-    coord.turn(HUB, prepare(5, EXEC, 7));
+    prepare_ready(&mut coord, 5);
     let bar = op(&coord).bar;
     drive_release(&mut coord, release(5, EXEC, 1));
     assert_eq!(op(&coord).bar, bar);
@@ -341,7 +365,7 @@ fn a_foreign_device_key_or_invalid_reason_cannot_create_a_cleanup_record() {
     assert_ne!(coord.turn(HUB, release(5, EXEC, 0)).status, wire::OK);
     assert!(coord.operation.is_none());
     assert!(script.borrow().actions.is_empty());
-    coord.turn(HUB, prepare(5, EXEC, 7));
+    prepare_ready(&mut coord, 5);
     let count = script.borrow().actions.len();
     assert_ne!(coord.turn(HUB, release(5, EXEC, 0)).status, wire::OK);
     assert_eq!(op(&coord).stage, Stage::Active);
@@ -352,7 +376,7 @@ fn a_foreign_device_key_or_invalid_reason_cannot_create_a_cleanup_record() {
 #[test]
 fn each_release_yields_after_one_effect_and_retains_the_next_stage() {
     let (mut coord, script) = setup();
-    coord.turn(HUB, prepare(5, EXEC, 7));
+    prepare_ready(&mut coord, 5);
     let count = script.borrow().actions.len();
     let said = coord.turn(HUB, release(5, EXEC, 1));
     assert_eq!(said.state, BindingState::Closing.code());
@@ -365,4 +389,44 @@ fn each_release_yields_after_one_effect_and_retains_the_next_stage() {
     assert_eq!(op(&coord).stage, Stage::Quiesce);
     assert_eq!(script.borrow().actions[count..],
         [Action::IommuInvalidate, Action::PciDisable, Action::CoreStop]);
+}
+
+#[test]
+fn explicit_supply_requires_the_exact_work_and_binding_and_is_immutable_on_retry() {
+    use crate::client::{Supply, Wire as Client, SUPPLY};
+    let (mut coord, script) = setup();
+    let first = coord.turn(HUB, prepare(5, EXEC, 7));
+    assert_eq!(first.state, BindingState::Preparing.code());
+    assert_eq!(first.client, PieToken::mint(0xc2));
+    let endpoint = op(&coord).client;
+    assert_eq!(op(&coord).stage, Stage::Acquire);
+    assert!(op(&coord).source.is_none());
+    assert!(script.borrow().iommu.is_empty(), "no ambient gift acquisition while awaiting Supply");
+    let frame = Supply { op: SUPPLY, hub: HUB, serial: 5, source: PieToken::mint(0xd1),
+        access: env::Access::FETCH_STORE.bits().bits(), back: PieToken::mint(1) };
+    for (from, changed) in [
+        (TaskId::new(17), frame),
+        (EXEC, Supply { hub: TaskId::new(17), ..frame }),
+        (EXEC, Supply { serial: 6, ..frame }),
+        (EXEC, Supply { source: PieToken::NONE, ..frame }),
+        (EXEC, Supply { access: 0, ..frame }),
+    ] {
+        assert_ne!(coord.client(from, Client::Supply(changed)).status, wire::OK);
+        assert!(op(&coord).source.is_none());
+    }
+    assert_eq!(coord.turn(HUB, prepare(5, EXEC, 7)).client, first.client);
+    assert_eq!(op(&coord).client, endpoint);
+    assert_eq!(coord.client(EXEC, Client::Supply(frame)).status, wire::OK);
+    assert_eq!(coord.client(EXEC, Client::Supply(frame)).status, wire::OK);
+    let changed = Supply { source: PieToken::mint(0xd2), ..frame };
+    assert_ne!(coord.client(EXEC, Client::Supply(changed)).status, wire::OK);
+    assert_eq!(op(&coord).source, Some((frame.source, frame.access)));
+    assert_eq!(coord.turn(HUB, prepare(5, EXEC, 7)).state, BindingState::Active.code());
+    assert_eq!(coord.client(EXEC, Client::Supply(frame)).status, wire::OK,
+        "a lost Supply acknowledgement may arrive after activation");
+    coord.turn(HUB, release(5, EXEC, 2));
+    assert_ne!(coord.client(EXEC, Client::Supply(frame)).status, wire::OK);
+    assert_eq!(op(&coord).source, Some((frame.source, frame.access)));
+    drive_release(&mut coord, release(5, EXEC, 2));
+    assert!(op(&coord).client.is_none());
 }
