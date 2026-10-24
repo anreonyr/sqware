@@ -8,3 +8,4 @@ pub mod router;
 pub mod rtc;
 pub mod shared;
 pub mod uart;
+pub mod virtio;

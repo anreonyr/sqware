@@ -12,3 +12,10 @@ pub mod launch;
 pub mod returned;
 #[path = "../../../src/service/hub/serve/execution.rs"]
 pub mod execution;
+
+#[path = "../../../src/service/hub/serve/binding_rpc.rs"]
+mod binding_rpc;
+#[path = "../../../src/service/hub/serve/coordination.rs"]
+mod coordination;
+#[cfg(test)]
+mod adapter_cases;

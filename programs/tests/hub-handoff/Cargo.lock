@@ -41,6 +41,7 @@ dependencies = [
  "env",
  "hub-api",
  "system-api",
+ "wire",
 ]
 
 [[package]]

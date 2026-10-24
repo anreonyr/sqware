@@ -12,6 +12,7 @@
 mod handoff;
 pub mod dma;
 mod service;
+mod pci_probe;
 
 use alloc::format;
 

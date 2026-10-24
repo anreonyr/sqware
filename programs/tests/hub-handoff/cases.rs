@@ -14,6 +14,7 @@ const NOW: u64 = 1_000;
 fn peers() -> Peers {
     Peers {
         control: ControlFace,
+        coord: serve::peers::CoordFace,
     }
 }
 
@@ -153,25 +154,37 @@ fn closing_binding_requests_release_before_hardware_finishes() {
     let mut ledger = ledger();
     ledger.admit(TASK, u64::MAX).unwrap();
     ledger.prepare_enrollment(TaskId::new(2), hub_api::Enroll {
-        op: hub_api::DMA_ENROLL, requester: 0, line: 7,
+        op: hub_api::DMA_ENROLL, key: 0, line: 7,
         name: "disk".into(), class: "virtio-blk".into(), back: env::PieToken::NONE,
     }).unwrap();
-    assert_eq!(ledger.advance_enrollment(0, &mut enrollment::Enrollment), Some(Ok(())));
+    let device = hub_api::DeviceId { source: TaskId::new(2), key: 0 };
+    assert_eq!(ledger.advance_enrollment(device, &mut enrollment::Enrollment), Some(Ok(())));
     let binding = ledger.claim(core::ClaimRequest {
-        from: TASK, id: 1, requester: 0,
-        sensor: env::PieToken::mint(TASK.get()), recovery: TaskId::new(3),
+        from: TASK, id: 1, device,
+        sensor: env::PieToken::mint(TASK.get()),
     }).unwrap();
     ledger.close(binding.serial, hub_api::Close::Normal).unwrap();
     assert_eq!(ledger.open_bindings_for(TASK), 1);
+    ledger.settle();
     let mut executions = Executions::try_new().unwrap();
     let peers = peers();
     backend::reset();
 
+    executions.settle(&mut ledger);
     assert!(executions.closed(&mut ledger, TASK));
+    assert!(!executions.target_received(TASK));
     executions.advance(&mut ledger, &peers, NOW);
     assert_eq!(backend::began(Kind::Release), 1);
     assert!(executions.has_return(TASK));
     assert!(ledger.admission(TASK).is_some());
+    assert!(!executions.target_received(TASK));
+    assert_eq!(ledger.binding(binding.serial).unwrap().state, hub_api::BindingState::Closing);
+    assert!(executions.target(&mut ledger, TASK));
+    let mut crossed = 0;
+    assert_eq!(ledger.stop_target(TASK, |_| crossed += 1), 1);
+    assert_eq!(crossed, 1);
+    assert!(executions.target_received(TASK));
+    assert_eq!(ledger.binding(binding.serial).unwrap().state, hub_api::BindingState::Closing);
 }
 
 #[test]
@@ -188,13 +201,76 @@ fn full_return_queue_keeps_responsibility_until_a_slot_is_reliable() {
     assert!(executions.has_return(TASK));
     assert!(!executions.has_return(TASK2));
     assert!(ledger.admission(TASK2).is_some());
+    assert!(!ledger.admission(TASK2).unwrap().closed());
+    assert!(!executions.target_received(TASK2));
 
     backend::script_release(Ok(Some(ok_said(TASK, State::Dead))));
     executions.advance(&mut ledger, &peers, NOW);
     executions.advance(&mut ledger, &peers, NOW);
     executions.advance(&mut ledger, &peers, NOW);
-    assert!(executions.has_return(TASK2));
+    assert!(!executions.has_return(TASK2));
     assert!(ledger.admission(TASK2).is_some());
+    assert!(executions.target(&mut ledger, TASK2));
+    assert!(executions.has_return(TASK2));
+    assert!(executions.target_received(TASK2));
+    assert!(ledger.admission(TASK2).unwrap().closed());
+}
+
+#[test]
+fn closed_expired_and_global_settlement_returns_do_not_prove_cpu_stop() {
+    backend::reset();
+    let mut ledger = ledger();
+    ledger.admit(TASK, NOW).unwrap();
+    ledger.admit(TASK2, u64::MAX).unwrap();
+    let mut executions = Executions::try_new().unwrap();
+    executions.advance(&mut ledger, &peers(), NOW + 1);
+    assert!(executions.has_return(TASK));
+    assert!(!executions.target_received(TASK));
+    assert!(executions.closed(&mut ledger, TASK2));
+    assert!(!executions.target_received(TASK2));
+    ledger.settle();
+    executions.settle(&mut ledger);
+    assert!(!executions.target_received(TASK));
+    assert!(!executions.target_received(TASK2));
+    assert!(executions.target(&mut ledger, TASK));
+    assert!(executions.target_received(TASK));
+    assert!(executions.closed(&mut ledger, TASK));
+    executions.settle(&mut ledger);
+    assert!(executions.target_received(TASK));
+    assert!(!executions.target_received(TASK2));
+}
+
+#[test]
+fn rejected_owner_discovery_keeps_target_proof_while_a_binding_is_open() {
+    backend::reset();
+    let mut ledger = ledger();
+    let mut executions = Executions::try_new().unwrap();
+    // Target arrival precedes admission discovery; its owner is still unconfirmed.
+    assert!(executions.target(&mut ledger, TASK));
+    ledger.admit(TASK, u64::MAX).unwrap();
+    ledger.prepare_enrollment(TaskId::new(2), hub_api::Enroll {
+        op: hub_api::DMA_ENROLL, key: 0, line: 7,
+        name: "disk".into(), class: "virtio-blk".into(), back: env::PieToken::NONE,
+    }).unwrap();
+    let device = hub_api::DeviceId { source: TaskId::new(2), key: 0 };
+    assert_eq!(ledger.advance_enrollment(device, &mut enrollment::Enrollment), Some(Ok(())));
+    let binding = ledger.claim(core::ClaimRequest {
+        from: TASK, id: 1, device,
+        sensor: env::PieToken::mint(TASK.get()),
+    }).unwrap();
+    backend::script_inspect(Ok(Some(fail_said(Fail::Denied))));
+    executions.advance(&mut ledger, &peers(), NOW);
+    executions.advance(&mut ledger, &peers(), NOW);
+    assert_eq!(backend::began(Kind::Release), 0);
+    assert_eq!(ledger.open_bindings_for(TASK), 1);
+    assert!(executions.has_return(TASK));
+    assert!(executions.target_received(TASK));
+    ledger.finish(binding.serial);
+    backend::script_inspect(Ok(Some(fail_said(Fail::Denied))));
+    executions.advance(&mut ledger, &peers(), NOW);
+    executions.advance(&mut ledger, &peers(), NOW);
+    assert!(!executions.has_return(TASK));
+    assert!(!executions.target_received(TASK));
 }
 
 #[test]

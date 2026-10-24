@@ -16,7 +16,7 @@ use core::sync::atomic::Ordering;
 use env::{EXIT_OK, PAGE_SIZE, PieToken, TaskId, TeamId};
 use resource::dock::Dock;
 
-use crate::driver::pci::virtio::{Caps, Virtio};
+use crate::driver::virtio::{Caps, Virtio};
 
 use super::dma::await_used_at;
 use super::handoff::HANDOFF;

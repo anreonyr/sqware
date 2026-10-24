@@ -3,6 +3,8 @@
 extern crate alloc;
 
 pub mod coord;
+pub mod coordination;
+pub mod device_id;
 pub mod frame;
 pub mod grant;
 pub mod marks;
@@ -12,6 +14,7 @@ pub use coord::{
     LAUNCH_MARK,
 };
 pub use frame::{code_to_fail, fail_to_code};
+pub use device_id::DeviceId;
 
 pub use frame::{
     ALIVE_MARK, BACK_MARK, BAD, BOND, BOOT, CLAIM, DEAD, DENIED, DTB, Deed, Fail, INVENTORY_MAX,
@@ -19,7 +22,7 @@ pub use frame::{
     UNKNOWN, Window, Wire, inventory_slot,
 };
 pub use frame::{
-    BindingId, BindingState, Close, CloseBinding, DeviceId, DmaCall, DmaClaim, DmaSaid,
+    BindingId, BindingState, Close, CloseBinding, DmaCall, DmaClaim, DmaSaid,
     DmaWire, Enroll, Failure, Inspect, Settle, DMA_BACK, DMA_CLAIM, DMA_CLOSE, DMA_ENROLL, DMA_INSPECT, DMA_SETTLE, PARTY_CONTROL, PARTY_HUB, PARTY_IOMMU, PARTY_PCI,
     PARTY_RECOVERY,
 };

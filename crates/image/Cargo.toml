@@ -28,6 +28,7 @@ elf = { version = "0.8", default-features = false }
 router-api = { path = "../../programs/src/driver/router/api" }
 pipe-api = { path = "../../programs/src/service/pipe/api" }
 account-api = { path = "../../programs/src/service/account/api" }
+hub-api = { path = "../../programs/src/service/hub/api" }
 
 [[bin]]
 name = "sqware-image"

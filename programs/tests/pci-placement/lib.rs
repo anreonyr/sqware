@@ -34,18 +34,28 @@ pub mod dock;
 
 #[path = "../../src/driver/pci/api.rs"]
 pub mod pci_api;
+pub use pci_api as api;
+#[path = "../../src/driver/pci/bar.rs"]
+pub mod bar;
 #[path = "../../src/driver/pci/endpoint.rs"]
 pub mod endpoint;
+#[path = "../../src/driver/pci/function_state.rs"]
+pub mod function_state;
+#[path = "../../src/driver/pci/place_request.rs"]
+pub mod place_request;
 #[path = "../../src/driver/pci/placement.rs"]
 pub mod placement;
-#[path = "../../src/driver/pci/virtio.rs"]
-pub mod virtio;
+#[path = "../../src/driver/pci/reader.rs"]
+pub mod reader;
 #[path = "../../src/driver/pci/core.rs"]
 pub mod pci_core;
 
 pub mod driver {
     pub mod pci {
-        pub use crate::{ecam, endpoint, pci_api as api, placement, virtio};
+        pub use crate::{
+            api, bar, ecam, endpoint, function_state, pci_core as core, place_request, placement,
+            reader,
+        };
     }
     pub mod shared {
         pub use crate::platform;
@@ -88,3 +98,4 @@ pub mod hole {
 }
 
 mod cleanup;
+mod multibar;

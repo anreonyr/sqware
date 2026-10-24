@@ -80,7 +80,7 @@ def verify(console, held_console, events, held_events, block, feed, target, hart
     assert all(record.start() < submitted.start() for record in drivers.values())
     published = one(console, r"^iommu: binding 1 published requester=\d+ held=6 ddtp=0x[0-9a-f]+$")
     master = one(console, r"^pci: endpoint bus-master on=0x4$")
-    active = one(console, r"^hub: binding 1 active \(business released\) iova=0x[0-9a-f]+$")
+    active = one(console, r"^recovery: binding 1 active iova=0x[0-9a-f]+ execution=\d+$")
     doorbell = one(console, r"^work: rang the in-flight request doorbell$")
     assert published.start() < master.start() < active.start() < doorbell.start() < submitted.start(), (
         "DMA publication/submission out of order"

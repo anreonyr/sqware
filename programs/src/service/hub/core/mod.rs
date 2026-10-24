@@ -20,7 +20,6 @@ mod leagues;
 mod ledger;
 mod owner;
 
-pub use binding::Step;
 pub use claim_request::ClaimRequest;
 pub use cell::Cell;
 pub use enrollment::Enrollment;

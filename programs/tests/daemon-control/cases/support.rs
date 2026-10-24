@@ -21,6 +21,7 @@ pub fn reset() {
 pub fn program(name: &'static str, supervision: Option<&'static str>) -> &'static UnitFile {
     Box::leak(Box::new(UnitFile {
         name,
+        operator: crate::fixtures::operator_config::OperatorConfig { namespace: &[] },
         control: ControlConfig {
             supervision,
             after: None,
@@ -35,6 +36,7 @@ pub fn programmed(
 ) -> &'static UnitFile {
     Box::leak(Box::new(UnitFile {
         name,
+        operator: crate::fixtures::operator_config::OperatorConfig { namespace: &[] },
         control: ControlConfig { supervision, after },
     }))
 }

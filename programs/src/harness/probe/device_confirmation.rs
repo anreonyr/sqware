@@ -12,6 +12,7 @@ pub(crate) const ACK: env::Mark = env::Mark::of("device-confirmation/ack");
 pub fn run() -> Result<(), env::Reason> {
     let boot = app::bootstrap::take().map_err(|why| why.code())?;
     let primitive = boot.catalog.deployment() == "iommu-fail-reference";
+    let before_stop = boot.catalog.deployment() == "iommu-fail-reset";
     let (party, op, target) = match boot.catalog.deployment() {
         "iommu-fail-invalidate" => (
             hub_api::PARTY_IOMMU,
@@ -19,8 +20,8 @@ pub fn run() -> Result<(), env::Reason> {
             "iommu",
         ),
         "iommu-fail-reset" => (
-            hub_api::PARTY_RECOVERY,
-            crate::driver::recovery::api::STOP,
+            hub_api::PARTY_HUB,
+            hub_api::coordination::RELEASE,
             "recovery",
         ),
         "iommu-fail-release" | "iommu-fail-reference" => (
@@ -42,6 +43,7 @@ pub fn run() -> Result<(), env::Reason> {
             op,
             target,
             primitive,
+            before_stop,
             injection: env::hole::unseal(
                 env::Mark::of("confirmation/injection"),
                 env::HoleLimits::default(),
@@ -79,19 +81,23 @@ fn prepare(mut state: ResMut<State>, control: Res<Control>) -> Result<Progress, 
         return Err(app::Fault::Room);
     }
     let hub = control.task("hub").ok_or(app::Fault::Room)?;
+    let coordinator = control.task("recovery").ok_or(app::Fault::Room)?;
     let target = control.task(state.target).ok_or(app::Fault::Room)?;
     let retainer = control.task("iommu").ok_or(app::Fault::Room)?;
     let bytes = injection::command(
         state.phase == 0,
-        hub.get(),
+        if state.before_stop { hub.get() } else { coordinator.get() },
         target.get(),
-        if state.primitive {
+        if state.before_stop {
+            injection::BEFORE_DEVICE_STOP
+        } else if state.primitive {
             injection::REFERENCE_RELEASE
         } else {
             u64::from(state.op)
         },
         1,
         retainer.get(),
+        if state.before_stop { control.task("pci").ok_or(app::Fault::Room)?.get() } else { 0 },
     );
     let injection = resource::raw::Hole::from_raw(state.injection);
     injection

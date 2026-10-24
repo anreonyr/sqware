@@ -1,108 +1,129 @@
-//! 设备恢复那一台的常驻面：上树落牌，然后一枚一枚答门上的问。
-//!
-//! 三手都只接受**协调入口**（Hub）那一台的请求；BAR 窗的来源（PCI 那一台）在起手时
-//! 从树上认一次。本台不进 α 的 Team 子树：一笔责任结清不要求本台退出。
+//! Device protocol selection and binding coordination in the independent Driver.
 
-use env::{HoleLimits, PieToken, TaskId, Wait};
-use ipc::rpc::request::Receiver;
-use ipc::session::establish;
+use env::{HoleLimits, PieToken, Wait};
+use hub_api::{DmaCall, DmaWire, Enroll, Grant, DMA_BACK, DMA_ENROLL};
+use hub_api::coordination::{self, Call};
+use ipc::{rpc::request::Receiver, session::establish};
 use system_api::operator::Path;
 use system_client::operator;
 
-use crate::driver::recovery::api::{self, Call};
-use crate::driver::recovery::core::{AttachRequest, Core};
-use crate::driver::shared::context::{Context, Step};
-use crate::driver::shared::dma::HubDma;
-use crate::driver::shared::peer::Peer;
+use crate::driver::pci::{api as pci, inspection};
+use crate::driver::iommu::api as iommu;
+use crate::driver::shared::{context::{Context, Step}, lookup, peer::Peer};
+use crate::driver::virtio::Caps;
+use super::{coord::Coordinator, core::Core, profile::Profile};
 
-/// 等树 / 认一次门面的上限（毫秒）。
 const MS: usize = 2000;
 
-/// 本台那一台的身子。
 pub fn serve() -> Result<(), &'static str> {
     let sire = env::unit::sire();
     let ctx = Context::open(sire, Wait::AtMost(MS)).map_err(|s| match s {
         Step::Tree => "recovery: tree",
     })?;
     let tree = operator::Face::from(&ctx.session);
-    let hub = HubDma::find(&tree, Wait::AtMost(MS))?;
-    // BAR 窗的来源：PCI 那一台那一扇门。
-    let pci_road = Path::new("pci/entry");
-    let pci = Peer::<crate::driver::pci::api::Call>::find(
-        &tree,
-        pci_road,
-        crate::driver::pci::api::Call::BACK,
-        Wait::AtMost(MS),
-    )?;
-    let core = Core::new(pci.host());
-    let entry =
-        env::hole::unseal(api::ENTRY, HoleLimits::default()).map_err(|_| "recovery: entry")?;
-    ctx.plate(entry, api::ENTRY_NAME, Wait::AtMost(MS));
-    let _ = establish::lend(sire, crate::unit::READY_MARK);
+    let entry = env::hole::unseal(coordination::call::ENTRY, HoleLimits::default())
+        .map_err(|_| "recovery: entry")?;
+    ctx.plate(entry, "coord", Wait::AtMost(MS));
+    // Publishing readiness precedes peer discovery: authenticated publisher lookup
+    // requires a live Ready slot, and Hub also discovers this coordination face.
+    establish::lend(sire, crate::unit::READY_MARK).map_err(|_| "recovery: ready")?;
+
+    let mut held = None;
+    let state = loop {
+        match lookup::state(&tree, sire, &mut held, Wait::AtMost(MS)) {
+            Ok(state) => break state,
+            Err(_) => pause(),
+        }
+    };
+    let hub = loop {
+        match lookup::peer::<DmaCall>(&tree, &state, Path::new("hub/dma"),
+            Grant::Dma.mark(), DMA_BACK, &mut held, Wait::AtMost(MS)) {
+            Ok(peer) => break peer,
+            Err(_) => pause(),
+        }
+    };
+    let pci = loop {
+        match lookup::peer::<pci::Call>(&tree, &state, Path::new("pci/entry"),
+            pci::ENTRY, pci::Call::BACK, &mut held, Wait::AtMost(MS)) {
+            Ok(peer) => break peer,
+            Err(_) => pause(),
+        }
+    };
+    let config = loop {
+        match lookup::peer::<inspection::Call>(&tree, &state, Path::new(inspection::ENTRY_PATH),
+            inspection::ENTRY, inspection::BACK, &mut held, Wait::AtMost(MS)) {
+            Ok(peer) => break peer,
+            Err(_) => pause(),
+        }
+    };
+    if config.host() != pci.host() { return Err("recovery: PCI configuration owner"); }
+    let iommu = loop {
+        match lookup::peer::<iommu::Call>(&tree, &state, Path::new("iommu/entry"),
+            iommu::ENTRY, iommu::Call::BACK, &mut held, Wait::AtMost(MS)) {
+            Ok(peer) => break peer,
+            Err(_) => pause(),
+        }
+    };
+    let profile = discover(&config)?;
+    loop {
+        let said = hub.call(Wait::AtMost(MS), |back| DmaWire::Enroll(Enroll {
+            op: DMA_ENROLL, key: profile.key, line: 0,
+            name: "virtio-blk-pci".into(), class: "virtio-blk".into(), back,
+        }));
+        match said {
+            Ok(said) if said.status == wire::OK => break,
+            Ok(said) if said.status != hub_api::fail_to_code(Some(hub_api::Fail::Full)) =>
+                return Err("recovery: enrollment denied"),
+            _ => pause(),
+        }
+    }
     crate::debug::put(&alloc::format!(
-        "recovery: ready hub={} pci={}",
-        hub.host().get(),
-        pci.host().get(),
+        "recovery: ready hub={} pci={} requester={} key={}",
+        hub.host().get(), pci.host().get(), profile.requester, profile.key,
     ));
-    run(entry, hub.host(), core)
+    let core = Core::new(pci.host());
+    run(entry, Coordinator::new(hub.host(), pci, iommu, core, profile))
 }
 
-/// 常驻那一圈：一枚门、一问一答。
-fn run(entry: PieToken, hub: TaskId, mut core: Core) -> Result<(), &'static str> {
+fn discover(config: &Peer<inspection::Call>) -> Result<Profile, &'static str> {
+    let mut cursor = 0;
+    loop {
+        let page = config.call(Wait::AtMost(MS), |back| inspection::Scan { from: cursor, back })
+            .map_err(|_| "recovery: configuration scan")?;
+        if page.status != wire::OK { return Err("recovery: configuration refused"); }
+        if page.count != 0 {
+            let vendor = u16::from_le_bytes([page.bytes[0], page.bytes[1]]);
+            let device = u16::from_le_bytes([page.bytes[2], page.bytes[3]]);
+            if vendor == 0x1af4 && matches!(device, 0x1001 | 0x1042) {
+                let (bar, caps) = Caps::read(&page.bytes)?;
+                return Ok(Profile { key: 1, requester: page.requester, bar, caps: caps.parts() });
+            }
+        }
+        if page.end == inspection::EOF { return Err("recovery: virtio block absent"); }
+        if page.next <= cursor { return Err("recovery: scan did not advance"); }
+        cursor = page.next;
+    }
+}
+
+fn run(entry: PieToken, mut coordinator: Coordinator) -> Result<(), &'static str> {
     let receiver = Receiver::<Call>::from_raw(entry, Call::BACK, Call::back);
-    let mut buffer = [0u8; api::Wire::LEN];
+    let mut buffer = [0u8; coordination::Wire::LEN];
     loop {
         let incoming = match receiver.receive(&mut buffer, Wait::Forever) {
             Ok(incoming) => incoming,
             Err(rejected) => {
-                if matches!(
-                    rejected.fail,
-                    ipc::rpc::Fail::Receive(error)
-                        if matches!(error, env::HoleFail::Dead | env::HoleFail::Denied)
-                ) {
-                    return Err("recovery: door dead");
-                }
-                let _ = execution::room::park(::core::time::Duration::from_millis(1));
+                if matches!(rejected.fail, ipc::rpc::Fail::Receive(
+                    env::HoleFail::Dead | env::HoleFail::Denied
+                )) { return Err("recovery: door dead"); }
+                pause();
                 continue;
             }
         };
-        let said = turn(&mut core, hub, incoming.from, incoming.request);
+        let said = coordinator.turn(incoming.from, incoming.request);
         let _ = incoming.reply.send(said);
     }
 }
 
-/// 一问 → 一答；不是协调入口发来的，一律拒。
-fn turn(core: &mut Core, hub: TaskId, from: TaskId, wire: api::Wire) -> api::Said {
-    if from != hub {
-        return api::Said::of(api::fail_to_code(Some(api::Fail::Denied)));
-    }
-    match wire {
-        api::Wire::Attach(attach) => {
-            let request = AttachRequest {
-                serial: attach.serial,
-                execution: attach.execution,
-                bar: attach.bar,
-                pages: attach.pages,
-                common: attach.common,
-                notify: attach.notify,
-                multiplier: attach.multiplier,
-                device: attach.device,
-            };
-            match core.attach(request) {
-                Ok(()) => api::Said::of(wire::OK),
-                Err(fail) => api::Said::of(api::fail_to_code(Some(fail))),
-            }
-        }
-        api::Wire::Stop(step) => match core.stop(step.serial) {
-            Ok(device) => api::Said {
-                status: wire::OK,
-                device,
-            },
-            Err(fail) => api::Said::of(api::fail_to_code(Some(fail))),
-        },
-        api::Wire::Detach(step) => match core.detach(step.serial) {
-            Ok(()) => api::Said::of(wire::OK),
-            Err(fail) => api::Said::of(api::fail_to_code(Some(fail))),
-        },
-    }
+fn pause() {
+    let _ = execution::room::park(::core::time::Duration::from_millis(1));
 }

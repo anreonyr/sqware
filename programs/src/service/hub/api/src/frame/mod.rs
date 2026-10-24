@@ -21,7 +21,7 @@ pub mod vocab;
 pub use self::bond::*;
 pub use self::claim::*;
 pub use self::dma::{
-    BindingId, BindingState, Close, CloseBinding, DeviceId, DmaClaim, DmaSaid, DmaWire,
+    BindingId, BindingState, Close, CloseBinding, DmaClaim, DmaSaid, DmaWire,
     Enroll, Failure, Inspect, Settle, DMA_BACK, DMA_CLAIM, DMA_CLOSE, DMA_ENROLL,
     DMA_INSPECT, DMA_SETTLE, PARTY_CONTROL, PARTY_HUB, PARTY_IOMMU, PARTY_PCI, PARTY_RECOVERY,
 };

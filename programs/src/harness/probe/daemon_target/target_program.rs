@@ -20,7 +20,7 @@ pub static PROGRAM: UnitFile = UnitFile {
                 .union(system_api::operator::Ops::UNBIND)
                 .union(system_api::operator::Ops::FIND),
             permit: Some(system_api::operator::Permit::Public),
-            source_mark: None,
+            source_mark: Some(api::ENTRY_MARK.get()),
             bindings: &[crate::unit::operator::Binding {
                 name: api::ENTRY_NAME,
                 mark: api::ENTRY_MARK,

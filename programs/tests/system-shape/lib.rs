@@ -157,7 +157,7 @@ mod boundaries {
         driver_files.sort();
         let mut expected = vec![
             "api.rs", "binding.rs", "bindings.rs", "context.rs", "core.rs", "fence.rs",
-            "handshake.rs", "main.rs", "mod.rs", "order.rs", "outstanding.rs", "pages.rs",
+            "handshake.rs", "main.rs", "marks.rs", "mod.rs", "order.rs", "outstanding.rs", "pages.rs",
             "phase.rs", "program.rs", "queue.rs", "references.rs", "regs.rs", "serve.rs",
             "settled.rs", "table.rs",
         ];
@@ -213,7 +213,10 @@ mod boundaries {
         // 认领走设备门牌与类联盟（不自报设备号、不开放设备清单）。
         assert!(dma.contains("device_by_door("));
         assert!(!dma.contains("claim.requester"));
-        assert!(dma.contains("peers.registered(\"pci\""));
+        assert!(dma.contains("peers.coord.host() != from"));
+        assert!(!dma.contains("crate::driver::pci::"));
+        let coordination = fs::read_to_string(src.join("service/hub/serve/coordination.rs")).unwrap();
+        assert!(coordination.contains("binding.device.source != peers.coord.host()"));
         let claim_frame = fs::read_to_string(src.join("service/hub/api/src/frame/dma.rs")).unwrap();
         assert!(!claim_frame.contains("pub requester: u32,\n    pub sensor"));
     }

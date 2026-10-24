@@ -9,7 +9,9 @@ use env::{PieToken, TaskId};
 use wire::{Message, OK};
 
 /// 本台那一扇门在树上的坐标。
-pub const ENTRY: env::Mark = env::Mark::of("iommu/entry");
+#[path = "marks.rs"]
+mod marks;
+pub use marks::ENTRY;
 pub const ENTRY_NAME: &str = "entry";
 pub const ENTRY_PATH: &str = "iommu/entry";
 
@@ -107,11 +109,13 @@ impl Message for Wire {
 
 /// 一答：状态 ＋ 还要不要再推一格 ＋ 此刻还持有几页帧。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-#[frame(len = 16)]
+#[frame(len = 24)]
 pub struct Said {
     pub status: u8,
     pub pending: u8,
     pub held: u32,
+    /// Actual IOVA base accepted by the IOMMU for this binding.
+    pub iova: u64,
 }
 
 impl Said {
@@ -119,6 +123,7 @@ impl Said {
         status: 0,
         pending: 0,
         held: 0,
+        iova: 0,
     };
 
     pub const fn of(status: u8) -> Self {

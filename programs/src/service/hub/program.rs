@@ -24,7 +24,7 @@ pub static PROGRAM: UnitFile = UnitFile {
                 key: system_api::namespace::SERVICE,
                 placement: crate::unit::operator::Placement::Shared,
                 path: "hub",
-                scope: crate::unit::operator::Scope::Subtree,
+                scope: crate::unit::operator::Scope::Names(&["bond", "list", "claim", "retire"]),
                 ops: system_api::operator::Ops::BIND
                     .union(system_api::operator::Ops::UNBIND)
                     .union(system_api::operator::Ops::FIND),
@@ -44,6 +44,16 @@ pub static PROGRAM: UnitFile = UnitFile {
                     .union(system_api::operator::Ops::FIND),
                 permit: None,
                 source_mark: None,
+                bindings: &[],
+            },
+            crate::unit::operator::Namespace {
+                key: system_api::namespace::SERVICE,
+                placement: crate::unit::operator::Placement::Shared,
+                path: "hub",
+                scope: crate::unit::operator::Scope::Names(&["dma"]),
+                ops: system_api::operator::Ops::BIND,
+                permit: Some(system_api::operator::Permit::Public),
+                source_mark: Some(hub_api::Grant::Dma.mark().get()),
                 bindings: &[],
             },
         ],

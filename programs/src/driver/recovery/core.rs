@@ -6,7 +6,7 @@
 use env::{Permission, PieKind, TaskId};
 use resource::dock::Dock;
 
-use crate::driver::pci::virtio;
+use crate::driver::virtio;
 use crate::driver::recovery::api;
 use crate::driver::recovery::device::Device;
 use crate::driver::shared::dma;

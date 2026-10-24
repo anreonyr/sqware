@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 from hardware import CQB, CQCSR, CQT, MEM_FAULT, regions
-from ruin_check import one, reaps, tasks
+from ruin_check import identity, one, reaps, tasks
 from trace import check as execution
 
 
@@ -17,7 +17,7 @@ def pending(console, events):
     one(console, r"iommu: binding 1 acquired requester=\d+ pages=6 iova=0x[0-9a-f]+")
     one(console, r"ctl: served used=1 len=513 written_ok=true sector_ok=true status=0")
     one(console, r"iommu: binding 1 invalidate fence expired frames held=6")
-    one(console, r"hub: binding 1 step failed party=3 op=3 code=4 \(holding\)")
+    one(console, r"recovery: binding 1 stage Invalidate failed party=3 op=3 code=4")
     for service in ("hub", "pci", "iommu", "recovery", "device-ctl-fault"):
         task = int(one(console, rf"system: minted {service} tid=(\d+)")[1])
         assert task not in retired, f"{service} reaped during hardware failure"
@@ -82,6 +82,7 @@ def hardware(data, dts):
 def check(console_path, events_path, capture_path):
     capture = Path(capture_path)
     console = Path(console_path).read_text()
+    _, key = identity(console)
     events = [json.loads(line) for line in Path(events_path).read_text().splitlines()]
     failed = capture.with_suffix(".failed-console").read_text()
     failed_events = [
@@ -94,18 +95,18 @@ def check(console_path, events_path, capture_path):
     execution(console_path, events_path)
     ordered = (
         r"iommu: binding 1 invalidate fence expired frames held=6",
-        r"hub: binding 1 step failed party=3 op=3 code=4 \(holding\)",
+        r"recovery: binding 1 stage Invalidate failed party=3 op=3 code=4",
         r"iommu: binding 1 invalidated frames held=6 \(not released\)",
         r"pci: binding 1 disabling bus-master",
         r"recovery: binding 1 stopped reset=1 status=0 queue_enable=0",
         r"iommu: binding 1 queues stopped cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 faults=0 last_did=0",
         r"iommu: binding 1 released ddtp=0x0 cqcsr=0x0 fqcsr=0x0 pqcsr=0x0 queue_enable=0 frames=0 stopped=true",
         r"recovery: binding 1 detached",
-        r"hub: binding 1 closed and released device \d+",
+        rf"hub: binding 1 closed and released device {key}",
         r"ctl: closed binding 1 failure party=3 op=3 code=4",
-        r"hub: binding 2 active \(business released\) iova=0x[0-9a-f]+",
+        r"recovery: binding 2 active iova=0x[0-9a-f]+ execution=\d+",
         r"ctl: stale iova submitted sentinel_held=true status_held=true",
-        r"hub: binding 2 closed and released device \d+",
+        rf"hub: binding 2 closed and released device {key}",
         r"exit tid=\d+ reason=0x0 note: device-ctl: done",
         r"exit tid=\d+ reason=0x0 note: system: done",
         r"task: all tasks exited, system halted",

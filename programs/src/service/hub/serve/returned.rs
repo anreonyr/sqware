@@ -13,20 +13,30 @@ use super::return_reply::ReturnReply;
 pub(super) struct Return {
     task: TaskId,
     trusted: bool,
+    target_received: bool,
     pending: Option<Pending<Call>>,
 }
 
 impl Return {
-    pub(super) fn new(task: TaskId, trusted: bool) -> Self {
+    pub(super) fn new(task: TaskId, trusted: bool, target_received: bool) -> Self {
         Self {
             task,
             trusted,
+            target_received,
             pending: None,
         }
     }
 
     pub(super) fn task(&self) -> TaskId {
         self.task
+    }
+
+    pub(super) fn target(&mut self) {
+        self.target_received = true;
+    }
+
+    pub(super) fn target_received(&self) -> bool {
+        self.target_received
     }
 
     pub(super) fn trust(&mut self) {

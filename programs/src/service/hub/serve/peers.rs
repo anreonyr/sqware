@@ -1,88 +1,63 @@
-//! Hub 要用的那几面：三个硬件域（PCI／IOMMU／设备恢复）＋ Control 那一面。
-//!
-//! 每一面都是“树上查回来的门牌 ＋ 开者”，一问一答由 `ipc::rpc` 铸、交、核。
-//! 开者由内核给出（`opened_by`），Hub 不信报文里的自报。
-
-use env::{PieToken, TaskId, Wait};
+use env::{PieToken, Wait};
+use hub_api::coordination::{Call, call};
+use ipc::session::establish;
+use system_api::control::{self, Grant};
 use system_api::operator::Path;
-use system_client::control::{Face as ControlFace};
+use system_client::control::Face as ControlFace;
 use system_client::operator::Face;
 
-use crate::driver::pci::api::Call as PciCall;
-use crate::driver::recovery::api::Call as RecoveryCall;
 use crate::driver::shared::peer::Peer;
 
-/// 三个硬件域的门在服务名下的坐标。
-const PCI_ENTRY: &str = "pci/entry";
-const IOMMU_ENTRY: &str = "iommu/entry";
-const RECOVERY_ENTRY: &str = "recovery/entry";
-
 pub struct Peers {
-    pub pci: Peer<PciCall>,
-    pub iommu: Peer<crate::driver::iommu::api::Call>,
-    pub recovery: Peer<RecoveryCall>,
-    /// 实例面：停止/核销执行实例（按真实 owner 核）。
+    pub coord: Peer<Call>,
     pub control: ControlFace,
-    /// 登记面：按名字问 Control “这一条此刻是哪一枚真任务”（准入用）。
-    pub state: ControlFace,
+    _state: ControlFace,
 }
 
 impl Peers {
-    /// 树上把三台驱动那一扇门与 Control 两面都取回来。
-    pub fn find(tree: &Face, wait: Wait) -> Result<Self, &'static str> {
-        let pci = Peer::<PciCall>::find(tree, Path::new(PCI_ENTRY), PciCall::BACK, wait).map_err(|_| "pci")?;
-        let iommu = Peer::<crate::driver::iommu::api::Call>::find(
-            tree,
-            Path::new(IOMMU_ENTRY),
-            crate::driver::iommu::api::Call::BACK,
-            wait,
-        ).map_err(|_| "iommu")?;
-        let recovery = Peer::<RecoveryCall>::find(
-            tree,
-            Path::new(RECOVERY_ENTRY),
-            RecoveryCall::BACK,
-            wait,
-        ).map_err(|_| "recovery")?;
-        let service = tree
-            .resolve(system_api::namespace::SERVICE, wait)
-            .map_err(|_| "hub: service namespace")?;
-        let control = |name: &str| -> Result<ControlFace, &'static str> {
-            let road = system_api::control::DIR
-                .try_join(name)
-                .ok_or("hub: control road")?;
-            let token = tree
-                .tile_from(service, &road, wait)
-                .and_then(|tile| tile.token(wait))
-                .map_err(|_| "hub: control face")?;
-            ControlFace::of(token).map_err(|_| "hub: control face")
-        };
-        let instance = control("instance").map_err(|_| "control instance")?;
-        let state = control(system_api::control::Grant::State.name()).map_err(|_| "control state")?;
-        Ok(Self {
-            pci,
-            iommu,
-            recovery,
-            control: instance,
-            state,
-        })
+    /// Failed construction retains every imported reference in `held` for retry.
+    pub fn find(tree: &Face, wait: Wait, held: &mut [Option<PieToken>; 3]) -> Result<Self, &'static str> {
+        if held.iter().any(Option::is_some) {
+            return Err("hub: endpoint cleanup pending");
+        }
+        let state_road = control::DIR.try_join(Grant::State.name()).ok_or("hub: state road")?;
+        let state_entry = lookup(tree, &state_road, wait)?;
+        held[0] = Some(state_entry);
+        let state = ControlFace::of_owned(state_entry, env::unit::sire())
+            .map_err(|_| "hub: state owner")?;
+        if establish::marked_as(state_entry) != Some(Grant::State.mark()) {
+            return Err("hub: state mark");
+        }
+        let instance_entry = lookup(tree, control::INSTANCE, wait)?;
+        held[1] = Some(instance_entry);
+        let control = ControlFace::of_owned(instance_entry, env::unit::sire())
+            .map_err(|_| "hub: instance owner")?;
+        if establish::marked_as(instance_entry) != Some(system_api::control::ASK_MARK) {
+            return Err("hub: instance mark");
+        }
+        let task = state.publisher(system_api::namespace::SERVICE, call::ENTRY, wait)
+            .map_err(|_| "hub: driver publisher")?;
+        let entry = lookup(tree, Path::new(call::ENTRY_PATH), wait)?;
+        held[2] = Some(entry);
+        let coord = Peer::<Call>::open_checked(entry, (task, call::ENTRY), Call::BACK)?;
+        held.fill(None);
+        Ok(Self { coord, control, _state: state })
     }
+}
 
-    /// 按名字问 Control：这一条此刻是哪一枚真任务（没登记/已死 ⇒ `None`）。
-    pub fn registered(&self, name: &str, wait: Wait) -> Option<TaskId> {
-        self.state
-            .task(name.into(), wait)
-            .ok()
-            .filter(|task| task.get() != 0)
+pub(super) fn reclaim(held: &mut [Option<PieToken>; 3]) {
+    for slot in held {
+        if let Some(token) = *slot {
+            if env::pie::release(token, env::ReleaseMode::Revoke).is_ok() {
+                *slot = None;
+            }
+        }
     }
+}
 
-    /// 三个硬件域的号（读数用）。
-    pub fn hosts(&self) -> (TaskId, TaskId, TaskId) {
-        (self.pci.host(), self.iommu.host(), self.recovery.host())
-    }
-
-    /// 把设备坐标推给执行方（放行业务那一手）：铸一枚孔、留写端。
-    pub fn release_business(&self, execution: TaskId, serial: u64) -> Result<PieToken, &'static str> {
-        ipc::session::establish::give(execution, crate::driver::shared::dma::coord_mark(serial))
-            .map_err(|_| "hub: coordinate channel")
-    }
+fn lookup(tree: &Face, road: &Path, wait: Wait) -> Result<PieToken, &'static str> {
+    let service = tree.resolve(system_api::namespace::SERVICE, wait)
+        .map_err(|_| "hub: endpoint namespace")?;
+    tree.tile_from(service, road, wait).and_then(|tile| tile.token(wait))
+        .map_err(|_| "hub: endpoint lookup")
 }

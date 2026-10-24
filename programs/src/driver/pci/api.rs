@@ -1,14 +1,17 @@
 //! PCI 驱动那一扇门的协议：落位、开启与清除 MASTER。
 //!
 //! 落位与 MASTER 是两手：落位只开内存空间（配置不授权发起），开启只在协调入口
-//! （Hub）核过全部前置之后发生。报文里不接收可信 caller——发送者由内核给出。
+//! （设备 Driver）核过全部前置之后发生。可信调用者由内核发送者身份确定。
 
 use env::wire::Span as _;
-use env::{PieToken, TaskId};
+use env::PieToken;
 use wire::{Message, OK};
 
 /// 本台那一扇门在树上与服务名下的坐标。
-pub const ENTRY: env::Mark = env::Mark::of("pci/entry");
+#[path = "marks.rs"]
+mod marks;
+pub use marks::ENTRY;
+pub(crate) use marks::CONFIG;
 pub const ENTRY_NAME: &str = "entry";
 pub const ENTRY_PATH: &str = "pci/entry";
 
@@ -19,27 +22,24 @@ pub const DISABLE: u8 = 3;
 pub const RELEASE: u8 = 4;
 pub const BAR_MARK: env::Mark = env::Mark::of("pci/recovery-bar");
 
-/// `place` 的 `bar` 那一格：`BAR_ANY` = 按设备自己的能力表那一根。
-pub const BAR_ANY: u8 = 0xFF;
-
-/// 落位：绑定号 ＋ 设备号 ＋ **恢复方**那一台 ＋ 要哪一根 BAR。
+/// 落位：绑定号、总线 requester 与 BAR。接收方是实际调用者。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-#[frame(len = 32)]
+#[frame(len = 24)]
 pub struct Place {
     pub op: u8,
     pub serial: u64,
     pub requester: u32,
-    pub recovery: TaskId,
     pub bar: u8,
     pub back: PieToken,
 }
 
-/// 开启／清除 MASTER：绑定号。
+/// 开启／清除 MASTER：绑定号与总线 requester。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 #[frame(len = 24)]
 pub struct Toggle {
     pub op: u8,
     pub serial: u64,
+    pub requester: u32,
     pub back: PieToken,
 }
 
@@ -104,18 +104,14 @@ impl Message for Wire {
 
 /// 一答：状态 ＋ 落位那一枚的坐标。
 ///
-/// `bar` 是**恢复方表里**那一枚精确 BAR token：Hub 把它随 `attach` 转交，
+/// `bar` 是实际调用者表里的精确 BAR token。
 /// 不解释它、也不把它当自己表里的号。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-#[frame(len = 48)]
+#[frame(len = 16)]
 pub struct Said {
     pub status: u8,
     pub pages: u32,
     pub bar: PieToken,
-    pub common: u32,
-    pub notify: u32,
-    pub multiplier: u32,
-    pub device: u32,
 }
 
 impl Said {
@@ -123,10 +119,6 @@ impl Said {
         status: 0,
         pages: 0,
         bar: PieToken::NONE,
-        common: 0,
-        notify: 0,
-        multiplier: 0,
-        device: 0,
     };
 
     pub const fn of(status: u8) -> Self {

@@ -6,19 +6,24 @@ from .ruin import CONSOLE as BASE
 def evidence(step):
     party, op, target, boundary = {
         "invalidate": (3, 3, 7, "iommu: binding 1 invalidated"),
-        "reset": (4, 2, 8, "recovery: binding 1 stopped"),
+        "reset": (1, 2, 8, "recovery: binding 1 stopped"),
         "release": (3, 5, 7, "iommu: binding 1 released"),
         "reference": (3, 5, 7, "iommu: binding 1 released"),
     }[step]
     code = 4 if step == "reference" else 0
+    stage = {"invalidate": "Invalidate", "reset": "Stop", "release": "Release", "reference": "Release"}[step]
     rejected = (
         "confirmation: reference release rejected from=7 reference=777 pages=6 references=2 ticks=3\n"
         if step == "reference" else
-        f"confirmation: transport rejected from=4 to={target} op={op} serial=1 references=2 ticks=3\n"
+        f"confirmation: transport rejected from={4 if step == 'reset' else 8} to={target} op={op} serial=1 references=2 ticks=3\n"
     )
     failure = (
         rejected
-        + f"hub: binding 1 step failed party={party} op={op} code={code} (holding)\n"
+        + (
+            f"hub: binding 1 coordination failed op={op} code={code} (holding)\n"
+            if step == "reset" else
+            f"recovery: binding 1 stage {stage} failed party={party} op={op} code={code}\n"
+        )
         + f"ctl: confirmation failed party={party} op={op} code={code} state=Closing\n"
         + (
             "confirmation: failed reference still owned reference=777 pages=6\n"
@@ -36,6 +41,11 @@ def evidence(step):
         "system: minted iommu tid=7\n"
         "system: minted device-ctl-confirmation tid=9\n"
         + BASE.replace("ruin: requested recovery\n", "")
+        .replace(
+            "pci: endpoint bus-master off=0x0",
+            ("confirmation: device stop gate armed from=8 pci=6 serial=1\n" if step == "reset" else "")
+            + "pci: endpoint bus-master off=0x0",
+        )
         .replace(
             "work: rang the in-flight request doorbell\n",
             "work: rang the doorbell\n"
