@@ -14,6 +14,7 @@ pub use execute::run;
 pub(crate) use execute::supervise;
 
 mod config;
+mod guard;
 pub(crate) mod supplies;
 
 mod waiting;

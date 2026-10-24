@@ -49,6 +49,8 @@ pub(crate) fn member_dying(task: &Task, reason: usize) {
     let mut node = Some(&*task.ident.team.life);
     while let Some(team) = node {
         if team.exit.trip() {
+            #[cfg(feature = "critical-scene")]
+            probe::trip(task, team.id);
             backend::stop(reason);
         }
         node = team.parent.as_deref();

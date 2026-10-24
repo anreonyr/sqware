@@ -11,6 +11,8 @@ use alloc::{collections::VecDeque, sync::Arc};
 pub(crate) struct Configuration {
     pub inputs: alloc::vec::Vec<Input>,
     pub targets: &'static [crate::unit::Target],
+    pub guarded: &'static [&'static str],
+    pub guard: Option<env::PieToken>,
 }
 pub(crate) fn install(
     resources: &mut Resources<'static>,
@@ -19,6 +21,8 @@ pub(crate) fn install(
 ) -> Result<(), crate::system::app::InstallError> {
     let mut control = Control::new(status, config.targets);
     control.inputs = config.inputs;
+    control.guarded = config.guarded;
+    control.guard_token = config.guard;
     resources
         .insert(control)?
         .insert(Roster::default())?

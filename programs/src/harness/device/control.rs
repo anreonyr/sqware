@@ -166,6 +166,8 @@ pub enum Mode {
     Ruin,
     /// 请求保持在途，持续存活直到 System 的空闲超时触发全局退场。
     Forced,
+    /// 请求保持在途，保持全部资源，等待测试用 Root 在真实 Guard 保护下杀掉目标。
+    Guard,
     /// 多代真实执行实例，交替正常关闭与主人死亡。
     Soak { generations: usize },
     /// 指定收尾操作无法取得确认，保留责任后恢复传输并重试。
@@ -176,8 +178,13 @@ impl Mode {
     /// 本景构造哪一张 α 镜像（受限构造按名字选，owner 恒为 Hub）。
     const fn work(self) -> &'static str {
         match self {
-            Self::Normal | Self::Fault | Self::Ruin | Self::Forced | Self::Soak { .. }
-                | Self::Confirmation => "device-work",
+            Self::Normal
+            | Self::Fault
+            | Self::Ruin
+            | Self::Forced
+            | Self::Guard
+            | Self::Soak { .. }
+            | Self::Confirmation => "device-work",
             Self::Before => "device-work-before",
             Self::After => "device-work-after",
         }
@@ -336,7 +343,7 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
         command(writer, Command::Window)?;
     }
     match mode {
-        Mode::Ruin | Mode::Forced => {
+        Mode::Ruin | Mode::Forced | Mode::Guard => {
             block.fill(layout::DATA, layout::SENTINEL);
             block.put32(layout::STATUS, 0, 0xFF);
             block.arm(dma::iova_base(serial).ok_or("ctl: iova")?, 0);
@@ -349,6 +356,17 @@ pub fn run(mode: Mode) -> Result<(), &'static str> {
                     .map_err(|_| "ctl: Ruin request channel")?;
                 resource::raw::Hole::from_raw(request).push(&[1], Wait::AtMost(MS))
                     .map_err(|_| "ctl: Ruin request")?;
+            } else if mode == Mode::Guard {
+                let request = establish::give(sire, crate::harness::probe::device_guard::REQUEST)
+                    .map_err(|_| "ctl: Guard request channel")?;
+                resource::raw::Hole::from_raw(request).push(&[1], Wait::AtMost(MS))
+                    .map_err(|_| "ctl: Guard request")?;
+                crate::debug::put(
+                    "ctl: in-flight request submitted; retaining block resources for guard death",
+                );
+                loop {
+                    let _ = execution::room::park(::core::time::Duration::from_millis(100));
+                }
             } else {
                 crate::debug::put("ctl: awaiting forced global shutdown with in-flight read");
             }

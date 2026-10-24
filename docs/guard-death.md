@@ -1,0 +1,201 @@
+# Guard death scene
+
+## Scope
+
+This scene proves that a deployed PCI, IOMMU, or Recovery static domain is
+guarded before a real in-flight block request is submitted, and that killing the
+protected domain main task after submission stops the machine before reference
+cleanup. It does not claim that DMA was drained: the successful case deliberately
+retains the block request and physical frame references.
+
+The three deployments are `iommu-guard-pci`, `iommu-guard-iommu`, and
+`iommu-guard-recovery`. They share entry image `iommu-guard`, start
+`hub`, `pci`, `iommu`, `recovery`, `device-ctl-guard`, and guard all three critical
+Driver domains, matching the product deployment. The validated scene selects
+the death target separately. The shared entry is the scene Root; the controller image is
+`device-ctl-guard`.
+
+## Root and trigger
+
+`programs/src/harness/probe/device_guard.rs` takes the bootstrap, opens the
+`ns16550a` resource from `Machine.devices` through `Accounts.token` and
+`Dock::open`, then installs the production resources. The included
+`driver/uart/dev/uart.rs` supplies only `drain`; no production UART branch is
+added.
+
+Each Root tick has one `prepare`, one budget-1 subplan that advances the real
+`app::schedule::frame()` once, and one `trigger` poll. The app-frame cursor lives
+in an existing `Cursor` resource, so the production frame is advanced exactly as the normal supervisor
+advances it while startup remains free to progress. `prepare` reads the private
+`device-guard/request` Hole and accepts only the real controller sender and the
+single byte `[1]`.
+
+The trigger step observes the selected Control row, requires `guard_held`, the
+actual `task`, and the actual `task_team`, and prints:
+
+```text
+guard: armed target=<name> task=<id> team=<id>
+guard: submitted controller=<id>
+guard: critical domains protected=3
+guard: ready target=<name> task=<id> team=<id>
+```
+
+On a valid `G` byte, it re-reads the same Control row in that System frame,
+requires the same target, task, team, and a live task, then prints
+`guard: trigger ...` and calls `env::unit::slay_task(task)`. It never calls
+Control Ruin or Unguard. If Slay returns, the Root logs that fact and parks; it
+does not report completion or run cleanup.
+
+Root review sealed the initial worker candidate at `244e88e0` before corrections.
+The initial one-guard selection was replaced with three protected domains and
+an independent scene target. The observer runs before receipt capture, keeping
+arm/submission/ready ordering explicit. All three guards are checked again in
+the trigger frame. The redundant cursor wrapper was removed.
+
+The verifier additionally requires actual IOMMU publication with six retained
+frames, MASTER on, active binding and the in-flight doorbell before submission;
+the named Driver's minted task must match the actual kernel trip identity.
+Missing execution trace, a death already present in the pre-trigger snapshot,
+or a serial reader error cannot count as a successful proof. Root independently
+ran 21 positive/negative verifier controls after these corrections. Native
+unexpected-death acceptance is still pending at this checkpoint.
+
+The first four-hart PCI run at `e5a58586` produced the actual guarded target,
+held NBD read, three peer quiescence receipts and no target reference cleanup;
+its raw runner exited 101 and the independent verifier accepted it. Inspection
+also showed that debug boot checks consume TaskIds. The verifier now reads the
+actual Root identity from the scene and rejects that Root's exit, rather than
+assuming task 1. The fixed source therefore requires a fresh run, including PCI.
+
+The controller reuses the Ruin submission path: real in-flight block request,
+`want == 3`, then the private Hole. It keeps the block page, view, references,
+command channel, and launch channel open and never closes or releases them.
+
+## Kernel instrumentation
+
+Under `critical-scene`, `member_dying` logs the actual dying task, its own Team,
+and the protected ancestor Team after `ExitPolicy::trip()` actually returns true:
+
+```text
+[critical] trip task=<id> task_team=<id> team=<id>
+```
+
+The existing guarded-exit, peer-quiescence, and reference-cleanup records are
+unchanged. The trip record contains identities only; it does not name hardware or
+change the protection decision.
+
+## Evidence
+
+The host driver `programs/tests/device-recovery/guard.py` waits for NBD
+`phase=held`, the in-flight doorbell, and `guard: ready`, confirms that the read
+was not resumed or completed, copies the held console and NBD events, sends one
+`G`, then records trigger, guarded exit, and serial EOF. It writes
+`<capture>.feed.json`, `<capture>.held-console`, `<capture>.held-events`, and
+`<capture>.block-events` before `qtest.nu` stops the background NBD server.
+`DMA_HOLD_SECONDS` is 60, longer than the VM timeout.
+
+`programs/tests/device-recovery/guard_check.py` independently requires:
+
+- raw qtest exit 101, a real timeout, and the `embedded::tests::scene` failure;
+- one armed, ready, and trigger record with the requested target and identical
+  task/team identities;
+- one kernel trip whose task and protected Team match the trigger, followed by
+  the guarded exit and exactly `harts - 1` peer quiescence receipts;
+- no target reference cleanup, no normal shutdown, no panic, and no re-mint or
+  reactivation of the target after the trigger;
+- no pre-trigger invalidation, bus-master-off, release, detach, or close;
+- a held NBD request in both the pre-trigger snapshot and the final record, with
+  no resume, completion, or resume receipt.
+
+The fixture `programs/tests/device-recovery/fixtures/guard.py` and cases in
+`test_guard.py` cover missing held, wrong target, missing quiescence, wrong hart
+count, target cleanup, normal return, missing trip, out-of-order trigger,
+identity mismatch, pre-trigger release, and retention failures.
+
+## Commands
+
+Run the commands separately, one QEMU at a time. The runner is expected to exit
+101; the independent verifier decides acceptance.
+
+```sh
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true QEMU_SMP=4 \
+TRACE_OUT="$PWD/target/driver-composition/guard/pci-4" \
+nu scripts/qtest.nu --package kernel --scene iommu-guard-pci -- \
+  --features semihosting,critical-scene --timeout 30 -- scene
+# qtest.nu already invokes guard_check.py with the raw runner code. To inspect
+# the same evidence manually (101 is the expected raw timeout):
+python3 programs/tests/device-recovery/guard_check.py \
+  target/driver-composition/guard/pci-4/scene-iommu-guard-pci-console.log \
+  target/driver-composition/guard/pci-4/scene-iommu-guard-pci-diagnose.jsonl \
+  target/driver-composition/guard/pci-4/scene-iommu-guard-pci-feed.log \
+  pci 4 101 \
+  target/driver-composition/guard/pci-4/scene-iommu-guard-pci-qtest.log
+```
+
+Repeat with target `iommu`, `recovery`, `QEMU_SMP=8`, and the corresponding
+scene. `qtest.nu` uses this independent verifier for the new scenes only; it
+keeps the raw runner code, does not map an arbitrary 101 to zero, and leaves the
+old scene criteria untouched. The NBD event copy is
+`scene-<scene>-block-events` in the same trace directory.
+
+## Verification performed by this worker
+
+No QEMU was run. The worker builds were:
+
+```text
+cargo check --workspace --offline                                  pass
+cargo check -p kernel --features critical-scene --offline          pass
+cargo check --tests -p kernel --features semihosting,critical-scene \
+  --target riscv64gc-unknown-none-elf --release --offline          pass
+cargo image iommu-guard-pci release                                pass
+cargo image iommu-guard-iommu release                              pass
+cargo image iommu-guard-recovery release                           pass
+cargo test --manifest-path crates/image/Cargo.toml \
+  --target x86_64-unknown-linux-gnu --offline                      18 passed
+(cd programs/tests/device-recovery && PYTHONDONTWRITEBYTECODE=1 \
+  python3 -m unittest test_guard)                                  14 passed
+```
+
+The native three-target 4/8-hart runs and the raw-101 verifier runs remain for
+the Root thread. This document does not claim A7 completion, DMA drainage, or a
+successful native halt.
+
+## Root native acceptance
+
+At fixed production source `978c4670529c964200b06ead45bf3f6e5ef5c383`, all six
+three-domain-protected scenes were independently accepted:
+
+| Target | Harts | Actual target Task/Team | Peer quiescence | Raw qtest | Independent verifier |
+| --- | --- | --- | --- | --- | --- |
+| PCI | 4 | 15 / 15 | 3 | 101 timeout | 0, accepted |
+| IOMMU | 4 | 14 / 14 | 3 | 101 timeout | 0, accepted |
+| Recovery | 4 | 16 / 16 | 3 | 101 timeout | 0, accepted |
+| PCI | 8 | 15 / 15 | 7 | 101 timeout | 0, accepted |
+| IOMMU | 8 | 14 / 14 | 7 | 101 timeout | 0, accepted |
+| Recovery | 8 | 16 / 16 | 7 | 101 timeout | 0, accepted |
+
+Each backend held an actual published DMA sector read and was never resumed;
+the target never reached reference cleanup, hardware release or a new launch.
+This is a deliberate nonreturning halt with references retained, not successful
+DMA drainage or ordinary all-green qtest output. Evidence directories are
+`target/driver-composition/guard-deployment/death-978-<target>-<harts>/`.
+
+On the same source, normal four/eight-hart product, eight-hart in-flight
+Ruin/forced and four-hart accept all exited 0. Ruin/forced still proved execution
+domains reaped before Driver teardown and frames 153→153. Host suites: Guard 16,
+Control instance 33, Control RPC 9, Hub handoff 12, retirement boundary 11,
+system shape 21, shutdown policy 8 and image 18 passed. Python guard evidence 21
+and earlier kernel verifier 6 passed; workspace check retained five existing
+warnings. No safety predicate or final ordinary reclamation check was removed.
+
+The authorized read-only Flash reviewer
+`session-4204103d-eb75-49f0-9398-5b3ccfea163a` found no confirmed blocker, with
+explicit limits on peer stopping and other cleanup paths. Root checked
+`machine/stop::hunker` (lease vacate, IRQ disable, one acknowledgement before
+nonreturning HSM stop), `protected_stop`, and the real exit-hook order. The
+IOMMU's retained Reference and View records require explicit release; dropping
+their Rust values does not release the kernel references before the exit guard.
+
+A7's beta safe-termination boundary is accepted. Device coordination, generic
+PCI, multiple domains/devices, the single generic Daemon, and final integrated
+four/eight-hart plus 1024-generation acceptance remain separate unfinished work.

@@ -437,6 +437,7 @@ mod tests {
             name: "invalid-image",
             entry: "accept-system",
             start: &[],
+            guarded: &[],
             resources: &["missing"],
             targets: &[],
             bootstrap: &[],
@@ -452,6 +453,7 @@ mod tests {
             name: "invalid-start",
             entry: "accept-system",
             start: &["missing"],
+            guarded: &[],
             resources: &[],
             targets: &[],
             bootstrap: &[],
@@ -508,6 +510,7 @@ mod tests {
             name: "cycle",
             entry: "cycle-a",
             start: &["cycle-a", "cycle-b"],
+            guarded: &[],
             resources: &[],
             targets: TARGETS,
             bootstrap: &[],
@@ -595,6 +598,7 @@ mod tests {
             name: "shared",
             entry: "test-entry",
             start: &["test-first", "test-second"],
+            guarded: &[],
             resources: &["unitless-image"],
             targets: &[],
             bootstrap: &[],
@@ -649,6 +653,7 @@ mod tests {
             name: "unknown-construction",
             entry: "unknown-entry",
             start: &[],
+            guarded: &[],
             resources: &[],
             targets: &[],
             bootstrap: &[],
@@ -686,6 +691,7 @@ mod tests {
             name: "raw-construction",
             entry: "raw-entry",
             start: &[],
+            guarded: &[],
             resources: &[],
             targets: &[],
             bootstrap: &[],
@@ -725,6 +731,7 @@ mod tests {
             name: "bootstrap-check",
             entry: "bootstrap-check",
             start: &["bootstrap-check"],
+            guarded: &[],
             resources: &[],
             targets: &[],
             bootstrap: &[],
@@ -787,6 +794,7 @@ mod tests {
             name: "target-cycle",
             entry: "target-a",
             start: &["target-a", "target-b"],
+            guarded: &[],
             resources: &[],
             targets: TARGETS,
             bootstrap: &[],
@@ -798,6 +806,7 @@ mod tests {
             name: "duplicate-start",
             entry: "target-a",
             start: &["target-a", "target-a"],
+            guarded: &[],
             resources: &[],
             targets: &[],
             bootstrap: &[],
@@ -823,6 +832,7 @@ mod tests {
             name: "duplicate-target",
             entry: "target-a",
             start: &["target-a"],
+            guarded: &[],
             resources: &[],
             targets: DUP_TARGETS,
             bootstrap: &[],
@@ -859,6 +869,17 @@ mod tests {
             }),
             Err(unit::DeploymentSelectionError::EntryMismatch)
         ));
+    }
+
+    #[test]
+    fn guarded_deployments_name_only_started_catalog_programs() {
+        for deployment in unit::DEPLOYMENTS {
+            assert!(
+                deployment.guarded().is_ok(),
+                "deployment {} has an invalid guard selection",
+                deployment.name
+            );
+        }
     }
 
     #[test]

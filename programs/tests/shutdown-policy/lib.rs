@@ -121,7 +121,7 @@ fn continued_liveness_does_not_refresh_idle() {
 fn static_reclamation_is_not_hidden_by_new_dynamic_team() {
     let mut control = fixture(None);
     assert_eq!(count(&control), 6);
-    control.detach_unit("service-1");
+    control.detach_unit("service-1").unwrap();
     control.instances.push(instance::Instance { team: Some(9) });
     assert_eq!(count(&control), 6);
     let resources = resources(control);
@@ -172,12 +172,12 @@ fn cleanup_started_but_not_finalized_is_not_reclamation() {
 #[test]
 fn repeated_static_detach_does_not_publish_new_progress() {
     let mut control = fixture(None);
-    control.detach_unit("service-1");
+    control.detach_unit("service-1").unwrap();
     assert_eq!(control.reclaimed_at, chrono::clock());
     let first = control.reclaimed_at;
     chrono::set(first + 1_000_000_000);
-    control.detach_unit("service-1");
-    control.detach_unit("unknown");
+    control.detach_unit("service-1").unwrap();
+    control.detach_unit("unknown").unwrap();
     assert_eq!(control.reclaimed_at, first);
 }
 
@@ -185,7 +185,7 @@ fn repeated_static_detach_does_not_publish_new_progress() {
 fn reattaching_after_detach_does_not_hide_the_completed_progress() {
     let mut control = fixture(None);
     let before = count(&control);
-    control.detach_unit("service-1");
+    control.detach_unit("service-1").unwrap();
     control.table.attach("service-1", Slot::Live {
         task: TaskId::new(20),
         team: Some(TeamId::new(20)),
