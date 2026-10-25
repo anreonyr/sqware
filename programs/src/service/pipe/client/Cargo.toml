@@ -6,7 +6,7 @@ edition.workspace = true
 pipe-api = { path = "../api" }
 stream = { path = "../../../../../crates/stream" }
 env = { path = "../../../../../crates/env" }
-wire = { path = "../../../../../crates/wire" }
+wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 ipc = { path = "../../../../../crates/ipc" }
 resource = { path = "../../../../../crates/resource" }
 system-client = { path = "../../../system/client" }

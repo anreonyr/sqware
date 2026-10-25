@@ -37,7 +37,7 @@ execution = { path = "../crates/execution" }
 schedule = { path = "../crates/schedule" }
 # 通信机制与提供方拥有的接口、客户端。
 ipc = { path = "../crates/ipc" }
-wire = { path = "../crates/wire" }
+wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 system-api = { path = "src/system/api" }
 system-client = { path = "src/system/client" }
 hub-api = { path = "src/service/hub/api" }

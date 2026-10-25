@@ -90,3 +90,4 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 [[package]]
 name = "wire"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/wire.git?rev=0ff77dc4573fa2620d2fe995a18c01949d9c7e57#0ff77dc4573fa2620d2fe995a18c01949d9c7e57"
