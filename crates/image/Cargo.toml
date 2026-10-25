@@ -31,5 +31,5 @@ account-api = { path = "../../programs/src/service/account/api" }
 hub-api = { path = "../../programs/src/service/hub/api" }
 
 [[bin]]
-name = "sqware-image"
+name = "shuyra-image"
 path = "src/main.rs"

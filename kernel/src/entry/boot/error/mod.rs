@@ -16,7 +16,7 @@ mod resource_operation;
 pub use map_operation::MapOperation;
 pub use resource_operation::ResourceOperation;
 
-const TITLE: &str = "sqware: boot failed";
+const TITLE: &str = "shuyra: boot failed";
 
 #[derive(Debug)]
 pub enum BootError {

@@ -42,7 +42,7 @@ pub fn accept() {
     assert_eq!(
         output.text(),
         concat!(
-            "sqware: boot failed\n\n",
+            "shuyra: boot failed\n\n",
             "  operation  initialize allocator\n",
             "  context    initializing allocator\n",
             "  reason     memory allocation failed while initializing allocator\n\n",
@@ -61,7 +61,7 @@ pub fn accept() {
     assert_eq!(
         output.text(),
         concat!(
-            "sqware: boot failed\n\n",
+            "shuyra: boot failed\n\n",
             "  operation  start hart\n",
             "  hart       2\n",
             "  context    s-mode environment call\n",

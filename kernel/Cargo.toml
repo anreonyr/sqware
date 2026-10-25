@@ -86,7 +86,7 @@ serde_json = { version = "1.0", default-features = false, features = [
 semihosting = { version = "0.1.25", features = ["fs"] }
 
 [[bin]]
-name = "sqware"
+name = "shuyra"
 path = "src/main.rs"
 test = false
 bench = false
