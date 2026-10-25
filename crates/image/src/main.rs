@@ -1,4 +1,4 @@
-//! `sqware-image [场景] [档]` —— 造镜像那一步的命令行（默认 `product` / `release`）。
+//! `shuyra-image [场景] [档]` —— 造镜像那一步的命令行（默认 `product` / `release`）。
 //!
 //! 交互式跑之前先来这一下（`.cargo/config.toml` 的别名：`cargo image`）——`cargo run` 本身
 //! 只管编内核，不再顺带造镜像（那是"initrd 与 kernel 何干"那一问的落点）。
@@ -8,7 +8,7 @@ fn main() {
     let scenario = args.next().unwrap_or_else(|| "product".to_string());
     let profile = args.next().unwrap_or_else(|| "release".to_string());
     if let Some(extra) = args.next() {
-        eprintln!("image: 多出来的参数 `{extra}`（用法：sqware-image [场景] [档]）");
+        eprintln!("image: 多出来的参数 `{extra}`（用法：shuyra-image [场景] [档]）");
         std::process::exit(2);
     }
     match image::build(&scenario, &profile) {

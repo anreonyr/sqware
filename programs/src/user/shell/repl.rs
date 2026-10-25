@@ -147,7 +147,7 @@ pub fn run() -> Result<(), &'static str> {
         identity_authority,
         lifecycle,
     ));
-    queue(&mut host, b"sqware Lisp Shell\n");
+    queue(&mut host, b"Shuyra Lisp Shell\n");
     queue(
         &mut host,
         format!(

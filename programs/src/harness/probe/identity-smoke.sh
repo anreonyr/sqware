@@ -28,9 +28,9 @@ PY
 image="$root/target/riscv64gc-unknown-none-elf/debug"
 cargo run --manifest-path "$temporary/Cargo.toml" --target x86_64-unknown-linux-gnu \
     --target-dir "$temporary/build" --offline -- "$image/initrd.img" "$temporary/initrd.img"
-cp "$image/sqware" "$temporary/sqware"
+cp "$image/shuyra" "$temporary/shuyra"
 if QEMU_TIMEOUT=30 QEMU_SETTLE=0 QEMU_SEMI=1 \
-    nu scripts/boot.nu "$temporary/sqware" </dev/null >"$temporary/qemu.log" 2>&1
+    nu scripts/boot.nu "$temporary/shuyra" </dev/null >"$temporary/qemu.log" 2>&1
 then
     status=0
 else

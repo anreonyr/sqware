@@ -59,7 +59,7 @@ def run(conn, capture):
     assert len(identities) == 2, identities
     assert identities[0][0] != identities[1][0], identities
     assert identities[0][1:] == identities[1][1:], identities
-    password_output = received.replace(b"sqware Lisp Shell\r\n", b"")
+    password_output = received.replace(b"Shuyra Lisp Shell\r\n", b"")
     for secret in (b"sqware", b"wrong-secret", b"cancel-secret", b"sqwarx", b"discard\x15"):
         assert secret not in password_output, f"password echoed: {secret!r}"
     conn.sendall(b"\x04")

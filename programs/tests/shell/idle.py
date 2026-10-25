@@ -11,7 +11,7 @@ import time
 def main():
     root = Path(__file__).resolve().parents[3]
     with tempfile.TemporaryDirectory(prefix="sqware-idle-") as tmp:
-        elf = root / "target/riscv64gc-unknown-none-elf/release/sqware"
+        elf = root / "target/riscv64gc-unknown-none-elf/release/shuyra"
         args = subprocess.check_output([
             "nu", "scripts/qemu-args.nu", str(elf), "--serial",
             f"unix:{tmp}/serial,server=on,wait=off",
