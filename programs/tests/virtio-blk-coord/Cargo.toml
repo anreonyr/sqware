@@ -14,3 +14,5 @@ env = { path = "../../../crates/env" }
 hub-api = { path = "../../src/service/hub/api" }
 wire = { path = "../../../crates/wire" }
 mold = { path = "../../../crates/mold" }
+pci-declaration = { path = "../../src/driver/pci/declaration" }
+iommu-declaration = { path = "../../src/driver/iommu/declaration" }

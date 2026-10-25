@@ -104,7 +104,7 @@ pub mod unit {
 pub mod guard_selection {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../src/unit/guard_selection.rs"
+        "/../../../crates/unit/src/guard_selection.rs"
     ));
 }
 

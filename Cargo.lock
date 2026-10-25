@@ -84,6 +84,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "composition"
+version = "0.1.0"
+dependencies = [
+ "account-api",
+ "env",
+ "fixturetarget-api",
+ "hub-api",
+ "iommu-declaration",
+ "pci-declaration",
+ "pipe-api",
+ "router-api",
+ "rtc-api",
+ "shell-declaration",
+ "system-api",
+ "unit",
+]
+
+[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -258,6 +276,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "784a4df722dc6267a04af36895398f59d21d07dce47232adf31ec0ff2fa45e67"
 
 [[package]]
+name = "fixturetarget-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "system-api",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -317,6 +343,15 @@ name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
+
+[[package]]
+name = "iommu-declaration"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "system-api",
+ "unit",
+]
 
 [[package]]
 name = "ipc"
@@ -446,6 +481,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
+name = "pci-declaration"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "system-api",
+ "unit",
+]
+
+[[package]]
 name = "pipe-api"
 version = "0.1.0"
 dependencies = [
@@ -506,28 +550,35 @@ dependencies = [
  "account-api",
  "account-client",
  "argon2",
+ "composition",
  "env",
  "erra",
  "execution",
  "fdt",
+ "fixturetarget-api",
  "hub-api",
  "hub-client",
+ "iommu-declaration",
  "ipc",
  "lisp",
  "mold",
+ "pci-declaration",
  "pipe-api",
  "pipe-client",
  "resource",
  "router-api",
  "router-client",
+ "rtc-api",
  "schedule",
  "shell-api",
  "shell-client",
+ "shell-declaration",
  "stream",
  "system-api",
  "system-client",
  "terminal-api",
  "terminal-client",
+ "unit",
  "wire",
  "zeroize",
 ]
@@ -624,6 +675,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtc-api"
+version = "0.1.0"
+dependencies = [
+ "system-api",
+]
+
+[[package]]
 name = "rustc-std-workspace-alloc"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -714,6 +772,16 @@ dependencies = [
  "pipe-client",
  "resource",
  "shell-api",
+]
+
+[[package]]
+name = "shell-declaration"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "pipe-api",
+ "system-api",
+ "unit",
 ]
 
 [[package]]
@@ -827,6 +895,14 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unit"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "system-api",
+]
 
 [[package]]
 name = "version_check"

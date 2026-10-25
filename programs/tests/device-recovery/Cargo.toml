@@ -13,4 +13,5 @@ path = "lib.rs"
 abi = { package = "env", path = "../../../crates/env" }
 hub-api = { path = "../../src/service/hub/api" }
 mold = { path = "../../../crates/mold" }
+pci-declaration = { path = "../../src/driver/pci/declaration" }
 wire = { path = "../../../crates/wire" }

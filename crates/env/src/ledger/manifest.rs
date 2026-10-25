@@ -26,7 +26,7 @@ pub use malformed::Malformed;
 /// 清单条数上限——**读侧与写侧共用的一个上界**，不是"这一台的清单有几条"。
 ///
 /// 故它退回成一个**明文上界**，而"加一行会不会撞上它"由**上层一条编译期断言**钉住：
-/// `programs/src/unit/catalog.rs` 里 `const _: () = assert!(PROGRAMS.len() <= MAX_PROGRAMS);`
+/// `crates/composition/src/units/mod.rs` 里 `const _: () = assert!(PROGRAMS.len() <= MAX_PROGRAMS);`
 /// ——超过就当场编不过。旧树那种"抬过一次、下一次没人回头看"的读法（它连着撞过三次：
 /// 20 → 24 → 28 → 32）在这条断言下**不可能再静默发生**：要么编得过（上界还够），要么红。
 ///

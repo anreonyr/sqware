@@ -591,7 +591,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     {
         let mut system = assembly.resources.write::<Control>().unwrap();
         system
-            .fixture_attach_unit(&crate::unit::login::PROGRAM, worker.id())
+            .fixture_attach_unit(&composition::units::login::PROGRAM, worker.id())
             .unwrap();
         system.register_internal(peer.id()).unwrap();
         system.register_internal(inherited.id()).unwrap();

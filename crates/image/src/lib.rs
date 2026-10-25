@@ -6,62 +6,20 @@
 
 mod capsule;
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// 目标三元组（与根 `.cargo/config.toml` 钉的那个一致）。
-const TARGET: &str = "riscv64gc-unknown-none-elf";
+use unit::{Deployment, UnitFile};
 
-/// 仓库根（本 crate 在 `crates/image`）。
-fn root() -> PathBuf {
-    let at = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    at.canonicalize().unwrap_or(at)
-}
+pub use unit::ImageBuild;
 
-/// **宿主声明表**：文本包含 `programs` 的宿主安全声明、Deployment 场景表和 Package 镜像表。
-///
-/// # 为什么是 `#[path]` 而不是一条依赖
-///
-/// 本 crate 是**宿主** std 程序，而 `programs` 依赖 execution
-/// （riscv 内联汇编，宿主上不做代码生成就编不过）⇒ 它**不能**依赖 `programs`。
-/// 各模块的 UnitFile 声明与镜像/部署选择分开；本 crate 只读取纯配置，不依赖运行时代码。
-///
-/// 装配声明只依赖 `env` 和纯 provider API crates（router / pipe / account）；这些 API 不依赖
-/// execution 或 protocol。`programs/src/unit/mod.rs` 与这份宿主 crate 的依赖图一起检查这条边界。
-#[allow(dead_code, unused_imports, reason = "Host projection of shared configuration and runtime reexports.")]
-#[path = "../../../programs/src/unit/mod.rs"]
-mod unit;
-
-// Pure command resource declarations are shared with the Shell UnitFile. This host module only
-// reads those declarations; it does not compile or run the Shell command loop.
-#[allow(dead_code, reason = "Image reads bindings; Shell consumes command names and ports.")]
-#[path = "../../../programs/src/user/shell/commands.rs"]
-pub(crate) mod shell_commands;
-
-mod user {
-    pub(crate) mod shell {
-        pub(crate) use crate::shell_commands as commands;
-    }
-}
-
-/// 可打包的部署名。
-fn scenes() -> Vec<&'static str> {
-    unit::DEPLOYMENTS
-        .iter()
-        .map(|deployment| deployment.name)
-        .collect()
-}
-
-/// 部署声明选定的引导镜像。
-fn entry_of(scene: &str) -> Option<&'static str> {
-    unit::Deployment::find(scene).and_then(unit::Deployment::entry_image)
-}
-
-/// Expand deployed UnitFiles, constructible UnitFiles, and their image resources into packages.
+/// Expand declared UnitFiles and their image resources into the requested
+/// image inventory. Only `ImageBuild.image` is used to identify an image.
 fn bins_with(
-    deployment: &'static unit::Deployment,
-    programs: &[&'static unit::UnitFile],
-    packages: &[unit::Package],
+    deployment: &'static Deployment,
+    programs: &[&'static UnitFile],
+    builds: &[ImageBuild],
 ) -> Result<Vec<(&'static str, env::ProgramKind)>, String> {
     let scenario = deployment.name;
     let mut names = Vec::new();
@@ -78,9 +36,9 @@ fn bins_with(
     let mut pending = Vec::new();
     let mut visited = Vec::new();
     fn enqueue(
-        pending: &mut Vec<&'static unit::UnitFile>,
+        pending: &mut Vec<&'static UnitFile>,
         visited: &mut Vec<&'static str>,
-        program: &'static unit::UnitFile,
+        program: &'static UnitFile,
     ) {
         if !visited.contains(&program.name()) {
             visited.push(program.name());
@@ -98,7 +56,7 @@ fn bins_with(
     }
     while let Some(program) = pending.pop() {
         add(&mut names, program.loader.image);
-        add_supply_images(&mut names, program, packages);
+        add_supply_images(&mut names, program, builds);
         for construction in program.control.construction {
             let unit::ConstructionSelector::Unit(name) = construction.selector else {
                 continue;
@@ -129,7 +87,7 @@ fn bins_with(
             .copied()
             .filter(|program| program.loader.image == name)
         {
-            add_supply_images(&mut names, program, packages);
+            add_supply_images(&mut names, program, builds);
         }
         scanned += 1;
     }
@@ -138,43 +96,38 @@ fn bins_with(
     let picked: Vec<(&'static str, env::ProgramKind)> = names
         .into_iter()
         .map(|name| -> Result<_, String> {
-            Ok(packages
+            let build = builds
                 .iter()
-                .find(|package| package.name == name)
-                .map(|package| {
-                    (
-                        package.name,
-                        if package.name == entry_image {
-                            entry_space
-                        } else {
-                            env::ProgramKind::User
-                        },
-                    )
-                })
-                .ok_or_else(|| format!("景 {scenario} 引用了未登记镜像 {name}"))?)
+                .find(|build| build.image == name)
+                .ok_or_else(|| format!("景 {scenario} 引用了未登记镜像 {name}"))?;
+            Ok((
+                build.image,
+                if build.image == entry_image {
+                    entry_space
+                } else {
+                    env::ProgramKind::User
+                },
+            ))
         })
         .collect::<Result<_, _>>()?;
     if picked.is_empty() {
-        return Err(format!(
-            "不认得的景 {scenario}（认得的：{}）",
-            scenes().join(" / ")
-        ));
+        return Err(format!("景 {scenario} 没有可构建镜像"));
     }
     Ok(picked)
 }
 
 fn add_supply_images(
     names: &mut Vec<&'static str>,
-    program: &unit::UnitFile,
-    packages: &[unit::Package],
+    program: &UnitFile,
+    builds: &[ImageBuild],
 ) {
     let initrd = system_api::supply::Key::of("system/initrd");
     for binding in program.supply() {
         if binding.source.mark() == initrd.mark()
             && binding.source.name() == initrd.name()
-            && packages
+            && builds
                 .iter()
-                .any(|package| package.name == binding.resource.name())
+                .any(|build| build.image == binding.resource.name())
         {
             add_name(names, binding.resource.name());
         }
@@ -187,22 +140,16 @@ fn add_name(names: &mut Vec<&'static str>, name: &'static str) {
     }
 }
 
-fn bins_for(
-    deployment: &'static unit::Deployment,
-) -> Result<Vec<(&'static str, env::ProgramKind)>, String> {
-    bins_with(deployment, unit::PROGRAMS, unit::PACKAGES)
-}
-
 /// **校验这一景的图，并返推导出的装配次序**（次序由各台声明里的 `after` 算出来，
 /// **打包这一趟是它的第一个读者**——宿主上有名字、有退出码，坏图在这里就断掉）。
 ///
 /// 三条话说得清：边指着本景没有的名字 / 被指着的那台没有"我答得动"的凭据 / 有环。
 fn order_of(
-    deployment: &'static unit::Deployment,
-    programs: &[&'static unit::UnitFile],
+    deployment: &'static Deployment,
+    programs: &[&'static UnitFile],
 ) -> Result<Vec<&'static str>, String> {
     let scenario = deployment.name;
-    let mut list: Vec<&'static unit::UnitFile> = deployment
+    let mut list: Vec<&'static UnitFile> = deployment
         .start
         .iter()
         .map(|name| {
@@ -236,70 +183,79 @@ fn order_of(
     Ok(list.iter().map(|p| p.name()).collect())
 }
 
-/// 造这一景这一档的镜像，返 `initrd.img` 的落点（内核 ELF 同目录）。
-pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
-    let root = root();
-    let deployment = unit::Deployment::find(scenario)
-        .ok_or_else(|| format!("不认得的景 {scenario}（认得的：{}）", scenes().join(" / ")))?;
-    let bins = bins_for(deployment)?;
-    // **图那一趟**：先把这一景的 after 校验一遍（坏图当场断），顺手把算出来的次序打出来——
-    // 验收要核对的就是这一行。
+/// Resolve the real Cargo executable artifacts for explicit image targets.
+///
+/// `root` is the caller's build root (manifest paths are relative to it) and
+/// `work` is the nested Cargo target directory. Cargo, not this library,
+/// resolves targets, profiles and features.
+pub fn executables(
+    root: &Path,
+    work: &Path,
+    builds: &[ImageBuild],
+) -> Result<Vec<(&'static str, PathBuf)>, String> {
+    validate_builds(builds)?;
+    let picked: Vec<&ImageBuild> = builds.iter().collect();
+    let mut artifacts = Vec::new();
+    for (index, group) in groups(&picked).into_iter().enumerate() {
+        let group_work = work.join(format!("group-{index}"));
+        artifacts.extend(build_group(root, &group_work, &group)?);
+    }
+    Ok(artifacts)
+}
+
+/// Build one deployment from explicit declarations, deployment and Cargo image targets.
+///
+/// The caller supplies the build root, nested target directory and final output
+/// path. No repository or composition path is inferred here.
+pub fn build_with(
+    root: &Path,
+    work: &Path,
+    output: &Path,
+    declarations: &[&'static UnitFile],
+    deployment: &'static Deployment,
+    builds: &[ImageBuild],
+) -> Result<PathBuf, String> {
+    validate_builds(builds)?;
+    let bins = bins_with(deployment, declarations, builds)?;
     println!(
-        "initrd: 景 {scenario} 的装配次序：{}",
-        order_of(deployment, unit::PROGRAMS)?.join(" → ")
+        "initrd: 景 {} 的装配次序：{}",
+        deployment.name,
+        order_of(deployment, declarations)?.join(" → ")
     );
+    let picked = needed_builds(&bins, builds)?;
 
-    // 嵌套 cargo 用**独立 target 目录**：宿主 cargo 会在 target 根持有 `.cargo-build-lock`，
-    // 同目录再起 cargo 会互锁死等（这一格是从 `kernel/build.rs` 原样搬过来的）。
-    let work = root.join("target/image").join(profile);
-    let mut args = vec![
-        "build".to_string(),
-        // **一个包**：产品与测具同住 `programs`（`src/` 与 `src/harness/`）。
-        "-p".to_string(),
-        "programs".to_string(),
-        "--target".to_string(),
-        TARGET.to_string(),
-        "--target-dir".to_string(),
-        work.to_string_lossy().into_owned(),
-    ];
-    // `debug` 是 dev profile 的名字——cargo 不接受 `--profile debug`，其余按名透传。
-    if profile != "debug" {
-        args.push("--profile".to_string());
-        args.push(profile.to_string());
-    }
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let status = Command::new(&cargo)
-        .args(&args)
-        .current_dir(&root)
-        .status()
-        .map_err(|e| format!("起不动嵌套 cargo：{e}"))?;
-    if !status.success() {
-        return Err("programs 编不过（上面是它自己的报错）".to_string());
+    let mut artifacts = Vec::new();
+    for (index, group) in groups(&picked).into_iter().enumerate() {
+        let group_work = work.join(format!("group-{index}"));
+        artifacts.extend(build_group(root, &group_work, &group)?);
     }
 
-    // Read and strip the binary registered by this Package.
-    // （`prog-*` 那份字节不动——它是宿主调试用的那一份，见文件头的"瘦身"那段）。
-    let bin_dir = work.join(TARGET).join(profile);
     let mut images = Vec::with_capacity(bins.len());
     for (name, kind) in &bins {
-        let package = unit::PACKAGES
+        let executable = artifacts
             .iter()
-            .find(|package| package.name == *name)
-            .ok_or_else(|| format!("部署镜像登记丢失：{name}"))?;
-        let elf = slim(&bin_dir.join(package.binary), &work)?;
+            .find(|(image, _)| image == name)
+            .map(|(_, path)| path)
+            .ok_or_else(|| format!("Cargo 未产出镜像 {name} 的可执行文件"))?;
+        let elf = slim(executable, work)?;
         images.push((*kind, *name, elf));
     }
     let items: Vec<(env::ProgramKind, &str, &[u8])> = images
         .iter()
         .map(|(kind, name, elf)| (*kind, *name, elf.as_slice()))
         .collect();
-    // 引导镜像由 entry 声明选择，并且必须包含在本景清单中。
-    let entry = entry_of(scenario)
-        .ok_or_else(|| format!("initrd: deployment entry image missing {scenario}"))?;
+    let entry = deployment
+        .entry_image(declarations)
+        .ok_or_else(|| format!("initrd: deployment entry image missing {}", deployment.name))?;
     let entry_at = bins
         .iter()
         .position(|(name, _)| *name == entry)
-        .ok_or_else(|| format!("initrd: 景 {scenario} 的引导镜像 {entry} 不在这一景的清单里"))?;
+        .ok_or_else(|| {
+            format!(
+                "initrd: 景 {} 的引导镜像 {entry} 不在这一景的清单里",
+                deployment.name
+            )
+        })?;
     let mut blob = env::ledger::manifest::pack(&items, entry_at, deployment.name)
         .ok_or_else(|| "initrd: 非法部署或镜像清单".to_string())?;
     let capsule = capsule::encode(items[entry_at].2)
@@ -319,18 +275,13 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
     blob[..4].copy_from_slice(&(offset as u32).to_le_bytes());
     blob[4..8].copy_from_slice(&(capsule.len() as u32).to_le_bytes());
 
-    // 落点：内核 ELF 同目录（`boot.nu` 就在那儿找）。
-    let at = root
-        .join("target")
-        .join(TARGET)
-        .join(profile)
-        .join("initrd.img");
-    if let Some(dir) = at.parent() {
+    if let Some(dir) = output.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("建 {} 失败：{e}", dir.display()))?;
     }
-    std::fs::write(&at, &blob).map_err(|e| format!("写 {} 失败：{e}", at.display()))?;
+    std::fs::write(output, &blob).map_err(|e| format!("写 {} 失败：{e}", output.display()))?;
+    let at = std::fs::canonicalize(output).unwrap_or_else(|_| output.to_path_buf());
     println!(
-        "initrd packed: {} ({} B, {} programs, 档 {profile})",
+        "initrd packed: {} ({} B, {} programs)",
         at.display(),
         blob.len(),
         bins.len()
@@ -338,9 +289,238 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
     Ok(at)
 }
 
+fn validate_builds(builds: &[ImageBuild]) -> Result<(), String> {
+    for (index, build) in builds.iter().enumerate() {
+        if build.image.is_empty() || build.package.is_empty() || build.bin.is_empty() {
+            return Err("构建映射缺少 image/package/bin".to_string());
+        }
+        if builds[..index]
+            .iter()
+            .any(|earlier| earlier.image == build.image)
+        {
+            return Err(format!("构建映射重复镜像 {}", build.image));
+        }
+    }
+    Ok(())
+}
+
+fn needed_builds<'a>(
+    bins: &[(&'static str, env::ProgramKind)],
+    builds: &'a [ImageBuild],
+) -> Result<Vec<&'a ImageBuild>, String> {
+    let mut picked = Vec::with_capacity(bins.len());
+    for (image, _) in bins {
+        let mut found = None;
+        for build in builds {
+            if build.image != *image {
+                continue;
+            }
+            if found.is_some() {
+                return Err(format!("镜像 {image} 在构建映射中不唯一"));
+            }
+            found = Some(build);
+        }
+        picked.push(found.ok_or_else(|| format!("未登记镜像 {image}"))?);
+    }
+    Ok(picked)
+}
+
+struct BuildGroup<'a> {
+    manifest: &'static str,
+    package: &'static str,
+    target: &'static str,
+    profile: &'static str,
+    features: &'static [&'static str],
+    default_features: bool,
+    builds: Vec<&'a ImageBuild>,
+}
+
+fn groups<'a>(picked: &[&'a ImageBuild]) -> Vec<BuildGroup<'a>> {
+    let mut groups: Vec<BuildGroup<'a>> = Vec::new();
+    for build in picked {
+        let existing = groups.iter().position(|group| {
+            group.manifest == build.manifest
+                && group.package == build.package
+                && group.target == build.target
+                && group.profile == build.profile
+                && group.features == build.features
+                && group.default_features == build.default_features
+        });
+        match existing {
+            Some(index) => groups[index].builds.push(build),
+            None => groups.push(BuildGroup {
+                manifest: build.manifest,
+                package: build.package,
+                target: build.target,
+                profile: build.profile,
+                features: build.features,
+                default_features: build.default_features,
+                builds: vec![build],
+            }),
+        }
+    }
+    groups
+}
+
+fn build_group(
+    root: &Path,
+    work: &Path,
+    group: &BuildGroup<'_>,
+) -> Result<Vec<(&'static str, PathBuf)>, String> {
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    let manifest = root.join(group.manifest);
+    let expected = package_id(&cargo, &manifest, group.package)?;
+    let mut args = vec![
+        "build".to_string(),
+        "--locked".to_string(),
+        "--manifest-path".to_string(),
+        manifest.to_string_lossy().into_owned(),
+        "-p".to_string(),
+        group.package.to_string(),
+        "--message-format=json".to_string(),
+        "--target".to_string(),
+        group.target.to_string(),
+        "--target-dir".to_string(),
+        work.to_string_lossy().into_owned(),
+        "--profile".to_string(),
+        group.profile.to_string(),
+    ];
+    for build in &group.builds {
+        args.push("--bin".to_string());
+        args.push(build.bin.to_string());
+    }
+    if !group.features.is_empty() {
+        args.push("--features".to_string());
+        args.push(group.features.join(","));
+    }
+    if !group.default_features {
+        args.push("--no-default-features".to_string());
+    }
+    let output = Command::new(&cargo)
+        .args(&args)
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("起不动嵌套 cargo：{e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let tail: String = stderr.chars().rev().take(4000).collect::<String>().chars().rev().collect();
+        return Err(format!(
+            "{} 编不过（{}）：\n{tail}",
+            group.package,
+            output.status
+        ));
+    }
+
+    let mut found = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let line = line.trim();
+        if !line.starts_with('{') {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value["reason"] != "compiler-artifact"
+            || value["package_id"] != expected.as_str()
+            || !contains(&value["target"]["kind"], "bin")
+            || value["profile"]["test"].as_bool().unwrap_or(true)
+        {
+            continue;
+        }
+        let Some(build) = group
+            .builds
+            .iter()
+            .find(|build| value["target"]["name"] == build.bin)
+        else {
+            continue;
+        };
+        let Some(executable) = value["executable"].as_str() else {
+            return Err(format!("镜像 {} 的可执行产物缺失", build.image));
+        };
+        println!(
+            "image resolved: image={} package={} bin={} target={} profile={} features={:?} executable={}",
+            build.image,
+            value["package_id"].as_str().unwrap_or(""),
+            build.bin,
+            group.target,
+            group.profile,
+            value["features"],
+            executable
+        );
+        found.push((build.image, PathBuf::from(executable)));
+    }
+
+    let mut artifacts = Vec::new();
+    for build in &group.builds {
+        let matches: Vec<_> = found
+            .iter()
+            .filter(|(image, _)| *image == build.image)
+            .collect();
+        match matches.as_slice() {
+            [] => return Err(format!("Cargo 缺少镜像 {} 的执行产物", build.image)),
+            [single] => artifacts.push((build.image, checked_elf(&single.1)?)),
+            _ => return Err(format!("Cargo 对镜像 {} 报出多个执行产物", build.image)),
+        }
+    }
+    Ok(artifacts)
+}
+
+fn package_id(cargo: &str, manifest: &Path, package: &str) -> Result<String, String> {
+    let output = Command::new(cargo)
+        .args([
+            "metadata",
+            "--locked",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--manifest-path",
+        ])
+        .arg(manifest)
+        .output()
+        .map_err(|e| format!("起不动 cargo metadata：{e}"))?;
+    if !output.status.success() {
+        return Err("cargo metadata 失败".to_string());
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|e| format!("cargo metadata JSON：{e}"))?;
+    value["packages"]
+        .as_array()
+        .and_then(|packages| {
+            packages
+                .iter()
+                .find(|item| item["name"] == package)
+                .and_then(|item| item["id"].as_str())
+        })
+        .map(str::to_string)
+        .ok_or_else(|| format!("cargo metadata 缺少包 {package}"))
+}
+
+fn contains(value: &serde_json::Value, want: &str) -> bool {
+    value
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item == want))
+}
+
+fn checked_elf(path: &Path) -> Result<PathBuf, String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| format!("执行产物 {} 不可读：{e}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("执行产物 {} 不是文件", path.display()));
+    }
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| format!("执行产物 {} 打不开：{e}", path.display()))?;
+    let mut magic = [0u8; 4];
+    file.read_exact(&mut magic)
+        .map_err(|e| format!("执行产物 {} 读不了：{e}", path.display()))?;
+    if magic != *b"\x7fELF" {
+        return Err(format!("执行产物 {} 不是 ELF", path.display()));
+    }
+    Ok(path.to_path_buf())
+}
+
 /// 瘦一份程序镜像：剥掉符号与调试节，只留可装载内容（见文件头"瘦身"那段）。
 ///
-/// `src` is the Package binary; it stays unchanged for host debugging. `out` is the profile work directory.
+/// `src` is the Cargo executable; it stays unchanged for host debugging. `out` is the work directory.
 /// （临时文件落在它下面，随 `target/` 一起清理）。产瘦好的字节。
 ///
 /// # Errors
@@ -377,17 +557,54 @@ fn slim(src: &Path, out: &Path) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{bins_for, bins_with, order_of, unit};
+    use super::{ImageBuild, bins_with, checked_elf, needed_builds, order_of, validate_builds};
+
+    /// Test-only projection of the in-repo composition values. Normal builds of
+    /// this crate never depend on composition.
+    mod unit {
+        pub use ::unit::*;
+        pub use composition::{DEPLOYMENTS, IMAGE_BUILDS, PROGRAMS};
+    }
+
+    fn deployment_of(scene: &str) -> Option<&'static unit::Deployment> {
+        unit::Deployment::find(unit::DEPLOYMENTS, scene)
+    }
+
+    fn bins_for(
+        deployment: &'static unit::Deployment,
+    ) -> Result<Vec<(&'static str, env::ProgramKind)>, String> {
+        bins_with(deployment, unit::PROGRAMS, unit::IMAGE_BUILDS)
+    }
+
+    const fn fixture_build(image: &'static str, bin: &'static str) -> ImageBuild {
+        ImageBuild {
+            image,
+            manifest: "unused/Cargo.toml",
+            package: "unused",
+            bin,
+            features: &[],
+            target: "riscv64gc-unknown-none-elf",
+            profile: "dev",
+            default_features: true,
+        }
+    }
+
+    fn select(
+        name: &str,
+        entry: env::ledger::manifest::Entry<'_>,
+    ) -> Result<&'static unit::Deployment, unit::DeploymentSelectionError> {
+        unit::select_deployment(unit::DEPLOYMENTS, unit::PROGRAMS, name, entry)
+    }
 
     #[test]
     fn deployment_image_and_start_members_are_registered() {
         for deployment in unit::DEPLOYMENTS {
             let images = bins_for(deployment).unwrap();
             order_of(deployment, unit::PROGRAMS).unwrap();
-            let entry_image = deployment.entry_image().unwrap();
+            let entry_image = deployment.entry_image(unit::PROGRAMS).unwrap();
             assert!(images.iter().any(|(name, _)| *name == entry_image));
             for (image, _) in &images {
-                assert!(unit::PACKAGES.iter().any(|package| package.name == *image));
+                assert!(unit::IMAGE_BUILDS.iter().any(|build| build.image == *image));
             }
             for start in deployment.start {
                 let program = unit::PROGRAMS
@@ -401,7 +618,7 @@ mod tests {
                 );
             }
         }
-        let fault = unit::Deployment::find("system-fault").unwrap();
+        let fault = deployment_of("system-fault").unwrap();
         let fault_bins = bins_for(fault).unwrap();
         for required in ["shell", "cat", "emit", "upper", "fail", "spin", "workers"] {
             assert!(fault_bins.iter().any(|(image, _)| *image == required));
@@ -409,7 +626,7 @@ mod tests {
         assert!(!fault.start.contains(&"shell"));
         assert!(!order_of(fault, unit::PROGRAMS).unwrap().contains(&"shell"));
 
-        let product = bins_for(unit::Deployment::find("product").unwrap())
+        let product = bins_for(deployment_of("product").unwrap())
             .unwrap()
             .into_iter()
             .map(|(name, _)| name)
@@ -455,7 +672,7 @@ mod tests {
             );
         }
         for scene in SCENES {
-            let deployment = unit::Deployment::find(scene).unwrap();
+            let deployment = deployment_of(scene).unwrap();
             let order = order_of(deployment, unit::PROGRAMS).unwrap();
             let daemon = order.iter().position(|name| *name == "daemon").unwrap();
             let provider = if matches!(*scene, "daemon-target" | "daemon-stop") {
@@ -509,14 +726,18 @@ mod tests {
 
     #[test]
     fn package_names_are_unique_and_exclude_scene_targets() {
-        for (index, package) in unit::PACKAGES.iter().enumerate() {
-            assert!(!package.name.is_empty());
-            assert!(package.binary.starts_with("prog-"));
-            assert!(unit::PACKAGES[..index]
-                .iter()
-                .all(|earlier| earlier.name != package.name && earlier.binary != package.binary));
+        for (index, build) in unit::IMAGE_BUILDS.iter().enumerate() {
+            assert!(!build.image.is_empty());
+            assert!(build.bin.starts_with("prog-"));
+            assert!(unit::IMAGE_BUILDS[..index].iter().all(|earlier| {
+                earlier.image != build.image && earlier.bin != build.bin
+            }));
         }
-        assert!(!unit::PACKAGES.iter().any(|package| package.name == "scene"));
+        assert!(
+            !unit::IMAGE_BUILDS
+                .iter()
+                .any(|build| build.image == "scene")
+        );
     }
 
     #[test]
@@ -697,22 +918,13 @@ mod tests {
             bootstrap: &[],
             sources: &[],
         };
-        static PACKAGES: &[unit::Package] = &[
-            unit::Package {
-                name: "shared-image",
-                binary: "shared-elf",
-            },
-            unit::Package {
-                name: "unitless-image",
-                binary: "raw-elf",
-            },
-            unit::Package {
-                name: "supplied-image",
-                binary: "supplied-elf",
-            },
+        static BUILDS: &[ImageBuild] = &[
+            fixture_build("shared-image", "shared-elf"),
+            fixture_build("unitless-image", "raw-elf"),
+            fixture_build("supplied-image", "supplied-elf"),
         ];
 
-        let bins = bins_with(&DEPLOYMENT, &[&ENTRY, &FIRST, &SECOND], PACKAGES).unwrap();
+        let bins = bins_with(&DEPLOYMENT, &[&ENTRY, &FIRST, &SECOND], BUILDS).unwrap();
         assert_eq!(
             bins,
             [
@@ -753,12 +965,9 @@ mod tests {
             bootstrap: &[],
             sources: &[],
         };
-        static PACKAGES: &[unit::Package] = &[unit::Package {
-            name: "unknown-entry",
-            binary: "unknown-entry-elf",
-        }];
+        static BUILDS: &[ImageBuild] = &[fixture_build("unknown-entry", "unknown-entry-elf")];
 
-        let error = bins_with(&DEPLOYMENT, &[&ENTRY], PACKAGES).unwrap_err();
+        let error = bins_with(&DEPLOYMENT, &[&ENTRY], BUILDS).unwrap_err();
         assert!(error.contains("未知 UnitFile missing-unit"));
     }
 
@@ -792,13 +1001,10 @@ mod tests {
             bootstrap: &[],
             sources: &[],
         };
-        static PACKAGES: &[unit::Package] = &[unit::Package {
-            name: "raw-entry",
-            binary: "raw-entry-elf",
-        }];
+        static BUILDS: &[ImageBuild] = &[fixture_build("raw-entry", "raw-entry-elf")];
 
         assert_eq!(
-            bins_with(&DEPLOYMENT, &[&ENTRY], PACKAGES).unwrap(),
+            bins_with(&DEPLOYMENT, &[&ENTRY], BUILDS).unwrap(),
             [("raw-entry", env::ProgramKind::User)]
         );
     }
@@ -952,16 +1158,16 @@ mod tests {
         };
         for name in ["", "unknown", "system", "system-iommu"] {
             assert!(matches!(
-                unit::select_deployment(name, entry),
+                select(name, entry),
                 Err(unit::DeploymentSelectionError::Unknown)
             ));
         }
         assert!(matches!(
-            unit::select_deployment("accept", entry),
+            select("accept", entry),
             Err(unit::DeploymentSelectionError::EntryMismatch)
         ));
         assert!(matches!(
-            unit::select_deployment("product", env::ledger::manifest::Entry {
+            select("product", env::ledger::manifest::Entry {
                 kind: env::ProgramKind::User,
                 ..entry
             }),
@@ -973,7 +1179,7 @@ mod tests {
     fn guarded_deployments_name_only_started_catalog_programs() {
         for deployment in unit::DEPLOYMENTS {
             assert!(
-                deployment.guarded().is_ok(),
+                deployment.guarded(unit::PROGRAMS).is_ok(),
                 "deployment {} has an invalid guard selection",
                 deployment.name
             );
@@ -988,10 +1194,10 @@ mod tests {
                 .map(|(name, kind)| (*kind, *name, b"actual image placeholder".as_slice()))
                 .collect();
             let entry_at = images.iter()
-                .position(|(name, _)| Some(*name) == deployment.entry_image()).unwrap();
+                .position(|(name, _)| Some(*name) == deployment.entry_image(unit::PROGRAMS)).unwrap();
             let blob = env::ledger::manifest::pack(&items, entry_at, deployment.name).unwrap();
             let entries = env::ledger::manifest::Entries::new(&blob).unwrap();
-            let selected = unit::select_deployment(entries.deployment(), entries.entry().unwrap()).unwrap();
+            let selected = select(entries.deployment(), entries.entry().unwrap()).unwrap();
             assert_eq!(unit::DEPLOYMENTS.iter().filter(|other| other.name == deployment.name).count(), 1);
             assert_eq!(selected.name, deployment.name);
             assert_eq!(selected.entry, deployment.entry);
@@ -1002,7 +1208,7 @@ mod tests {
 
     #[test]
     fn long_soak_uses_loader_arguments_without_another_controller_image() {
-        let deployment = unit::Deployment::find("iommu-soak-long").unwrap();
+        let deployment = deployment_of("iommu-soak-long").unwrap();
         assert_eq!(deployment.entry, "system");
         assert!(deployment.start.contains(&"device-ctl-soak-long"));
         let controller = unit::PROGRAMS.iter()
@@ -1024,9 +1230,9 @@ mod tests {
             ("iommu-product-after", Some("device-ctl-after")),
         ];
         for (name, controller) in variants {
-            let deployment = unit::Deployment::find(name).unwrap();
+            let deployment = deployment_of(name).unwrap();
             assert_eq!(deployment.entry, "system");
-            assert_eq!(deployment.entry_image(), Some("system"));
+            assert_eq!(deployment.entry_image(unit::PROGRAMS), Some("system"));
             let bins = bins_for(deployment).unwrap();
             assert_eq!(bins.iter().filter(|(name, _)| *name == "system").count(), 1);
             assert!(!bins.iter().any(|(name, _)| name.starts_with("system-iommu")));
@@ -1034,7 +1240,7 @@ mod tests {
                 assert_eq!(deployment.start.contains(&candidate), controller == Some(candidate));
             }
         }
-        assert!(!unit::PACKAGES.iter().any(|package| package.name.starts_with("system-iommu")));
+        assert!(!unit::IMAGE_BUILDS.iter().any(|build| build.image.starts_with("system-iommu")));
         assert!(!unit::PROGRAMS.iter().any(|program| program.name().starts_with("system-iommu")));
     }
 
@@ -1049,14 +1255,46 @@ mod tests {
         let blob = pack(items, 1, "iommu-product-fault").unwrap();
         let entries = Entries::new(&blob).unwrap();
         assert_eq!(
-            unit::select_deployment(entries.deployment(), entries.entry().unwrap()).unwrap().name,
+            select(entries.deployment(), entries.entry().unwrap()).unwrap().name,
             "iommu-product-fault",
         );
         let wrong = pack(items, 0, "iommu-product-fault").unwrap();
         let entries = Entries::new(&wrong).unwrap();
         assert!(matches!(
-            unit::select_deployment(entries.deployment(), entries.entry().unwrap()),
+            select(entries.deployment(), entries.entry().unwrap()),
             Err(unit::DeploymentSelectionError::EntryMismatch)
         ));
+    }
+
+    #[test]
+    fn image_mapping_rejects_duplicate_and_missing_entries() {
+        let duplicate = [
+            fixture_build("same", "one"),
+            fixture_build("same", "two"),
+        ];
+        assert!(validate_builds(&duplicate).unwrap_err().contains("重复镜像"));
+        let bins = [("missing", env::ProgramKind::User)];
+        assert!(
+            needed_builds(&bins, &[fixture_build("present", "bin")])
+                .err()
+                .expect("missing image must fail")
+                .contains("未登记镜像")
+        );
+    }
+
+    #[test]
+    fn non_elf_artifact_is_rejected() {
+        let at = std::env::temp_dir().join(format!(
+            "shuyra-image-non-elf-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&at, b"not an elf").unwrap();
+        let error = checked_elf(&at).unwrap_err();
+        let _ = std::fs::remove_file(&at);
+        assert!(error.contains("不是 ELF"), "{error}");
     }
 }

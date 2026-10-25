@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use ::resource::dock::View;
 use env::{Name, Page};
 
-use crate::unit::router::PLIC_CLASS;
+use router_api::PLIC_CLASS;
 
 /// Two inventory entries are reserved for the boot DTB and interrupt resource.
 pub const MAX_DEVICES: usize = hub_api::INVENTORY_MAX - 2;

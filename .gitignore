@@ -31,3 +31,7 @@ __pycache__/
 
 programs/tests/*/target/
 kernel/tests/*/target/
+
+# 独立测试/fixture 工作区可能嵌在更深层（例如 crates/image/tests/fixtures/...、
+# tools/shuyra-image）；它们各自的 target 都是构建缓存，不随源码入库。
+**/target/

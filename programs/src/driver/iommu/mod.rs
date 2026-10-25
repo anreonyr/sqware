@@ -19,7 +19,7 @@
 pub mod acquire;
 pub mod api;
 pub mod binding;
-pub mod bindings;
+pub use iommu_declaration::bindings;
 mod cache_step;
 pub mod context;
 mod cookie;

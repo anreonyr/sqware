@@ -13,4 +13,6 @@ path = "lib.rs"
 env = { path = "../../../crates/env" }
 hub-api = { path = "../../../programs/src/service/hub/api" }
 mold = { path = "../../../crates/mold" }
+pci-declaration = { path = "../../../programs/src/driver/pci/declaration" }
+iommu-declaration = { path = "../../../programs/src/driver/iommu/declaration" }
 wire = { path = "../../../crates/wire" }

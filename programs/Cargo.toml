@@ -30,6 +30,8 @@ zeroize = { version = "1", default-features = false, features = ["alloc"] }
 mold = { path = "../crates/mold" }
 # 服务域把判据就地登记成一例一例（自己挂到自己的 `cases::Suite` 上）。
 env = { path = "../crates/env" }
+unit = { path = "../crates/unit" }
+composition = { path = "../crates/composition" }
 resource = { path = "../crates/resource" }
 execution = { path = "../crates/execution" }
 schedule = { path = "../crates/schedule" }
@@ -42,8 +44,13 @@ hub-api = { path = "src/service/hub/api" }
 hub-client = { path = "src/service/hub/client" }
 terminal-api = { path = "src/user/terminal/api" }
 terminal-client = { path = "src/user/terminal/client" }
+shell-declaration = { path = "src/user/shell/declaration" }
+iommu-declaration = { path = "src/driver/iommu/declaration" }
+pci-declaration = { path = "src/driver/pci/declaration" }
 router-api = { path = "src/driver/router/api" }
 router-client = { path = "src/driver/router/client" }
+rtc-api = { path = "src/driver/rtc/api" }
+fixturetarget-api = { path = "src/harness/probe/daemon_target/api" }
 # 设备树解析：**驱动自己读自描述**（内核不代劳，`platform/devices.rs` 只原样搬运）。
 # 使用者目前只有 `prog-router`（要数自己的 context、列自己要接的线）。
 fdt = { version = "0.1.5", default-features = false }
@@ -372,9 +379,9 @@ doctest = false
 
 # ── 那二十三个 bin 的清单 ───────────────────────────────────────────
 #
-# 特权级**不在这里**声明（与产品同一条规矩）：那一格在 `programs/src/unit/catalog.rs` 的 `PROGRAMS` 里
-# （`ProgramKind::User` / `Supervisor`），而且**按场景分**（看每行的 `scenes`）——验收那张只列
-# 探针，台子那张只列台主与它要的受害者。
+# 特权级**不在这里**声明（与产品同一条规矩）：那一格在 `crates/composition/src/units/` 的
+# `PROGRAMS` 里（`ProgramKind::User` / `Supervisor`），而且**按场景分**（看每行的 `scenes`）
+# ——验收那张只列探针，台子那张只列台主与它要的受害者。
 
 [[bin]]
 name = "prog-probe-owner"

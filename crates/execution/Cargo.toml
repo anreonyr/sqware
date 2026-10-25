@@ -2,6 +2,7 @@
 name = "execution"
 version.workspace = true
 edition.workspace = true
+links = "execution"
 
 [lib]
 path = "src/lib.rs"

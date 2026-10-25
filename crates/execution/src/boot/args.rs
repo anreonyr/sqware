@@ -1,12 +1,12 @@
 //! boot::args — **启动参数面**：`save_args` / `args`（`Spawn` 那两格的读侧，任务本地状态）。
-//! `save_args` 只有汇编一个调用者：`programs/src/entry.rs` 的 `_start` 用 `call save_args`
-//! 直接叫它（`#[unsafe(no_mangle)]` 就是为这一手——路径搬到哪儿，符号都不动）。
+//! `save_args` 只有汇编一个调用者：`crates/execution/src/boot/start.rs` 的 `_start` 用
+//! `call save_args` 直接叫它（`#[unsafe(no_mangle)]` 就是为这一手——路径搬到哪儿，符号都不动）。
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 // ── 启动参数面 ────────────────────────────────────────────────────────────
 //
-// **`save_args` 只有汇编一个调用者**：`programs/src/entry.rs` 的 `_start` 用
+// **`save_args` 只有汇编一个调用者**：`crates/execution/src/boot/start.rs` 的 `_start` 用
 // `call save_args` 直接叫它（`#[unsafe(no_mangle)]` 就是为这一手——路径搬到哪儿，
 // 符号都不动）。故它必须**在任何 Rust 调用之前**就能跑：这里只写两个静态，不碰 TLS。
 

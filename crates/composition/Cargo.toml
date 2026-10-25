@@ -1,0 +1,24 @@
+[package]
+name = "composition"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+env = { path = "../env" }
+unit = { path = "../unit" }
+system-api = { path = "../../programs/src/system/api" }
+hub-api = { path = "../../programs/src/service/hub/api" }
+router-api = { path = "../../programs/src/driver/router/api" }
+rtc-api = { path = "../../programs/src/driver/rtc/api" }
+fixturetarget-api = { path = "../../programs/src/harness/probe/daemon_target/api" }
+account-api = { path = "../../programs/src/service/account/api" }
+pipe-api = { path = "../../programs/src/service/pipe/api" }
+shell-declaration = { path = "../../programs/src/user/shell/declaration" }
+iommu-declaration = { path = "../../programs/src/driver/iommu/declaration" }
+pci-declaration = { path = "../../programs/src/driver/pci/declaration" }

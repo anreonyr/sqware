@@ -12,15 +12,15 @@ pub mod debug;
 
 pub mod boot;
 pub mod driver;
-pub mod entry;
 pub mod harness;
-#[path = "unit/interfaces.rs"]
 mod interfaces;
 pub mod service;
 pub mod support;
 pub mod system;
-pub mod unit;
 pub mod user;
+
+pub use composition;
+pub use unit;
 
 // 出口那一套的转发：生成物（`entry_<路径>.rs`）里写的是 `programs::…`，各 bin 的
 // `main` 返回类型也写 `programs::Report` / `programs::Exit`，故这几个名字得在 crate 根上

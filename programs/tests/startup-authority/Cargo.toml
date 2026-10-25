@@ -13,3 +13,4 @@ ipc = { path = "../../../crates/ipc" }
 schedule = { path = "../../../crates/schedule" }
 wire = { path = "../../../crates/wire" }
 system-api = { path = "../../src/system/api" }
+unit-declarations = { package = "unit", path = "../../../crates/unit" }

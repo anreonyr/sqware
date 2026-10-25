@@ -26,7 +26,7 @@ use wire::Message;
 use super::Start;
 use crate::service::hub::core::{Entry, Ledger, Owner};
 use crate::support::machine::Machine;
-use crate::unit::hub::{E_HUB, INVENTORY_MARK};
+use hub_api::declaration::{E_HUB, INVENTORY_MARK, READY_MARK};
 
 use self::directory::Directory;
 use self::peers::Peers;
@@ -201,7 +201,7 @@ pub fn serve() -> Result<(), Start> {
 
             // **八、报"我起完了"**（Setup::Machine 的 `ready` 那条通道）：铸一枚刻它的孔、**交给
             // （设备格都在树上、盟都立好了）。
-            establish::lend(sire, crate::unit::hub::READY_MARK).map_err(|why| {
+            establish::lend(sire, READY_MARK).map_err(|why| {
                 crate::debug::put(&alloc::format!("hub: ready channel {why:?}"));
                 Start::Desk(E_HUB)
             })?;
@@ -536,18 +536,18 @@ pub(super) fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -
 fn receive_inventory(system: TaskId) -> Result<Inventory, Start> {
     let descriptor = establish::claim(
         system,
-        crate::unit::descriptor_mark(INVENTORY_MARK),
+        system_api::supply::descriptor_mark(INVENTORY_MARK),
         Wait::AtMost(MS),
     )
     .map_err(|_| Start::Load(E_HUB))?;
-    let mut bytes = crate::unit::SupplyFrame::EMPTY;
+    let mut bytes = system_api::supply::SupplyFrame::EMPTY;
     let (len, sender) = Hole::from_raw(descriptor)
         .pull(&mut bytes, Wait::AtMost(MS))
         .map_err(|_| Start::Load(E_HUB))?;
     if sender != system {
         return Err(Start::Load(E_HUB));
     }
-    let frame = crate::unit::SupplyFrame::fetch(&bytes[..len]).ok_or(Start::Load(E_HUB))?;
+    let frame = system_api::supply::SupplyFrame::fetch(&bytes[..len]).ok_or(Start::Load(E_HUB))?;
     let description = &frame.description[..usize::from(frame.length)];
     let count = usize::from(
         *description

@@ -14,8 +14,12 @@ pub(crate) const REQUEST: env::Mark = env::Mark::of("device-ruin/request");
 
 pub fn run() -> Result<(), env::Reason> {
     let boot = app::bootstrap::take().map_err(|why| why.code())?;
-    let programs = app::scene::programs(&boot.catalog).map_err(|_| 9usize)?;
-    let mut resources = app::install::resources(boot).map_err(|_| 9usize)?;
+    let deployment = crate::harness::deployment(&boot.catalog).map_err(|_| 9usize)?;
+    let declarations = crate::harness::declarations();
+    let programs = app::scene::programs(&boot.catalog, declarations, deployment)
+        .map_err(|_| 9usize)?;
+    let mut resources = app::install::resources(boot, declarations, deployment)
+        .map_err(|_| 9usize)?;
     resources
         .write::<control::Startup>()
         .map_err(|_| 9usize)?

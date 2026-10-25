@@ -8,28 +8,18 @@ publish = false
 # another checkout (Delta worktrees). Do not inherit the enclosing target workspace.
 [workspace]
 
-# image —— **造镜像那一步**：编程序（`programs` + `harness`）→ 打 initrd → 放到内核 ELF 旁。
-#
-# 它是**编外**的（根 `Cargo.toml` 的 `exclude`），与 `crates/alloc-probe` 同源：
-# 主工作区被 `.cargo/config.toml` 钉在 riscv 上，而这一步要 std + host ABI。
-#
-# 为什么要独立一件事、而不是留在 `kernel/build.rs`：见 `src/lib.rs` 头注（用户原话
-# **"initrd 与 kernel 何干"**）。
+# Published image-builder core: host library only. It knows explicit declarations,
+# an explicit Deployment and explicit ImageBuild coordinates; it does not know the
+# in-repo composition or a repository layout.
 
 [dependencies]
-# **两侧共读的那一份**：清单格式（`env::manifest`，坐标与启动参数同理）＋ `ProgramKind`。
-#
-# **装配表不在依赖里**：它住 `programs/src/unit/catalog.rs`，由 `src/lib.rs` 用一行 `#[path]`
-# 文本包含；产品入口声明只引用 `env` 与无 execution / protocol 的 provider API。
+# Host-safe declaration/type package: no execution, no server, no client, no composition.
 env = { path = "../env" }
-wire = { path = "../wire" }
+unit = { path = "../unit" }
 system-api = { path = "../../programs/src/system/api" }
 elf = { version = "0.8", default-features = false }
-router-api = { path = "../../programs/src/driver/router/api" }
-pipe-api = { path = "../../programs/src/service/pipe/api" }
-account-api = { path = "../../programs/src/service/account/api" }
-hub-api = { path = "../../programs/src/service/hub/api" }
+serde_json = "1"
 
-[[bin]]
-name = "shuyra-image"
-path = "src/main.rs"
+[dev-dependencies]
+# Composition is test data only (existing integration assertions); normal builds do not see it.
+composition = { path = "../composition" }

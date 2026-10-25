@@ -55,11 +55,7 @@ fn namespace(
 ) -> Result<Progress, Fail> {
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
     let task = active.task().ok_or(Fail::NotReady)?;
-    let program = crate::unit::PROGRAMS
-        .iter()
-        .copied()
-        .find(|program| program.name() == job.key.request.name)
-        .ok_or(Fail::Unknown)?;
+    let program = job.program.ok_or(Fail::Unknown)?;
     crate::debug::put(&alloc::format!(
         "system: prepare {} namespace",
         program.name()
@@ -142,11 +138,7 @@ fn identity_exports(
 ) -> Result<Progress, Fail> {
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
     let task = active.task().ok_or(Fail::NotReady)?;
-    let program = crate::unit::PROGRAMS
-        .iter()
-        .copied()
-        .find(|program| program.name() == job.key.request.name)
-        .ok_or(Fail::Unknown)?;
+    let program = job.program.ok_or(Fail::Unknown)?;
     exports
         .grant(crate::system::identity::export::GrantRequest {
             task,
@@ -171,11 +163,7 @@ fn claim_grant(
 ) -> Result<Progress, Fail> {
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
     let task = active.task().ok_or(Fail::NotReady)?;
-    let program = crate::unit::PROGRAMS
-        .iter()
-        .copied()
-        .find(|program| program.name() == job.key.request.name)
-        .ok_or(Fail::Unknown)?;
+    let program = job.program.ok_or(Fail::Unknown)?;
     endpoint
         .grant_claim(task, program.control.construction)
         .map_err(|_| Fail::NotReady)?;

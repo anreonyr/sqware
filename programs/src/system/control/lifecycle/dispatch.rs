@@ -16,7 +16,7 @@ pub fn select(
     mut active: ResMut<Active>,
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
 ) -> Result<Progress, ControlFail> {
-    let tracked = loop {
+    let mut tracked = loop {
         let Some(tracked) = operations.select_lifecycle() else {
             dispatch.stop()?;
             return Ok(Progress::Done);
@@ -29,6 +29,9 @@ pub fn select(
         Action::Debark => Key::Debark,
         Action::Ruin => Key::Ruin,
     };
+    tracked.operation.program = operations
+        .declarations
+        .and_then(|declarations| declarations.find(&tracked.operation.key.request.name));
     active.0 = Some(tracked.operation);
     dispatch.select(Invocation {
         key,

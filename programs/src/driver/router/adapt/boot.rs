@@ -20,7 +20,7 @@ use programs::debug;
 use programs::driver::shared::context::{Context, Step};
 use programs::driver::shared::device::{Ask, Device, Hub};
 use programs::driver::shared::fail::Fail;
-use programs::unit::router::{E_ROUTER, PLIC_CLASS};
+use router_api::{E_ROUTER, PLIC_CLASS};
 use system_client::operator;
 
 /// 它们不是树里的设备）

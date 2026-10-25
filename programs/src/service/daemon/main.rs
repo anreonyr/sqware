@@ -6,6 +6,6 @@ extern crate programs;
 fn main() -> Result<(), env::Reason> {
     programs::service::daemon::run().map_err(|why| {
         programs::debug::put(why);
-        programs::unit::daemon::E_DAEMON
+        programs::service::daemon::E_DAEMON
     })
 }

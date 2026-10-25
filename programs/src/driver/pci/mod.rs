@@ -10,7 +10,7 @@
 
 pub mod api;
 mod bar;
-pub mod bindings;
+pub use pci_declaration::bindings;
 pub mod core;
 pub mod ecam;
 pub mod end;

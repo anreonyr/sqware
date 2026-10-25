@@ -56,6 +56,7 @@ pub struct Execution {
 pub struct Operation {
     pub key: OperationKey,
     pub progress: ExecutionProgress,
+    pub program: Option<&'static crate::unit::UnitFile>,
 }
 pub struct OperationKey {
     pub id: crate::system::assembly::JobId,
@@ -94,6 +95,7 @@ impl Tracked {
                     },
                     failure: None,
                 },
+                program: None,
             },
             cursor: Cursor::default(),
             complete: false,

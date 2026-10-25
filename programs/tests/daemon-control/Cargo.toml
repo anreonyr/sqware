@@ -10,3 +10,4 @@ path = "lib.rs"
 env = { path = "../../../crates/env" }
 schedule = { path = "../../../crates/schedule" }
 system-api = { path = "../../src/system/api" }
+unit-declarations = { package = "unit", path = "../../../crates/unit" }

@@ -48,8 +48,12 @@ pub fn acceptance() -> crate::Report<'static> {
     use crate::system::app::{bootstrap, scene};
 
     let boot = bootstrap::take().expect("accept: bootstrap");
-    let list = scene::programs(&boot.catalog).expect("accept: scene");
-    let mut fixture = Fixture::new(boot).ok().expect("accept: setup");
+    let deployment = crate::harness::deployment(&boot.catalog).expect("accept: deployment");
+    let declarations = crate::harness::declarations();
+    let list = scene::programs(&boot.catalog, declarations, deployment).expect("accept: scene");
+    let mut fixture = Fixture::new(boot, declarations, deployment)
+        .ok()
+        .expect("accept: setup");
     for program in list {
         fixture.assemble(program).expect("accept: install unit");
     }

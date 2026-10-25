@@ -1,7 +1,9 @@
 #![no_std]
 
+pub mod declaration;
 pub mod frame;
 pub mod marks;
+pub use declaration::{CHANNEL, E_ROUTER, PLIC_CLASS, READY_MARK};
 pub use interface::{INTERFACE_ID, PUBLICATIONS, REGISTRY};
 
 pub use frame::Fail;

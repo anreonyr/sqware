@@ -44,6 +44,11 @@ impl<'a> Catalog<'a> {
         }
     }
 
+    /// Iterate the validated manifest records.
+    pub fn entries(&self) -> manifest::Entries<'a> {
+        self.programs()
+    }
+
     fn programs(&self) -> manifest::Entries<'a> {
         manifest::Entries::new(self.view).expect("部署头已在 new 时验过")
     }

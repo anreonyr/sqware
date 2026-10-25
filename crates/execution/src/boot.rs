@@ -1,6 +1,8 @@
 //! Program startup arguments and return-value adaptation.
 
 pub mod args;
+mod panic;
+mod start;
 
 use env::{EXIT_OK, Reason};
 
@@ -8,7 +10,7 @@ use crate::room::reap;
 
 /// note 的**线形状**：`(ptr, len)`——`0` 长度即"无话"。
 ///
-/// **为什么不用 `Option<&str>`**：这个词要跨 `programs::entry::entry` 那个
+/// **为什么不用 `Option<&str>`**：这个词要跨 `execution::boot::entry` 那个
 /// `extern "C" fn clean_ret()` 的边界回来，而 `Option<&str>` 是带 niche 的枚举、没有
 /// `repr`，编译器（正确地）不肯认它是 FFI-safe。拆成两个标量（与内核 `Reap { note, len }`
 /// 同一形）就干净了。

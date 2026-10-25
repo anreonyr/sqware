@@ -19,7 +19,9 @@ use env::Wait;
 use programs::Report;
 
 use programs::driver::shared::device::{Ask, Hub};
-use programs::unit::lodger::E_LODGER;
+
+/// It dies during startup/residency here.
+const E_LODGER: env::Reason = 11;
 
 use ipc::session::Session;
 use programs::debug;

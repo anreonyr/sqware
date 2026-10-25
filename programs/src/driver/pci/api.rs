@@ -8,10 +8,8 @@ use env::PieToken;
 use wire::{Message, OK};
 
 /// 本台那一扇门在树上与服务名下的坐标。
-#[path = "marks.rs"]
-mod marks;
-pub use marks::ENTRY;
-pub(crate) use marks::CONFIG;
+pub use pci_declaration::marks::ENTRY;
+pub(crate) use pci_declaration::marks::CONFIG;
 pub const ENTRY_NAME: &str = "entry";
 pub const ENTRY_PATH: &str = "pci/entry";
 

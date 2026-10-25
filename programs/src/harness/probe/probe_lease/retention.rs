@@ -7,16 +7,16 @@ pub(super) fn check() {
     let system = env::unit::sire();
     let descriptor = ipc::session::establish::claim(
         system,
-        programs::unit::descriptor_mark(Mark::of("probe-lease/retention")),
+        system_api::supply::descriptor_mark(Mark::of("probe-lease/retention")),
         Wait::AtMost(2000),
     )
     .expect("probe-lease: retention descriptor");
-    let mut bytes = programs::unit::SupplyFrame::EMPTY;
+    let mut bytes = system_api::supply::SupplyFrame::EMPTY;
     let (len, from) = Hole::from_raw(descriptor)
         .pull(&mut bytes, Wait::AtMost(2000))
         .expect("probe-lease: retention frame");
     assert_eq!(from, system);
-    let frame = programs::unit::SupplyFrame::fetch(&bytes[..len]).unwrap();
+    let frame = system_api::supply::SupplyFrame::fetch(&bytes[..len]).unwrap();
     assert_eq!(frame.length, 1);
     assert_eq!(frame.description[0], 1);
     let token =

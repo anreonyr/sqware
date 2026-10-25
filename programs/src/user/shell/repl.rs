@@ -16,11 +16,11 @@ fn catalogue(system: TaskId) -> Result<shell_api::Catalogue, &'static str> {
     for command in super::commands::COMMANDS {
         let channel = ipc::session::establish::claim(
             system,
-            crate::unit::descriptor_mark(command.binding.slot),
+            system_api::supply::descriptor_mark(command.binding.slot),
             WAIT,
         )
         .map_err(|_| "shell resource channel")?;
-        let mut frame_bytes = crate::unit::SupplyFrame::EMPTY;
+        let mut frame_bytes = system_api::supply::SupplyFrame::EMPTY;
         let (n, from) = resource::raw::Hole::from_raw(channel)
             .pull(&mut frame_bytes, WAIT)
             .map_err(|_| "shell resource receive")?;
@@ -28,7 +28,7 @@ fn catalogue(system: TaskId) -> Result<shell_api::Catalogue, &'static str> {
             return Err("shell resource source");
         }
         let frame =
-            crate::unit::SupplyFrame::fetch(&frame_bytes[..n]).ok_or("shell resource frame")?;
+            system_api::supply::SupplyFrame::fetch(&frame_bytes[..n]).ok_or("shell resource frame")?;
         let description = &frame.description[..usize::from(frame.length)];
         let encoded_length: [u8; 8] = description
             .get(..8)

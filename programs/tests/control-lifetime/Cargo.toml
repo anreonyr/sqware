@@ -8,3 +8,4 @@ publish = false
 path = "lib.rs"
 [dependencies]
 env = { path = "../../../crates/env" }
+system-api = { path = "../../src/system/api" }

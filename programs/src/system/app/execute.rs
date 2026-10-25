@@ -1,15 +1,22 @@
+use super::Declarations;
 use super::policy as frame;
 use super::{install, schedule};
 use crate::system::app::{bootstrap, scene};
 use crate::system::control::unit::start;
 use ::schedule::{Cursor, Progress};
-pub fn run() -> Result<(), env::Reason> {
-    let boot = bootstrap::take().map_err(|e| e.code())?;
-    let list = scene::programs(&boot.catalog).map_err(|_| start::E_PROGRAM)?;
+use unit::Deployment;
+
+pub(crate) fn run(
+    boot: bootstrap::Boot,
+    declarations: Declarations,
+    deployment: &'static Deployment,
+) -> Result<(), env::Reason> {
+    let list = scene::programs(&boot.catalog, declarations, deployment)
+        .map_err(|_| start::E_PROGRAM)?;
     if list.is_empty() {
         return Err(start::E_PROGRAM);
     }
-    let resources = install::resources(boot).map_err(|error| {
+    let resources = install::resources(boot, declarations, deployment).map_err(|error| {
         programs::debug::put(&alloc::format!("system: install {}", error));
         start::E_TABLE
     })?;

@@ -9,6 +9,16 @@ pub(crate) struct BootstrapReceipt {
     operation_start: Option<api::OperationId>,
     pending: Option<system_client::operator::PartResult>,
     cursor: usize,
+    declarations: Option<crate::system::app::Declarations>,
+}
+
+impl BootstrapReceipt {
+    pub(crate) fn new(declarations: crate::system::app::Declarations) -> Self {
+        Self {
+            declarations: Some(declarations),
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -88,7 +98,13 @@ pub(crate) fn bootstrap(
         receipt.pending = None;
         receipt.cursor += 1;
     }
-    for program in crate::unit::PROGRAMS.iter().copied() {
+    for program in receipt
+        .declarations
+        .ok_or("declaration set")?
+        .list()
+        .iter()
+        .copied()
+    {
         for declaration in program.operator.namespace {
             match system.resolve(declaration.key, WAIT) {
                 Ok(_) => {}

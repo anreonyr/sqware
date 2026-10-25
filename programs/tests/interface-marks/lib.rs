@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-#[path = "../../src/unit/interfaces.rs"]
+#[path = "../../src/interfaces.rs"]
 mod interfaces;
 
 mod baseline;

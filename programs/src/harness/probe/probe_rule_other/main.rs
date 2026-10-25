@@ -16,8 +16,8 @@
 
 // ——与 `terminal` / `probe-denied` 同一条：`programs/src/user/mod.rs` 里没有它。
 // 两条 `extern crate` 缺一不可（实测）：`alloc` 是 `format!` 要用；`programs` **不是**为了
-// 用它里面的东西，而是为了把 `libprograms` 链进来——**panic handler 与 `_start` 都住那份
-// lib**（`programs/src/entry.rs`）。少了它，链接期报 `` `#[panic_handler]` function required ``。
+// 用它里面的东西，而是为了把 `execution` 与 `env` 链进来——**panic handler 与 `_start` 都住
+// `crates/execution`**。少了它，链接期报 `` `#[panic_handler]` function required ``。
 extern crate alloc;
 extern crate programs;
 

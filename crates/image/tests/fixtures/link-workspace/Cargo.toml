@@ -1,0 +1,10 @@
+[workspace]
+members = ["first", "second", "link-dep"]
+resolver = "3"
+
+[profile.release]
+debug-assertions = true
+
+[profile.release-check]
+inherits = "release"
+debug-assertions = true

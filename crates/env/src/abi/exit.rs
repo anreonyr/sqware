@@ -26,7 +26,7 @@ pub type Reason = usize;
 /// 自愿／正常结束（"没有失败要报"）。
 pub const EXIT_OK: Reason = 0;
 
-/// **域内 panic**：`programs/src/entry.rs` 的 panic handler 专用。
+/// **域内 panic**：`crates/execution/src/boot/panic.rs` 的 panic handler 专用。
 ///
 /// 取高位段、与各 bin 的启动握手编号（小整数）不重叠——读 trace 的人一眼能分出
 /// "启动没走通"与"域自己炸了"。
