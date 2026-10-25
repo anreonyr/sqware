@@ -1,0 +1,18 @@
+[package]
+name = "shuyra-image"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Integration-owned adapter: chooses the in-repo scene/profile, resolves the
+# Integration build root, and calls the published image-builder core.
+[workspace]
+
+[dependencies]
+image = { path = "../../crates/image" }
+composition = { path = "../../crates/composition" }
+unit = { path = "../../crates/unit" }
+
+[[bin]]
+name = "shuyra-image"
+path = "src/main.rs"

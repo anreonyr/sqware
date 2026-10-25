@@ -1,36 +1,29 @@
+use super::Declarations;
 use super::supplies::Supplies;
 use super::{boot, bootstrap::Boot, life, policy, wait};
 use crate::system::{assembly, control, identity, loader, operator};
 use ::schedule::Resources;
 use alloc::vec::Vec;
 use env::{Call, Name};
+use unit::Deployment;
 
 pub(crate) fn resources(
     boot: Boot,
+    declarations: Declarations,
+    deployment: &'static Deployment,
 ) -> Result<Resources<'static>, crate::system::app::InstallError> {
-    super::config::validate().map_err(crate::system::app::InstallError::Configuration)?;
+    super::config::validate(declarations.list())
+        .map_err(crate::system::app::InstallError::Configuration)?;
     let status = boot::status();
-    let deployment =
-        crate::unit::select_deployment(boot.catalog.deployment(), boot.catalog.entry()).map_err(
-            |why| {
-                programs::debug!(
-                    "system: invalid deployment {}: {why:?}",
-                    boot.catalog.deployment()
-                );
-                crate::system::app::InstallError::Configuration("invalid deployment selection")
-            },
-        )?;
     let inputs = deployment
         .start
         .iter()
         .map(|name| {
-            let program = crate::unit::PROGRAMS
-                .iter()
-                .copied()
-                .find(|program| program.name() == *name)
-                .ok_or(crate::system::app::InstallError::Configuration(
+            let program = declarations.find(name).ok_or(
+                crate::system::app::InstallError::Configuration(
                     "deployment start UnitFile missing",
-                ))?;
+                ),
+            )?;
             let image = boot
                 .catalog
                 .find(program.loader.image)
@@ -45,7 +38,7 @@ pub(crate) fn resources(
         })
         .collect::<Result<Vec<_>, crate::system::app::InstallError>>()?;
     let deployed = inputs.iter().map(|input| input.program).collect::<Vec<_>>();
-    let guarded = deployment.guarded().map_err(|why| {
+    let guarded = deployment.guarded(declarations.list()).map_err(|why| {
         programs::debug!(
             "system: invalid guarded deployment {}: {why:?}",
             deployment.name
@@ -59,8 +52,9 @@ pub(crate) fn resources(
         Supplies::new(boot.machine, boot.accounts, boot.catalog)
             .map_err(crate::system::app::InstallError::Configuration)?,
     )?;
+    resources.insert(declarations)?;
     resources.insert(super::operator::Layout::default())?;
-    resources.insert(super::operator::BootstrapReceipt::default())?;
+    resources.insert(super::operator::BootstrapReceipt::new(declarations))?;
     control::install(
         &mut resources,
         status.clone(),
@@ -75,7 +69,7 @@ pub(crate) fn resources(
     operator::install(&mut resources)?;
     resources.insert(identity::export::Exports::default())?;
     loader::install(&mut resources)?;
-    assembly::install(&mut resources)?;
+    assembly::install(&mut resources, declarations)?;
     let namespaces = crate::system::assembly::namespace::NamespaceInstallations::new();
     resources.insert(namespaces)?;
 

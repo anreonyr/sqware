@@ -6,6 +6,12 @@ use env::{Mark, Permission, PieToken, TaskId};
 pub const MAX_DESCRIPTION: usize = 128;
 pub const MAX_LEASES: usize = 256;
 
+mod frame;
+mod marks;
+
+pub use frame::SupplyFrame;
+pub use marks::{IMAGE_MARK, descriptor_mark};
+
 /// A stable logical source or resource name. The composition root checks collisions.
 #[derive(Clone, Copy, Debug)]
 pub struct Key {

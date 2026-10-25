@@ -1,0 +1,21 @@
+[package]
+name = "link-second"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+env = { path = "../../../../../../crates/env" }
+execution = { path = "../../../../../../crates/execution" }
+mold = { path = "../../../../../../crates/mold" }
+link-dep = { path = "../link-dep" }
+
+[features]
+use-loud = ["link-dep/loud"]
+
+[[bin]]
+name = "second"
+path = "src/main.rs"
+test = false
+bench = false
+doctest = false

@@ -6,7 +6,7 @@ use ipc::session::establish;
 use system_api::identity::Grant;
 
 use crate::harness::probe::fixture::Fixture;
-use crate::unit::{self, UnitFile};
+use crate::unit::UnitFile;
 use ::resource::raw::{Hole, inspect, reserve};
 use env::pie;
 
@@ -37,8 +37,8 @@ pub(crate) fn supply_to(
     if program.name() == "system-dependent" {
         super::hierarchy::supply(task)?;
     }
-    if program.name() != unit::probe_denied::PROBE_DENIED.name()
-        && program.name() != unit::probe_coalition::PROBE_COALITION.name()
+    if program.name() != composition::units::probe_denied::PROBE_DENIED.name()
+        && program.name() != composition::units::probe_coalition::PROBE_COALITION.name()
     {
         return Ok(());
     }
@@ -112,8 +112,12 @@ pub fn acceptance() {
     super::hierarchy::codecs();
     super::hierarchy::reference_lifetime();
     let boot = bootstrap::take().expect("identity: bootstrap");
-    let list = scene::programs(&boot.catalog).expect("identity: scene");
-    let mut assembly = Fixture::new(boot).ok().expect("identity: assembly");
+    let deployment = crate::harness::deployment(&boot.catalog).expect("identity: deployment");
+    let declarations = crate::harness::declarations();
+    let list = scene::programs(&boot.catalog, declarations, deployment).expect("identity: scene");
+    let mut assembly = Fixture::new(boot, declarations, deployment)
+        .ok()
+        .expect("identity: assembly");
     revision(&mut assembly);
     for program in list {
         if program.name() == "system-child" {

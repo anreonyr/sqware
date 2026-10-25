@@ -11,10 +11,10 @@
 //! fn main() -> Result<(), fail::Fail> { … }        // 原样
 //!
 //! #[unsafe(no_mangle)]
-//! extern "C" fn clean_ret() { programs::entry::entry(main) }
+//! extern "C" fn clean_ret() { execution::boot::entry(main) }
 //! ```
 //!
-//! `_start` 的汇编调的就是 `clean_ret`（见 `programs/src/entry.rs`）——**符号名不再是 `main`**，
+//! `_start` 的汇编调的就是 `clean_ret`（见 `crates/execution/src/boot/start.rs`）——**符号名不再是 `main`**，
 //! 于是：
 //!
 //! - 你那个 `main` 照旧叫 `main`（不必改名、不必加 attribute）；
@@ -25,8 +25,8 @@
 //! 名字为什么叫 `clean_ret`：入口那一手做的是"**干净地回来**"——`main` 正常返回时，
 //! 把退出码与那句话折成 `Report` 交给内核；`main` 自己退场（`-> !`）时这一层根本走不到。
 //!
-//! **（它绑下游）**：展开体里写死 `programs::entry::entry(#name)`——这一枚宏**不是**
-//! 通用的，它认的就是 `programs` 那一格入口胶水。与 `#[derive(Envcall)]` 的主张不同：那个只
+//! **（它绑下游）**：展开体里写死 `execution::boot::entry(#name)`——这一枚宏**不是**
+//! 通用的，它认的就是 `execution` 那一格入口胶水。与 `#[derive(Envcall)]` 的主张不同：那个只
 //! 依赖 `Wire`，这个依赖一个具体的下游 crate。
 //!
 //! 本文件是该宏的全部——**与另外两个宏一行都不共享**。
@@ -55,7 +55,7 @@ pub fn expand(item: TokenStream) -> TokenStream {
         /// 汇编 `_start` 调的那一格（名字见宏的头注；这里不让它叫 `main`——那个名字归你）。
         #[unsafe(no_mangle)]
         extern "C" fn clean_ret() {
-            programs::entry::entry(#name)
+            execution::boot::entry(#name)
         }
     }
 }

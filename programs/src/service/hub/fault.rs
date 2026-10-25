@@ -1,4 +1,5 @@
-use crate::unit::{Died, hub::E_HUB};
+use hub_api::declaration::E_HUB;
+use unit::Died;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {

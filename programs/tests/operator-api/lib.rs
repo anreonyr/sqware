@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 extern crate alloc;
 
-#[path = "../../src/unit/operator.rs"]
-mod unit_operator;
+#[cfg(test)]
+use unit_declarations::operator as unit_operator;
 
 pub mod system {
     pub mod identity {

@@ -42,7 +42,7 @@ impl Service {
                 .descriptors
                 .try_reserve(1)
                 .map_err(|_| Error::Step("no room for descriptors"))?;
-            let writer = establish::give(self.task, crate::unit::descriptor_mark(binding.slot))
+            let writer = establish::give(self.task, system_api::supply::descriptor_mark(binding.slot))
                 .map_err(|_| Error::Step("descriptor channel"))?;
             staged.descriptors.push(DescriptorChannel {
                 slot: binding.slot,

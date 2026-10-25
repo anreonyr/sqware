@@ -4,7 +4,10 @@ extern crate programs;
 
 #[programs::entry]
 fn main() -> programs::Report<'static> {
-    match programs::system::app::run() {
+    match programs::system::app::run(
+        programs::composition::PROGRAMS,
+        programs::composition::DEPLOYMENTS,
+    ) {
         Ok(()) => programs::Report::note(env::EXIT_OK, "system: done"),
         Err(reason) => programs::Report::note(reason, "system: failed"),
     }

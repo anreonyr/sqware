@@ -6,6 +6,8 @@ use system_api::control::{
     construction::{Image, Input, UnitRef},
 };
 
+use crate::system::app::Declarations;
+
 pub(crate) enum Source {
     Image { image: Image, from: TaskId },
     Unit(UnitRef),
@@ -22,13 +24,13 @@ impl Source {
             crate::system::loader::release_image(image, *from);
         }
     }
-    pub(crate) fn program(&self) -> Option<&'static crate::unit::UnitFile> {
+    pub(crate) fn program(
+        &self,
+        declarations: Option<Declarations>,
+    ) -> Option<&'static crate::unit::UnitFile> {
         match self {
             Self::Image { .. } => None,
-            Self::Unit(unit) => crate::unit::PROGRAMS
-                .iter()
-                .copied()
-                .find(|program| program.name() == unit.name),
+            Self::Unit(unit) => declarations?.find(&unit.name),
         }
     }
     pub(crate) fn parameters(&self) -> (u8, &[u64; system_api::loader::MAX_ARGS], u64) {
@@ -40,6 +42,7 @@ impl Source {
     pub(crate) fn snapshot(
         &self,
         catalog: Option<crate::boot::Catalog<'static>>,
+        declarations: Option<Declarations>,
     ) -> Result<Vec<u8>, Fail> {
         match self {
             Self::Image { image, from } => {
@@ -50,7 +53,10 @@ impl Source {
                 .map_err(Into::into)
             }
             Self::Unit(_) => {
-                let program = self.program().ok_or(Fail::Unknown)?;
+                let declarations = declarations.ok_or(Fail::NotReady)?;
+                let program = self
+                    .program(Some(declarations))
+                    .ok_or(Fail::Unknown)?;
                 if !program.valid() {
                     return Err(Fail::Bad);
                 }

@@ -39,8 +39,7 @@ pub mod support {
 
 pub mod fixtures;
 
-#[path = "../../src/unit/operator.rs"]
-pub mod operator;
+pub use unit_declarations::operator;
 
 pub mod unit {
     use crate::{DEAD, TaskId, Wait};

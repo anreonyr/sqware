@@ -1,6 +1,7 @@
 pub(crate) mod boot;
 mod activity;
 pub(crate) mod bootstrap;
+pub(crate) mod declarations;
 mod execute;
 pub(crate) mod install;
 pub(crate) mod life;
@@ -10,8 +11,31 @@ pub(crate) mod policy;
 pub(crate) mod scene;
 pub(crate) mod schedule;
 pub(crate) mod wait;
-pub use execute::run;
+pub(crate) use declarations::Declarations;
 pub(crate) use execute::supervise;
+
+/// Executable-system entry: take boot once, validate the catalog selection and
+/// hand the borrowed declaration set plus chosen deployment to the server body.
+pub fn run(
+    declarations: &'static [&'static unit::UnitFile],
+    deployments: &'static [unit::Deployment],
+) -> Result<(), env::Reason> {
+    let boot = bootstrap::take().map_err(|error| error.code())?;
+    let deployment = unit::select_deployment(
+        deployments,
+        declarations,
+        boot.catalog.deployment(),
+        boot.catalog.entry(),
+    )
+    .map_err(|why| {
+        programs::debug!(
+            "system: invalid deployment {}: {why:?}",
+            boot.catalog.deployment()
+        );
+        crate::system::control::unit::start::E_PROGRAM
+    })?;
+    execute::run(boot, Declarations(declarations), deployment)
+}
 
 mod config;
 mod guard;

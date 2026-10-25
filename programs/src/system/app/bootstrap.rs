@@ -21,8 +21,8 @@ impl Fail {
     }
 }
 
-/// 引导那一族共用的号（"两块账读不出来"那一格）
-use crate::unit::system::E_BOOT;
+/// Server-owned failure number for the boot-ledger step.
+const E_BOOT: env::Reason = 1;
 
 /// **起手要的三样东西**：两块账、那台机器的自述、那块清单
 pub struct Boot {

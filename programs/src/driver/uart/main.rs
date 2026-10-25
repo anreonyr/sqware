@@ -19,7 +19,7 @@ use ::resource::pile::Pile;
 use env::{HoleCondition, Wait};
 use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, DRAIN_MAX};
-use programs::unit::uart::E_UART;
+use programs::driver::uart::E_UART;
 
 const MS: usize = 1000;
 

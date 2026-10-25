@@ -80,11 +80,16 @@ fn inject(
     Ok(Progress::Done)
 }
 impl Fixture {
-    pub(crate) fn new(boot: Boot) -> Result<Self, ()> {
-        let mut resources = crate::system::app::install::resources(boot).map_err(|why| {
-            programs::debug::put(&alloc::format!("system: install {}", why));
-            ()
-        })?;
+    pub(crate) fn new(
+        boot: Boot,
+        declarations: crate::system::app::Declarations,
+        deployment: &'static unit::Deployment,
+    ) -> Result<Self, ()> {
+        let mut resources =
+            crate::system::app::install::resources(boot, declarations, deployment).map_err(|why| {
+                programs::debug::put(&alloc::format!("system: install {}", why));
+                ()
+            })?;
         resources
             .insert(Fault {
                 armed: false,

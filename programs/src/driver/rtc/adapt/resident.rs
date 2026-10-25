@@ -13,7 +13,7 @@ use programs::driver::rtc::core::frame::Time;
 use programs::driver::rtc::core::host::{Host, Ring};
 use programs::driver::shared::device::Device;
 use programs::driver::shared::fail::Fail;
-use programs::unit::rtc::E_RTC;
+use programs::driver::rtc::E_RTC;
 use router_client as line;
 
 /// 常驻：**一只组等两个源**——门上有请求、线上有投递

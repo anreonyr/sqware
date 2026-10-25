@@ -12,3 +12,6 @@ path = "lib.rs"
 [dependencies]
 env = { path = "../../../crates/env" }
 system-api = { path = "../../src/system/api" }
+
+[dev-dependencies]
+unit-declarations = { package = "unit", path = "../../../crates/unit" }

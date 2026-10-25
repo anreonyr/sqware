@@ -837,7 +837,7 @@ system-fault 场景随后通过。预触碰/eager 与 PTE fence 的诊断实验�
 ### 本轮一并带上的基线修复
 
 `programs/src/harness/probe/loader.rs::image_bytes` 的入口与 `PT_LOAD` VA
-从 `0x4000` 改成与 `programs/link.ld` 一致的 `IMAGE_BASE = 0x1_0000`
+从 `0x4000` 改成与 `crates/execution/link.ld` 一致的 `IMAGE_BASE = 0x1_0000`
 （低于 `IMAGE_BASE` 的真实失败是 `MemoryFail::NoRegion`，不是 IPC 超时；
 修 fixture 后 system-fault 真实场景通过）。本项只改该夹具的三行事实。
 

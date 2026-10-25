@@ -2,7 +2,7 @@
 
 ## Selection
 
-`programs/src/unit/deployment.rs` carries `Deployment.guarded`. Device deployments
+`crates/unit/src/deployment.rs` carries `Deployment.guarded`. Device deployments
 that start the three trusted domains explicitly declare
 `guarded: &["pci", "iommu", "virtio-blk"]`; other deployments declare an empty
 selection. Hardware names appear only in these deployment declarations.
@@ -10,10 +10,11 @@ The current Driver naming and final acceptance are recorded in
 [driver-device-boundary.md](driver-device-boundary.md); historical native evidence
 retains the unit names used by its own source checkpoint.
 
-`Deployment::guarded` validates the declaration through
-`programs/src/unit/guard_selection.rs`: names must be unique, present in that
-deployment's own `start`, and present in `PROGRAMS`. The validator contains no
-hardware name. `crates/image` checks every deployment through the same method.
+`Deployment::guarded(units)` validates the declaration through
+`crates/unit/src/guard_selection.rs`: names must be unique, present in that
+deployment's own `start`, and present in the caller-provided Unit declaration
+slice. The validator contains no hardware name. `crates/image` checks every
+deployment through the same explicit-slice method.
 
 ## Boot authority
 

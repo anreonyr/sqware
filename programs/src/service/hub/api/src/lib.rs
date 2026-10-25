@@ -4,10 +4,15 @@ extern crate alloc;
 
 pub mod coord;
 pub mod coordination;
+pub mod declaration;
 pub mod device_id;
 pub mod frame;
 pub mod grant;
 pub mod marks;
+
+pub use declaration::{
+    CHANNEL, CHANNEL_MARK, E_HUB, INVENTORY_MARK, READY, READY_MARK,
+};
 
 pub use coord::{
     binding_mark, coord_mark, window_mark,

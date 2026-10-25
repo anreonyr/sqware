@@ -7,8 +7,7 @@ extern crate self as resource;
 pub use abi::wire;
 pub use abi::{Access, Frame, HoleLimits, HoleResult, Mark, Permission, PieFail, PieInfo, PieKind, PieResult, PieToken, Policy, ReleaseMode, TaskId, Wait};
 
-#[path = "../../src/unit/construction.rs"]
-mod unit_construction;
+use unit_declarations::construction as unit_construction;
 
 use std::cell::RefCell;
 

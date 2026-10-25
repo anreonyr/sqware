@@ -156,10 +156,10 @@ mod boundaries {
             .collect();
         driver_files.sort();
         let mut expected = vec![
-            "acquire.rs", "binding.rs", "bindings.rs", "cache_step.rs", "context.rs", "cookie.rs", "core.rs",
+            "acquire.rs", "binding.rs", "cache_step.rs", "context.rs", "cookie.rs", "core.rs",
             "domain.rs", "domain_id.rs", "domain_range.rs", "engine.rs", "fence.rs",
-            "handshake.rs", "invalidation.rs", "layout.rs", "main.rs", "marks.rs", "mod.rs", "order.rs", "pages.rs",
-            "phase.rs", "program.rs", "queue.rs", "references.rs", "regs.rs", "serve.rs",
+            "handshake.rs", "invalidation.rs", "layout.rs", "main.rs", "mod.rs", "order.rs", "pages.rs",
+            "phase.rs", "queue.rs", "references.rs", "regs.rs", "serve.rs",
             "settled.rs", "table.rs", "ticket.rs",
         ];
         expected.sort();
@@ -284,7 +284,7 @@ mod boundaries {
             at = found.unwrap() + step.len();
         }
         // Dynamic execution instances declare Hub's generic retirement dependency.
-        let device = fs::read_to_string(repo.join("programs/src/harness/device/programs.rs")).unwrap();
+        let device = fs::read_to_string(repo.join("crates/composition/src/units/device.rs")).unwrap();
         assert!(device.contains("retirement: &WORK_RETIREMENT"));
         assert!(device.contains("provider: \"hub\""));
         // Common owner callers hand receipts back through Release, never kernel Oust.
@@ -707,7 +707,7 @@ mod boundaries {
             }
         }
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let assembly = syn::parse_file(&fs::read_to_string(repo.join("programs/src/unit/interfaces.rs")).unwrap()).unwrap();
+        let assembly = syn::parse_file(&fs::read_to_string(repo.join("programs/src/interfaces.rs")).unwrap()).unwrap();
         let mut registered = Paths::default();
         registered.visit_expr(expression(&assembly, "APIS"));
         for provider in [
@@ -791,7 +791,7 @@ mod revised_ownership {
     fn daemon_is_one_rtc_only_resident_supervision_process() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let declaration =
-            fs::read_to_string(repo.join("programs/src/service/daemon/program.rs")).unwrap();
+            fs::read_to_string(repo.join("crates/composition/src/units/daemon.rs")).unwrap();
         for required in [
             "name: \"daemon\"",
             "supervision: Some(\"supervised\")",
@@ -801,10 +801,10 @@ mod revised_ownership {
         ] {
             assert!(declaration.contains(required), "daemon declaration missing {required}");
         }
-        let catalog = fs::read_to_string(repo.join("programs/src/unit/catalog.rs")).unwrap();
+        let catalog = fs::read_to_string(repo.join("crates/composition/src/units/mod.rs")).unwrap();
         assert_eq!(catalog.matches("daemon::PROGRAM").count(), 1);
-        let packages = fs::read_to_string(repo.join("programs/src/unit/package.rs")).unwrap();
-        assert_eq!(packages.matches("package!(\"daemon\")").count(), 1);
+        let packages = fs::read_to_string(repo.join("crates/composition/src/image_builds.rs")).unwrap();
+        assert_eq!(packages.matches("image!(\"daemon\")").count(), 1);
         assert!(fs::read_to_string(repo.join("programs/Cargo.toml"))
             .unwrap()
             .contains("name = \"prog-daemon\""));

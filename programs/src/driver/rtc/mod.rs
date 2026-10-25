@@ -13,3 +13,6 @@
 pub mod api;
 pub mod client;
 pub mod core;
+
+/// It dies during startup/residency here.
+pub const E_RTC: env::Reason = 12;

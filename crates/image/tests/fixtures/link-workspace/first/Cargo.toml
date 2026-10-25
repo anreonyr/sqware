@@ -1,0 +1,17 @@
+[package]
+name = "link-first"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+env = { path = "../../../../../../crates/env" }
+execution = { path = "../../../../../../crates/execution" }
+mold = { path = "../../../../../../crates/mold" }
+
+[[bin]]
+name = "first"
+path = "src/main.rs"
+test = false
+bench = false
+doctest = false

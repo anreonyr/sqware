@@ -1,9 +1,8 @@
 //! 不进产品镜像的一切——探针（只读数）· 试客（量服务）·
-//! 压测台（整台替换引导镜像）。
-//! # 这一档与产品那一档的界线
+//! 压测台（整台替换引导镜像）。//! # 这一档与产品那一档的界线
 //! **产品**（`driver/` / `service/` / `system/` / `user/`）：内核起的那套服务 + 真客人。
 //! **测具**（本目录）：**只为了量**而存在的程序。两档同住这一个 crate、同一张链接脚本
-//! （`programs/link.ld`，镜像都链在 `IMAGE_BASE = 0x10000`）、同一手 programs::entry。
+//! （`crates/execution/link.ld`，镜像都链在 `IMAGE_BASE = 0x10000`）、同一手 programs::entry。
 //! 镜像特权级由 LoaderConfig 声明，镜像成员与启动顺序由 Deployment 声明，二者互不决定。
 //! 验收那张列 **6** 份产品 + **6** 份探针 + **6** 位试客（共 18 条）；台子那张只列台主与受害者。
 
@@ -46,4 +45,21 @@ pub(crate) fn mint(
         )
         .map_err(|_| Fail::Full)?;
     crate::system::control::unit::task::mint(table, image.name, built)
+}
+
+/// Harness entries own their composition choice; server code receives it by reference.
+pub(crate) fn declarations() -> crate::system::app::Declarations {
+    crate::system::app::Declarations(composition::PROGRAMS)
+}
+
+/// Select the boot deployment against the harness-owned declaration set.
+pub(crate) fn deployment(
+    catalog: &crate::boot::Catalog<'_>,
+) -> Result<&'static unit::Deployment, unit::DeploymentSelectionError> {
+    unit::select_deployment(
+        composition::DEPLOYMENTS,
+        composition::PROGRAMS,
+        catalog.deployment(),
+        catalog.entry(),
+    )
 }

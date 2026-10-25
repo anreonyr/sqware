@@ -22,7 +22,7 @@ use programs::driver::rtc::core::Host;
 use programs::driver::shared::context::{Context, Step};
 use programs::driver::shared::device::{Ask, Device, Hub};
 use programs::driver::shared::fail::Fail;
-use programs::unit::rtc::E_RTC;
+use programs::driver::rtc::E_RTC;
 use router_api::ENTRY_MARK;
 use system_client::operator;
 

@@ -1,6 +1,6 @@
 extern crate alloc;
-#[path = "../../src/unit/operator.rs"]
-mod declaration;
+#[cfg(test)]
+use unit_declarations::operator as declaration;
 #[cfg(test)]
 mod tests {
     use super::declaration::{Namespace, Scope};

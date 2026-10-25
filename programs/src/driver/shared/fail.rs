@@ -10,7 +10,7 @@ pub struct Fail {
 }
 
 impl Fail {
-    /// 死在**某一步**：号是装配表里那一号（[E_UART](programs::unit::uart::E_UART) 那种
+    /// 死在**某一步**：号是装配表里那一号（[E_UART](programs::driver::uart::E_UART) 那种
     pub const fn at(code: Died, text: &'static str) -> Self {
         Self { code, text }
     }

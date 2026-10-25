@@ -291,12 +291,10 @@ impl Supplies {
             authority: Some(authority),
             roots: alloc::vec::Vec::new(),
         };
-        for package in crate::unit::PACKAGES {
-            let Some(entry) = catalog.find(package.name) else {
-                continue;
-            };
+        for entry in catalog.entries() {
+            let entry = entry.map_err(|_| "image manifest entry")?;
             let length = (entry.elf.len() as u64).to_le_bytes();
-            let resource = system_api::supply::Key::of(package.name);
+            let resource = system_api::supply::Key::of(entry.name);
             let definition = match crate::system::supply::PoleResource::from_bytes(
                 crate::system::supply::PoleSpec {
                     key: resource,
@@ -553,11 +551,11 @@ impl Supplies {
             return Ok(());
         }
         let (lease, delivery) = self.acquire(task, binding)?;
-        let frame = crate::unit::SupplyFrame {
+        let frame = system_api::supply::SupplyFrame {
             length: delivery.len,
             description: delivery.description,
         };
-        let mut buffer = crate::unit::SupplyFrame::EMPTY;
+        let mut buffer = system_api::supply::SupplyFrame::EMPTY;
         let Some(length) = frame.store(&mut buffer) else {
             self.release_lease(binding.source, lease)?;
             return Err(Error::Step("supply descriptor frame"));

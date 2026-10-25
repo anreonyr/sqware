@@ -4,9 +4,11 @@
 # 它自带 Cargo.toml 与 README，用 `crates/alloc-probe/.cargo/config.toml` 里那十条别名跑。
 exclude = [
     "crates/alloc-probe",
-    # `crates/image` 是**造镜像那一步**（用户裁定"initrd 与 kernel 何干"）：与上面那台同源，
-    # 要 std + host ABI。跑法见 `.cargo/config.toml` 的 `[alias] image`。
+    # `crates/image` is the published host image-builder core: std + host ABI.
+    # `tools/shuyra-image` is the Integration-owned CLI adapter and host-only too.
+    # Run them through `.cargo/config.toml`'s `[alias] image`.
     "crates/image",
+    "tools/shuyra-image",
 ]
 
 # 没有 `[profile.framework]` / `[profile.harden]`。`debug_assertions` 控制的
@@ -19,6 +21,8 @@ members = [
     "kernel",
     "programs",
     "crates/env",
+    "crates/unit",
+    "crates/composition",
     "crates/resource",
     "crates/execution",
     "crates/schedule",
@@ -32,6 +36,7 @@ members = [
     "programs/src/service/pipe/client",
     "programs/src/user/shell/api",
     "programs/src/user/shell/client",
+    "programs/src/user/shell/declaration",
     "programs/src/system/client",
     "programs/src/system/api",
     "programs/src/service/account/api",
@@ -42,6 +47,10 @@ members = [
     "programs/src/user/terminal/client",
     "programs/src/driver/router/api",
     "programs/src/driver/router/client",
+    "programs/src/driver/rtc/api",
+    "programs/src/harness/probe/daemon_target/api",
+    "programs/src/driver/iommu/declaration",
+    "programs/src/driver/pci/declaration",
 ]
 default-members = ["kernel"]
 resolver = "3"

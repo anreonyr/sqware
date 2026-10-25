@@ -15,8 +15,7 @@ pub mod operator {
     }
 }
 
-#[path = "../../src/unit/operator.rs"]
-pub mod unit_operator;
+pub use unit_declarations::operator as unit_operator;
 
 pub mod unit {
     pub use crate::unit_operator as operator;

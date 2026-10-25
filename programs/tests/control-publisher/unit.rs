@@ -4,8 +4,7 @@ pub use crate::fixtures::input::Input;
 pub use crate::fixtures::operator_config::OperatorConfig;
 pub use crate::fixtures::unit_file::UnitFile;
 
-#[path = "../../src/unit/operator.rs"]
-pub mod operator;
+pub use ::unit_declarations::operator;
 #[path = "../../src/system/control/unit/table.rs"]
 pub mod table;
 #[path = "../../src/system/control/unit/verdict.rs"]

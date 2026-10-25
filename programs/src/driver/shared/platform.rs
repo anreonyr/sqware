@@ -8,7 +8,8 @@ use env::{Permission, PieKind, PieToken, TaskId, Wait};
 use resource::raw::Hole;
 use wire::Message;
 
-use crate::unit::{Binding, SupplyFrame};
+use crate::unit::Binding;
+use system_api::supply::SupplyFrame;
 
 /// 一扇交进来的平台窗：本域那一枚门闩 ＋ 它声明的几何（物理地址，不是本域 VA）。
 pub struct Window {
@@ -68,7 +69,7 @@ pub fn descriptor(
 ) -> Result<(u16, [u8; system_api::supply::MAX_DESCRIPTION]), &'static str> {
     let descriptor = ipc::session::establish::claim(
         system,
-        crate::unit::descriptor_mark(slot),
+        system_api::supply::descriptor_mark(slot),
         wait,
     )
     .map_err(|_| "platform: descriptor channel")?;

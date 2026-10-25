@@ -14,7 +14,9 @@ version = "0.1.0"
 dependencies = [
  "env",
  "hub-api",
+ "iommu-declaration",
  "mold",
+ "pci-declaration",
  "wire",
 ]
 
@@ -45,12 +47,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "iommu-declaration"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "system-api",
+ "unit",
+]
+
+[[package]]
 name = "mold"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "pci-declaration"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "system-api",
+ "unit",
 ]
 
 [[package]]
@@ -96,6 +116,14 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "unit"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "system-api",
+]
 
 [[package]]
 name = "wire"

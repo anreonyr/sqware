@@ -30,8 +30,12 @@ pub(crate) fn run(settings: Scene) -> Result<(), env::Reason> {
         settings.root,
         env::unit::self_id().get(),
     ));
-    let programs = app::scene::programs(&boot.catalog).map_err(|_| 9usize)?;
-    let mut resources = app::install::resources(boot).map_err(|_| 9usize)?;
+    let deployment = crate::harness::deployment(&boot.catalog).map_err(|_| 9usize)?;
+    let declarations = crate::harness::declarations();
+    let programs = app::scene::programs(&boot.catalog, declarations, deployment)
+        .map_err(|_| 9usize)?;
+    let mut resources = app::install::resources(boot, declarations, deployment)
+        .map_err(|_| 9usize)?;
     resources
         .write::<crate::system::control::Startup>()
         .map_err(|_| 9usize)?

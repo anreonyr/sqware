@@ -7,7 +7,7 @@ use programs::driver::shared::context::{Context, Step};
 use programs::driver::shared::device::{Ask, Device, Hub};
 use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, ME, RX, TX};
-use programs::unit::uart::E_UART;
+use programs::driver::uart::E_UART;
 use router_client::Line;
 use system_api::operator::{self as operator_api, Permit};
 use system_client::operator;

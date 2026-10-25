@@ -163,6 +163,7 @@ mod fingerprint_tests {
 
 pub(crate) struct Jobs {
     catalog: Option<crate::boot::Catalog<'static>>,
+    pub(crate) declarations: Option<crate::system::app::Declarations>,
     work: WorkQueue<Work>,
     launches: Vec<Launch>,
     creates: Vec<CreateRecord>,
@@ -176,6 +177,7 @@ impl Default for Jobs {
     fn default() -> Self {
         Self {
             catalog: None,
+            declarations: None,
             work: WorkQueue::default(),
             launches: Vec::new(),
             creates: Vec::new(),
@@ -1156,10 +1158,12 @@ pub(crate) enum CreateAdmission {
 
 pub(crate) fn install(
     resources: &mut ::schedule::Resources<'static>,
+    declarations: crate::system::app::Declarations,
 ) -> Result<(), ::schedule::resource::AccessError> {
     let catalog = *resources.read::<crate::boot::Catalog<'static>>()?;
     resources.insert(Jobs {
         catalog: Some(catalog),
+        declarations: Some(declarations),
         ..Jobs::default()
     })?;
     Ok(())
@@ -1212,7 +1216,7 @@ fn construct(
         control: &mut control,
     };
     for (job_id, mut request) in requests {
-        let bytes = match request.image.snapshot(jobs.catalog) {
+        let bytes = match request.image.snapshot(jobs.catalog, jobs.declarations) {
             Ok(bytes) => bytes,
             Err(fail) => {
                 request.image.release();
@@ -1229,7 +1233,7 @@ fn construct(
             }
         };
         request.image.release();
-        request.delivery.program = request.image.program();
+        request.delivery.program = request.image.program(jobs.declarations);
         if let Some(key) = request.create {
             let fingerprint = sha256(&bytes);
             let existing = jobs

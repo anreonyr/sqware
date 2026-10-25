@@ -3,8 +3,7 @@
 //! 每一手都是独立效果，不合并。报文只带本引擎签发的 `DomainId` 与 Hub 的完整绑定号；
 //! 不接收可信 caller：发送者由内核给出，域主人在门外按实际发送者核。
 
-#[path = "../marks.rs"]
-mod marks;
+use iommu_declaration::marks;
 
 mod acquire;
 mod call;

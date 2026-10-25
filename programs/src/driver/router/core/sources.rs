@@ -13,7 +13,7 @@
 /// 项序是绑定的定义，算术不是
 const EXT_S: u32 = 9;
 
-use programs::unit::router::PLIC_CLASS;
+use router_api::PLIC_CLASS;
 
 pub struct Sources {
     /// 本控制器有多少条线（`riscv,ndev`）——线账按它校验（越界不可表达），也按它拒线号

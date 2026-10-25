@@ -5,7 +5,7 @@ use super::event::{bell, desk, exhaust};
 use super::sweep;
 use env::Wait;
 use programs::driver::shared::fail::Fail;
-use programs::unit::router::E_ROUTER;
+use router_api::E_ROUTER;
 
 /// 等待外部 trap 通知、入口请求和排空消息。
 pub fn run(up: &mut Up) -> Result<(), Fail> {
