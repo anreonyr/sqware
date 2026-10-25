@@ -12,4 +12,4 @@ doctest = false
 env = { path = "../../../../../crates/env" }
 wire = { path = "../../../../../crates/wire" }
 system-api = { path = "../../../system/api" }
-mold = { path = "../../../../../crates/mold" }
+mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b686eded8b4bcd743b4e96084b7f9" }

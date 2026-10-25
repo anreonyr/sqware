@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 env = { path = "../../../../../../crates/env" }
 execution = { path = "../../../../../../crates/execution" }
-mold = { path = "../../../../../../crates/mold" }
+mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b686eded8b4bcd743b4e96084b7f9" }
 
 [[bin]]
 name = "first"

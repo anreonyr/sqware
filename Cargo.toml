@@ -27,7 +27,6 @@ members = [
     "crates/execution",
     "crates/schedule",
     "crates/sbi",
-    "crates/mold",
     "crates/wire",
     "crates/ipc",
     "crates/lisp",
