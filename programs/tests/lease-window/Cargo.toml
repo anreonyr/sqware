@@ -13,4 +13,4 @@ path = "lib.rs"
 abi = { package = "env", path = "../../../crates/env" }
 resource = { path = "../../../crates/resource" }
 system-api = { path = "../../src/system/api" }
-wire = { path = "../../../crates/wire" }
+wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }

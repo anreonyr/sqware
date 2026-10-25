@@ -8,6 +8,6 @@ publish = false
 path = "lib.rs"
 [dependencies]
 abi = { package = "env", path = "../../../crates/env" }
-wire = { path = "../../../crates/wire" }
+wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 system-api = { path = "../../src/system/api" }
 terminal-api = { path = "../../src/user/terminal/api" }

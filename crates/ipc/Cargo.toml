@@ -10,5 +10,5 @@ doctest = false
 
 [dependencies]
 env = { path = "../env" }
-wire = { path = "../wire" }
+wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 resource = { path = "../resource" }
