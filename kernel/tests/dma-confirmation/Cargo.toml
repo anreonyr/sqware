@@ -12,7 +12,7 @@ path = "lib.rs"
 [dev-dependencies]
 env = { path = "../../../crates/env" }
 hub-api = { path = "../../../programs/src/service/hub/api" }
-mold = { path = "../../../crates/mold" }
+mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b686eded8b4bcd743b4e96084b7f9" }
 pci-declaration = { path = "../../../programs/src/driver/pci/declaration" }
 iommu-declaration = { path = "../../../programs/src/driver/iommu/declaration" }
 wire = { path = "../../../crates/wire" }

@@ -11,5 +11,5 @@ doctest = false
 [dependencies]
 bitflags = "2"
 erra = { version = "0.2.0", default-features = false }
-mold = { path = "../mold" }
+mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b686eded8b4bcd743b4e96084b7f9" }
 wire = { path = "../wire" }
