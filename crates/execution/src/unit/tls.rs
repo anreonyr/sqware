@@ -251,6 +251,7 @@ pub(super) fn reap_task(task: TaskId) {
     }
 }
 
+#[cfg(target_arch = "riscv64")]
 #[inline]
 pub fn base() -> usize {
     let tp: usize;
@@ -298,6 +299,7 @@ pub fn allocate() -> MemoryResult<usize> {
 ///
 /// 归还按**准确的关系身份**执行（登记时记下的那个 `ViewId`），不是按地址猜所有权；
 /// 同步未完成的失败保留身份，下一次再试，不当成功丢掉句柄。
+#[cfg(target_arch = "riscv64")]
 pub fn deallocate() {
     let tp = base();
     if tp == 0 {
@@ -313,6 +315,7 @@ pub fn deallocate() {
 
 /// # Safety
 /// 仅在主线程出生点（`_start` → `main` 之间）调用恰好一次。
+#[cfg(target_arch = "riscv64")]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bootstrap() {
     let addr = allocate().expect("tls bootstrap alloc failed");

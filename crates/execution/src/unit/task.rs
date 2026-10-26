@@ -252,6 +252,7 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
     holder();
     sweep();
     // 正常退出提前 Detach；异常退出由内核结清 Caller 映射，终态回收本地 TLS 登记。
+    #[cfg(target_arch = "riscv64")]
     tls::deallocate();
     crate::room::reap(env::EXIT_OK, None)
 }

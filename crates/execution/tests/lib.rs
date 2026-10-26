@@ -101,6 +101,15 @@ mod memory {
     }
 }
 
+#[path = "fixtures/state.rs"]
+mod fixture_state;
+
+#[path = "fixtures/kernel.rs"]
+mod fixture_kernel;
+
+#[path = "mechanism/mod.rs"]
+mod mechanism;
+
 #[path = "../src/memory/allocator.rs"]
 mod allocator;
 

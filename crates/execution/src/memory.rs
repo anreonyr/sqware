@@ -1,8 +1,17 @@
 //! User memory: source holds, mappings and the program heap.
 
 pub use env::PAGE_SIZE;
+#[path = "memory/mapping_kernel.rs"]
+pub mod mapping_kernel;
+#[path = "memory/mechanism.rs"]
+pub mod mechanism;
+#[path = "memory/native.rs"]
+#[doc(hidden)]
+pub mod native;
 #[path = "memory/reference.rs"]
 mod reference;
+#[path = "memory/reference_kernel.rs"]
+pub mod reference_kernel;
 #[path = "memory/view.rs"]
 mod view;
 use env::wire::Field;
@@ -10,8 +19,14 @@ use env::{
     AcquireSource, Allocation, FlatReference, MemoryFail, MemoryResult, PieToken, Placement,
     ReferenceRange, TeamId, ViewControl, ViewId, ViewSelection, VirtAddr,
 };
-pub use reference::Reference;
-pub use view::View;
+pub use mapping_kernel::MappingKernel;
+pub use native::Native;
+pub use reference_kernel::ReferenceKernel;
+
+/// 默认内核后端下的来源持有。
+pub type Reference = mechanism::Reference<Native>;
+/// 默认内核后端下的映射视图。
+pub type View = mechanism::View<Native>;
 
 /// 当前任务的身份（引用表的作用域就是它）。
 ///

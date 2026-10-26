@@ -148,6 +148,7 @@ pub fn finish(report: Report<'_>) -> ! {
 }
 
 /// Allocate and install this task's initial thread-local storage block.
+#[cfg(target_arch = "riscv64")]
 pub unsafe fn bootstrap() {
     unsafe { crate::unit::bootstrap() }
 }
