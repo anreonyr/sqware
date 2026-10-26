@@ -89,6 +89,7 @@ dependencies = [
 [[package]]
 name = "resource"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/resource.git?rev=dbc96834f50f094b5c386e54a0a2ae5560dcd7f8#dbc96834f50f094b5c386e54a0a2ae5560dcd7f8"
 dependencies = [
  "env",
  "erra",
