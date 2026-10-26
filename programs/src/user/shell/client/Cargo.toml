@@ -8,4 +8,4 @@ pipe-client = { path = "../../../service/pipe/client" }
 pipe-api = { path = "../../../service/pipe/api" }
 env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
 resource = { git = "https://github.com/shuyra-arche/resource.git", rev = "dbc96834f50f094b5c386e54a0a2ae5560dcd7f8" }
-execution = { path = "../../../../../crates/execution" }
+execution = { git = "https://github.com/shuyra-arche/execution.git", rev = "1b333a28bc4c34beaea3f7986a9bb6e8ab2db414" }

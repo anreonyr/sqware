@@ -21,7 +21,6 @@ members = [
     "kernel",
     "programs",
     "crates/composition",
-    "crates/execution",
     "crates/schedule",
     "crates/ipc",
     "crates/lisp",
