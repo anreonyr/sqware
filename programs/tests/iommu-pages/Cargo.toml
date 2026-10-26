@@ -17,4 +17,4 @@ mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b68
 schedule = { path = "../../../crates/schedule" }
 iommu-declaration = { path = "../../src/driver/iommu/declaration" }
 erra = { version = "0.2.0", default-features = false }
-resource_impl = { package = "resource", path = "../../../crates/resource" }
+resource_impl = { package = "resource", git = "https://github.com/shuyra-arche/resource.git", rev = "dbc96834f50f094b5c386e54a0a2ae5560dcd7f8" }
