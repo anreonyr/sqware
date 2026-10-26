@@ -21,7 +21,6 @@ members = [
     "kernel",
     "programs",
     "crates/composition",
-    "crates/ipc",
     "crates/lisp",
     "crates/stream",
     "programs/src/service/pipe/api",
