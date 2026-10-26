@@ -1,18 +1,20 @@
 use env::{MemoryFail, MemoryResult, TeamId, ViewId, ViewSelection};
 
-use super::Reference;
+use super::mapping_kernel::MappingKernel;
+use super::reference::Reference;
+use super::reference_kernel::ReferenceKernel;
 
 /// Mapping control record. The Space owns the mapping; dropping this value does not detach it.
 #[must_use]
-pub struct View {
+pub struct View<K: ReferenceKernel + MappingKernel> {
     team: TeamId,
     id: Option<ViewId>,
     address: usize,
     size: usize,
-    pub(super) pending: Option<Reference>,
+    pub(super) pending: Option<Reference<K>>,
 }
 
-impl View {
+impl<K: ReferenceKernel + MappingKernel> View<K> {
     pub(super) fn new(team: TeamId, id: ViewId, address: usize, size: usize) -> Self {
         Self {
             team,
@@ -36,7 +38,7 @@ impl View {
     }
 
     pub fn set_access(&self, selection: ViewSelection, access: u64) -> MemoryResult<()> {
-        super::set_access(self.team, self.id()?, selection, access)
+        K::set_access(self.team, self.id()?, selection, access)
     }
 
     pub fn release_source(&mut self) -> MemoryResult<()> {
@@ -49,7 +51,7 @@ impl View {
 
     pub fn close(&mut self) -> MemoryResult<()> {
         if let Some(id) = self.id {
-            super::detach(self.team, id, ViewSelection::Whole)?;
+            K::detach(self.team, id, ViewSelection::Whole)?;
             self.id = None;
         }
         self.release_source()

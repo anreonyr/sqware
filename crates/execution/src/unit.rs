@@ -16,6 +16,7 @@ pub fn spawn(team: TeamId, entry: usize, args: &[usize], stack: usize) -> UnitRe
     )
 }
 
+#[cfg(target_arch = "riscv64")]
 pub(crate) unsafe fn bootstrap() {
     unsafe { tls::bootstrap() }
 }

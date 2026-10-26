@@ -108,36 +108,13 @@ pub mod pole {
     }
 }
 
-#[path = "../../../crates/execution/src/memory/reference.rs"]
-pub mod reference;
+#[path = "fixtures/reference_kernel.rs"]
+mod reference_kernel;
+pub use reference_kernel::FixtureKernel;
 
-pub struct View;
-
-impl View {
-    pub fn new(_: crate::TeamId, _: crate::ViewId, _: usize, _: usize) -> Self {
-        Self
-    }
-}
-
-pub fn acquire(
-    source: crate::AcquireSource,
-    retention: crate::PieToken,
-) -> crate::MemoryResult<crate::FlatReference> {
-    crate::state::acquire(source, retention)
-}
-
-pub fn release(reference: crate::FlatReference) -> crate::MemoryResult<()> {
-    crate::state::release_reference(reference)
-}
-
-pub fn attach(
-    _: crate::ReferenceRange,
-    _: crate::TeamId,
-    _: crate::Placement,
-    _: u64,
-    _: crate::ViewControl,
-) -> crate::MemoryResult<(crate::ViewId, usize)> {
-    panic!("pci fixture: attach is not used")
+pub mod reference {
+    pub type Reference =
+        execution_impl::memory::mechanism::Reference<crate::FixtureKernel>;
 }
 
 pub mod memory {
