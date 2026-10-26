@@ -220,6 +220,9 @@ mod time;
 mod rpc;
 
 #[cfg(test)]
+mod time_boundary;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::vec::Vec;

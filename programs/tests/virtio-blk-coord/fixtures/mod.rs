@@ -10,5 +10,6 @@ pub mod raw;
 pub mod region;
 pub mod script;
 pub mod state;
+pub mod time;
 
 pub use kernel::Kernel;

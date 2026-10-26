@@ -278,5 +278,5 @@ pub mod chrono {
         0
     }
 }
-#[path = "../../../crates/ipc/src/time.rs"]
+#[path = "time.rs"]
 pub mod time;

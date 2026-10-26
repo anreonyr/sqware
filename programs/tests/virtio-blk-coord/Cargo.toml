@@ -17,3 +17,4 @@ mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b68
 pci-declaration = { path = "../../src/driver/pci/declaration" }
 iommu-declaration = { path = "../../src/driver/iommu/declaration" }
 resource_impl = { package = "resource", git = "https://github.com/shuyra-arche/resource.git", rev = "dbc96834f50f094b5c386e54a0a2ae5560dcd7f8" }
+ipc_impl = { package = "ipc", path = "../../../crates/ipc" }

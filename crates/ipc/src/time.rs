@@ -11,22 +11,28 @@ pub struct Deadline {
 
 impl Deadline {
     pub fn new(wait: Wait) -> Self {
+        Self::new_with_clock(wait, chrono::clock)
+    }
+
+    pub fn new_with_clock(wait: Wait, clock_ns: impl FnOnce() -> u64) -> Self {
+        let started = clock_ns();
         let budget_ms = match wait {
             Wait::Forever => None,
             Wait::AtMost(ms) => Some(ms),
         };
-        Self {
-            started: chrono::clock(),
-            budget_ms,
-        }
+        Self { started, budget_ms }
     }
 
     /// Remaining time preserves the established floor-to-milliseconds conversion.
     pub fn remaining(self) -> Wait {
+        self.remaining_with_clock(chrono::clock)
+    }
+
+    pub fn remaining_with_clock(self, clock_ns: impl FnOnce() -> u64) -> Wait {
         match self.budget_ms {
             None => Wait::Forever,
             Some(ms) => {
-                let elapsed = (chrono::clock().saturating_sub(self.started) / 1_000_000) as usize;
+                let elapsed = (clock_ns().saturating_sub(self.started) / 1_000_000) as usize;
                 Wait::AtMost(ms.saturating_sub(elapsed))
             }
         }
