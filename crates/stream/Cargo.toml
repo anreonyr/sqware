@@ -1,4 +1,0 @@
-[package]
-name = "stream"
-version.workspace = true
-edition.workspace = true

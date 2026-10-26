@@ -229,6 +229,7 @@ dependencies = [
 [[package]]
 name = "stream"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/stream.git?rev=ebd1c6db4823e28591650d967d7e8c8dd1939687#ebd1c6db4823e28591650d967d7e8c8dd1939687"
 
 [[package]]
 name = "syn"

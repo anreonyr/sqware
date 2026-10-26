@@ -14,5 +14,5 @@ env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d4
 lisp = { path = "../../../crates/lisp" }
 pipe-api = { path = "../../src/service/pipe/api" }
 shell-api = { path = "../../src/user/shell/api" }
-stream = { path = "../../../crates/stream" }
+stream = { git = "https://github.com/shuyra-arche/stream.git", rev = "ebd1c6db4823e28591650d967d7e8c8dd1939687" }
 system-api = { git = "https://github.com/shuyra-arche/system.git", rev = "9e5d63ca536a176583cf1b0054b4ecf7ddd88257" }
