@@ -20,8 +20,6 @@ mod unit_file;
 mod control_config;
 #[path = "fixtures/unit/ready.rs"]
 mod ready;
-#[path = "fixtures/guard_selection.rs"]
-mod guard_selection_error;
 #[path = "fixtures/verdict.rs"]
 mod verdict;
 #[path = "fixtures/control/control.rs"]
@@ -70,7 +68,6 @@ pub use unit_calls::Ending;
 pub use unit_file::UnitFile;
 pub use control_config::ControlConfig;
 pub use ready::Ready;
-pub use guard_selection_error::GuardSelectionError;
 pub use verdict::Fail;
 pub use control_type::Control;
 pub use input::Input;
@@ -99,13 +96,6 @@ pub mod unit {
     pub use crate::unit_file::UnitFile;
     pub use crate::control_config::ControlConfig;
     pub use crate::ready::Ready;
-}
-
-pub mod guard_selection {
-    include!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../crates/unit/src/guard_selection.rs"
-    ));
 }
 
 pub mod app {
