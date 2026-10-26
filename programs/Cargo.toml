@@ -30,7 +30,7 @@ zeroize = { version = "1", default-features = false, features = ["alloc"] }
 mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b686eded8b4bcd743b4e96084b7f9" }
 # 服务域把判据就地登记成一例一例（自己挂到自己的 `cases::Suite` 上）。
 env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
-unit = { path = "../crates/unit" }
+unit = { git = "https://github.com/shuyra-arche/unit.git", rev = "90396f0fda376e0693fb1b9553aa21864d241057" }
 composition = { path = "../crates/composition" }
 resource = { path = "../crates/resource" }
 execution = { path = "../crates/execution" }

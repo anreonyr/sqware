@@ -101,6 +101,7 @@ checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
 [[package]]
 name = "unit"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/unit.git?rev=90396f0fda376e0693fb1b9553aa21864d241057#90396f0fda376e0693fb1b9553aa21864d241057"
 dependencies = [
  "env",
  "system-api",

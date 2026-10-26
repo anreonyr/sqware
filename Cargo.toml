@@ -20,7 +20,6 @@ exclude = [
 members = [
     "kernel",
     "programs",
-    "crates/unit",
     "crates/composition",
     "crates/resource",
     "crates/execution",
