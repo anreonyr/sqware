@@ -35,8 +35,7 @@ pub mod exchange;
 pub mod peers;
 #[path = "../../src/driver/virtio/blk/polled.rs"]
 pub mod polled;
-#[path = "../../../crates/ipc/src/time.rs"]
-pub mod time;
+pub use crate::fixtures::time;
 #[path = "../../src/driver/virtio/blk/profile.rs"]
 pub mod profile;
 #[path = "../../src/driver/virtio/blk/stage.rs"]

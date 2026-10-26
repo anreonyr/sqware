@@ -147,11 +147,8 @@ pub mod port {
         })
     }
 }
-pub mod time {
-    pub use crate::production_time::*;
-}
-#[path = "../../../crates/ipc/src/time.rs"]
-mod production_time;
+#[path = "time.rs"]
+pub mod time;
 pub mod session {
     pub mod establish {
         pub struct Endpoint {

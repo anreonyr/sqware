@@ -45,6 +45,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ipc"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "resource",
+ "wire",
+]
+
+[[package]]
 name = "mold"
 version = "0.1.0"
 source = "git+https://github.com/shuyra-arche/mold.git?rev=f52501f4c91b686eded8b4bcd743b4e96084b7f9#f52501f4c91b686eded8b4bcd743b4e96084b7f9"
@@ -133,6 +142,7 @@ dependencies = [
  "env",
  "hub-api",
  "iommu-declaration",
+ "ipc",
  "mold",
  "pci-declaration",
  "resource",
