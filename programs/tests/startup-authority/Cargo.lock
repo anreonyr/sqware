@@ -28,6 +28,7 @@ checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 [[package]]
 name = "ipc"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/ipc.git?rev=29ad97dc08d9dfc4ea6578b1b77874261229b3b5#29ad97dc08d9dfc4ea6578b1b77874261229b3b5"
 dependencies = [
  "env",
  "resource",

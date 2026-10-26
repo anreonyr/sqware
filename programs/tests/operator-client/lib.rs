@@ -5,6 +5,9 @@ extern crate alloc;
 mod capability;
 
 #[cfg(test)]
+mod lookup_regression;
+
+#[cfg(test)]
 mod tests {
     use super::capability::{
         at, coordinates, encode_scope, revoke_unaccepted, transport_fail, valid_descriptor,
