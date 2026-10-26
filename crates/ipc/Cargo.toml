@@ -9,6 +9,6 @@ bench = false
 doctest = false
 
 [dependencies]
-env = { path = "../env" }
+env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
 wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 resource = { path = "../resource" }

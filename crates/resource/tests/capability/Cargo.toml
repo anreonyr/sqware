@@ -10,4 +10,4 @@ publish = false
 path = "lib.rs"
 
 [dependencies]
-abi = { package = "env", path = "../../../env" }
+abi = { package = "env", git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }

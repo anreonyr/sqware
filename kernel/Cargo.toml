@@ -62,7 +62,7 @@ doctest = false
 # ⇒ 由本 crate 的 `build.rs` 自己交代那枚脚本（读源文件 + 哈希自检）。
 embedded-test-linker-script = "0.1"
 
-env = { path = "../crates/env" }
+env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
 sbi = { path = "../crates/sbi" }
 
 bitflags = "2.13.1"

@@ -10,7 +10,7 @@ publish = false
 path = "lib.rs"
 
 [dependencies]
-env = { path = "../../../crates/env" }
+env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
 hub-api = { path = "../../src/service/hub/api" }
 system-api = { path = "../../src/system/api" }
 wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
