@@ -1,10 +1,40 @@
 use crate::{
-    GrantRange, HoleFail, Mark, Permission, PieToken, TaskId, Wait,
-    capability::Capability,
+    FlatReference, GrantRange, HoleFail, Mark, Permission, PieToken, TaskId, Wait,
+    capability::Capability as GenericCapability,
+    native::Native,
     raw::Hole,
     reply::{Reply, ReplyError},
     test_backend::{self, Event, Op},
 };
+
+type Capability = GenericCapability<Native>;
+
+#[allow(dead_code)]
+fn grant_keeps_the_source_backend<'a>(
+    capability: &'a Capability,
+    peer: TaskId,
+) -> Result<crate::loan::Loan<'a, Native>, <Native as crate::kernel::CapabilityKernel>::PieError>
+{
+    capability.grant(peer, Permission::STORE, Mark::NONE)
+}
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn concrete_capability_aliases_keep_their_layout_and_signatures() {
+    use core::mem::{align_of, size_of};
+
+    assert_eq!(size_of::<Capability>(), 16);
+    assert_eq!(align_of::<Capability>(), 8);
+    assert_eq!(size_of::<crate::raw::Loan<'static>>(), 32);
+    assert_eq!(align_of::<crate::raw::Loan<'static>>(), 8);
+
+    let _: fn(Mark) -> crate::HoleResult<Capability> = Capability::unseal_hole;
+    let _: fn(FlatReference, bool) -> crate::PoleResult<Capability> = Capability::unseal_pole;
+    let _: fn(PieToken, Permission, Mark, GrantRange) -> crate::PieResult<Capability> =
+        Capability::derive;
+    let _: fn(&'static PieToken, TaskId, Permission, Mark) -> crate::PieResult<crate::raw::Loan<'static>> =
+        crate::raw::Loan::<'static>::accord;
+}
 
 fn peer() -> TaskId {
     TaskId::new(7)

@@ -17,10 +17,22 @@ pub mod debug {
     pub fn put(_: &str) {}
 }
 
-#[path = "../../../crates/resource/src/capability.rs"]
-pub mod capability;
-#[path = "../../../crates/resource/src/loan.rs"]
-pub mod loan;
+#[path = "fixtures/kernel.rs"]
+mod kernel;
+pub use kernel::Kernel;
+
+pub mod capability {
+    pub type Capability = resource_impl::capability::Capability<crate::Kernel>;
+}
+
+pub mod loan {
+    pub type Loan<'a> = resource_impl::loan::Loan<'a, crate::Kernel>;
+}
+
+pub mod dock {
+    pub type Dock = resource_impl::mapping::Dock<crate::Kernel>;
+    pub use resource_impl::view::View;
+}
 
 #[path = "fixtures/state.rs"]
 mod state;
@@ -38,8 +50,6 @@ pub mod pie;
 pub mod platform;
 #[path = "fixtures/raw.rs"]
 pub mod raw;
-#[path = "../../../crates/resource/src/dock.rs"]
-pub mod dock;
 
 #[path = "../../src/driver/pci/api.rs"]
 pub mod pci_api;

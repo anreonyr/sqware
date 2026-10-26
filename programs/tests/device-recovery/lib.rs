@@ -18,8 +18,14 @@ pub mod raw;
 pub mod pie;
 #[path = "fixtures/pole.rs"]
 pub mod pole;
-#[path = "../../../crates/resource/src/dock.rs"]
-pub mod dock;
+#[path = "fixtures/kernel.rs"]
+mod kernel;
+pub use kernel::Kernel;
+
+pub mod dock {
+    pub type Dock = resource_impl::mapping::Dock<crate::Kernel>;
+    pub use resource_impl::view::View;
+}
 #[path = "../../src/driver/pci/ecam.rs"]
 pub mod ecam;
 #[path = "../../src/driver/virtio/registers.rs"]

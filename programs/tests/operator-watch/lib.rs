@@ -81,10 +81,17 @@ pub mod pie {
         unreachable!()
     }
 }
-#[path = "../../../crates/resource/src/capability.rs"]
-mod capability;
-#[path = "../../../crates/resource/src/loan.rs"]
-mod loan;
+#[path = "kernel.rs"]
+mod kernel;
+pub use kernel::Kernel;
+
+pub mod capability {
+    pub type Capability = resource_impl::capability::Capability<crate::Kernel>;
+}
+
+pub mod loan {
+    pub type Loan<'a> = resource_impl::loan::Loan<'a, crate::Kernel>;
+}
 pub mod raw {
     pub use crate::pie::revoke;
     pub fn release(token: crate::PieToken) -> crate::PieResult<()> {

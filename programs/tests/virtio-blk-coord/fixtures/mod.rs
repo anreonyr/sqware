@@ -3,9 +3,12 @@ pub mod endpoint;
 pub mod group;
 pub mod handoff;
 pub mod iommu;
+pub mod kernel;
 pub mod pci;
 pub mod peer;
 pub mod raw;
 pub mod region;
 pub mod script;
 pub mod state;
+
+pub use kernel::Kernel;

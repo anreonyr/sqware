@@ -28,8 +28,14 @@ pub mod pages;
 #[path = "../../src/driver/iommu/table.rs"]
 pub mod table;
 
-#[path = "../../../crates/resource/src/dock.rs"]
-pub mod dock;
+#[path = "fixtures/kernel.rs"]
+mod kernel;
+pub use kernel::Kernel;
+
+pub mod dock {
+    pub type Dock = resource_impl::mapping::Dock<crate::Kernel>;
+    pub use resource_impl::view::View;
+}
 #[path = "fixtures/core.rs"]
 mod core_fixture;
 #[path = "fixtures/platform.rs"]
