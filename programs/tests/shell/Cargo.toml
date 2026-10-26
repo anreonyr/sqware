@@ -7,7 +7,7 @@ publish = false
 [lib]
 path = "lib.rs"
 [dependencies]
-stream = { path = "../../../crates/stream" }
+stream = { git = "https://github.com/shuyra-arche/stream.git", rev = "ebd1c6db4823e28591650d967d7e8c8dd1939687" }
 lisp = { path = "../../../crates/lisp" }
 pipe-api = { path = "../../src/service/pipe/api" }
 
