@@ -12,5 +12,5 @@ erra = { version = "0.2.0", default-features = false }
 ipc = { path = "../../../crates/ipc" }
 schedule = { path = "../../../crates/schedule" }
 wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
-system-api = { path = "../../src/system/api" }
+system-api = { git = "https://github.com/shuyra-arche/system.git", rev = "9e5d63ca536a176583cf1b0054b4ecf7ddd88257" }
 unit-declarations = { package = "unit", path = "../../../crates/unit" }

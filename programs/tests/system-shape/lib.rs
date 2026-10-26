@@ -560,8 +560,6 @@ mod boundaries {
             result
         }
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let api = dependencies(&repo.join("programs/src/system/api/Cargo.toml"));
-        assert!(api.iter().all(|name| ["env", "wire", "mold"].contains(&name.as_str())));
         let clients = dependencies(&repo.join("programs/src/system/client/Cargo.toml"));
         assert!(clients.iter().any(|name| name == "system-api"));
         assert!(!clients.iter().any(|name| name == "protocol" || name == "programs"));
@@ -772,7 +770,6 @@ mod revised_ownership {
         assert!(!control.contains("loader:"));
         let operator = fs::read_to_string(repo.join("programs/src/system/operator/runtime/authority.rs")).unwrap();
         assert!(!operator.contains("hub_api") && !operator.contains("Machine"));
-        assert!(!repo.join("programs/src/system/api/src/control/publication.rs").exists());
         assert!(!repo.join("programs/src/system/client/src/control/publication.rs").exists());
         assert!(!repo.join("programs/src/system/launch/activation.rs").exists());
         assert!(!repo.join("programs/src/system/control/unit/material.rs").exists());

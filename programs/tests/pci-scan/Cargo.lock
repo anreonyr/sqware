@@ -86,6 +86,7 @@ dependencies = [
 [[package]]
 name = "system-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/system.git?rev=9e5d63ca536a176583cf1b0054b4ecf7ddd88257#9e5d63ca536a176583cf1b0054b4ecf7ddd88257"
 dependencies = [
  "env",
  "mold",

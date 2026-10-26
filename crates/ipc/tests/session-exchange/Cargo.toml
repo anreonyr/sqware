@@ -10,4 +10,4 @@ path = "lib.rs"
 [workspace]
 
 [dependencies]
-system-api = { path = "../../../../programs/src/system/api" }
+system-api = { git = "https://github.com/shuyra-arche/system.git", rev = "9e5d63ca536a176583cf1b0054b4ecf7ddd88257" }
