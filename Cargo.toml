@@ -21,7 +21,6 @@ members = [
     "kernel",
     "programs",
     "crates/composition",
-    "crates/schedule",
     "crates/ipc",
     "crates/lisp",
     "crates/stream",
