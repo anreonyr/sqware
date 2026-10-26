@@ -63,7 +63,7 @@ doctest = false
 embedded-test-linker-script = "0.1"
 
 env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
-sbi = { path = "../crates/sbi" }
+sbi = { git = "https://github.com/shuyra-arche/sbi.git", rev = "2dc10bafb919eb2e8f6ca37c95cfd56f9a05831d" }
 
 bitflags = "2.13.1"
 erra = { version = "0.2.0", default-features = false }

@@ -693,6 +693,7 @@ checksum = "f9d441c3b2ebf55cebf796bfdc265d67fa09db17b7bb6bd4be75c509e1e8fec3"
 [[package]]
 name = "sbi"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/sbi.git?rev=2dc10bafb919eb2e8f6ca37c95cfd56f9a05831d#2dc10bafb919eb2e8f6ca37c95cfd56f9a05831d"
 dependencies = [
  "erra",
  "fack",
