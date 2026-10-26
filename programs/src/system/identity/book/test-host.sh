@@ -11,9 +11,11 @@ trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 python3 - "$here" "$api_root" "$temporary" "$root" <<'PY'
 import pathlib, sys
 here, api, temporary, root = map(pathlib.Path, sys.argv[1:])
+env_url = "https://github.com/shuyra-arche/env.git"
+env_rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae"
 source = (root / "programs/tests/identity/host.rs").read_text()
-source = source.replace('#[path = "mod.rs"]', f'#[path = "{here / "mod.rs"}"]')
-source = source.replace('#[path = "../serve/answer.rs"]', f'#[path = "{here / "../service/answer.rs"}"]')
+source = source.replace('#[path = "../../src/system/identity/service/answer.rs"]', f'#[path = "{here / "../service/answer.rs"}"]')
+source = source.replace('#[path = "../../src/system/identity/book/mod.rs"]', f'#[path = "{here / "mod.rs"}"]')
 (temporary / "host.rs").write_text(source)
 (temporary / "Cargo.toml").write_text(f'''
 [package]
@@ -25,7 +27,7 @@ edition = "2024"
 path = "host.rs"
 doctest = false
 [dependencies]
-env = {{ path = "{root / "crates/env"}" }}
+env = {{ git = "{env_url}", rev = "{env_rev}" }}
 system-api = {{ path = "{api / "programs/src/system/api"}" }}
 ''')
 PY

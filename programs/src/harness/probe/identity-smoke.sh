@@ -12,6 +12,8 @@ trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 python3 - "$root" "$here" "$temporary" <<'PY'
 import json, pathlib, sys
 root, here, temporary = map(pathlib.Path, sys.argv[1:])
+env_url = "https://github.com/shuyra-arche/env.git"
+env_rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae"
 (temporary / "Cargo.toml").write_text(f'''
 [package]
 name = "identity-smoke-image"
@@ -22,7 +24,7 @@ edition = "2024"
 name = "identity-smoke-image"
 path = {json.dumps(str(here / "identity-smoke.rs"))}
 [dependencies]
-env = {{ path = {json.dumps(str(root / "crates/env"))} }}
+env = {{ git = "{env_url}", rev = "{env_rev}" }}
 ''')
 PY
 image="$root/target/riscv64gc-unknown-none-elf/debug"

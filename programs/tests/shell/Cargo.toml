@@ -12,4 +12,4 @@ lisp = { path = "../../../crates/lisp" }
 pipe-api = { path = "../../src/service/pipe/api" }
 
 shell-api = { path = "../../src/user/shell/api" }
-abi = { package = "env", path = "../../../crates/env" }
+abi = { package = "env", git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }

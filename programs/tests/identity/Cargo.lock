@@ -11,6 +11,7 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 [[package]]
 name = "env"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/env.git?rev=d3000253cd5d13d466e91fafd4dbb27a5ec5aaae#d3000253cd5d13d466e91fafd4dbb27a5ec5aaae"
 dependencies = [
  "bitflags",
  "erra",

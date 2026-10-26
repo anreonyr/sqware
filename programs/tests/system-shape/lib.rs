@@ -672,22 +672,13 @@ mod boundaries {
         }
     }
     #[test]
-    fn execution_mechanism_and_environment_marks_have_no_domain_dependencies() {
+    fn schedule_mechanism_has_no_domain_dependencies() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let mut paths = References::default();
         references(&repo.join("crates/schedule/src"), &mut paths);
         assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
         let schedule_manifest = fs::read_to_string(repo.join("crates/schedule/Cargo.toml")).unwrap();
         assert!(!schedule_manifest.contains("protocol"));
-        let source = fs::read_to_string(repo.join("crates/env/src/marks.rs")).unwrap();
-        let mut paths = References::default();
-        paths.visit_file(&syn::parse_file(&source).unwrap());
-        assert!(!paths.0.iter().any(|path| {
-            path.starts_with("crate::system")
-                || path.starts_with("crate::driver")
-                || path.starts_with("crate::service")
-                || path.starts_with("protocol::")
-        }));
     }
     #[test]
     fn mark_declarations_cannot_bypass_the_registry() {

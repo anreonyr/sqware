@@ -14,7 +14,7 @@ publish = false
 
 [dependencies]
 # Host-safe declaration/type package: no execution, no server, no client, no composition.
-env = { path = "../env" }
+env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
 unit = { path = "../unit" }
 system-api = { path = "../../programs/src/system/api" }
 elf = { version = "0.8", default-features = false }
