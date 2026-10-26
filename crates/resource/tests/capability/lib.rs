@@ -326,6 +326,12 @@ pub mod test_backend {
     }
 }
 
+#[path = "../../src/kernel.rs"]
+pub mod kernel;
+#[path = "../../src/cleanup.rs"]
+pub mod cleanup;
+#[path = "native.rs"]
+pub mod native;
 #[path = "../../src/capability.rs"]
 pub mod capability;
 #[path = "../../src/loan.rs"]
@@ -335,6 +341,8 @@ pub mod loan;
 pub(crate) mod hole_handle;
 #[path = "../../src/raw.rs"]
 pub mod raw;
+#[path = "../../src/reply_error.rs"]
+mod reply_error;
 #[path = "../../src/reply.rs"]
 pub mod reply;
 

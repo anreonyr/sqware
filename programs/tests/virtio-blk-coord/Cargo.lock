@@ -82,6 +82,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "resource"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "erra",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -126,6 +134,7 @@ dependencies = [
  "iommu-declaration",
  "mold",
  "pci-declaration",
+ "resource",
  "wire",
 ]
 

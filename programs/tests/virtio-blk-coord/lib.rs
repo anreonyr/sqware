@@ -53,8 +53,11 @@ pub mod registers;
 pub mod caps;
 #[path = "../../src/driver/virtio/device.rs"]
 pub mod virtio_device;
-#[path = "../../../crates/resource/src/dock.rs"]
-pub mod dock;
+
+pub mod dock {
+    pub type Dock = resource_impl::mapping::Dock<crate::Kernel>;
+    pub use resource_impl::view::View;
+}
 
 pub mod debug { pub fn put(_: &str) {} }
 pub mod chrono {
@@ -181,3 +184,4 @@ pub mod driver {
 
 mod fixtures;
 mod tests;
+pub use crate::fixtures::Kernel;

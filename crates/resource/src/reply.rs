@@ -1,7 +1,12 @@
 //! 一次交互使用的自有回信端。
 
-use crate::{capability::Capability, hole::Hole};
-use env::{HoleFail, HoleResult, Mark, Permission, PieFail, PieResult, PieToken, TaskId, Wait, make_fail, pie};
+use crate::{hole::Hole, raw::Capability};
+use env::{
+    HoleFail, HoleResult, Mark, Permission, PieFail, PieResult, PieToken, TaskId, Wait, make_fail,
+    pie,
+};
+
+pub use crate::reply_error::ReplyError;
 
 /// 自有回信端；只接收指定对端的回复，结束时撤销授出并封印释放本地孔。
 pub struct Reply {
@@ -9,12 +14,6 @@ pub struct Reply {
     peer: TaskId,
     mark: Mark,
     remote: Option<PieToken>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReplyError {
-    Mail(HoleFail),
-    WrongSource,
 }
 
 impl Reply {

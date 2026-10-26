@@ -16,3 +16,5 @@ wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2
 mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b686eded8b4bcd743b4e96084b7f9" }
 schedule = { path = "../../../crates/schedule" }
 iommu-declaration = { path = "../../src/driver/iommu/declaration" }
+erra = { version = "0.2.0", default-features = false }
+resource_impl = { package = "resource", path = "../../../crates/resource" }

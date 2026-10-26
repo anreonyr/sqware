@@ -1,20 +1,24 @@
 //! 本任务持有的一份能力及其本地派生。
 
-use env::{FlatReference, GrantRange, Mark, Permission, PieResult, PieToken, TaskId, pie};
+use core::marker::PhantomData;
 
-use crate::loan::Loan;
+use env::{FlatReference, GrantRange, Mark, Permission, PieToken, TaskId};
+
+use crate::{cleanup::cleanup, kernel::CapabilityKernel, loan::Loan};
 
 /// 本任务创建的一份能力。释放它不会自动封印资源。
-pub struct Capability {
+pub struct Capability<K: CapabilityKernel> {
     token: PieToken,
     active: bool,
+    _kernel: PhantomData<fn() -> K>,
 }
 
-impl Capability {
-    pub fn unseal_hole(mark: Mark) -> env::HoleResult<Self> {
+impl<K: CapabilityKernel> Capability<K> {
+    pub fn unseal_hole(mark: Mark) -> Result<Self, K::HoleError> {
         Ok(Self {
-            token: env::hole::unseal(mark, env::HoleLimits::default())?,
+            token: K::unseal_hole(mark)?,
             active: true,
+            _kernel: PhantomData,
         })
     }
 
@@ -22,10 +26,11 @@ impl Capability {
     ///
     /// The kernel rejects overlapping child windows and keeps the parent's
     /// exclusive delivery unused; the returned root is what may be granted.
-    pub fn unseal_pole(reference: FlatReference, shared: bool) -> env::PoleResult<Self> {
+    pub fn unseal_pole(reference: FlatReference, shared: bool) -> Result<Self, K::PoleError> {
         Ok(Self {
-            token: env::pole::unseal(reference, shared)?,
+            token: K::unseal_pole(reference, shared)?,
             active: true,
+            _kernel: PhantomData,
         })
     }
 
@@ -39,36 +44,42 @@ impl Capability {
         permission: Permission,
         mark: Mark,
         range: GrantRange,
-    ) -> PieResult<Self> {
+    ) -> Result<Self, K::PieError> {
         Ok(Self {
-            token: pie::derive(source, permission, mark, range)?,
+            token: K::derive(source, permission, mark, range)?,
             active: true,
+            _kernel: PhantomData,
         })
     }
 
-    pub fn grant(&self, peer: TaskId, permission: Permission, mark: Mark) -> PieResult<Loan<'_>> {
+    pub fn grant(
+        &self,
+        peer: TaskId,
+        permission: Permission,
+        mark: Mark,
+    ) -> Result<Loan<'_, K>, K::PieError> {
         Loan::accord(&self.token, peer, permission, mark)
     }
 
-    pub fn seal(&self) -> env::HoleResult<()> {
-        env::hole::seal(self.token)
+    pub fn seal(&self) -> Result<(), K::HoleError> {
+        K::seal_hole(self.token)
     }
 
     /// 失败时保留同一枚 token，调用方可用同一句柄重试。
-    pub fn release(&mut self) -> PieResult<()> {
+    pub fn release(&mut self) -> Result<(), K::PieError> {
         if !self.active {
             return Ok(());
         }
-        crate::raw::release(self.token)?;
+        cleanup::<K>(|| K::release(self.token))?;
         self.active = false;
         Ok(())
     }
 }
 
-impl Drop for Capability {
+impl<K: CapabilityKernel> Drop for Capability<K> {
     fn drop(&mut self) {
         if self.active {
-            let _ = crate::raw::release(self.token);
+            let _ = cleanup::<K>(|| K::release(self.token));
         }
     }
 }
