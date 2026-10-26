@@ -35,7 +35,6 @@ members = [
     "programs/src/user/shell/client",
     "programs/src/user/shell/declaration",
     "programs/src/system/client",
-    "programs/src/system/api",
     "programs/src/service/account/api",
     "programs/src/service/account/client",
     "programs/src/service/hub/api",

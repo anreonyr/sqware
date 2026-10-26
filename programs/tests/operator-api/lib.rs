@@ -478,9 +478,6 @@ mod tests {
                 "legacy Face::{method} remains"
             );
         }
-        let api = std::fs::read_to_string(root.join("../../../api/src/operator/mod.rs")).unwrap();
-        assert!(!api.contains("pub enum Grant"));
-        assert!(!api.contains("mod grant"));
         for source in [&client, &module] {
             assert!(!source.contains("Rein"));
             assert!(!source.contains("granted_berth"));

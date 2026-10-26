@@ -14,5 +14,5 @@ env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d4
 wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 resource = { path = "../../../../../crates/resource" }
 ipc = { path = "../../../../../crates/ipc" }
-system-api = { path = "../../../system/api" }
+system-api = { git = "https://github.com/shuyra-arche/system.git", rev = "9e5d63ca536a176583cf1b0054b4ecf7ddd88257" }
 system-client = { path = "../../../system/client" }

@@ -10,4 +10,4 @@ bench = false
 doctest = false
 
 [dependencies]
-system-api = { path = "../../../system/api" }
+system-api = { git = "https://github.com/shuyra-arche/system.git", rev = "9e5d63ca536a176583cf1b0054b4ecf7ddd88257" }
