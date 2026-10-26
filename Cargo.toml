@@ -23,7 +23,6 @@ members = [
     "crates/composition",
     "crates/execution",
     "crates/schedule",
-    "crates/sbi",
     "crates/ipc",
     "crates/lisp",
     "crates/stream",
