@@ -227,6 +227,7 @@ checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 [[package]]
 name = "execution"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/execution.git?rev=1b333a28bc4c34beaea3f7986a9bb6e8ab2db414#1b333a28bc4c34beaea3f7986a9bb6e8ab2db414"
 dependencies = [
  "env",
  "spinning_top",
