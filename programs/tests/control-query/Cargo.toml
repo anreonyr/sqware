@@ -8,5 +8,5 @@ publish = false
 path = "lib.rs"
 [dependencies]
 env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
-schedule = { path = "../../../crates/schedule" }
+schedule = { git = "https://github.com/shuyra-arche/schedule.git", rev = "a806630061a1d939f31ad8c683d544d00a385854" }
 system-api = { git = "https://github.com/shuyra-arche/system.git", rev = "9e5d63ca536a176583cf1b0054b4ecf7ddd88257" }

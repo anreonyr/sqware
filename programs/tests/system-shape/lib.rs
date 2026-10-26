@@ -670,15 +670,6 @@ mod boundaries {
         }
     }
     #[test]
-    fn schedule_mechanism_has_no_domain_dependencies() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let mut paths = References::default();
-        references(&repo.join("crates/schedule/src"), &mut paths);
-        assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
-        let schedule_manifest = fs::read_to_string(repo.join("crates/schedule/Cargo.toml")).unwrap();
-        assert!(!schedule_manifest.contains("protocol"));
-    }
-    #[test]
     fn mark_declarations_cannot_bypass_the_registry() {
         fn expression<'a>(syntax: &'a syn::File, name: &str) -> &'a syn::Expr {
             syntax.items.iter().find_map(|item| match item {

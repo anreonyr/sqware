@@ -34,7 +34,7 @@ unit = { git = "https://github.com/shuyra-arche/unit.git", rev = "90396f0fda376e
 composition = { path = "../crates/composition" }
 resource = { git = "https://github.com/shuyra-arche/resource.git", rev = "dbc96834f50f094b5c386e54a0a2ae5560dcd7f8" }
 execution = { git = "https://github.com/shuyra-arche/execution.git", rev = "1b333a28bc4c34beaea3f7986a9bb6e8ab2db414" }
-schedule = { path = "../crates/schedule" }
+schedule = { git = "https://github.com/shuyra-arche/schedule.git", rev = "a806630061a1d939f31ad8c683d544d00a385854" }
 # 通信机制与提供方拥有的接口、客户端。
 ipc = { path = "../crates/ipc" }
 wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }

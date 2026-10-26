@@ -64,6 +64,7 @@ dependencies = [
 [[package]]
 name = "schedule"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/schedule.git?rev=a806630061a1d939f31ad8c683d544d00a385854#a806630061a1d939f31ad8c683d544d00a385854"
 
 [[package]]
 name = "syn"
