@@ -1,0 +1,4 @@
+[package]
+name = "kernel-test-api"
+version.workspace = true
+edition.workspace = true

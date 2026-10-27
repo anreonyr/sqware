@@ -1,4 +1,4 @@
-mod injection;
+use kernel_test_api::device_confirmation as injection;
 mod state;
 
 use schedule::{Progress, Res, ResMut, Schedule};

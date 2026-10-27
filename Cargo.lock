@@ -383,6 +383,7 @@ dependencies = [
  "fack",
  "fdt",
  "hashbrown",
+ "kernel-test-api",
  "log",
  "riscv",
  "sbi",
@@ -390,6 +391,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "kernel-test-api"
+version = "0.1.0"
 
 [[package]]
 name = "libc"
@@ -564,6 +569,7 @@ dependencies = [
  "hub-client",
  "iommu-declaration",
  "ipc",
+ "kernel-test-api",
  "lisp",
  "mold",
  "pci-declaration",

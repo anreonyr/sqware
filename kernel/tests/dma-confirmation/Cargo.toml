@@ -10,6 +10,7 @@ publish = false
 path = "lib.rs"
 
 [dev-dependencies]
+kernel-test-api = { path = "../api" }
 env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
 hub-api = { path = "../../../programs/src/service/hub/api" }
 mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b686eded8b4bcd743b4e96084b7f9" }

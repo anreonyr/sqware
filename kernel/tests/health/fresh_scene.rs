@@ -21,9 +21,7 @@ use crate::core::work::room::conductor::current;
 use crate::core::work::room::messenger::{self, WakeKey};
 use crate::machine::clock;
 
-#[allow(dead_code)]
-#[path = "../../../programs/src/harness/probe/memory_transfer_fresh/handshake.rs"]
-mod handshake;
+use kernel_test_api::memory_transfer_fresh as handshake;
 
 /// 等读者登记的时限（毫秒）：到点就不注入，把结论写回握手页交回现场。
 const AWAIT_MS: u64 = 2_000;

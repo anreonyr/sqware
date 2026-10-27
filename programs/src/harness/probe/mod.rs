@@ -27,13 +27,13 @@ pub mod memory_transfer;
 pub mod memory_transfer_tlb;
 
 // 又一面：一次真移交失败把目标还成从未物化的 Fresh。等待者与晚到者物化的都是
-// 新清零页；握手页那一面与内核夹具共用同一份线格式（见 `memory_transfer_fresh/handshake.rs`）。
+// 新清零页；握手页那一面与内核夹具共用 `kernel-test-api` 的同一份线格式。
 pub mod memory_transfer_fresh;
 
 // 时间那一面：上面几景都是同一颗 hart 上的先后（或只证明某一段窗口真的开着）。
 // 这一景要的是**真并发**：管理端在一次真移交的在途窗口里驻留不让 hart，另一个
 // Team／另一个 Space 里的对端在另一颗 hart 上真登记一次冷缺页；共享控制页那一面
-// 与内核夹具共用同一份线格式（见 `memory_transfer_race/handshake.rs`）。
+// 与内核夹具共用 `kernel-test-api` 的同一份线格式。
 pub mod memory_transfer_race;
 
 // 换到硬件那一面：这台机器真的有一颗 RISC-V IOMMU。它证的是“我们写下的 DDT / DC / Sv39 表

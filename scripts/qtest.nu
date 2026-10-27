@@ -539,8 +539,8 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
   }
 
   if $code == 0 and $scene == "memory-transfer-fresh" {
-    // 引导那一台报收尾：两阶段的读者都已被它 join 到手才走到这一行，故这一句就是
-    // 本景的成功证明（逐格判据在宿主驱动那一侧）。
+    # 引导那一台报收尾：两阶段的读者都已被它 join 到手才走到这一行，故这一句就是
+    # 本景的成功证明（逐格判据在宿主驱动那一侧）。
     let console = (open --raw $env.QEMU_TEE_LOG | lines)
     let proof = "^exit tid=[0-9]+ reason=0x0 note: memory-transfer-fresh: acceptance passed"
     if ($console | where {|line| $line =~ $proof } | is-empty) {
