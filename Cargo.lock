@@ -367,6 +367,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "iommu-hold"
+version = "0.1.0"
+dependencies = [
+ "env",
+]
+
+[[package]]
 name = "ipc"
 version = "0.1.0"
 source = "git+https://github.com/shuyra-arche/ipc.git?rev=29ad97dc08d9dfc4ea6578b1b77874261229b3b5#29ad97dc08d9dfc4ea6578b1b77874261229b3b5"
@@ -394,6 +401,7 @@ dependencies = [
  "fack",
  "fdt",
  "hashbrown",
+ "iommu-hold",
  "kernel-test-api",
  "log",
  "riscv",
@@ -590,6 +598,7 @@ dependencies = [
  "hub-client",
  "iommu-api",
  "iommu-declaration",
+ "iommu-hold",
  "ipc",
  "kernel-test-api",
  "lisp",

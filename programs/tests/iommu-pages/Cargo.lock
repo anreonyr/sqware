@@ -56,6 +56,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "iommu-hold"
+version = "0.1.0"
+dependencies = [
+ "env",
+]
+
+[[package]]
 name = "iommu-pages-tests"
 version = "0.1.0"
 dependencies = [
@@ -64,6 +71,7 @@ dependencies = [
  "hub-api",
  "iommu-api",
  "iommu-declaration",
+ "iommu-hold",
  "mold",
  "resource",
  "schedule",

@@ -41,6 +41,7 @@ members = [
     "programs/src/harness/probe/daemon_target/api",
     "programs/src/driver/iommu/declaration",
     "programs/src/driver/iommu/api",
+    "programs/src/driver/iommu/hold",
     "programs/src/driver/pci/declaration",
     "programs/src/driver/pci/api",
 ]

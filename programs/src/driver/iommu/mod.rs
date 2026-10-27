@@ -30,7 +30,7 @@ pub mod domain_range;
 pub mod engine;
 pub mod fence;
 pub mod handshake;
-pub mod hold;
+pub use iommu_hold as hold;
 pub mod invalidation;
 pub(crate) mod layout;
 pub mod order;

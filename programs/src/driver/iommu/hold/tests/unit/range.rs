@@ -1,4 +1,4 @@
-use crate::hold::DeviceRange;
+use crate::DeviceRange;
 
 #[test]
 fn closed_interval_overlap_does_not_overflow_at_the_top_of_the_address_space() {
