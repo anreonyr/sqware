@@ -63,8 +63,7 @@ pub mod layout;
 pub mod context;
 #[path = "../../src/driver/iommu/core.rs"]
 pub mod iommu_core;
-#[path = "../../src/driver/iommu/hold/mod.rs"]
-pub mod hold;
+pub use iommu_hold as hold;
 #[path = "../../src/driver/iommu/phase.rs"]
 pub mod phase;
 #[path = "../../src/driver/iommu/queue.rs"]
@@ -111,4 +110,3 @@ mod coordination;
 mod contexts;
 mod domains;
 mod provider_wire;
-mod ranges;

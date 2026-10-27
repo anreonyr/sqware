@@ -1,3 +1,5 @@
+#![no_std]
+
 //! Held references outlive CPU authority until the platform stops external access.
 //!
 //! 归**驱动自己的功能域**（`driver::iommu`）：只有这一台驱动持有它——它记的是
@@ -23,3 +25,9 @@ pub use platform::Platform;
 pub use range::DeviceRange;
 pub use registration::Registration;
 pub use scope::Scope;
+
+extern crate alloc;
+
+#[cfg(test)]
+#[path = "../tests/unit/range.rs"]
+mod range_tests;
