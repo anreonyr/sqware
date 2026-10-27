@@ -15,6 +15,7 @@ dependencies = [
  "env",
  "hub-api",
  "iommu-declaration",
+ "kernel-test-api",
  "mold",
  "pci-declaration",
  "wire",
@@ -55,6 +56,10 @@ dependencies = [
  "system-api",
  "unit",
 ]
+
+[[package]]
+name = "kernel-test-api"
+version = "0.1.0"
 
 [[package]]
 name = "mold"

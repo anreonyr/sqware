@@ -32,9 +32,7 @@ use crate::machine::clock;
 
 use alloc::sync::Arc;
 
-#[allow(dead_code)]
-#[path = "../../../programs/src/harness/probe/memory_transfer_race/handshake.rs"]
-mod handshake;
+use kernel_test_api::memory_transfer_race as handshake;
 
 /// 等对端登记的时限（毫秒）：到点就把结论写成 `TIMEOUT` 交回现场，不冒充登记过。
 ///

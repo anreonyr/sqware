@@ -19,6 +19,7 @@ doctest = false
 shell-api = { path = "src/user/shell/api" }
 shell-client = { path = "src/user/shell/client" }
 lisp = { path = "../crates/lisp" }
+kernel-test-api = { path = "../kernel/tests/api" }
 stream = { git = "https://github.com/shuyra-arche/stream.git", rev = "ebd1c6db4823e28591650d967d7e8c8dd1939687" }
 pipe-api = { path = "src/service/pipe/api" }
 pipe-client = { path = "src/service/pipe/client" }

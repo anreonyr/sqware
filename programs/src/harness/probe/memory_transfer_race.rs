@@ -15,7 +15,7 @@
 //! - **对端**：由管理端经 `Loader` 装载进**另一个 Team**（Space P）的那一台。
 //!   它在自己空间里把两条子分支各 `open` 成一条关系：来源那条盖两页，控制页那条盖一页。
 //! - **共享控制页**：与迁移范围**分开**的一份来源，两侧映射的是同一张物理页，
-//!   寿命到本景收尾；线格式在 [`handshake`]（内核夹具 include 同一份文件）。
+//!   寿命到本景收尾；线格式在 [`handshake`]（由 `kernel-test-api` 提供，内核夹具用同一个包）。
 //!
 //! # 程序序（每一步都只有一种走法）
 //!
@@ -44,8 +44,7 @@
 //! 真等待位、真 `Reap`。多 Hart 只有一颗时（`QEMU_SMP=1`）那一手不可能进展：
 //! 夹具的有界自旋会超时，`STATE=TIMEOUT`，本景当场红——那正是它该有的样子。
 
-#[allow(dead_code)]
-mod handshake;
+use kernel_test_api::memory_transfer_race as handshake;
 mod manager;
 mod page;
 mod peer;

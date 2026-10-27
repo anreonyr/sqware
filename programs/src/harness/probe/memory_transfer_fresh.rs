@@ -21,10 +21,9 @@
 //! 它放开前后的读数。读者那一台不经父子结果槽交回：它把读数写回握手页，收工与
 //! 回收由宿主按真实事件认。
 
-// 握手页的线格式与内核夹具是**同一份文件**（那边 `#[path]` 拉进去）：两侧各用得到
-// 其中一部分，用不到的那几个字在这边就是死项。
-#[allow(dead_code)]
-mod handshake;
+// 握手页的线格式由 `kernel-test-api` 的 `memory_transfer_fresh` 提供：两侧按同一份
+// 公开线格式读写。
+use kernel_test_api::memory_transfer_fresh as handshake;
 mod page;
 mod reader;
 

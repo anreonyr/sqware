@@ -18,16 +18,16 @@ semihosting = ["dep:serde_json"]
 # 确认失败的内核探针。与 `semihosting` 同款**非默认**：默认关着就根本没有探针实体，
 # D1/TLB/accept/product 连它被装上的机会都没有。它只在 `cfg(debug_assertions)`
 # 里编得出来（那四个探针同处）；选景靠这一格 ＋ 握手页上那枚标记，不靠 debug_assertions。
-fresh-scene = []
+fresh-scene = ["dep:kernel-test-api"]
 # 真实多 Hart 确定性交错那一景的**在途夹具**：占槽之后、撤 PTE 之前，按共享控制
 # 页里的请求放开另一个 Team／另一个 Space 里的对端，等它真登记在那条关系上。
 # 与 `fresh-scene` 同款**非默认**，同样只在 `cfg(debug_assertions)` 里编得出来，
 # 选景靠这一格 ＋ 共享页上那枚标记；没有常开 ABI、没有常开 trace schema。
-race-scene = []
+race-scene = ["dep:kernel-test-api"]
 # 专用 critical 场景：真实进入 guard 停止路径，机器不返回健康面。
 critical-scene = []
 # 指定 DMA 收尾操作的传输失败夹具；仅测试、仅 debug_assertions。
-dma-confirmation-scene = []
+dma-confirmation-scene = ["dep:kernel-test-api"]
 # 大叶验收用例（`tests/health/transfer.rs` 的 `mega_leaf`，夹具在 `frame_layout.rs`）的
 # **受控布局**：把帧池里小于 8 MiB 的伙伴块抽干、并预热块池的元数据尺寸类，使一次普通
 # `Flat::acquire` 的物化落在相对连续的区段上。与 `fresh-scene` 同款**非默认**，且只在
@@ -48,6 +48,8 @@ bench = false
 doctest = false
 
 [dependencies]
+# 场景夹具的纯线格式：只由三个场景 feature 显式打开。
+kernel-test-api = { path = "tests/api", optional = true }
 # 提供 `embedded-test.x`：本 crate 的 `build.rs` 把它的**源文件**（`links` 那一格保证它在
 # registry 里可读）读出来、落到自己的 `OUT_DIR`，再用 `cargo::rustc-link-arg-tests` 的
 # **绝对路径**交给 `[[test]] embedded`（`cargo::rustc-link-arg` 只作用于 bin，交不到测试目标）。

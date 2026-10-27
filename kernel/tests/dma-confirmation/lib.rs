@@ -16,8 +16,7 @@ mod task;
 mod tick;
 #[path = "../health/dma_confirmation.rs"]
 mod fixture;
-#[path = "../../../programs/src/harness/probe/device_confirmation/injection.rs"]
-mod injection;
+use kernel_test_api::device_confirmation as injection;
 #[path = "../../../programs/src/driver/iommu/api/mod.rs"]
 mod iommu;
 #[path = "../../../programs/src/driver/pci/api.rs"]

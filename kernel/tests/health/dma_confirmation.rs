@@ -5,9 +5,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use env::TaskId;
 
-#[path = "../../../programs/src/harness/probe/device_confirmation/injection.rs"]
-#[allow(dead_code)]
-mod injection;
+use kernel_test_api::device_confirmation as injection;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static FROM: AtomicUsize = AtomicUsize::new(0);
