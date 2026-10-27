@@ -36,6 +36,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "iommu-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "hub-api",
+ "iommu-declaration",
+ "mold",
+ "wire",
+]
+
+[[package]]
 name = "iommu-declaration"
 version = "0.1.0"
 dependencies = [
@@ -51,6 +62,7 @@ dependencies = [
  "env",
  "erra",
  "hub-api",
+ "iommu-api",
  "iommu-declaration",
  "mold",
  "resource",

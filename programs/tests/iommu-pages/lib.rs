@@ -40,8 +40,7 @@ pub mod dock {
 mod core_fixture;
 #[path = "fixtures/platform.rs"]
 pub mod platform;
-#[path = "../../src/driver/iommu/api/mod.rs"]
-pub mod api;
+pub use iommu_api as api;
 #[path = "../../src/driver/iommu/acquire.rs"]
 pub mod acquire;
 #[path = "../../src/driver/iommu/binding.rs"]

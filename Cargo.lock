@@ -347,6 +347,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
+name = "iommu-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "hub-api",
+ "iommu-declaration",
+ "mold",
+ "wire",
+]
+
+[[package]]
 name = "iommu-declaration"
 version = "0.1.0"
 dependencies = [
@@ -490,6 +501,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
+name = "pci-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "pci-declaration",
+ "wire",
+]
+
+[[package]]
 name = "pci-declaration"
 version = "0.1.0"
 dependencies = [
@@ -567,11 +588,13 @@ dependencies = [
  "fixturetarget-api",
  "hub-api",
  "hub-client",
+ "iommu-api",
  "iommu-declaration",
  "ipc",
  "kernel-test-api",
  "lisp",
  "mold",
+ "pci-api",
  "pci-declaration",
  "pipe-api",
  "pipe-client",

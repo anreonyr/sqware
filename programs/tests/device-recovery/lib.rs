@@ -34,8 +34,7 @@ pub mod registers;
 pub mod caps;
 #[path = "../../src/driver/virtio/device.rs"]
 pub mod virtio_device;
-#[path = "../../src/driver/pci/api.rs"]
-pub mod pci_api;
+pub use pci_api;
 #[path = "../../src/driver/virtio/blk/recovery/api.rs"]
 pub mod api;
 #[path = "../../src/driver/virtio/blk/client/mod.rs"]

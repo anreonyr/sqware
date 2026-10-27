@@ -36,6 +36,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pci-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "pci-declaration",
+ "wire",
+]
+
+[[package]]
 name = "pci-declaration"
 version = "0.1.0"
 dependencies = [
@@ -50,6 +60,7 @@ version = "0.1.0"
 dependencies = [
  "env",
  "mold",
+ "pci-api",
  "pci-declaration",
  "wire",
 ]
