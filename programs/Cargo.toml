@@ -47,7 +47,9 @@ terminal-api = { path = "src/user/terminal/api" }
 terminal-client = { path = "src/user/terminal/client" }
 shell-declaration = { path = "src/user/shell/declaration" }
 iommu-declaration = { path = "src/driver/iommu/declaration" }
+iommu-api = { path = "src/driver/iommu/api" }
 pci-declaration = { path = "src/driver/pci/declaration" }
+pci-api = { path = "src/driver/pci/api" }
 router-api = { path = "src/driver/router/api" }
 router-client = { path = "src/driver/router/client" }
 rtc-api = { path = "src/driver/rtc/api" }

@@ -51,8 +51,7 @@ pub mod platform;
 #[path = "fixtures/raw.rs"]
 pub mod raw;
 
-#[path = "../../src/driver/pci/api.rs"]
-pub mod pci_api;
+pub use pci_api;
 pub use pci_api as api;
 #[path = "../../src/driver/pci/bar.rs"]
 pub mod bar;

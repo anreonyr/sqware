@@ -17,10 +17,8 @@ mod tick;
 #[path = "../health/dma_confirmation.rs"]
 mod fixture;
 use kernel_test_api::device_confirmation as injection;
-#[path = "../../../programs/src/driver/iommu/api/mod.rs"]
-mod iommu;
-#[path = "../../../programs/src/driver/pci/api.rs"]
-mod pci;
+use iommu_api as iommu;
+use pci_api as pci;
 
 static SERIAL: Mutex<()> = Mutex::new(());
 thread_local! {

@@ -36,6 +36,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "iommu-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "hub-api",
+ "iommu-declaration",
+ "mold",
+ "wire",
+]
+
+[[package]]
 name = "iommu-declaration"
 version = "0.1.0"
 dependencies = [
@@ -62,6 +73,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "pci-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "pci-declaration",
+ "wire",
 ]
 
 [[package]]
@@ -142,9 +163,11 @@ version = "0.1.0"
 dependencies = [
  "env",
  "hub-api",
+ "iommu-api",
  "iommu-declaration",
  "ipc",
  "mold",
+ "pci-api",
  "pci-declaration",
  "resource",
  "wire",

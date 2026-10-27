@@ -16,5 +16,6 @@ wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2
 mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b686eded8b4bcd743b4e96084b7f9" }
 schedule = { git = "https://github.com/shuyra-arche/schedule.git", rev = "a806630061a1d939f31ad8c683d544d00a385854" }
 iommu-declaration = { path = "../../src/driver/iommu/declaration" }
+iommu-api = { path = "../../src/driver/iommu/api" }
 erra = { version = "0.2.0", default-features = false }
 resource_impl = { package = "resource", git = "https://github.com/shuyra-arche/resource.git", rev = "dbc96834f50f094b5c386e54a0a2ae5560dcd7f8" }

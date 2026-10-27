@@ -13,10 +13,8 @@ pub use abi::{
 };
 pub type PoleResult<T> = Result<T, PoleFail>;
 
-#[path = "../../src/driver/pci/api.rs"]
-pub mod pci_api;
-#[path = "../../src/driver/iommu/api/mod.rs"]
-pub mod iommu_api;
+pub use pci_api;
+pub use iommu_api;
 #[path = "../../src/driver/iommu/domain_id.rs"]
 pub mod domain_id;
 #[path = "../../src/driver/virtio/blk/recovery/api.rs"]

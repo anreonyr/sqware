@@ -15,6 +15,7 @@ dependencies = [
  "env",
  "hub-api",
  "mold",
+ "pci-api",
  "pci-declaration",
  "resource",
  "wire",
@@ -55,6 +56,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "pci-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "pci-declaration",
+ "wire",
 ]
 
 [[package]]

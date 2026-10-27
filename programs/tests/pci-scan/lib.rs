@@ -17,8 +17,7 @@ pub mod snapshot;
 #[path = "../../src/driver/pci/window.rs"]
 pub mod window;
 
-#[path = "../../src/driver/pci/api.rs"]
-pub mod api;
+pub use pci_api as api;
 #[path = "../../src/driver/pci/inspection/mod.rs"]
 pub mod inspection;
 

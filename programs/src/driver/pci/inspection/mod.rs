@@ -9,7 +9,7 @@ pub use call::Call;
 pub use page::Page;
 pub use scan::Scan;
 
-pub const ENTRY: env::Mark = super::api::CONFIG;
+pub const ENTRY: env::Mark = pci_declaration::marks::CONFIG;
 pub const ENTRY_PATH: &str = "pci/config";
 pub const BACK: env::Mark = env::Mark::of("pci/config-back");
 pub const CAPACITY: u8 = 1;

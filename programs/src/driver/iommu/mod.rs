@@ -17,7 +17,7 @@
 //! PCI、设备恢复与设备协议都不在本域：本域不解释 virtio 寄存器，也不决定何时停端点。
 
 pub mod acquire;
-pub mod api;
+pub use iommu_api as api;
 pub mod binding;
 pub use iommu_declaration::bindings;
 mod cache_step;

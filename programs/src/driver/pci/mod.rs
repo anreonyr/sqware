@@ -8,7 +8,7 @@
 //! - [`ecam`] / [`endpoint`]：配置空间、探尺与落位（只开内存空间）；
 //! - [`api`] / [`bindings`] / [`core`] / [`serve`]：本台那一域的门、声明窗与核心。
 
-pub mod api;
+pub use pci_api as api;
 mod bar;
 pub use pci_declaration::bindings;
 pub mod core;

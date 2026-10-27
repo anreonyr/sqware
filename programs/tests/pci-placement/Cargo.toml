@@ -14,6 +14,7 @@ abi = { package = "env", git = "https://github.com/shuyra-arche/env.git", rev = 
 wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b686eded8b4bcd743b4e96084b7f9" }
 pci-declaration = { path = "../../src/driver/pci/declaration" }
+pci-api = { path = "../../src/driver/pci/api" }
 erra = { version = "0.2.0", default-features = false }
 resource_impl = { package = "resource", git = "https://github.com/shuyra-arche/resource.git", rev = "dbc96834f50f094b5c386e54a0a2ae5560dcd7f8" }
 execution_impl = { package = "execution", git = "https://github.com/shuyra-arche/execution.git", rev = "1b333a28bc4c34beaea3f7986a9bb6e8ab2db414" }
