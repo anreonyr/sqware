@@ -7,13 +7,14 @@ publish = false
 # 宿主测试 crate，独立于默认裸机工作区。
 [workspace]
 
-# 宿主（x86_64）专用 crate：把**内核真实的**帧/块分配器源码按 `include!` 编进来单独压测。
+# 宿主（x86_64）专用 crate：直接编译 `kernel-allocator` 机制包，在宿主台上单独压测。
 #
 # 为什么单独一个 crate：内核里一次分配器失败与"某个内核对象没析构"在读数上长得一样
-# （都是关机审计的资产表）。把分配器搬到宿主上，判据就只剩分配器自己。
+# （都是关机审计的资产表）。把分配器机制搬到宿主上，判据就只剩分配器自己。
 
 [dependencies]
 erra = { version = "0.2.0", default-features = false }
+kernel-allocator = { path = "../../kernel/allocator" }
 # 三个**互斥**的宿主堆后端（见 README「六条路」与 lib.rs 的接管段）。三者都必须是
 # `[dependencies]`（可选）而不是 `[dev-dependencies]`：`#[global_allocator]` 挂在 lib 里，
 # 而 dev-dependencies 对 lib 不可见（实测：`unresolved module`）。

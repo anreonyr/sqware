@@ -1,5 +1,4 @@
-use crate::core::memory::flat::allocator::InitError;
-use crate::machine::board;
+use crate::{InitError, Region};
 
 pub(super) struct BumpInner {
     pub(super) used: usize,
@@ -12,13 +11,12 @@ impl BumpInner {
         Self { base, edge, used }
     }
 
-    pub(super) fn init(&mut self) -> Result<(), InitError> {
-        let m = board::info();
-        if m.free.size == 0 {
+    pub(super) fn init(&mut self, free: Region) -> Result<(), InitError> {
+        if free.size == 0 {
             return Err(InitError::NoFreeMemory);
         }
-        self.base = m.free.base;
-        self.edge = m.free.base + m.free.size;
+        self.base = free.base;
+        self.edge = free.base + free.size;
         Ok(())
     }
 }

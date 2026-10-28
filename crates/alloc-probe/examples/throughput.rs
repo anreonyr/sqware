@@ -31,7 +31,7 @@
 use core::alloc::{Allocator, GlobalAlloc, Layout};
 
 use alloc_probe::harness;
-use alloc_probe::memory::flat::allocator::{block, frame};
+use alloc_probe::host::{block, frame};
 use malloc_bench_rs::{Config, Workload};
 
 /// 内核 `hybrid.rs:42` 的分流点：≤ 2 KiB 走块池，> 2 KiB 走帧。

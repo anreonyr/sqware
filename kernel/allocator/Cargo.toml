@@ -1,0 +1,17 @@
+[package]
+name = "kernel-allocator"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+# 纯机制：Bump/Frame/Block/Hybrid/Spare 的状态与全部实际分配算法在这里。
+# 不提供 `#[global_allocator]`、启动、panic handler，也不认识 Kernel 的 board/hart
+# 具体类型；环境事实经实现方提供的 effect 传入。
+[dependencies]
+env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
+erra = { version = "0.2.0", default-features = false }
+fack = { version = "0.2.0", default-features = false }
+
+[features]
+# 帧池最低非空伙伴桶的只读观测（测试夹具用）。Kernel 的 `mega-leaf` 转发到这一格。
+mega-leaf = []

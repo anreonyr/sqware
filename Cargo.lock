@@ -402,6 +402,7 @@ dependencies = [
  "fdt",
  "hashbrown",
  "iommu-hold",
+ "kernel-allocator",
  "kernel-test-api",
  "log",
  "riscv",
@@ -409,6 +410,15 @@ dependencies = [
  "semihosting",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "kernel-allocator"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "erra",
+ "fack",
 ]
 
 [[package]]

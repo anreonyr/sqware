@@ -1,17 +1,14 @@
 pub mod bitmap;
 pub mod block;
 pub mod bump;
-mod error;
 pub mod frame;
 pub mod hybrid;
-mod link;
 mod no_allocation;
 pub mod portal;
 pub mod spare;
 pub mod statistics;
 
-pub use error::{InitError, InitResult};
-pub(crate) use link::Link;
+pub use kernel_allocator::{InitError, InitResult};
 #[cfg(debug_assertions)]
 pub(crate) use no_allocation::NoAllocation;
 pub(crate) use no_allocation::assert_allocation_allowed;
