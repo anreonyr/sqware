@@ -28,6 +28,7 @@ checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 [[package]]
 name = "hub-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/hub.git?rev=cccef3f325198c8390007ae88b064bae0f21f93e#cccef3f325198c8390007ae88b064bae0f21f93e"
 dependencies = [
  "env",
  "mold",

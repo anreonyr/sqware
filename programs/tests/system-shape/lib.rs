@@ -206,8 +206,6 @@ mod boundaries {
         assert!(!work.contains("find_bar("));
         let control = fs::read_to_string(src.join("harness/device/control.rs")).unwrap();
         assert!(!control.contains("iova_base("));
-        let hub_coord = fs::read_to_string(src.join("service/hub/api/src/coord.rs")).unwrap();
-        assert!(!hub_coord.contains("IOVA"));
         // Hub 那一本账：主人死亡只转收场（不空格、不重绑）；观察兄弟不用 join 当已停。
         let bindings = fs::read_to_string(src.join("service/hub/core/bindings.rs")).unwrap();
         assert!(bindings.contains("pub fn owner_gone"));
@@ -252,8 +250,6 @@ mod boundaries {
         assert!(!dma.contains("crate::driver::pci::"));
         let coordination = fs::read_to_string(src.join("service/hub/serve/coordination.rs")).unwrap();
         assert!(coordination.contains("binding.device.source != peers.coord.host()"));
-        let claim_frame = fs::read_to_string(src.join("service/hub/api/src/frame/dma.rs")).unwrap();
-        assert!(!claim_frame.contains("pub requester: u32,\n    pub sensor"));
     }
     #[test]
     fn instance_retirement_precedes_cleanup_and_dynamic_units_declare_hub() {
@@ -572,11 +568,9 @@ mod boundaries {
         assert!(terminal_client.contains(&"system-client".to_owned()));
         let router_client = dependencies(&repo.join("programs/src/driver/router/client/Cargo.toml"));
         assert!(router_client.iter().all(|name| ["env", "wire", "resource", "ipc", "router-api"].contains(&name.as_str())));
-        let hub_api = dependencies(&repo.join("programs/src/service/hub/api/Cargo.toml"));
-        assert!(hub_api.iter().all(|name| ["env", "wire", "mold", "system-api"].contains(&name.as_str())));
         let hub_client = dependencies(&repo.join("programs/src/service/hub/client/Cargo.toml"));
         assert!(hub_client.iter().all(|name| ["env", "wire", "resource", "ipc", "hub-api", "system-api", "system-client"].contains(&name.as_str())));
-        for dependencies in [&terminal_api, &router_api, &hub_api, &terminal_client, &router_client, &hub_client] {
+        for dependencies in [&terminal_api, &router_api, &terminal_client, &router_client, &hub_client] {
             assert!(!dependencies.iter().any(|name| name == "protocol"));
         }
         let mut paths = References::default();
@@ -707,7 +701,7 @@ mod boundaries {
         assert!(loader.0.iter().any(|path| path == "system_api::loader::REGISTRY"),
             "Loader provider registry is not assembled");
 
-        for api in ["programs/src/user/terminal/api/src/lib.rs", "programs/src/driver/router/api/src/lib.rs", "programs/src/service/hub/api/src/lib.rs"] {
+        for api in ["programs/src/user/terminal/api/src/lib.rs", "programs/src/driver/router/api/src/lib.rs"] {
             let source = fs::read_to_string(repo.join(api)).unwrap();
             assert!(source.contains("mold::interface"), "provider metadata is not generated: {api}");
         }

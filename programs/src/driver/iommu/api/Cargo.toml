@@ -13,4 +13,4 @@ env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d4
 wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b686eded8b4bcd743b4e96084b7f9" }
 iommu-declaration = { path = "../declaration" }
-hub-api = { path = "../../../service/hub/api" }
+hub-api = { git = "https://github.com/shuyra-arche/hub.git", rev = "cccef3f325198c8390007ae88b064bae0f21f93e" }

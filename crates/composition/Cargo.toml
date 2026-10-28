@@ -13,7 +13,7 @@ doctest = false
 env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
 unit = { git = "https://github.com/shuyra-arche/unit.git", rev = "90396f0fda376e0693fb1b9553aa21864d241057" }
 system-api = { git = "https://github.com/shuyra-arche/system.git", rev = "9e5d63ca536a176583cf1b0054b4ecf7ddd88257" }
-hub-api = { path = "../../programs/src/service/hub/api" }
+hub-api = { git = "https://github.com/shuyra-arche/hub.git", rev = "cccef3f325198c8390007ae88b064bae0f21f93e" }
 router-api = { path = "../../programs/src/driver/router/api" }
 rtc-api = { path = "../../programs/src/driver/rtc/api" }
 fixturetarget-api = { path = "../../programs/src/harness/probe/daemon_target/api" }
