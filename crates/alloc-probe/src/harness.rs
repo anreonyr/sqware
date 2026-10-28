@@ -32,9 +32,9 @@ use core::ptr::NonNull;
 use std::sync::OnceLock;
 use std::vec::Vec;
 
-use crate::machine;
-use crate::memory::PAGE_SIZE;
-use crate::memory::flat::allocator::{block, bump, frame, hybrid, spare, statistics};
+use crate::fixture;
+use crate::host::PAGE_SIZE;
+use crate::host::{block, bump, frame, hybrid, spare, statistics};
 
 /// 页大小（内核 `memory::PAGE_SIZE` 的宿主镜像）。
 pub const PAGE: usize = PAGE_SIZE;
@@ -113,15 +113,15 @@ pub fn init() {
     INIT.get_or_init(|| {
         let a = arena();
         let run = || {
-            machine::board::configure(a.base(), a.size(), HARTS);
-            bump::init().expect("bump::init");
+            fixture::configure(a.base(), a.size(), HARTS);
+            bump::init();
             // **block 必须在 frame 之前**（`block/mod.rs` 的 `init` 文档：池的页要向 frame 借，
             // 而簿记表要覆盖 free 区；顺序反了帧链的链头就是毒化内存 —— 实测过）。
-            block::init().expect("block::init");
-            frame::init().expect("frame::init");
+            block::init();
+            frame::init();
             // 后备仓：内核 `allocator::init()` 的最后一步（从混合分配器整块取仓区 ⇒ 必须排在
             // 块/帧之后）。`hybrid` 只是 `static` 路由器，不需要 init。
-            spare::init().expect("spare::init");
+            spare::init();
             statistics::record_spare_total(spare::spare().total_bytes());
         };
         #[cfg(feature = "mockalloc")]

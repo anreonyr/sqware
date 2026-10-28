@@ -15,8 +15,8 @@
 use core::alloc::{Allocator, Layout};
 
 use crate::harness::{self, Backend, Op};
-use crate::memory::PAGE_SIZE;
-use crate::memory::flat::allocator::frame;
+use crate::host::PAGE_SIZE;
+use crate::host::frame;
 
 const PAGE: usize = PAGE_SIZE;
 

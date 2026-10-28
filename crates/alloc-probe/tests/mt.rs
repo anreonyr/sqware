@@ -34,8 +34,8 @@
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
-use alloc_probe::{concurrent, harness, machine};
-use alloc_probe::memory::flat::allocator::block;
+use alloc_probe::{concurrent, fixture, harness};
+use alloc_probe::host::block;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};
 
@@ -192,14 +192,14 @@ fn harness_handles_are_dropped() {
     let counters = std::sync::Mutex::new(counters);
     let start = std::sync::Barrier::new(THREADS);
     let layout = Layout::from_size_align(256, 16).expect("块级请求");
-    let harts = machine::hart::hart_count().max(1);
+    let harts = fixture::hart_count().max(1);
 
     std::thread::scope(|s| {
         for t in 0..THREADS {
             let counters = &counters;
             let start = &start;
             s.spawn(move || {
-                machine::hart::hart_bind(t % harts);
+                fixture::hart_bind(t % harts);
                 let alloc = block::allocator();
                 start.wait();
                 let mut held: Vec<(NonNull<u8>, Layout, dropcount::Counter)> =

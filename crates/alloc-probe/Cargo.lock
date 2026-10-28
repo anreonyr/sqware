@@ -24,6 +24,7 @@ dependencies = [
  "dhat",
  "dropcount",
  "erra",
+ "kernel-allocator",
  "malloc-bench-rs",
  "mockalloc",
  "proptest",
@@ -96,10 +97,58 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "001eb80797c0bfe97296d926576233ba573a1de69e19a8ffc6d12a734227740e"
 
 [[package]]
+name = "env"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/env.git?rev=d3000253cd5d13d466e91fafd4dbb27a5ec5aaae#d3000253cd5d13d466e91fafd4dbb27a5ec5aaae"
+dependencies = [
+ "bitflags",
+ "erra",
+ "mold",
+ "wire",
+]
+
+[[package]]
 name = "erra"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
+
+[[package]]
+name = "fack"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79bf0abbd0418af0e15118cce2ebafbc49d877867f4eeb2fa3120bbf3ca94765"
+dependencies = [
+ "fack-core",
+ "fack-macro",
+]
+
+[[package]]
+name = "fack-codegen"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43eb35ab3b590c556df60c7df949560c7df1fbf45bb78ba03246e8218a836410"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "fack-core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cb29ce2b3ca6df89e4f6b7e0ab461223ee77ee997e21f13469b7474e378e83a"
+
+[[package]]
+name = "fack-macro"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3bb69083fa40ad0cbddacc560efd420208969c7924745c28da0f94e5a836ac0"
+dependencies = [
+ "fack-codegen",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -130,6 +179,15 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "kernel-allocator"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "erra",
+ "fack",
+]
 
 [[package]]
 name = "lazy_static"
@@ -197,6 +255,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "mold"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/mold.git?rev=f52501f4c91b686eded8b4bcd743b4e96084b7f9#f52501f4c91b686eded8b4bcd743b4e96084b7f9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -495,6 +563,11 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+
+[[package]]
+name = "wire"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/wire.git?rev=0ff77dc4573fa2620d2fe995a18c01949d9c7e57#0ff77dc4573fa2620d2fe995a18c01949d9c7e57"
 
 [[package]]
 name = "wit-bindgen"

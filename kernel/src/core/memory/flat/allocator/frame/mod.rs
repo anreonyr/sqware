@@ -1,117 +1,87 @@
-use crate::core::memory::PAGE_SIZE;
-use core::ptr::NonNull;
+use alloc::alloc::Allocator;
+use alloc::boxed::Box;
+
 use erra::ResultExt;
 
-use alloc::{
-    alloc::{AllocError, Allocator},
-    boxed::Box,
-};
+use crate::core::memory::flat::allocator::{InitError, InitResult, bump, statistics};
+use crate::machine::sync::SpinLock;
+use kernel_allocator::Region;
+use kernel_allocator::frame::{Effect, FrameAllocator as Mechanism};
+use kernel_allocator::MachineFacts;
 
-use crate::core::memory::flat::allocator::{InitError, InitResult};
-use crate::machine::sync::{Level, OnceLock, SpinLock};
+pub(crate) struct KernelFrame;
 
-#[path = "inner.rs"]
-mod inner;
-
-use inner::FrameInner;
-
-pub(crate) struct FrameAllocator {
-    inner: SpinLock<FrameInner>,
-}
-
-impl FrameAllocator {
-    fn init() -> Result<Self, InitError> {
-        let mut inner = FrameInner::new();
-        inner.init()?;
-        Ok(Self {
-            inner: SpinLock::new_level(Level::Frame, inner),
-        })
-    }
-}
-
-fn block_power(size: usize) -> usize {
-    size.max(PAGE_SIZE)
-        .next_multiple_of(PAGE_SIZE)
-        .next_power_of_two()
-        .ilog2() as usize
-        - PAGE_SIZE.ilog2() as usize
-}
-
-unsafe impl Allocator for FrameAllocator {
-    fn allocate(&self, layout: core::alloc::Layout) -> Result<NonNull<[u8]>, AllocError> {
-        super::assert_allocation_allowed();
-        {
-            let this = &self;
-            let size = layout.size().max(PAGE_SIZE);
-            let power = block_power(size);
-            let mut guard = this.inner.lock();
-            let frame = &mut *guard;
-            let index = unsafe { frame.split_block(power) }.ok_or(AllocError)?;
-            let addr = frame.frame_addr(index) as *mut u8;
-            #[cfg(debug_assertions)]
-            {
-                let a = addr as usize;
-                assert!(
-                    (a >= frame.base) && (a < frame.edge),
-                    "frame alloc out of range: {a:#x} not in [{:#x}, {:#x})",
-                    frame.base,
-                    frame.edge
-                );
-            }
-            super::statistics::record_frame_take(index, power);
-            Ok(NonNull::slice_from_raw_parts(
-                NonNull::new(addr).ok_or(AllocError)?,
-                size,
-            ))
+// SAFETY: facts 来自 board 的实际机器事实；boundary/frontier 取自同一个实际 Bump
+// 实例；帧池 backing 就是该 Bump 尚未消费的 free DRAM，生存期覆盖 Frame 与派生
+// Block/Hybrid。回调直接调用 Kernel 当前的统计/输出/禁令函数。
+unsafe impl Effect for KernelFrame {
+    fn facts(&self) -> MachineFacts {
+        let m = crate::machine::board::info();
+        MachineFacts {
+            free: Region::new(m.free.base, m.free.size),
+            reserved: m
+                .reserved
+                .map(|region| region.map(|r| Region::new(r.base, r.size))),
         }
     }
 
-    #[track_caller]
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: core::alloc::Layout) {
-        unsafe {
-            let mut guard = self.inner.lock();
-            let frame = &mut *guard;
-            let size = layout.size().max(PAGE_SIZE);
-            let power = block_power(size);
-            let addr = ptr.addr().get();
-            #[cfg(debug_assertions)]
-            {
-                let a = addr;
-                assert!(
-                    (a >= frame.base) && (a < frame.edge),
-                    "frame dealloc out of range: {a:#x} not in [{:#x}, {:#x})",
-                    frame.base,
-                    frame.edge
-                );
-            }
-            let index = frame.frame_index(addr);
-            super::statistics::record_frame_give(index);
-            frame.merge_block(index, power);
-        }
+    fn bump_boundary(&self) -> usize {
+        bump::boundary()
+    }
+
+    fn bump_frontier(&self) -> usize {
+        bump::frontier()
+    }
+
+    fn install_frame_kinds(&self, frames: usize) -> Result<(), InitError> {
+        statistics::install_frame_kinds(frames)
+    }
+
+    fn record_frame_take(&self, index: usize, power: usize) {
+        statistics::record_frame_take(index, power);
+    }
+
+    fn record_frame_give(&self, index: usize) {
+        statistics::record_frame_give(index);
+    }
+
+    fn assert_allocation_allowed(&self) {
+        crate::core::memory::flat::allocator::assert_allocation_allowed();
+    }
+
+    fn report(&self, args: core::fmt::Arguments<'_>) {
+        crate::machine::console::_write(format_args!("{args}\n"));
     }
 }
 
-static FRAME_ALLOCATOR: OnceLock<&'static FrameAllocator> = OnceLock::new();
+type FrameAllocator = Mechanism<SpinLock<()>, KernelFrame>;
+
+static FRAME_ALLOCATOR: crate::machine::sync::OnceLock<&'static FrameAllocator> =
+    crate::machine::sync::OnceLock::new();
 
 /// 最低非空伙伴桶的幂（只读观测；测试夹具用它判断是否已把小于 8 MiB 的块抽干）。
 #[cfg(all(debug_assertions, feature = "mega-leaf"))]
 pub(crate) fn lowest_free_power() -> Option<usize> {
     FRAME_ALLOCATOR
         .get()
-        .and_then(|allocator| allocator.inner.lock().lowest_free_power())
+        .and_then(|allocator| allocator.lowest_free_power())
 }
 
-pub fn allocator() -> &'static dyn Allocator {
+pub(crate) fn instance() -> &'static FrameAllocator {
     FRAME_ALLOCATOR
         .get()
         .expect("frame allocator not initialized")
+}
+
+pub fn allocator() -> &'static dyn Allocator {
+    instance()
 }
 
 pub fn init() -> InitResult<()> {
     (|| -> Result<(), InitError> {
         let mut slot =
             Box::<FrameAllocator>::try_new_uninit().map_err(|_| InitError::OutOfMemory)?;
-        slot.write(FrameAllocator::init()?);
+        slot.write(FrameAllocator::new(KernelFrame)?);
         let heap = Box::leak(unsafe { slot.assume_init() });
         FRAME_ALLOCATOR
             .set(heap)

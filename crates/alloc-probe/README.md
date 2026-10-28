@@ -4,16 +4,15 @@
 关机审计里一块内存还在册；那道审计已按用户裁决整体删除）。
 本 crate 是**测试侧**的同一刀：
 
-* 把内核**逐字未改**的分配器源码 `include!` 进来 —— `kernel/src/core/memory/flat/allocator/`
-  的 `bump/mod.rs` / `frame/mod.rs` / `block/mod.rs` / `hybrid.rs` / `spare/mod.rs`；
-* 平台垫片把内核依赖顶掉：核身份 `machine::hart`、机器事实 `machine::board`、锁 `machine::sync`、
-  页大小与分配器 `core::memory`、环尺寸 `core::work::record::trace`（路径与内核同形，全是宿主版），
+* 直接依赖 `kernel/allocator`（`kernel-allocator`）机制包：Bump/Frame/Block/Hybrid/Spare
+  的算法只有那一份，本 crate 不再 `include!` 内核私有源码；
+* 宿主侧只保留实际适配：`harness::Arena` 提供独占台面，`fixture` 提供"线程即 hart"
+  夹具与机器事实，`host` 提供各实例的全局槽、原生 unit 锁与统计计数；
   **分配器自己的簿记分配落在宿主堆上**，于是泄漏检测器能直接看见"分配器有没有漏掉自己的元数据"；
 * 内核对象的生命周期不在场 ⇒ 任何失败都只能归因于分配器。
 
-> 垫片是**垫片**：内核改了 `statistics` 的**写侧**签名，这里就得跟着改（`lib.rs` 的
-> `memory::flat::allocator::statistics`，内核那份现在在 `core/memory/flat/allocator/statistics/mod.rs`）。
-> `include!` 进来的源码一个字都不改 —— 那是本 crate 全部结论的前提。
+> 机制包改了 effect/锁契约，本 crate 的 `host` 适配就要跟着改；生产算法不在本 crate 里复制。
+> `#[global_allocator]` 只有本 crate 的三个可选后端与内核 portal 各自那一处。
 
 ---
 
@@ -83,8 +82,8 @@ mockalloc 那条腿拿"一次 `Box` 往返 = 1 笔分配"当凭证、并另有�
 
 ## 多线程（扩展）：并发压力下的判据
 
-**支点：线程即 hart。** 内核按 hart 选 per-hart 池（`block/mod.rs` 的 `blocks[hart_id]`），于是宿主
-shim 的 `machine::hart::hart_id()` 改成按线程分配 id（`machine::hart::hart_bind` 给确定性绑定）。这一改让并发层压到
+**支点：线程即 hart。** 内核按 hart 选 per-hart 池（机制包的 `blocks[hart_id]`），于是宿主
+夹具 `fixture::hart_id()` 按线程分配 id（`fixture::hart_bind` 给确定性绑定）。这一改让并发层压到
 三条平时压不到的路径：**per-hart 池分家**、**跨 hart 归还**（`home != me` ⇒ `feed` 进泵，本池
 下次 `pull` 先 `suck` 抽回）、**同池并发**（线程数 > hart 数时两线程共用一池）。
 
@@ -203,8 +202,8 @@ dhat         static HOST_ALLOCATOR: dhat::Alloc                       = dhat::Al
 ## 已知边界（本 crate 自己的，都要交代）
 
 1. **类目表不进宿主账**：内核 debug 档的 `statistics::install_frame_kinds` /
-   `install_block_kinds` 会分配逐帧、逐页的类目表（那套标注账）。宿主 shim 里它们是
-   **空壳**（`Ok(())`，见 `lib.rs` 的 shim 注①）—— 在宿主上再实现一遍表尺寸必然与内核漂移
+   `install_block_kinds` 会分配逐帧、逐页的类目表（那套标注账）。宿主 `host` effect 里它们是
+   **空壳**（`Ok(())`）—— 在宿主上再实现一遍表尺寸必然与内核漂移
    （"一个事实只有一份账"）。**代价**：本 crate 的宿主用量读数**不含**那份类目表，
    要看它得在内核侧量。
 2. **甲腿的判词只报第一类**：`mockalloc` 的 `AllocInfo::finish()` 先判笔数
@@ -212,7 +211,7 @@ dhat         static HOST_ALLOCATOR: dhat::Alloc                       = dhat::Al
    **盖住**。补法是**双对账**：多释放一笔会挪 `num_leaks()`、错尺寸/错对齐会挪
    `mem_leaked()`，两条都对到常量上（`tests/pairing.rs` 里有逐条注）。
 3. **影账只认"我取的那几块"**：池有几页**迟滞**（每 size class 留 1 个空闲页不还，
-   `block/mod.rs` 的 arena 迟滞是设计）。故判据是"我取的全部还回去了"，**不是**"内存池归零"。
+   机制包的 block arena 迟滞是设计）。故判据是"我取的全部还回去了"，**不是**"内存池归零"。
    台面级的两件事另开通道判：`tests.rs` 的**容量守恒**（取尽—还尽—再取尽页数不变）与
    **还尽后大块必可取回**（合并没漏）。
 4. **`bump` 不进随机序列**：它的 `deallocate` 是空操作（一次性推进），没有"释放配对"这回事。

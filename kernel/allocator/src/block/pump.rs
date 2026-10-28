@@ -4,6 +4,9 @@ pub(super) struct Pump {
     head: Option<NonNull<u8>>,
 }
 
+// SAFETY: 裸指针只在持有泵锁时读写。
+unsafe impl Send for Pump {}
+
 impl Pump {
     pub(super) const fn new() -> Self {
         Self { head: None }

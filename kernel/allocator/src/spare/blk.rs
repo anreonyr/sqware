@@ -1,6 +1,6 @@
 use core::ptr::NonNull;
 
-use crate::core::memory::flat::allocator::Link;
+use crate::Link;
 
 use super::HEADER;
 

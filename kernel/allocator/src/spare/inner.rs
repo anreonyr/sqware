@@ -9,6 +9,9 @@ pub(super) struct SpareInner {
     head: Option<NonNull<Blk>>,
 }
 
+// SAFETY: 裸指针只在持有 Spare 锁时读写。
+unsafe impl Send for SpareInner {}
+
 impl SpareInner {
     pub(super) fn new(base: usize, edge: usize) -> Self {
         let head = unsafe { Blk::write(base, edge - base) };

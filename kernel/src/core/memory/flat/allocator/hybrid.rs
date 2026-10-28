@@ -1,52 +1,34 @@
-use core::alloc::Layout;
-use core::ptr::NonNull;
-
-use alloc::alloc::{AllocError, Allocator};
+use core::alloc::Allocator;
 
 use crate::core::memory::flat::allocator::{InitResult, block, frame};
+use kernel_allocator::hybrid::{Effect, HybridAllocator as Mechanism};
 
-pub(crate) struct HybridAllocator;
+pub(crate) struct KernelHybrid;
 
-impl HybridAllocator {
-    pub const fn new() -> Self {
-        Self
+// SAFETY: block/frame 返回 Kernel 的实际稳定实例；两者都实现 Sync 并由 Kernel 的
+// arena 支撑；禁令直接转发 Kernel 当前函数。
+unsafe impl Effect for KernelHybrid {
+    fn block(&self) -> &'static (dyn Allocator + Sync) {
+        block::heap()
     }
 
-    pub fn init(&self) -> InitResult<()> {
-        block::init()?;
-        frame::init()?;
-        Ok(())
-    }
-}
-
-unsafe impl Allocator for HybridAllocator {
-    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        super::assert_allocation_allowed();
-        if layout.size() <= block::MAX_SIZE {
-            block::allocator().allocate(layout)
-        } else {
-            frame::allocator().allocate(layout)
-        }
+    fn frame(&self) -> &'static (dyn Allocator + Sync) {
+        frame::instance()
     }
 
-    #[track_caller]
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        unsafe {
-            if layout.size() <= block::MAX_SIZE {
-                block::allocator().deallocate(ptr, layout);
-            } else {
-                frame::allocator().deallocate(ptr, layout);
-            }
-        }
+    fn assert_allocation_allowed(&self) {
+        crate::core::memory::flat::allocator::assert_allocation_allowed();
     }
 }
 
-pub(crate) static HYBRID_ALLOCATOR: HybridAllocator = HybridAllocator::new();
+pub(crate) static HYBRID_ALLOCATOR: Mechanism<KernelHybrid> = Mechanism::new(KernelHybrid);
 
 pub fn allocator() -> &'static dyn Allocator {
     &HYBRID_ALLOCATOR
 }
 
 pub fn init() -> InitResult<()> {
-    HYBRID_ALLOCATOR.init()
+    block::init()?;
+    frame::init()?;
+    Ok(())
 }

@@ -8,7 +8,7 @@
 //! | 交付区**跨线程**不重叠 / 不被簿记踩 | 全局**原子登记表**（占位 + 扫描）+ 交付区模式写读 | 交付区是共享内存：同一段被交付两次 ⇒ 两个线程往同一段写不同 tag ⇒ 归还时必有一方读回不符 |
 //! | 取还**守恒** | `statistics` 的原子计数（块级 / 帧级 / 池级） | 块级**严格守恒**；帧级/池级的差值只能是池的**迟滞**（每 size class 1 页，`block/mod.rs` 头注） |
 //! | 在途块**全部归还** | `LIVE` 原子计数 | 一趟并发跑完必须归零 |
-//! | 跨 hart 归还真的**回了本池** | `block::heap().own(pa)`（池归属读数） | `home != me` 时走 `feed`；本池下次 `pull` 时 `suck` 抽回（`block/mod.rs` 的泵是唯一回路） |
+//! | 跨 hart 归还真的**回了本池** | `block::heap().pool_of(pa)`（池归属读数） | `home != me` 时走 `feed`；本池下次 `pull` 时 `suck` 抽回（`block/mod.rs` 的泵是唯一回路） |
 //!
 //! # 两层为什么各有一份 `run` 循环
 //!
@@ -33,8 +33,8 @@ use std::sync::Barrier;
 use std::vec::Vec;
 
 use crate::harness::{self, Backend, Op, Report, Violation, Want};
-use crate::machine;
-use crate::memory::flat::allocator::{block, statistics};
+use crate::fixture;
+use crate::host::{block, statistics};
 
 /// 登记表容量：一趟并发里最多同时在册的块数。
 ///
@@ -165,7 +165,7 @@ pub const SPARE_PAGES_PER_POOL: usize = 9;
 
 /// 帧级/池级差值的上界：**每池**迟滞 × 池数（池按 hart 数建，见 `block/mod.rs::init`）。
 pub fn spare_pages_max() -> usize {
-    machine::hart::hart_count().max(1) * SPARE_PAGES_PER_POOL
+    fixture::hart_count().max(1) * SPARE_PAGES_PER_POOL
 }
 
 // ── 并发计划的执行 ───────────────────────────────────────────────────────────
@@ -401,8 +401,8 @@ pub fn concurrent_churn(
             ));
             let start = &start;
             handles.push(s.spawn(move || {
-                let harts = machine::hart::hart_count().max(1);
-                machine::hart::hart_bind(t % harts);
+                let harts = fixture::hart_count().max(1);
+                fixture::hart_bind(t % harts);
                 start.wait(); // 同一起跑线：真并发，不是排队
                 run_plan(&plan, budget)
             }));
@@ -466,7 +466,7 @@ pub fn cross_hart_handoff(blocks: usize) -> Result<Handoff, Violation> {
 
     let (a, b) = std::thread::scope(|s| {
         let ha = s.spawn(move || -> Result<(usize, usize), Violation> {
-            machine::hart::hart_bind(0);
+            fixture::hart_bind(0);
             let alloc = block::allocator();
             let heap = block::heap();
             let mut mine: Vec<(usize, usize, core::alloc::Layout, u8)> = Vec::with_capacity(blocks);
@@ -484,7 +484,7 @@ pub fn cross_hart_handoff(blocks: usize) -> Result<Handoff, Violation> {
                 unsafe { core::ptr::write_bytes(ptr.as_ptr(), tag, len) };
                 mine.push((addr, len, layout, tag));
             }
-            let pool = heap.own(mine[0].0).expect("块级的块必然归属某个池");
+            let pool = heap.pool_of(mine[0].0).expect("块级的块必然归属某个池");
             for &(addr, len, layout, tag) in &mine {
                 // 交给 hart 1 归还（通道的另一端在 hart 1 上）。
                 tx.send((addr, len, layout, tag)).expect("通道另一端在");
@@ -502,7 +502,7 @@ pub fn cross_hart_handoff(blocks: usize) -> Result<Handoff, Violation> {
                     align: layout.align(),
                 })?;
                 let p = buf.cast::<u8>();
-                if heap.own(p.as_ptr() as usize) == Some(pool) {
+                if heap.pool_of(p.as_ptr() as usize) == Some(pool) {
                     home += 1;
                 }
                 again.push((p, layout));
@@ -515,7 +515,7 @@ pub fn cross_hart_handoff(blocks: usize) -> Result<Handoff, Violation> {
         });
 
         let hb = s.spawn(move || -> Result<usize, Violation> {
-            machine::hart::hart_bind(1);
+            fixture::hart_bind(1);
             let alloc = block::allocator();
             let heap = block::heap();
             // 先取一块**自己的**：登记 per-hart 池真的分家（这一块的归属应是池 1）。
@@ -526,7 +526,7 @@ pub fn cross_hart_handoff(blocks: usize) -> Result<Handoff, Violation> {
                 align: layout.align(),
             })?;
             let mine_ptr = mine.cast::<u8>();
-            let pool = heap.own(mine_ptr.as_ptr() as usize);
+            let pool = heap.pool_of(mine_ptr.as_ptr() as usize);
             // SAFETY: 本指针本步刚拿到，layout 原样带回。
             unsafe { alloc.deallocate(mine_ptr, layout) };
 

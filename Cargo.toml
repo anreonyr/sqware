@@ -18,6 +18,7 @@ exclude = [
 # 同一张链接脚本、同一批"被内核装载的 ELF"、同一手 `programs::entry`；哪几台进哪张镜像只在
 # `programs/src/unit/` 声明（**程序装配声明的唯一来源**）。
 members = [
+    "kernel/allocator",
     "kernel/tests/api",
     "kernel",
     "programs",

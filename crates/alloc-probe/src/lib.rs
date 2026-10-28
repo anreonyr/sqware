@@ -1,19 +1,14 @@
-//! alloc-probe — 把内核**真实**的帧/块分配器源码搬到宿主上单独压测。
+//! alloc-probe — 把内核真实分配器**机制包**搬到宿主上单独压测。
 //!
 //! # 为什么要有这个 crate（解耦）
 //!
-//! 内核里"分配器的账坏了"与"某个内核对象没析构"在读数上曾经长得一模一样：都表现为
-//! 关机审计里一块内存还在册（那一层审计已按用户裁决整体删除）。
-//! 两者的**修法完全不同** —— 前者在分配器内部（表/链/簿记三套口径对不上），后者在对象
-//! 的持有者（谁没 drop）。本 crate 是测试侧的同一刀：
+//! 分配器自己的账坏了，与"某个内核对象没析构"在读数上曾经长得一模一样。
+//! 本 crate 只压前者：`kernel-allocator` 的 Bump/Frame/Block/Hybrid/Spare 在这里装台运行，
+//! 分配器元数据落在宿主堆上，泄漏检测器能直接看见"分配器自己有没有漏掉自己的簿记"；
+//! 内核对象的生命周期不在场 ⇒ 任何失败都只能归因于分配器。
 //!
-//! * 把 `frame/mod.rs` / `block/mod.rs` / `bump/mod.rs`（**逐字未改的内核源码**，按 `include!`
-//!   引进来）放到宿主上跑；
-//! * 分配器**元数据**的分配落在宿主堆上 ⇒ 泄漏检测器（LeakSanitizer / smartalloc）
-//!   能直接看见"分配器自己有没有漏掉它自己的簿记"；
-//! * 内核对象的生命周期**不在场** ⇒ 任何失败都只能归因于分配器；
-//! 内核侧的对应判据是内核内用例（`kernel/tests/health/{pagetable,spare,stress}.rs`），两边不共享代码，
-//! 只共享同一批不变量。
+//! 宿主侧只保留**有意义的适配**：台面、线程即 hart 的夹具、宿主堆锁实现、统计计数。
+//! 生产算法只有一份，住在 `kernel-allocator`；这里不 `include!` 内核源码，也不复制算法。
 //!
 //! # 判据分三层 + 一个未接线的出口（见 README）
 //!
@@ -28,33 +23,18 @@
 //! ②③ 两条腿**不依赖后端**：`plain` / `smartalloc` / `mockalloc` / `dhat` 四档都跑同一批判据，
 //! 后端只换读数口径。
 
-#![feature(allocator_api)] // 内核分配器源码用 `core::alloc::Allocator`（bump/mod.rs）
+#![feature(allocator_api)]
 #![allow(dead_code, unused_imports, unused_variables)]
 
 extern crate alloc;
 
-// ── 平台垫片：内核里这些名字来自 `crate::machine::{hart, board, sync}` 与
-//    `crate::core::{memory, work::record::trace}` ─────────────────────────────
-//
-// 两条纪律，下面每个模块都照它写：
-//
-// ① **路径与内核同形**：`include!` 进来的分配器源码按内核的写法取这些名字（核身份是
-//    `machine::hart`、机器事实是 `machine::board`、锁是 `machine::sync`、页大小与分配器是
-//    `core::memory`、环尺寸是 `core::work::record::trace`）。垫片换个拼法 ⇒ “逐字未改”失效。
-// ② **一个事实一份**：宿主侧的实现与状态只有一份（下面 `shim_lock` / `shim_machine` 两个私有
-//    模块 + `memory` / `statistics`），公开面全是把同一批名字**换回内核拼法**的 `pub use` ——
-//    不复制、不建第二套账。
-//
-// 另：本 crate 从根上就有 `core` 模块（与内核同形），故**本文件**里写 Rust 核心库要用
-// `::core::`；子模块里的 `core::…` 仍指 Rust 核心库（与内核源码的写法一致）。
-
-/// 宿主侧的锁与一次性槽（内核把它们放在 `crate::machine::sync`）。
-/// 这里是**唯一一份实现**；公开面见下面 `machine::sync`。
+/// 宿主侧的锁与一次性槽。锁仍是既有的 `shim_lock::SpinLock<()>` 包 `std::sync::Mutex`；
+/// 它实现机制包的 `Lock`，返回原生 unit guard，不把状态挂到锁上。
 mod shim_lock {
     use core::ops::DerefMut;
     use std::sync::Mutex;
 
-    /// 锁层级（内核里由 lockdep 用；宿主上只作标记）。
+    /// 锁层级（宿主上只作标记：与内核同角色的层级值保持一致）。
     #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
     pub enum Level {
         Scheduler = 1,
@@ -73,7 +53,8 @@ mod shim_lock {
         level: Level,
     }
 
-    // SAFETY: 宿主用例是单线程的（每个用例各自建台），锁只用来对齐内核的类型形状。
+    // SAFETY: 宿主用例由 `.cargo/config.toml` 的 `RUST_TEST_THREADS=1` 约束；
+    // 锁本身仍是 std 的互斥量，`T` 的访问只经过 `MutexGuard`。
     unsafe impl<T> Send for SpinLock<T> {}
     unsafe impl<T> Sync for SpinLock<T> {}
 
@@ -84,14 +65,37 @@ mod shim_lock {
                 level: Level::Frame,
             }
         }
+
         pub const fn new_level(level: Level, v: T) -> Self {
             Self {
                 v: Mutex::new(v),
                 level,
             }
         }
-        pub fn lock(&self) -> impl DerefMut<Target = T> + '_ {
+
+        pub fn lock(&self) -> std::sync::MutexGuard<'_, T> {
             self.v.lock().unwrap_or_else(|e| e.into_inner())
+        }
+    }
+
+    // 机制包只认原生 unit guard；这里直接返回既有本地锁的原生 MutexGuard。
+    unsafe impl kernel_allocator::Lock for SpinLock<()> {
+        type Guard<'a>
+            = std::sync::MutexGuard<'a, ()>
+        where
+            Self: 'a;
+
+        fn new(role: Option<kernel_allocator::LockRole>) -> Self {
+            match role {
+                Some(kernel_allocator::LockRole::Frame) => SpinLock::new_level(Level::Frame, ()),
+                Some(kernel_allocator::LockRole::Tally) => SpinLock::new_level(Level::Tally, ()),
+                Some(kernel_allocator::LockRole::Spare) => SpinLock::new_level(Level::Spare, ()),
+                None => SpinLock::new(()),
+            }
+        }
+
+        fn lock(&self) -> Self::Guard<'_> {
+            SpinLock::lock(self)
         }
     }
 
@@ -122,24 +126,16 @@ mod shim_lock {
     }
 }
 
-/// 宿主侧的机器事实与核身份（内核把它们分在 `crate::machine::{board, hart}`）。
-/// 这里是**唯一一份实现与状态**；公开面见下面 `machine::{board, hart}`。
-mod shim_machine {
+/// 宿主机器事实与核身份夹具：一块宿主缓冲冒充物理内存，线程即 hart。
+pub mod fixture {
     use super::shim_lock::OnceLock;
+    use kernel_allocator::Region;
 
-    pub const MAX_RESERVED: usize = 2;
-
-    #[derive(Clone, Copy, Debug)]
-    pub struct Region {
-        pub base: usize,
-        pub size: usize,
-    }
+    pub(crate) const MAX_RESERVED: usize = 2;
 
     #[derive(Clone, Copy, Debug)]
-    pub struct Machine {
-        /// 空闲 DRAM 区（本 crate 用一块对齐好的宿主缓冲冒充）。
+    pub(crate) struct Machine {
         pub free: Region,
-        /// 保留区（initrd / 设备树）——测试里留空。
         pub reserved: [Option<Region>; MAX_RESERVED],
     }
 
@@ -147,15 +143,15 @@ mod shim_machine {
     static HARTS: OnceLock<usize> = OnceLock::new();
 
     /// 装台：把一块宿主缓冲当作"物理内存"交给分配器。**必须在 init 之前调一次。**
-    pub fn configure(base: usize, size: usize, harts: usize) {
+    pub(crate) fn configure(base: usize, size: usize, harts: usize) {
         let _ = INFO.set(Machine {
-            free: Region { base, size },
+            free: Region::new(base, size),
             reserved: [None; MAX_RESERVED],
         });
         let _ = HARTS.set(harts);
     }
 
-    pub fn info() -> &'static Machine {
+    pub(crate) fn info() -> &'static Machine {
         INFO.get()
             .expect("machine not configured (call configure first)")
     }
@@ -164,11 +160,8 @@ mod shim_machine {
         *HARTS.get().unwrap_or(&4)
     }
 
-    /// 核的身份 —— 与内核 `crate::machine::hart::HartId` **同形**：`include!` 进来的分配器源码
-    /// 按内核的写法调 `.get()`（`block/mod.rs` 的 per-hart 池）。`bit()` 今日无人调，
-    /// 一并给出是为了**两处形状不分家**——垫片的义务是"同形"，不是"够用就行"。
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct HartId(usize);
+    pub(crate) struct HartId(usize);
 
     impl HartId {
         pub const fn new(id: usize) -> Self {
@@ -187,24 +180,13 @@ mod shim_machine {
         }
     }
 
-    // **一个**线程局部槽，两个函数共用：`thread_local!` 每次展开都是一个**独立的静态**，
-    // 在 `hart_id` / `hart_bind` 各写一份就等于各写各的（绑定写进 A、读取读的是 B —— 实测
-    // 症状：绑到 hart 1 的线程取到的块仍归属池 0）。
     thread_local! {
         static HART: core::cell::Cell<Option<usize>> = const { core::cell::Cell::new(None) };
     }
     static NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
-    /// 当前 hart（宿主上 = **当前线程**）。内核用它选 per-hart 池（`block/mod.rs` 的
-    /// `blocks[hart_id]`），宿主上"线程即 hart"，于是并发那层天然压到两条路径：
-    ///
-    /// * 不同线程落在**不同池**上（`hart_bind` 给确定性绑定，见下）；
-    /// * 跨线程归还走 `feed`（不是本池）→ 本池下次 `pull` 时 `suck` 抽空泵 ——
-    ///   `feed`/`suck` 是块池唯二的过境路径（`block/mod.rs` 的 pump）。
-    ///
-    /// 单线程用例里恒 0（与"没有多线程"时的旧行为一致）：id 按**首次调用顺序**轮转分配，
-    /// 主线程第一个拿到 0。
-    pub fn hart_id() -> HartId {
+    /// 当前 hart（宿主上 = 当前线程）；块池按它选 per-hart 池。
+    pub(crate) fn hart_id() -> HartId {
         HART.with(|c| {
             HartId::new(c.get().unwrap_or_else(|| {
                 let n = hart_count();
@@ -219,204 +201,15 @@ mod shim_machine {
         })
     }
 
-    /// **宿主专用**（内核没有这个函数）：把当前线程绑到指定 hart。
-    ///
-    /// 并发的判据要的是"哪个线程 = 哪个池"**确定**，而不是"线程先到先得"：
-    /// `pool_of(hart 1 取到的块) == 1` 这类断言在轮转分配下时对时错。
+    /// **宿主专用**：把当前线程绑到指定 hart，让 per-hart 池归属可确定断言。
     pub fn hart_bind(id: usize) {
         HART.with(|c| c.set(Some(id)));
     }
 }
 
-/// 内核 `crate::machine` 的公开面（`include!` 进来的源码按这些路径取名）。
-/// 三份全是上面 `shim_machine` / `shim_lock` 的 `pub use`：同一份事实换个内核拼法。
-pub mod machine {
-    /// 核身份与"当前 hart"（内核 `crate::machine::hart`）。宿主上"线程即 hart"（见
-    /// `shim_machine::hart_id`）：`block/mod.rs` 的 per-hart 池、`spare/mod.rs` 的仓容量都问这里。
-    pub mod hart {
-        pub use crate::shim_machine::{HartId, hart_bind, hart_count, hart_id};
-    }
-
-    /// 机器事实：空闲区与保留区（内核 `crate::machine::board`；`frame/mod.rs` 的 `holes` 问这里）。
-    pub mod board {
-        pub use crate::shim_machine::{MAX_RESERVED, Machine, Region, configure, info};
-    }
-
-    /// 锁层级与自旋锁、一次性槽（内核 `crate::machine::sync`）。
-    pub mod sync {
-        pub use crate::shim_lock::{Level, OnceLock, SpinLock};
-    }
-}
-
-/// 内核 `crate::core` 的公开面。
-pub mod core {
-    /// **同一个** `memory` 模块（内核 `crate::core::memory`）：本 crate 自己的用例/示例按
-    /// `alloc_probe::memory` 取分配器，`include!` 进来的源码按内核写法取 `crate::core::memory::…`
-    /// —— 一个定义、两个拼法。
-    pub use crate::memory;
-
-    /// 内核 `crate::core::work::record::trace`：`spare::init` 只问一句"每 hart 的 trace
-    /// 环多大"（仓容量 = 环字节 + 块头 + `DUMP_BUDGET`，再页对齐）。
-    ///
-    /// 宿主上给**常量**：内核那份的真实尺寸由 `diagnose` 定，本 crate 不判它的账。它只影响仓
-    /// **容量**（1 MiB 级的常数），不影响 spare 的判据（预算即契约 / 拉满返 `Err` / 全归还余量还原）。
-    pub mod work {
-        pub mod record {
-            pub mod trace {
-                /// 每 hart 的 trace 环字节数（宿主常量：4 KiB/hart）。
-                pub const RING_PER_HART: usize = 4096;
-                /// 总环字节数（内核同名函数的宿主版）。
-                pub fn ring_bytes(harts: usize) -> usize {
-                    RING_PER_HART * harts.max(1)
-                }
-            }
-        }
-    }
-}
-
-/// 内核 `crate::core::memory` 的宿主版：页大小 + **逐字未改**的分配器源码
-/// （`include!` 进来，含共享的 `Link`）+ 统计写侧垫片。公开拼法还有 `core::memory`（同一模块的别名）。
-pub mod memory {
-    pub const PAGE_SIZE: usize = 0x1000;
-
-    pub mod flat {
-        pub mod allocator {
-            // 内核源码**逐字未改**地编进来（`include!` 的路径相对本文件 ⇒ 三级上到仓库根）。
-            // 用 `include!` 而不是 `#[path]`：后者对嵌套模块按"模块目录"解析，层级会绕。
-            // 内核那几份源码用 `#[path = "<文件>.rs"]` 声明子模块（`inner.rs` 等）；
-            // 该 `#[path]` 相对**被 include 的文件**（`<模块>/mod.rs`），于是与内核编译时的拼法一致。
-            pub mod link {
-                include!("../../../kernel/src/core/memory/flat/allocator/link.rs");
-            }
-            pub(crate) use link::Link;
-            pub mod bump {
-                include!("../../../kernel/src/core/memory/flat/allocator/bump/mod.rs");
-            }
-            pub mod frame {
-                include!("../../../kernel/src/core/memory/flat/allocator/frame/mod.rs");
-            }
-            pub mod block {
-                include!("../../../kernel/src/core/memory/flat/allocator/block/mod.rs");
-            }
-            /// 分流器（≤ 2 KiB 走 block、否则走 frame）。宿主上**不需要 init**：
-            /// 它只是一个 `static` 路由器（`HYBRID_ALLOCATOR` 是 `const fn new()`），
-            /// 两端的块/帧由 `harness` 装台。
-            pub mod hybrid {
-                include!("../../../kernel/src/core/memory/flat/allocator/hybrid.rs");
-            }
-            /// 后备仓（崩溃路径专用仓：有序合并 free-list，一次取定、此后只在区内拉还）。
-            /// 装台时它从混合分配器整块取一段仓区（`ring_bytes(harts) + HEADER + DUMP_BUDGET`），
-            /// 故它是**台面的一部分**：容量读数与判据都看得见它。
-            pub mod spare {
-                include!("../../../kernel/src/core/memory/flat/allocator/spare/mod.rs");
-            }
-
-            /// 统计出口的宿主版：**只是计数**，不参与分配器正确性判据。
-            ///
-            /// 与内核 `statistics/mod.rs` 的**写侧**同名同形（内核那份的读侧是 health 用例的判据
-            /// 输入；宿主侧那批判据由影子账自己算 ⇒ 这里只留写侧）。内核源码改了写侧签名，
-            /// 这里必须跟着改 —— 它是 shim，不是内核的一部分（`include!` 进来的源码**逐字未改**）。
-            ///
-            /// # 两条刻意的"不镜像"（都要交代，否则读数是假的）
-            ///
-            /// ① **类目表不建**：内核 debug 档的 `install_frame_kinds` /
-            ///    `install_block_kinds` 会分配逐帧、逐页的类目表（那是回到内核的那套
-            ///    标注账）。宿主 shim 里它们是**空壳** —— 本 crate 的判据不看类目（`tag!` 在宿主上
-            ///    恒等），而且"一个事实只有一份账"：在宿主上再实现一遍表尺寸，必然与内核漂移。
-            ///    **代价**：本 crate 的宿主**用量**读数不含内核 debug 档那份类目表
-            ///    （要看它得在内核侧量，见 README「已知边界」）。
-            /// ② **读侧不镜像**：`frame_occupied` / `block_occupied` / `kinds` 那些读数在宿主上
-            ///    没有读者（判据走影子账），留着只会变成第二套口径。
-            pub mod statistics {
-                use std::sync::atomic::{AtomicUsize, Ordering};
-
-                // 写侧计数：只用来证明"分配器的热路径确实走到了"，不参与任何判据。
-                pub static FRAME_TAKE: AtomicUsize = AtomicUsize::new(0);
-                pub static FRAME_GIVE: AtomicUsize = AtomicUsize::new(0);
-                pub static BLOCK_TAKE: AtomicUsize = AtomicUsize::new(0);
-                pub static BLOCK_GIVE: AtomicUsize = AtomicUsize::new(0);
-                pub static POOL_TAKE: AtomicUsize = AtomicUsize::new(0);
-                pub static POOL_GIVE: AtomicUsize = AtomicUsize::new(0);
-                pub static SPARE_TAKE: AtomicUsize = AtomicUsize::new(0);
-                pub static SPARE_GIVE: AtomicUsize = AtomicUsize::new(0);
-                pub static SPARE_TOTAL: AtomicUsize = AtomicUsize::new(0);
-
-                /// 内核那份在这里装配 `STATS` 单例；宿主侧没有单例（全是原子计数）。
-                pub fn init() {}
-
-                /// 见模块头注①：宿主上**不建**逐帧类目表。
-                ///
-                /// # Errors
-                ///
-                /// 恒 `Ok`（内核那份在表分配失败时返 `OutOfMemory`）。
-                pub fn install_frame_kinds(_frames: usize) -> Result<(), super::InitError> {
-                    Ok(())
-                }
-
-                /// 见模块头注①：宿主上**不建**逐页类目表。
-                ///
-                /// # Errors
-                ///
-                /// 恒 `Ok`（同上）。
-                pub fn install_block_kinds(_base: usize, _len: usize) -> Result<(), super::InitError> {
-                    Ok(())
-                }
-
-                pub fn record_frame_take(_index: usize, _power: usize) {
-                    FRAME_TAKE.fetch_add(1, Ordering::Relaxed);
-                }
-                pub fn record_frame_give(_index: usize) {
-                    FRAME_GIVE.fetch_add(1, Ordering::Relaxed);
-                }
-                pub fn record_block_take(_addr: usize, _power: usize) {
-                    BLOCK_TAKE.fetch_add(1, Ordering::Relaxed);
-                }
-                pub fn record_block_give(_addr: usize, _power: usize) {
-                    BLOCK_GIVE.fetch_add(1, Ordering::Relaxed);
-                }
-                pub fn record_pool_take() {
-                    POOL_TAKE.fetch_add(1, Ordering::Relaxed);
-                }
-                pub fn record_pool_give() {
-                    POOL_GIVE.fetch_add(1, Ordering::Relaxed);
-                }
-                pub fn record_spare_take(_bytes: usize) {
-                    SPARE_TAKE.fetch_add(1, Ordering::Relaxed);
-                }
-                pub fn record_spare_give(_bytes: usize) {
-                    SPARE_GIVE.fetch_add(1, Ordering::Relaxed);
-                }
-                pub fn record_spare_total(total: usize) {
-                    SPARE_TOTAL.store(total, Ordering::Relaxed);
-                }
-            }
-
-            /// 内核 `flat/allocator/mod.rs` 的热路径门（那一份在 debug 档下问"此刻是不是正在发表提交里"
-            /// —— 提交里不许分配、也不许击落页表）。`frame` / `block` / `hybrid` / `spare` 的
-            /// `allocate` / `deallocate` 都过这道门。
-            ///
-            /// 宿主上**恒放行**：门的两端都不在场 —— 守卫（`NoAllocation`）与它那张 `FORBIDDEN` 表
-            /// 住在 `manager`（不在 `include!` 进来的源码里），本 crate 也不造发表提交。
-            /// 装一个空门只会假装判过（同 `statistics::install_*_kinds` 那条"不镜像"）。
-            #[inline]
-            pub(crate) fn assert_allocation_allowed() {}
-
-            /// 分配器初始化错误（与内核 `flat/allocator/mod.rs` 同名同义；内核那份用
-            /// `fack::Error` 派生，宿主这份手写，免得为一个 derive 多拉一个依赖）。
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            pub enum InitError {
-                NoFreeMemory,
-                OutOfMemory,
-                NoFreeFrames,
-                NoHarts,
-                AlreadyInitialized,
-            }
-
-            /// 与内核同名同形：`erra::Result`（带调用点上下文的 `Result`）。
-            pub type InitResult<T> = erra::Result<T, InitError>;
-        }
-    }
-}
+/// 宿主侧的实际机制实例：装台槽与 effect 在 `host` 子模块里，算法在 `kernel-allocator`。
+/// 对外只留 `host::{block,frame}::allocator()` 与 `fixture` 的 hart 夹具。
+pub mod host;
 
 // ── 判据：分配器自身违例的宿主通道（**未接线**：照实记，当前零调用点）────────
 
@@ -444,7 +237,7 @@ macro_rules! putln {
     ($($t:tt)*) => {{ println!($($t)*); }};
 }
 
-/// `tag!(Prime, expr)`：内核里给块打来源标签（`fence` 删除后内核那份已是恒等宏）。
+/// `tag!(Prime, expr)`：宿主上类目观测不建表，标签是恒等。
 #[macro_export]
 macro_rules! tag {
     ($kind:ident, $v:expr) => {
@@ -455,8 +248,7 @@ macro_rules! tag {
 // ── 宿主堆的接管：三个后端**三选一**（**debug 档**）────────────────────────────
 //
 // rustc 只允许一个 `#[global_allocator]`，而这三个后端的读数口径互不相同，故**三选一**；
-// `.cargo/config.toml` 的别名各给一条路（原先是 `run.sh`，**那份脚本已删**），
-// `compile_error!` 把"同时开两个"挡在编译期：
+// `.cargo/config.toml` 的别名各给一条路，`compile_error!` 把"同时开两个"挡在编译期：
 //
 //   feature      全局分配器                     读数
 //   smartalloc   smartalloc::SmartAlloc         收尾 `dump_orphans()` 点名还在账上的块
@@ -474,68 +266,17 @@ compile_error!(
     "宿主堆只能由一个后端接管：`smartalloc` / `mockalloc` / `dhat` **三选一**（见 README「六条路」与 `.cargo/config.toml` 的别名）"
 );
 
-// ── 后端甲：`smartalloc`（默认）——"孤儿缓冲"转储 ──────────────────────────────
-//
-// 就这一行 —— crate 原样用它自己的 `SmartAlloc`，不再包任何自定义分配器：
-//
-//     #[global_allocator]
-//     static HOST: smartalloc::SmartAlloc = smartalloc::SmartAlloc;
-//
-// 于是本 crate 的**每一次**宿主分配（含被压测的内核分配器自己去要的元数据）都记在
-// smartalloc 的账上；收尾 `dump_orphans()` 把还在账上的块连**分配点**一起打出来。
-//
-// 为什么只可能是 debug 档：`smartalloc` 自己写着 `#![cfg(debug_assertions)]` ——
-// release 下整个 crate 是空的（连 `SmartAlloc` 类型都不存在）。测试跑的就是 debug 档。
-//
-// # 两个必须交代的前提（都在本 crate 里写明并落实，而不是靠"应该没事"）
-//
-// ① **指针对齐**：上游 `sizeof(struct abufhead) == 40`（x86-64），用户指针 = malloc 基址
-//    + 40 ⇒ 只有 8 字节对齐，违反 Rust `GlobalAlloc` 的契约（返回指针须满足
-//    `layout.align()`）。直接挂上去的实测症状：进程起始阶段 SIGSEGV，`movdqa (%r14)`
-//    —— hashbrown 的表扩容里第一条 16 字节 SIMD 载入，一个用例都跑不到。
-//    修法见 `Cargo.toml` 的 `[patch.crates-io]`：本地 vendored `smartalloc-sys` 把
-//    `SM_ALIGN = 64` 写进 C（`smalloc` 抬高基址并把真基址记在头里），**Rust 侧照用 crate**。
-// ② **单线程**：C 层是一张无锁全局链表 + `assert`，多线程并发 alloc/free 会把它写坏。
-//    故 `.cargo/config.toml` 里钉 `RUST_TEST_THREADS = "1"`（crate 自己的使用前提；
-//    另两个后端也各自要它：dhat 的读数是**进程级**的，并发用例会把别人的分配算进增量）。
-//
-// 与 `-Zsanitizer=leak` 互斥：接管之后每个活块都被 smartalloc 的队列指着，LSan 会一律
-// 判成 "still reachable" ⇒ 那条路必须 `--no-default-features`（见 README）。
 /// **接管点甲**：debug 档（且带 `smartalloc` feature）的宿主堆从这里过。
 #[cfg(all(feature = "smartalloc", debug_assertions))]
 #[global_allocator]
 static HOST_ALLOCATOR: smartalloc::SmartAlloc = smartalloc::SmartAlloc;
 
-// ── 后端乙：`mockalloc`（第一层·甲）——分配/释放**配对**判词 ─────────────────────
-//
-// `Mockalloc<System>` 包住系统分配器，按**线程局部**状态记每一次 alloc/free 的
-// (指针, 尺寸, 对齐) 散列累加；`record_allocs(闭包)` 圈出"一幕"，收幕时看累加器归不归零
-// ⇒ 泄漏 / 重复释放 / 错指针 / 错尺寸 / 错对齐 五类各自点名（`AllocError`）。
-//
-// 本 crate 用它**只**判一件事：内核分配器**自己**在宿主堆上的分配（记账表 / Vec / Box）
-// 配不配对。它看不见台面内部（`frame`/`block` 管的是一块 16 MiB 宿主缓冲的内部划分，
-// 不是全局堆）⇒ "帧发重了"那类缺陷由影子账判（`harness`）；两把尺子各管一段，别互相顶替。
-//
-// 为何不需要 vendored 补丁：它包的是 `System`，超 16 字节的对齐走 std 自己的
-// `posix_memalign` 路径（smartalloc 那条路要补，是因为它的 C 头把基址抬了 40 字节）。
 /// **接管点乙**：debug 档（且带 `mockalloc` feature）的宿主堆从这里过。
 #[cfg(all(feature = "mockalloc", debug_assertions))]
 #[global_allocator]
 static HOST_ALLOCATOR: mockalloc::Mockalloc<std::alloc::System> =
     mockalloc::Mockalloc(std::alloc::System);
 
-// ── 后端丙：`dhat`（第一层·乙）——宿主堆**用量**读数 ──────────────────────────
-//
-// `dhat::Alloc` 记每一次分配的 (块数, 字节数)，分**累计**（`total_*`）、**当下**（`curr_*`）、
-// **峰值**（`max_*`）三套读数（`HeapStats::get()`）；testing 档不写 `dhat-heap.json`，
-// 只供测试断言（`Profiler::builder().testing().build()`）。
-//
-// 它给出的正是"分配器自己占了多少宿主内存"：装台期分配多少、稳态还增长不增长、峰值被抬到哪。
-// 判据在 `tests/heap.rs`。
-//
-// 注意：dhat 的 `Profiler` **一个进程只能建一个**（上游 `build()` 里断言旧的是 `None`），
-// 故那条腿是**单用例**（`tests/heap.rs` 只有一个 `#[test]`）—— 这也正合意：三段判据
-// （凭证 / 装台预算 / 随机工作负载）必须在同一幕里顺序走。
 /// **接管点丙**：debug 档（且带 `dhat` feature）的宿主堆从这里过。
 #[cfg(all(feature = "dhat", debug_assertions))]
 #[global_allocator]
@@ -553,7 +294,7 @@ pub fn dump_orphans() {
 /// 被压测对象与判据。`pub` 是给**集成测试**用的（那是独立 crate，看不见 `#[cfg(test)]` 模块）。
 pub mod harness;
 
-/// **并发台面**：线程即 hart（见下 `machine::hart::hart_id`），判据在 `tests/mt.rs`。
+/// **并发台面**：线程即 hart，判据在 `tests/mt.rs`。
 pub mod concurrent;
 
 #[cfg(test)]

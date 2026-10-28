@@ -2,8 +2,8 @@ use core::ptr::NonNull;
 
 use alloc::vec::Vec;
 
-use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::flat::allocator::{InitError, Link, bump};
+use crate::{InitError, Link, MachineFacts};
+use env::PAGE_SIZE;
 
 static STALE_RM: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
 
@@ -13,6 +13,9 @@ pub(super) struct FrameInner {
     pub(super) base: usize,
     pub(super) edge: usize,
 }
+
+// SAFETY: 裸指针只指向同一块受 Frame 锁保护的物理帧，且只在 guard 内读写。
+unsafe impl Send for FrameInner {}
 
 impl FrameInner {
     pub(super) const fn new() -> Self {
@@ -24,9 +27,9 @@ impl FrameInner {
         }
     }
 
-    pub(super) fn init(&mut self) -> Result<(), InitError> {
-        self.edge = bump::boundary();
-        let prov_base = bump::frontier().next_multiple_of(PAGE_SIZE);
+    pub(super) fn init(&mut self, effect: &impl super::Effect) -> Result<(), InitError> {
+        self.edge = effect.bump_boundary();
+        let prov_base = effect.bump_frontier().next_multiple_of(PAGE_SIZE);
         let max_frame = self.edge.saturating_sub(prov_base) / PAGE_SIZE;
         if max_frame == 0 {
             return Err(InitError::NoFreeFrames);
@@ -40,9 +43,9 @@ impl FrameInner {
             .try_reserve(max_frame)
             .map_err(|_| InitError::OutOfMemory)?;
         self.pagemeta.resize_with(max_frame, || None);
-        crate::core::memory::flat::allocator::statistics::install_frame_kinds(max_frame)?;
+        effect.install_frame_kinds(max_frame)?;
 
-        self.base = bump::frontier().next_multiple_of(PAGE_SIZE);
+        self.base = effect.bump_frontier().next_multiple_of(PAGE_SIZE);
         let max_frame = self.edge.saturating_sub(self.base) / PAGE_SIZE;
         if max_frame == 0 {
             return Err(InitError::NoFreeFrames);
@@ -53,7 +56,8 @@ impl FrameInner {
 
         let mut index = 0usize;
         let mut remaining = max_frame;
-        let holes = Self::holes(self.base, self.edge, max_frame);
+        let facts = effect.facts();
+        let holes = Self::holes(&facts, self.base, self.edge, max_frame);
         while remaining > 0 {
             if let Some(end) = hole_containing(&holes, index) {
                 let skip = end - index;
@@ -98,13 +102,14 @@ impl FrameInner {
     }
 
     fn holes(
+        facts: &MachineFacts,
         base: usize,
         edge: usize,
         max_frame: usize,
-    ) -> [Option<(usize, usize)>; crate::machine::board::MAX_RESERVED] {
-        let mut out = [None; crate::machine::board::MAX_RESERVED];
+    ) -> [Option<(usize, usize)>; crate::MAX_RESERVED] {
+        let mut out = [None; crate::MAX_RESERVED];
         let mut n = 0;
-        for r in crate::machine::board::info().reserved.iter().flatten() {
+        for r in facts.reserved.iter().flatten() {
             let (hs, he) = (r.base, r.base + r.size);
             if he <= base || hs >= edge {
                 continue;
@@ -126,7 +131,7 @@ impl FrameInner {
         self.pagemeta[index] = None;
     }
 
-    unsafe fn pull_link(&mut self, power: usize) -> Option<usize> {
+    unsafe fn pull_link(&mut self, effect: &impl super::Effect, power: usize) -> Option<usize> {
         unsafe {
             let head = self.freelist[power]?;
 
@@ -137,10 +142,10 @@ impl FrameInner {
                     ::core::sync::atomic::AtomicUsize::new(0);
                 let n = BAD.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) + 1;
                 if n <= 8 {
-                    crate::putln!(
+                    effect.report(format_args!(
                         "frame freelist corrupt: pop index={index:#x} len={} power={power} ({n})",
                         self.pagemeta.len()
-                    );
+                    ));
                 }
                 return None;
             }
@@ -170,7 +175,7 @@ impl FrameInner {
         }
     }
 
-    unsafe fn remove_link(&mut self, index: usize, power: usize) {
+    unsafe fn remove_link(&mut self, effect: &impl super::Effect, index: usize, power: usize) {
         unsafe {
             let addr = self.frame_addr(index) as *mut Link;
 
@@ -184,11 +189,11 @@ impl FrameInner {
                 if head != Some(addr as usize) {
                     let n = STALE_RM.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) + 1;
                     if n <= 8 {
-                        crate::putln!(
+                        effect.report(format_args!(
                             "[stale-rm] remove_link idx={index} power={power} 自称桶头但桶头={:?} next={:?}（第 {n} 次）",
                             head.map(|h| (h - self.base) / PAGE_SIZE),
                             next.map(|x| (x.as_ptr() as usize - self.base) / PAGE_SIZE)
-                        );
+                        ));
                     }
                 }
                 self.freelist[power] = next;
@@ -199,7 +204,11 @@ impl FrameInner {
         }
     }
 
-    pub(super) unsafe fn split_block(&mut self, power: usize) -> Option<usize> {
+    pub(super) unsafe fn split_block(
+        &mut self,
+        effect: &impl super::Effect,
+        power: usize,
+    ) -> Option<usize> {
         unsafe {
             let mut k = power;
             while k < self.freelist.len() && self.freelist[k].is_none() {
@@ -209,7 +218,7 @@ impl FrameInner {
                 return None;
             }
 
-            let index = self.pull_link(k)?;
+            let index = self.pull_link(effect, k)?;
 
             while k > power {
                 k -= 1;
@@ -221,7 +230,12 @@ impl FrameInner {
         }
     }
 
-    pub(super) unsafe fn merge_block(&mut self, mut index: usize, mut power: usize) {
+    pub(super) unsafe fn merge_block(
+        &mut self,
+        effect: &impl super::Effect,
+        mut index: usize,
+        mut power: usize,
+    ) {
         unsafe {
             self.clear_head(index);
             while power < self.freelist.len() {
@@ -238,7 +252,7 @@ impl FrameInner {
                     break;
                 }
 
-                self.remove_link(buddy, power);
+                self.remove_link(effect, buddy, power);
                 self.clear_head(buddy);
                 index = index.min(buddy);
                 power += 1;
@@ -250,9 +264,9 @@ impl FrameInner {
                     ::core::sync::atomic::AtomicUsize::new(0);
                 let n = LOST.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) + 1;
                 if n <= 8 {
-                    crate::putln!(
+                    effect.report(format_args!(
                         "merge: pushed block NOT in chain idx={index} power={power} ({n})"
-                    );
+                    ));
                 }
             }
         }

@@ -33,7 +33,7 @@ dma-confirmation-scene = ["dep:kernel-test-api"]
 # `Flat::acquire` 的物化落在相对连续的区段上。与 `fresh-scene` 同款**非默认**，且只在
 # `cfg(debug_assertions)` 里编得出来；它另开一格只读观测（帧池最低非空伙伴桶的幂）与
 # 一处容量预留（来源页槽表），两者都只在这一格打开时可见，普通 release／default 里不存在。
-mega-leaf = []
+mega-leaf = ["kernel-allocator/mega-leaf"]
 # 拆法：**登记与打点**搬去 `embedded-test`（`tests/embedded.rs` + `nu scripts/qtest.nu`）；
 # 那些 `cfg(any(debug_assertions, feature = "framework"))` 全部收成 `cfg(debug_assertions)`
 # ——**自检并进断言那一档**，它本来就只在 debug 里有实体。故这一格没有读者，删。
@@ -66,6 +66,7 @@ embedded-test-linker-script = "0.1"
 
 env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
 iommu-hold = { path = "../programs/src/driver/iommu/hold" }
+kernel-allocator = { path = "allocator" }
 sbi = { git = "https://github.com/shuyra-arche/sbi.git", rev = "2dc10bafb919eb2e8f6ca37c95cfd56f9a05831d" }
 
 bitflags = "2.13.1"
