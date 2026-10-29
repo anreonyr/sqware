@@ -39,11 +39,6 @@ members = [
     "programs/src/driver/router/client",
     "programs/src/driver/rtc/api",
     "programs/src/harness/probe/daemon_target/api",
-    "programs/src/driver/iommu/declaration",
-    "programs/src/driver/iommu/api",
-    "programs/src/driver/iommu/hold",
-    "programs/src/driver/pci/declaration",
-    "programs/src/driver/pci/api",
 ]
 default-members = ["kernel"]
 resolver = "3"

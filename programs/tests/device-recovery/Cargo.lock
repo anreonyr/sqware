@@ -62,6 +62,7 @@ dependencies = [
 [[package]]
 name = "pci-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/pci.git?rev=6e3ca09ffc61610017746f74a5f7df0be2ba2dae#6e3ca09ffc61610017746f74a5f7df0be2ba2dae"
 dependencies = [
  "env",
  "mold",
@@ -72,6 +73,7 @@ dependencies = [
 [[package]]
 name = "pci-declaration"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/pci.git?rev=6e3ca09ffc61610017746f74a5f7df0be2ba2dae#6e3ca09ffc61610017746f74a5f7df0be2ba2dae"
 dependencies = [
  "env",
  "system-api",

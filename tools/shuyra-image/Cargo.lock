@@ -92,6 +92,7 @@ dependencies = [
 [[package]]
 name = "iommu-declaration"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/iommu.git?rev=5d2038033efcbd55de77534b35e611729d4bd9bd#5d2038033efcbd55de77534b35e611729d4bd9bd"
 dependencies = [
  "env",
  "system-api",
@@ -123,6 +124,7 @@ dependencies = [
 [[package]]
 name = "pci-declaration"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/pci.git?rev=6e3ca09ffc61610017746f74a5f7df0be2ba2dae#6e3ca09ffc61610017746f74a5f7df0be2ba2dae"
 dependencies = [
  "env",
  "system-api",

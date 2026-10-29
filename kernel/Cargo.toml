@@ -65,7 +65,7 @@ kernel-test-api = { path = "tests/api", optional = true }
 embedded-test-linker-script = "0.1"
 
 env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d466e91fafd4dbb27a5ec5aaae" }
-iommu-hold = { path = "../programs/src/driver/iommu/hold" }
+iommu-hold = { git = "https://github.com/shuyra-arche/iommu.git", rev = "5d2038033efcbd55de77534b35e611729d4bd9bd" }
 kernel-allocator = { path = "allocator" }
 sbi = { git = "https://github.com/shuyra-arche/sbi.git", rev = "2dc10bafb919eb2e8f6ca37c95cfd56f9a05831d" }
 

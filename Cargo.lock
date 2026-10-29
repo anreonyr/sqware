@@ -350,6 +350,7 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 [[package]]
 name = "iommu-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/iommu.git?rev=5d2038033efcbd55de77534b35e611729d4bd9bd#5d2038033efcbd55de77534b35e611729d4bd9bd"
 dependencies = [
  "env",
  "hub-api",
@@ -361,6 +362,7 @@ dependencies = [
 [[package]]
 name = "iommu-declaration"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/iommu.git?rev=5d2038033efcbd55de77534b35e611729d4bd9bd#5d2038033efcbd55de77534b35e611729d4bd9bd"
 dependencies = [
  "env",
  "system-api",
@@ -370,6 +372,7 @@ dependencies = [
 [[package]]
 name = "iommu-hold"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/iommu.git?rev=5d2038033efcbd55de77534b35e611729d4bd9bd#5d2038033efcbd55de77534b35e611729d4bd9bd"
 dependencies = [
  "env",
 ]
@@ -522,6 +525,7 @@ checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 [[package]]
 name = "pci-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/pci.git?rev=6e3ca09ffc61610017746f74a5f7df0be2ba2dae#6e3ca09ffc61610017746f74a5f7df0be2ba2dae"
 dependencies = [
  "env",
  "mold",
@@ -532,6 +536,7 @@ dependencies = [
 [[package]]
 name = "pci-declaration"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/pci.git?rev=6e3ca09ffc61610017746f74a5f7df0be2ba2dae#6e3ca09ffc61610017746f74a5f7df0be2ba2dae"
 dependencies = [
  "env",
  "system-api",

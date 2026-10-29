@@ -1,27 +1,14 @@
-//! Hub 那一本账上的 **DMA 安全绑定**：不因主人死亡直接变为可重绑；
-//! 同时保留旧的**持有账宿主安全套件**（`accessor` / `ordering` / `platform` /
-//! `references` / `protocol`）——那套用例直接编译生产的 `iommu-hold`，
-//! 而新 IOMMU 核心正是用这本账（见 `driver/iommu/core.rs`），不是第二套死机制。
+//! Hub 那一本账上的 **DMA 安全绑定**：不因主人死亡直接变为可重绑。
+//! 纯持有账宿主套件已归 `iommu-hold` 提供方；这里保留 Hub 私有核心与协议用例。
 #![allow(dead_code)]
 extern crate alloc;
-
-#[cfg(test)]
-use iommu_hold as retention;
 
 #[cfg(test)]
 #[path = "../../src/service/hub/core/mod.rs"]
 mod hub_core;
 
 #[cfg(test)]
-mod accessor;
-#[cfg(test)]
-mod ordering;
-#[cfg(test)]
-mod platform;
-#[cfg(test)]
 mod protocol;
-#[cfg(test)]
-mod references;
 #[cfg(test)]
 mod execution;
 #[cfg(test)]
