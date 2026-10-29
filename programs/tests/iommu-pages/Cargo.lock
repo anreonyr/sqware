@@ -39,6 +39,7 @@ dependencies = [
 [[package]]
 name = "iommu-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/iommu.git?rev=5d2038033efcbd55de77534b35e611729d4bd9bd#5d2038033efcbd55de77534b35e611729d4bd9bd"
 dependencies = [
  "env",
  "hub-api",
@@ -50,6 +51,7 @@ dependencies = [
 [[package]]
 name = "iommu-declaration"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/iommu.git?rev=5d2038033efcbd55de77534b35e611729d4bd9bd#5d2038033efcbd55de77534b35e611729d4bd9bd"
 dependencies = [
  "env",
  "system-api",
@@ -59,6 +61,7 @@ dependencies = [
 [[package]]
 name = "iommu-hold"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/iommu.git?rev=5d2038033efcbd55de77534b35e611729d4bd9bd#5d2038033efcbd55de77534b35e611729d4bd9bd"
 dependencies = [
  "env",
 ]

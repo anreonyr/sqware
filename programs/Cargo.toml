@@ -46,11 +46,11 @@ hub-client = { path = "src/service/hub/client" }
 terminal-api = { path = "src/user/terminal/api" }
 terminal-client = { path = "src/user/terminal/client" }
 shell-declaration = { path = "src/user/shell/declaration" }
-iommu-declaration = { path = "src/driver/iommu/declaration" }
-iommu-api = { path = "src/driver/iommu/api" }
-iommu-hold = { path = "src/driver/iommu/hold" }
-pci-declaration = { path = "src/driver/pci/declaration" }
-pci-api = { path = "src/driver/pci/api" }
+iommu-declaration = { git = "https://github.com/shuyra-arche/iommu.git", rev = "5d2038033efcbd55de77534b35e611729d4bd9bd" }
+iommu-api = { git = "https://github.com/shuyra-arche/iommu.git", rev = "5d2038033efcbd55de77534b35e611729d4bd9bd" }
+iommu-hold = { git = "https://github.com/shuyra-arche/iommu.git", rev = "5d2038033efcbd55de77534b35e611729d4bd9bd" }
+pci-declaration = { git = "https://github.com/shuyra-arche/pci.git", rev = "6e3ca09ffc61610017746f74a5f7df0be2ba2dae" }
+pci-api = { git = "https://github.com/shuyra-arche/pci.git", rev = "6e3ca09ffc61610017746f74a5f7df0be2ba2dae" }
 router-api = { path = "src/driver/router/api" }
 router-client = { path = "src/driver/router/client" }
 rtc-api = { path = "src/driver/rtc/api" }

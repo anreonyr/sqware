@@ -14,9 +14,9 @@ env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d4
 hub-api = { git = "https://github.com/shuyra-arche/hub.git", rev = "cccef3f325198c8390007ae88b064bae0f21f93e" }
 wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 mold = { git = "https://github.com/shuyra-arche/mold.git", rev = "f52501f4c91b686eded8b4bcd743b4e96084b7f9" }
-pci-declaration = { path = "../../src/driver/pci/declaration" }
-iommu-declaration = { path = "../../src/driver/iommu/declaration" }
-iommu-api = { path = "../../src/driver/iommu/api" }
-pci-api = { path = "../../src/driver/pci/api" }
+pci-declaration = { git = "https://github.com/shuyra-arche/pci.git", rev = "6e3ca09ffc61610017746f74a5f7df0be2ba2dae" }
+iommu-declaration = { git = "https://github.com/shuyra-arche/iommu.git", rev = "5d2038033efcbd55de77534b35e611729d4bd9bd" }
+iommu-api = { git = "https://github.com/shuyra-arche/iommu.git", rev = "5d2038033efcbd55de77534b35e611729d4bd9bd" }
+pci-api = { git = "https://github.com/shuyra-arche/pci.git", rev = "6e3ca09ffc61610017746f74a5f7df0be2ba2dae" }
 resource_impl = { package = "resource", git = "https://github.com/shuyra-arche/resource.git", rev = "dbc96834f50f094b5c386e54a0a2ae5560dcd7f8" }
 ipc_impl = { package = "ipc", git = "https://github.com/shuyra-arche/ipc.git", rev = "29ad97dc08d9dfc4ea6578b1b77874261229b3b5" }

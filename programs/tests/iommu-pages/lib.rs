@@ -109,4 +109,3 @@ mod translation;
 mod coordination;
 mod contexts;
 mod domains;
-mod provider_wire;
