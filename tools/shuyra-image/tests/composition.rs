@@ -2,7 +2,7 @@
 //! planning API. The provider core knows only explicit declarations, so these
 //! stay in Integration; the three catalog cases are in `catalog.rs`.
 
-use composition::units::{account, pipe, terminal};
+use composition::units::{account, hub, pipe, terminal};
 use composition::{DEPLOYMENTS, IMAGE_BUILDS, PROGRAMS};
 use env::ProgramKind;
 use image::{image_inventory, startup_order};
@@ -183,6 +183,15 @@ fn package_names_are_unique_and_exclude_scene_targets() {
             assert_eq!(build.target, account::BUILD.target);
             assert_eq!(build.profile, account::BUILD.profile);
             assert_eq!(build.default_features, account::BUILD.default_features);
+        } else if build.image == "hub" {
+            assert_eq!(build.image, hub::BUILD.image);
+            assert_eq!(build.manifest, "components/driver/units/hub/server/Cargo.toml");
+            assert_eq!(build.package, hub::BUILD.package);
+            assert_eq!(build.bin, hub::BUILD.bin);
+            assert_eq!(build.features, hub::BUILD.features);
+            assert_eq!(build.target, hub::BUILD.target);
+            assert_eq!(build.profile, hub::BUILD.profile);
+            assert_eq!(build.default_features, hub::BUILD.default_features);
         } else {
             assert_eq!(build.manifest, "programs/Cargo.toml");
             assert_eq!(build.package, "programs");

@@ -56,6 +56,7 @@ dependencies = [
 [[package]]
 name = "router-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/router.git?rev=94fec223f3c5df6c99a49527a65d016d88de3af4#94fec223f3c5df6c99a49527a65d016d88de3af4"
 dependencies = [
  "env",
  "mold",

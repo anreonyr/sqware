@@ -34,6 +34,8 @@ mod boundaries {
     #[test]
     fn driver_retention_uses_the_same_supply_acquisition_as_service_installation() {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
+        let hub = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../components/driver/units/hub/server/src");
         let iommu_dir = src.join("driver/iommu");
         let mut driver_files: Vec<String> = fs::read_dir(&iommu_dir).unwrap().filter_map(|entry| {
             let path = entry.unwrap().path();
@@ -66,26 +68,26 @@ mod boundaries {
         assert!(!work.contains("find_bar("));
         let control = fs::read_to_string(src.join("harness/device/control.rs")).unwrap();
         assert!(!control.contains("iova_base("));
-        let bindings = fs::read_to_string(src.join("service/hub/core/bindings.rs")).unwrap();
+        let bindings = fs::read_to_string(hub.join("core/bindings.rs")).unwrap();
         assert!(bindings.contains("pub fn owner_gone"));
         assert!(bindings.contains("Fail::Taken"));
         assert!(!bindings.contains("iova_base"));
         assert!(!bindings.contains("Cell::Vacant"));
-        let dma = fs::read_to_string(src.join("service/hub/serve/dma.rs")).unwrap();
+        let dma = fs::read_to_string(hub.join("serve/dma.rs")).unwrap();
         assert!(!dma.contains("join_task("));
         assert!(!dma.contains("slay_team("));
         assert!(!dma.contains("env::unit::oust("));
-        let hub_core = src.join("service/hub/core");
+        let hub_core = hub.join("core");
         for old in ["execution.rs","execution_effects.rs","execution_failure.rs","execution_step.rs","executions.rs"] { assert!(!hub_core.join(old).exists(), "Hub lifecycle state remains: {old}"); }
         assert!(hub_core.join("admission.rs").is_file());
-        let hub_execution = fs::read_to_string(src.join("service/hub/serve/execution.rs")).unwrap();
+        let hub_execution = fs::read_to_string(hub.join("serve/execution.rs")).unwrap();
         assert!(!hub_execution.contains("env::unit::"));
-        assert!(fs::read_to_string(src.join("service/hub/serve/launch.rs")).unwrap().contains("begin_inspect"));
-        let hub_return = fs::read_to_string(src.join("service/hub/serve/returned.rs")).unwrap();
+        assert!(fs::read_to_string(hub.join("serve/launch.rs")).unwrap().contains("begin_inspect"));
+        let hub_return = fs::read_to_string(hub.join("serve/returned.rs")).unwrap();
         assert!(hub_return.contains("begin_release"));
-        assert!(src.join("service/hub/serve/launch_phase.rs").is_file());
-        assert!(src.join("service/hub/serve/launch_reply.rs").is_file());
-        assert!(src.join("service/hub/serve/return_reply.rs").is_file());
+        assert!(hub.join("serve/launch_phase.rs").is_file());
+        assert!(hub.join("serve/launch_reply.rs").is_file());
+        assert!(hub.join("serve/return_reply.rs").is_file());
         assert!(!dma.contains("fn stop_cpu"));
         assert!(!dma.contains("owned_instance"));
         assert!(!hub_return.contains("Err(Fail::Unknown) | Err(Fail::Denied) => ReturnReply::Released"));
@@ -94,7 +96,7 @@ mod boundaries {
         assert!(!dma.contains("claim.requester"));
         assert!(dma.contains("peers.coord.host() != from"));
         assert!(!dma.contains("crate::driver::pci::"));
-        let coordination = fs::read_to_string(src.join("service/hub/serve/coordination.rs")).unwrap();
+        let coordination = fs::read_to_string(hub.join("serve/coordination.rs")).unwrap();
         assert!(coordination.contains("binding.device.source != peers.coord.host()"));
     }
     #[test]
@@ -116,9 +118,18 @@ mod boundaries {
     #[test]
     fn ordinary_programs_do_not_depend_on_system_implementation() {
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
-        for area in ["driver", "service", "user"] {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        for (area, root) in [
+            ("driver", source.join("driver")),
+            ("service", source.join("service")),
+            ("user", source.join("user")),
+            ("selected-hub-client", repo.join("components/driver/units/hub/client/src")),
+            ("selected-hub-server", repo.join("components/driver/units/hub/server/src")),
+            ("selected-router-api", repo.join("components/driver/units/router/api/src")),
+            ("selected-driver-support", repo.join("components/driver/support/src")),
+        ] {
             let mut paths = References::default();
-            references(&source.join(area), &mut paths);
+            references(&root, &mut paths);
             assert!(!paths.0.iter().any(|path| path.starts_with("crate::system::") || path.starts_with("programs::system::") || path.starts_with("system_server::")), "{area} enters System implementation: {:?}", paths.0);
         }
     }
@@ -143,7 +154,7 @@ mod boundaries {
         }
         let mut loader = Paths::default(); loader.visit_expr(expression(&assembly, "LOADER"));
         assert!(loader.0.iter().any(|path| path == "system_api::loader::REGISTRY"));
-        for api in ["programs/src/driver/router/api/src/lib.rs"] {
+        for api in ["components/driver/units/router/api/src/lib.rs"] {
             assert!(fs::read_to_string(repo.join(api)).unwrap().contains("mold::interface"));
         }
     }
@@ -167,14 +178,14 @@ mod boundaries {
         }
         assert!(!programs.contains("src/user/terminal/api"));
         assert!(!programs.contains("src/user/terminal/client"));
-        let router_api = dependencies(&repo.join("programs/src/driver/router/api/Cargo.toml"));
+        let router_api = dependencies(&repo.join("components/driver/units/router/api/Cargo.toml"));
         assert!(router_api.iter().all(|name| ["env","wire","mold","system-api"].contains(&name.as_str())));
         let router_client = dependencies(&repo.join("programs/src/driver/router/client/Cargo.toml"));
         assert!(router_client.iter().all(|name| ["env","wire","resource","ipc","router-api"].contains(&name.as_str())));
-        let hub_client = dependencies(&repo.join("programs/src/service/hub/client/Cargo.toml"));
+        let hub_client = dependencies(&repo.join("components/driver/units/hub/client/Cargo.toml"));
         assert!(hub_client.iter().all(|name| ["env","wire","resource","ipc","hub-api","system-api","system-client"].contains(&name.as_str())));
         for dependencies in [&router_api, &router_client, &hub_client] { assert!(!dependencies.iter().any(|name| name == "protocol")); }
-        for source in [repo.join("programs/src/driver/router/api/src"),repo.join("programs/src/driver/router/client/src")] {
+        for source in [repo.join("components/driver/units/router/api/src"),repo.join("programs/src/driver/router/client/src")] {
             let mut paths = References::default(); references(&source, &mut paths);
             assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
         }

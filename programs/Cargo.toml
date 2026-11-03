@@ -44,7 +44,7 @@ system-client = { git = "https://github.com/shuyra-arche/system.git", rev = "5a7
 system-server = { git = "https://github.com/shuyra-arche/system.git", rev = "9001af65f97501dfa490c9397c61d593c871136d", features = ["test-support"] }
 system-support = { git = "https://github.com/shuyra-arche/system.git", rev = "5a792ff2d39901a970925b1a6d63206adf6c16d8" }
 hub-api = { git = "https://github.com/shuyra-arche/hub.git", rev = "cccef3f325198c8390007ae88b064bae0f21f93e" }
-hub-client = { path = "src/service/hub/client" }
+hub-client = { git = "https://github.com/shuyra-arche/hub.git", rev = "daa23b2611fee0c503bc6bd31a16121d97698ad6" }
 terminal-api = { git = "https://github.com/shuyra-arche/terminal.git", rev = "c447c0761835339a39efdf2ddd8101ebf80db15a" }
 terminal-client = { git = "https://github.com/shuyra-arche/terminal.git", rev = "c447c0761835339a39efdf2ddd8101ebf80db15a" }
 uart-api = { git = "https://github.com/shuyra-arche/uart.git", rev = "b690431496b0beaeb5fb7cafb42e60b4c8b38c9d" }
@@ -55,10 +55,11 @@ iommu-api = { git = "https://github.com/shuyra-arche/iommu.git", rev = "5d203803
 iommu-hold = { git = "https://github.com/shuyra-arche/iommu.git", rev = "5d2038033efcbd55de77534b35e611729d4bd9bd" }
 pci-declaration = { git = "https://github.com/shuyra-arche/pci.git", rev = "6e3ca09ffc61610017746f74a5f7df0be2ba2dae" }
 pci-api = { git = "https://github.com/shuyra-arche/pci.git", rev = "6e3ca09ffc61610017746f74a5f7df0be2ba2dae" }
-router-api = { path = "src/driver/router/api" }
+router-api = { git = "https://github.com/shuyra-arche/router.git", rev = "94fec223f3c5df6c99a49527a65d016d88de3af4" }
 router-client = { path = "src/driver/router/client" }
 rtc-api = { path = "src/driver/rtc/api" }
 fixturetarget-api = { path = "src/harness/probe/daemon_target/api" }
+driver-support = { git = "https://github.com/shuyra-arche/driver.git", rev = "8e6de5a77aa52184bb6f7fbbcbc961f779e94629" }
 # 设备树解析：**驱动自己读自描述**（内核不代劳，`platform/devices.rs` 只原样搬运）。
 # 使用者目前只有 `prog-router`（要数自己的 context、列自己要接的线）。
 fdt = { version = "0.1.5", default-features = false }
@@ -359,13 +360,6 @@ doctest = false
 [[bin]]
 name = "prog-daemon-ctl-stop"
 path = "src/harness/probe/daemon_stop/control_main.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-hub"
-path = "src/service/hub/main.rs"
 test = false
 bench = false
 doctest = false

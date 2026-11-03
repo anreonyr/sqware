@@ -3,10 +3,31 @@
 version = 4
 
 [[package]]
+name = "account-api"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/account.git?rev=7dc701facdbe6368fbc09f7429920ad49dacdfca#7dc701facdbe6368fbc09f7429920ad49dacdfca"
+dependencies = [
+ "env",
+ "mold",
+ "system-api",
+ "wire",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
+
+[[package]]
+name = "control-rpc-host-tests"
+version = "0.1.0"
+dependencies = [
+ "account-api",
+ "env",
+ "system-api",
+ "wire",
+]
 
 [[package]]
 name = "env"
@@ -24,27 +45,6 @@ name = "erra"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
-
-[[package]]
-name = "hub-api"
-version = "0.1.0"
-source = "git+https://github.com/shuyra-arche/hub.git?rev=cccef3f325198c8390007ae88b064bae0f21f93e#cccef3f325198c8390007ae88b064bae0f21f93e"
-dependencies = [
- "env",
- "mold",
- "system-api",
- "wire",
-]
-
-[[package]]
-name = "hub-handoff-tests"
-version = "0.1.0"
-dependencies = [
- "env",
- "hub-api",
- "system-api",
- "wire",
-]
 
 [[package]]
 name = "mold"

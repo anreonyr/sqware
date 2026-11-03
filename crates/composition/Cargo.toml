@@ -14,10 +14,11 @@ env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d4
 unit = { git = "https://github.com/shuyra-arche/unit.git", rev = "90396f0fda376e0693fb1b9553aa21864d241057" }
 system-api = { git = "https://github.com/shuyra-arche/system.git", rev = "9e5d63ca536a176583cf1b0054b4ecf7ddd88257" }
 hub-api = { git = "https://github.com/shuyra-arche/hub.git", rev = "cccef3f325198c8390007ae88b064bae0f21f93e" }
-router-api = { path = "../../programs/src/driver/router/api" }
+router-api = { git = "https://github.com/shuyra-arche/router.git", rev = "94fec223f3c5df6c99a49527a65d016d88de3af4" }
 rtc-api = { path = "../../programs/src/driver/rtc/api" }
 fixturetarget-api = { path = "../../programs/src/harness/probe/daemon_target/api" }
 session-cluster = { git = "https://github.com/shuyra-arche/session.git", rev = "f7c7542acf0bf010c1aac07d36d30a19e0591731" }
+driver-cluster = { git = "https://github.com/shuyra-arche/driver.git", rev = "f202872b28372799a56957d7e272abf6758cbc14" }
 pipe-declaration = { git = "https://github.com/shuyra-arche/pipe.git", rev = "4fce76372beb6c5ab8567232516f156b3d1032eb" }
 shell-declaration = { path = "../../programs/src/user/shell/declaration" }
 iommu-declaration = { git = "https://github.com/shuyra-arche/iommu.git", rev = "5d2038033efcbd55de77534b35e611729d4bd9bd" }
