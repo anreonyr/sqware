@@ -1,3 +1,6 @@
+//! Cross-component Integration checks: the manifest bytes written by the
+//! image-builder are read by the published System runtime `Catalog`.
+
 use env::ProgramKind;
 use env::ledger::manifest::pack;
 use system_support::boot::Catalog;

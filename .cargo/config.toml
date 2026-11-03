@@ -11,7 +11,9 @@ runner = ["nu", "scripts/runner.nu"]
 
 [alias]
 # 造镜像那一步是**编外**的：它要 std + host ABI，而本工作区被上面那两行钉在
-# riscv 上——**编内核之外**（用户裁定"initrd 与 kernel 何干"）：
+# riscv 上——**编内核之外**（用户裁定"initrd 与 kernel 何干"）。核心是公开的
+# `shuyra-arche/image-builder` provider（Cargo 包 `image-builder`）；本树只留
+# Source 侧的 composition 与 CLI 适配器：
 #
 #   cargo image               默认 product / release（产品景 9 台；验收景 `accept` 要写明，24 台）
 #   cargo image rig debug     指定场景与档
