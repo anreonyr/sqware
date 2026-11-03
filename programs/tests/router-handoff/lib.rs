@@ -116,7 +116,7 @@ pub mod session {
     }
 }
 
-#[path = "../../src/driver/router/client/src/handoff.rs"]
+#[path = "../../../components/driver/units/router/client/src/handoff.rs"]
 mod client_handoff;
 #[path = "../../src/driver/router/adapt/event/handoff.rs"]
 mod handoff;

@@ -556,6 +556,7 @@ dependencies = [
 [[package]]
 name = "router-client"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/router.git?rev=aa3033a7bd25b5d4199a50a6c00538475b62ef4c#aa3033a7bd25b5d4199a50a6c00538475b62ef4c"
 dependencies = [
  "env",
  "ipc",

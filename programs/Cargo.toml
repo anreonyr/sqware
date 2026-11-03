@@ -56,7 +56,7 @@ iommu-hold = { git = "https://github.com/shuyra-arche/iommu.git", rev = "5d20380
 pci-declaration = { git = "https://github.com/shuyra-arche/pci.git", rev = "6e3ca09ffc61610017746f74a5f7df0be2ba2dae" }
 pci-api = { git = "https://github.com/shuyra-arche/pci.git", rev = "6e3ca09ffc61610017746f74a5f7df0be2ba2dae" }
 router-api = { git = "https://github.com/shuyra-arche/router.git", rev = "94fec223f3c5df6c99a49527a65d016d88de3af4" }
-router-client = { path = "src/driver/router/client" }
+router-client = { git = "https://github.com/shuyra-arche/router.git", rev = "aa3033a7bd25b5d4199a50a6c00538475b62ef4c" }
 rtc-api = { path = "src/driver/rtc/api" }
 fixturetarget-api = { path = "src/harness/probe/daemon_target/api" }
 driver-support = { git = "https://github.com/shuyra-arche/driver.git", rev = "8e6de5a77aa52184bb6f7fbbcbc961f779e94629" }
