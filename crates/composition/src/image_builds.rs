@@ -18,6 +18,17 @@ macro_rules! image {
     };
 }
 
+const PIPE: ImageBuild = ImageBuild {
+    image: pipe_declaration::BUILD.image,
+    manifest: "components/pipe/server/Cargo.toml",
+    package: pipe_declaration::BUILD.package,
+    bin: pipe_declaration::BUILD.bin,
+    features: pipe_declaration::BUILD.features,
+    target: pipe_declaration::BUILD.target,
+    profile: pipe_declaration::BUILD.profile,
+    default_features: pipe_declaration::BUILD.default_features,
+};
+
 pub const IMAGE_BUILDS: &[ImageBuild] = &[
     image!("hub"),
     image!("daemon"),
@@ -28,7 +39,7 @@ pub const IMAGE_BUILDS: &[ImageBuild] = &[
     image!("fixturetarget"),
     image!("daemon-stop"),
     image!("daemon-ctl-stop"),
-    image!("pipe"),
+    PIPE,
     image!("account"),
     image!("terminal"),
     image!("login"),

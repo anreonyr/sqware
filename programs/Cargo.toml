@@ -21,8 +21,8 @@ shell-client = { path = "src/user/shell/client" }
 lisp = { path = "../crates/lisp" }
 kernel-test-api = { git = "https://github.com/shuyra-arche/kernel.git", rev = "3aa0a155f825fbf377fc8d04009472ca67cbbf8c" }
 stream = { git = "https://github.com/shuyra-arche/stream.git", rev = "ebd1c6db4823e28591650d967d7e8c8dd1939687" }
-pipe-api = { path = "src/service/pipe/api" }
-pipe-client = { path = "src/service/pipe/client" }
+pipe-api = { git = "https://github.com/shuyra-arche/pipe.git", rev = "4fce76372beb6c5ab8567232516f156b3d1032eb" }
+pipe-client = { git = "https://github.com/shuyra-arche/pipe.git", rev = "4fce76372beb6c5ab8567232516f156b3d1032eb" }
 account-api = { path = "src/service/account/api" }
 account-client = { path = "src/service/account/client" }
 argon2 = { version = "=0.5.3", default-features = false, features = ["alloc", "password-hash", "zeroize"] }
@@ -41,7 +41,7 @@ ipc = { git = "https://github.com/shuyra-arche/ipc.git", rev = "29ad97dc08d9dfc4
 wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 system-api = { git = "https://github.com/shuyra-arche/system.git", rev = "9e5d63ca536a176583cf1b0054b4ecf7ddd88257" }
 system-client = { git = "https://github.com/shuyra-arche/system.git", rev = "5a792ff2d39901a970925b1a6d63206adf6c16d8" }
-system-server = { git = "https://github.com/shuyra-arche/system.git", rev = "5a792ff2d39901a970925b1a6d63206adf6c16d8", features = ["test-support"] }
+system-server = { git = "https://github.com/shuyra-arche/system.git", rev = "9001af65f97501dfa490c9397c61d593c871136d", features = ["test-support"] }
 system-support = { git = "https://github.com/shuyra-arche/system.git", rev = "5a792ff2d39901a970925b1a6d63206adf6c16d8" }
 hub-api = { git = "https://github.com/shuyra-arche/hub.git", rev = "cccef3f325198c8390007ae88b064bae0f21f93e" }
 hub-client = { path = "src/service/hub/client" }
@@ -657,13 +657,6 @@ doctest = false
 [[bin]]
 name = "prog-account"
 path = "src/service/account/main.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-pipe"
-path = "src/service/pipe/main.rs"
 test = false
 bench = false
 doctest = false

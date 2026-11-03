@@ -7,3 +7,6 @@
 [submodule "components/image-builder"]
 	path = components/image-builder
 	url = https://github.com/shuyra-arche/image-builder.git
+[submodule "components/pipe"]
+	path = components/pipe
+	url = https://github.com/shuyra-arche/pipe.git

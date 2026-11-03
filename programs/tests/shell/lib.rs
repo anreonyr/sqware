@@ -53,8 +53,6 @@ mod core;
 #[cfg(test)]
 mod host;
 mod native;
-#[path = "../../src/service/pipe/core.rs"]
-mod pipe;
 #[cfg(test)]
 mod tests {
     use super::core::*;
@@ -210,18 +208,6 @@ mod tests {
         assert_eq!(job.status, JobStatus::Cancelling);
         job.complete(1, 2).unwrap();
         assert_eq!(job.status, JobStatus::Failed);
-    }
-    #[test]
-    fn pipe_registry_authorizes_owner_and_keeps_roles_exclusive() {
-        let mut ledger = super::pipe::Ledger::default();
-        let id = ledger.create(1, 4).unwrap();
-        assert!(ledger.bind(id, 2, Direction::Read, 3).is_err());
-        ledger.bind(id, 1, Direction::Read, 3).unwrap();
-        assert!(ledger.bind(id, 1, Direction::Read, 3).is_err());
-        assert!(ledger.bind(id, 1, Direction::Read, 4).is_err());
-        ledger.bind(id, 1, Direction::Write, 4).unwrap();
-        ledger.release(id);
-        assert!(ledger.record(id).is_err());
     }
 }
 

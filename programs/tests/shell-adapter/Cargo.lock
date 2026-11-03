@@ -98,6 +98,7 @@ dependencies = [
 [[package]]
 name = "pipe-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/pipe.git?rev=4fce76372beb6c5ab8567232516f156b3d1032eb#4fce76372beb6c5ab8567232516f156b3d1032eb"
 dependencies = [
  "env",
  "mold",

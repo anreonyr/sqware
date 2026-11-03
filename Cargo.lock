@@ -93,7 +93,7 @@ dependencies = [
  "hub-api",
  "iommu-declaration",
  "pci-declaration",
- "pipe-api",
+ "pipe-declaration",
  "router-api",
  "rtc-api",
  "shell-declaration",
@@ -362,6 +362,7 @@ dependencies = [
 [[package]]
 name = "pipe-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/pipe.git?rev=4fce76372beb6c5ab8567232516f156b3d1032eb#4fce76372beb6c5ab8567232516f156b3d1032eb"
 dependencies = [
  "env",
  "mold",
@@ -372,6 +373,7 @@ dependencies = [
 [[package]]
 name = "pipe-client"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/pipe.git?rev=4fce76372beb6c5ab8567232516f156b3d1032eb#4fce76372beb6c5ab8567232516f156b3d1032eb"
 dependencies = [
  "env",
  "ipc",
@@ -381,6 +383,17 @@ dependencies = [
  "system-api",
  "system-client",
  "wire",
+]
+
+[[package]]
+name = "pipe-declaration"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/pipe.git?rev=4fce76372beb6c5ab8567232516f156b3d1032eb#4fce76372beb6c5ab8567232516f156b3d1032eb"
+dependencies = [
+ "env",
+ "pipe-api",
+ "system-api",
+ "unit",
 ]
 
 [[package]]
@@ -605,7 +618,7 @@ dependencies = [
 [[package]]
 name = "system-server"
 version = "0.1.0"
-source = "git+https://github.com/shuyra-arche/system.git?rev=5a792ff2d39901a970925b1a6d63206adf6c16d8#5a792ff2d39901a970925b1a6d63206adf6c16d8"
+source = "git+https://github.com/shuyra-arche/system.git?rev=9001af65f97501dfa490c9397c61d593c871136d#9001af65f97501dfa490c9397c61d593c871136d"
 dependencies = [
  "env",
  "erra",

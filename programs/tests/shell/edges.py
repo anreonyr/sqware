@@ -46,8 +46,12 @@ def run(conn, capture):
     assert b"(completed (0))" in received
     evaluate("(define closed (buffer 'write))", b"<port>")
     evaluate("(define bulk (command 'emit '(\"--repeat\" \"131072\" \"abcdefgh\")))", b"<command>")
-    evaluate("(define broken (spawn (connect (list bulk) (list (list (list bulk 'records) closed)))))", b"<job>")
+    # Causal setup: prepare without starting, close the receiver first, then
+    # start the prepared job. The already-closed sink is why the bulk writer
+    # observes BrokenPipe; there is no sleep or size race here.
+    evaluate("(define broken (prepare (connect (list bulk) (list (list (list bulk 'records) closed)))))", b"<job>")
     evaluate("(close closed)", b"()")
+    evaluate("(start broken)", b"<job>")
     evaluate("(wait broken)", b"(completed (1))")
     received.clear()
     conn.sendall(b"\x04")

@@ -2,6 +2,7 @@
 
 pub use iommu_declaration as iommu;
 pub use pci_declaration as pci;
+pub use pipe_declaration as pipe;
 pub use shell_declaration as shell;
 use unit::UnitFile;
 
@@ -39,7 +40,6 @@ pub mod memory_transfer_race;
 pub mod memory_transfer_tlb;
 pub mod park;
 pub mod passer;
-pub mod pipe;
 pub mod probe_bound;
 pub mod probe_coalition;
 pub mod probe_control;
@@ -81,7 +81,7 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &fixturetarget::PROGRAM,
     &daemon_stop::PROGRAM,
     &daemon_stop_control::PROGRAM,
-    &pipe::PROGRAM,
+    &pipe::UNIT,
     &account::PROGRAM,
     &terminal::PROGRAM,
     &login::PROGRAM,
