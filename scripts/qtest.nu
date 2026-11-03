@@ -8,9 +8,9 @@
 # 换掉：`-initrd`（参数表在 `--board-only` 下让出它）与**串口那一格**（经参数表的
 # `--serial` 口换，见下）。
 #
-# 用法：
-#   nu scripts/qtest.nu                              # 跑当前 manifest 的全部用例
-#   nu scripts/qtest.nu --package kernel             # 指定包（工作区里用）
+# 用法（从 Source 根调用；actual cargo-qtest runs in `components/kernel`）：
+#   nu scripts/qtest.nu                              # 空 package = kernel health
+#   nu scripts/qtest.nu --package kernel             # 显式 Kernel provider workspace
 #   nu scripts/qtest.nu --package kernel --scene rig # 造 rig 景、带它跑整机那一例
 #   nu scripts/qtest.nu --package kernel --scene accept
 #   nu scripts/qtest.nu --package kernel --scene iommu-ruin -- --features semihosting
@@ -23,7 +23,13 @@
 #   CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true nu scripts/qtest.nu --package kernel \
 #     --scene memory-transfer-race --feed-script programs/tests/memory-transfer/race.py \
 #     -- --features semihosting,race-scene -- scene
-#   nu scripts/qtest.nu -- --list                    # `--` 之后原样转给 cargo-qtest
+#   nu scripts/qtest.nu -- --verbose -- retention_authorization_delegates_via_accord
+#
+# Kernel is the fixed public gitlink `components/kernel`, not a Source workspace
+# member. Only `^cargo qtest` runs with scoped cwd there; `cargo image`, feed
+# paths and traces stay relative to Source. Do not pass `--manifest-path`:
+# the installed cargo-qemu-test rejects it (raw 2). `--package` empty selects
+# `kernel` explicitly; a non-kernel package keeps the Source workspace meaning.
 #
 # **（`memory-transfer-fresh` 另需带护栏那一档 ＋ 两格 feature）**：那一景靠一个在途夹具
 # 注入一次撤页确认失败，而夹具与那四个探针同属 `cfg(debug_assertions)` ⇒ 不带
@@ -185,6 +191,7 @@ while True:
 # exec 保持 runner 所持 PID 就是 QEMU；捕获进程不隔开超时终止责任。
 const WRAPPER = '#!/usr/bin/env bash
 set -o pipefail
+cd "$QTEST_SOURCE_ROOT"
 args=()
 for a in "$@"; do
   [ "$a" = "-nographic" ] || args+=("$a")
@@ -201,7 +208,7 @@ else
   exec qemu-system-riscv64 "${args[@]}"
 fi'
 
-def main [--package: string, --scene: string, --profile: string, --feed: string, --feed-script: string, --feed-after: int = 5, ...rest: string] {
+def main [--package: string, --scene: string = "", --profile: string, --feed: string, --feed-script: string, --feed-after: int = 5, ...rest: string] {
   if ($env.QEMU_ICOUNT? | is-empty) { $env.QEMU_ICOUNT = "" }
 
   # **runner 守卫**：crates.io 上**两个包**都提供 `cargo-qtest` 这一枚 bin——
@@ -218,7 +225,13 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
 
   let script_dir = $env.FILE_PWD
   let repo = ($script_dir | path dirname)
-  let trapdir = ($env.TRACE_OUT? | default ($repo | path join "trace"))
+  let trapdir = (($env.TRACE_OUT? | default ($repo | path join "trace")) | path expand)
+  let selected_package = if ($package | is-empty) { "kernel" } else { $package }
+  let kernel_workspace = ($repo | path join "components" "kernel")
+  let run_cwd = if ($selected_package == "kernel") { $kernel_workspace } else { $repo }
+  if not (($run_cwd | path join "Cargo.toml") | path exists) {
+    error make {msg: $"qtest 包工作区不存在：($run_cwd)"}
+  }
   let retirement = $scene in ["iommu-ruin" "iommu-forced"]
   let hardware = $scene == "iommu-fail-fence"
   let readback = $scene == "iommu-fail-readback"
@@ -241,13 +254,14 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   } else {
     $feed_script
   }
+  let feed_script = if ($feed_script | is-empty) { "" } else { $feed_script | path expand }
   let hold = if $retirement or $hardware or $readback or $guard {
-    $"target/ruin-(random uuid).nbd"
+    ($repo | path join $"target/ruin-(random uuid).nbd")
   } else {
     ""
   }
   $env.DMA_HOLD = $hold
-  $env.DMA_CONTROL = if $hardware or $readback { $"target/control-(random uuid).qtest" } else { "" }
+  $env.DMA_CONTROL = if $hardware or $readback { ($repo | path join $"target/control-(random uuid).qtest") } else { "" }
   $env.DMA_HOLD_SECONDS = if $guard { "60" } else if $scene == "iommu-forced" { "30" } else { "10" }
   let summary = match $scene {
     "memory-transfer" => "scene-memory-transfer-phases.json"
@@ -295,6 +309,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
       | last
       | str replace "ok" ""
       | str trim
+      | path expand
     )
     if not ($at | path exists) {
       error make {msg: $"造不出镜像：cargo image ($scene) ($prof) 说落在 ($at)"}
@@ -316,6 +331,8 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     }
     if ($env.QEMU_TEE_LOG? | is-empty) {
       $env.QEMU_TEE_LOG = ($trapdir | path join $"scene-($scene)-console.log")
+    } else {
+      $env.QEMU_TEE_LOG = ($env.QEMU_TEE_LOG | path expand)
     }
     $env.QEMU_TEE_STATUS = ($trapdir | path join $"scene-($scene)-capture.status")
     "P" | save --force $env.QEMU_TEE_STATUS
@@ -347,7 +364,9 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     if ($pid_file | path exists) {
       ^bash -c 'p=$(cat "$FEED_PID"); kill "$p" 2>/dev/null; true'
     }
-    ^bash -c 'nohup python3 "$FEED_HELPER" "$FEED_PORTFILE" "$FEED_CAP" "$FEED_TEXT" "$FEED_AFTER" "$FEED_SCRIPT" >"$FEED_ERR" 2>&1 & echo $! > "$FEED_PID"'
+    $env.QTEST_SOURCE_ROOT = ($repo | into string)
+    $env.QTEST_RUN_CWD = ($repo | into string)
+    ^bash -c 'cd "$QTEST_RUN_CWD" && nohup python3 "$FEED_HELPER" "$FEED_PORTFILE" "$FEED_CAP" "$FEED_TEXT" "$FEED_AFTER" "$FEED_SCRIPT" >"$FEED_ERR" 2>&1 & echo $! > "$FEED_PID"'
     # 端口由帮手 bind(0) 后报出来（有界等；它没起来就当场说清楚，不要等到十例都超时）。
     let got = (^bash -c 'for i in $(seq 1 50); do if [ -s "$FEED_PORTFILE" ]; then cat "$FEED_PORTFILE"; exit 0; fi; sleep 0.1; done; exit 1' | complete)
     if ($got.exit_code != 0) {
@@ -411,7 +430,15 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
   let board = (^nu ($script_dir | path join "qemu-args.nu") --board-only ...$iommu_argv ...$serial_argv ...$endpoint_argv ...$hold_argv ...$control_argv
       | lines | where { |l| ($l | str trim) != "" })
   let qemu_args = ($board | each { |a| $"--qemu-arg=($a)" })
-  let pkg = if ($package | is-empty) { [] } else { ["--package" $package] }
+  # The Kernel SHA is read only when Kernel is the selected package. A
+  # non-kernel package must work without an initialized components/kernel.
+  let kernel_sha = if ($selected_package == "kernel") {
+    (^git -C $kernel_workspace rev-parse HEAD | str trim)
+  } else {
+    "not-selected"
+  }
+  let pkg = ["--package" $selected_package]
+  print $"qtest: cwd=($run_cwd) package=($selected_package) workspace=($kernel_workspace) kernel_sha=($kernel_sha)"
   let qemu_bin = if ($wrapper | is-empty) { [] } else { ["--qemu" $wrapper] }
   # 整机用例跑 **release**：同一个 `accept` 景，release 产品路 6/6 稳（14 笔结局），debug 产品路
   # 结局笔数 5 / 11 / 6 / 11 乱跳、偶发 panic ⇒ debug 档下这条世界本来就不可靠。健康面那九例
@@ -438,7 +465,15 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
     $env.RUSTFLAGS = "-Crelocation-model=static -Cforce-frame-pointers=yes -Ccode-model=medium"
   }
   # `try` 的块作用域会丢掉外部命令的 LAST_EXIT_CODE；直接保留完整执行结果。
-  let result = (^cargo ...$qtest_argv o+e>| tee { save --force $qtlog } | complete)
+  # Only the actual cargo-qtest call runs from the Kernel provider workspace.
+  # `--manifest-path` is unsupported by the installed runner (raw 2), so use a
+  # scoped cwd closure and restore the Source cwd immediately afterwards.
+  let here = ($env.PWD)
+  let result = (do {
+    cd $run_cwd
+    ^cargo ...$qtest_argv o+e>| tee { save --force $qtlog } | complete
+  })
+  cd $here
   print -n $result.stdout
   let raw_code = $result.exit_code
   mut code = $raw_code

@@ -31,6 +31,24 @@
 # `--serial <后端>` = 换掉串口那一格（默认 `stdio`）。整机用例要把串口搬到一条**能喂输入**
 # 的通道上（`cargo-qtest` 把 QEMU 的 stdin 钉成 null），见 [`qtest.nu`](qtest.nu) 的头注；
 # **串口这一格因此只有一个出处**——`-serial` 不是"后者胜"，写两次会多出一枚串口（实测踩过）。
+# One selection authority for the initrd used by the normal boot path.
+# `SHUYRA_INITRD` wins when set and must exist; otherwise the ELF-adjacent
+# `initrd.img` is used when present. Board-only callers must not call this.
+export def chosen-initrd [elf?: path] {
+  let explicit = ($env.SHUYRA_INITRD? | default "")
+  if not ($explicit | is-empty) {
+    let selected = ($explicit | path expand)
+    if not ($selected | path exists) {
+      error make {msg: $"SHUYRA_INITRD 指向的镜像不存在：($selected)"}
+    }
+    return $selected
+  }
+  if ($elf | is-empty) { return null }
+  let adjacent = ((($elf | path expand) | path dirname | path join "initrd.img") | path expand)
+  if ($adjacent | path exists) { return $adjacent }
+  null
+}
+
 export def args [elf?: path, --board-only, --serial: string, --iommu, --endpoint: string, --endpoints: string, --endpoint-hold: string, --qtest-socket: string] {
   if not ($endpoint_hold | is-empty) and ($endpoint | is-empty) {
     error make {msg: "--endpoint-hold 需要 --endpoint 指定夹具磁盘"}
@@ -62,13 +80,13 @@ export def args [elf?: path, --board-only, --serial: string, --iommu, --endpoint
   let seed = ($env.QEMU_SEED? | default "")
   let seed_args = if ($seed | is-empty) { [] } else { ["-seed", $seed] }
 
-  # initrd blob（与内核 ELF 同目录）：存在才传 `-initrd`。板子那一半**不传**——
-  # 内核内用例跑在起服务之前，用不到它。
-  let initrd_arg = if $board_only or ($elf == null) {
+  # Normal boot uses the shared selector. Board-only (qtest) must not add an
+  # initrd: qtest injects the Source image path itself.
+  let initrd_arg = if $board_only {
       []
   } else {
-      let initrd = ($elf | path dirname | path join "initrd.img")
-      if ($initrd | path exists) { ["-initrd", $initrd] } else { [] }
+      let initrd = (chosen-initrd $elf)
+      if ($initrd == null) { [] } else { ["-initrd", ($initrd | into string)] }
   }
 
   let kernel_arg = if $board_only or ($elf == null) { [] } else { ["-kernel", ($elf | into string)] }

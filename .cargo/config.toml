@@ -16,8 +16,19 @@ runner = ["nu", "scripts/runner.nu"]
 #   cargo image               默认 product / release（产品景 9 台；验收景 `accept` 要写明，24 台）
 #   cargo image rig debug     指定场景与档
 #
-# `cargo run` 只管编内核；交互式跑之前先来这一下（`scripts/runner.nu` 会查镜像在不在）。
+# Kernel is built/run explicitly from its public gitlink:
+#   cargo image
+#   SHUYRA_INITRD=<absolute initrd> cargo run \
+#     --manifest-path components/kernel/Cargo.toml --release
+# (`cargo shuyra --release` is the named alias.) Plain `cargo run` no longer
+# selects Kernel.
 image = "run --manifest-path tools/shuyra-image/Cargo.toml --target x86_64-unknown-linux-gnu --"
+
+# Kernel is the fixed public gitlink at `components/kernel`, not a workspace
+# member. This named alias is the documented explicit entry; plain `cargo run`
+# no longer selects the Kernel.
+#   SHUYRA_INITRD=<absolute initrd> cargo shuyra --release
+shuyra = "run --manifest-path components/kernel/Cargo.toml --bin shuyra"
 
 #   nu scripts/qtest.nu --package kernel
 #
