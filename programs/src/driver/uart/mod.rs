@@ -11,7 +11,7 @@
 //! **`core` 与 `client` 在 lib 里**（与 `driver/rtc/{core,client}` 同款）：这一面两头都要念
 //! ——驱动落砖那几枚名字与客人找砖那几枚名字必须是同一处；各写一份就编不过。
 
-pub mod client;
+pub use uart_client as client;
 pub mod core;
 
 /// It dies during startup/residency here.

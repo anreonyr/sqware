@@ -29,6 +29,17 @@ const PIPE: ImageBuild = ImageBuild {
     default_features: pipe_declaration::BUILD.default_features,
 };
 
+const TERMINAL: ImageBuild = ImageBuild {
+    image: terminal_declaration::BUILD.image,
+    manifest: "components/terminal/server/Cargo.toml",
+    package: terminal_declaration::BUILD.package,
+    bin: terminal_declaration::BUILD.bin,
+    features: terminal_declaration::BUILD.features,
+    target: terminal_declaration::BUILD.target,
+    profile: terminal_declaration::BUILD.profile,
+    default_features: terminal_declaration::BUILD.default_features,
+};
+
 pub const IMAGE_BUILDS: &[ImageBuild] = &[
     image!("hub"),
     image!("daemon"),
@@ -41,7 +52,7 @@ pub const IMAGE_BUILDS: &[ImageBuild] = &[
     image!("daemon-ctl-stop"),
     PIPE,
     image!("account"),
-    image!("terminal"),
+    TERMINAL,
     image!("login"),
     image!("shell"),
     image!("cat"),

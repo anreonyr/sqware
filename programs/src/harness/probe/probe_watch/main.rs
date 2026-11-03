@@ -229,10 +229,23 @@ fn main() -> Report<'static> {
     }
     publisher.unbind(first, Wait::AtMost(MS)).unwrap();
     let first_road = PathBuf::try_new("probe-watch-dynamic/one").unwrap();
-    assert!(matches!(
-        tree.tile_from(root, &first_road, Wait::AtMost(MS)),
-        Err(system_api::operator::Fail::Unknown)
-    ));
+    // A permanent negative is one typed wire question, not a publication retry.
+    let reply = session
+        .call::<system_api::operator::Call>(
+            system_api::operator::Req::Relative {
+                base: root,
+                road: first_road,
+            },
+            Wait::AtMost(MS),
+        )
+        .unwrap_or_else(|fail| {
+            panic!("probe-watch: retired one transport failure {fail:?}")
+        });
+    assert_eq!(
+        reply.failure_status(),
+        Some(system_api::operator::UNKNOWN),
+        "probe-watch: retired one must answer UNKNOWN"
+    );
     let second_road = PathBuf::try_new("probe-watch-dynamic/two").unwrap();
     assert_eq!(
         tree.tile_from(root, &second_road, Wait::AtMost(MS))

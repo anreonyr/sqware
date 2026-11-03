@@ -10,3 +10,6 @@
 [submodule "components/pipe"]
 	path = components/pipe
 	url = https://github.com/shuyra-arche/pipe.git
+[submodule "components/terminal"]
+	path = components/terminal
+	url = https://github.com/shuyra-arche/terminal.git

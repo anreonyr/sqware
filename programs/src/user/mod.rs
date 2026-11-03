@@ -2,6 +2,5 @@
 //! Terminal starts in canonical input mode.
 
 pub mod login;
-pub mod terminal;
 
 pub mod shell;

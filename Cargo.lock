@@ -98,6 +98,7 @@ dependencies = [
  "rtc-api",
  "shell-declaration",
  "system-api",
+ "terminal-declaration",
  "unit",
 ]
 
@@ -446,6 +447,8 @@ dependencies = [
  "system-support",
  "terminal-api",
  "terminal-client",
+ "uart-api",
+ "uart-client",
  "unit",
  "wire",
  "zeroize",
@@ -683,10 +686,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal-declaration"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/terminal.git?rev=f07a0954f65472e9a16e878e52c5f1d34146bc64#f07a0954f65472e9a16e878e52c5f1d34146bc64"
+dependencies = [
+ "system-api",
+ "unit",
+]
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "uart-api"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/uart.git?rev=b690431496b0beaeb5fb7cafb42e60b4c8b38c9d#b690431496b0beaeb5fb7cafb42e60b4c8b38c9d"
+dependencies = [
+ "env",
+ "wire",
+]
+
+[[package]]
+name = "uart-client"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/uart.git?rev=b690431496b0beaeb5fb7cafb42e60b4c8b38c9d#b690431496b0beaeb5fb7cafb42e60b4c8b38c9d"
+dependencies = [
+ "env",
+ "ipc",
+ "system-api",
+ "system-client",
+ "uart-api",
+]
 
 [[package]]
 name = "unicode-ident"

@@ -39,6 +39,7 @@ dependencies = [
  "rtc-api",
  "shell-declaration",
  "system-api",
+ "terminal-declaration",
  "unit",
 ]
 
@@ -364,6 +365,15 @@ checksum = "53f8ad14fa1c1b8635114abf9721076fe1e869572a5f26a52690f407292c80dc"
 dependencies = [
  "allocator-api2",
  "lock_api",
+]
+
+[[package]]
+name = "terminal-declaration"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/terminal.git?rev=f07a0954f65472e9a16e878e52c5f1d34146bc64#f07a0954f65472e9a16e878e52c5f1d34146bc64"
+dependencies = [
+ "system-api",
+ "unit",
 ]
 
 [[package]]

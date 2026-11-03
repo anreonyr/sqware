@@ -8,4 +8,4 @@
 //! **不调用资源或执行原语**：这一层要与内核隔开（可以念 `env` / `protocol` 的类型与记号）。
 //! 碰内核与设备的那几手住 `../adapt/`，设备面住 `../dev/uart.rs`，客人那一面住 `../client.rs`。
 
-pub mod frame;
+pub use uart_api::frame;

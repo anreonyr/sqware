@@ -4,6 +4,7 @@ pub use iommu_declaration as iommu;
 pub use pci_declaration as pci;
 pub use pipe_declaration as pipe;
 pub use shell_declaration as shell;
+pub use terminal_declaration as terminal;
 use unit::UnitFile;
 
 pub mod accept;
@@ -64,7 +65,6 @@ pub mod sleeper;
 pub mod subject;
 pub mod system;
 pub mod system_fault;
-pub mod terminal;
 pub mod uart;
 pub mod virtio_blk;
 pub mod waiter;
@@ -83,7 +83,7 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &daemon_stop_control::PROGRAM,
     &pipe::UNIT,
     &account::PROGRAM,
-    &terminal::PROGRAM,
+    &terminal::UNIT,
     &login::PROGRAM,
     &shell::PROGRAM,
     &probe_terminal::PROGRAM,
