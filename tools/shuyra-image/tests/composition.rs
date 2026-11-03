@@ -2,6 +2,7 @@
 //! planning API. The provider core knows only explicit declarations, so these
 //! stay in Integration; the three catalog cases are in `catalog.rs`.
 
+use composition::units::pipe;
 use composition::{DEPLOYMENTS, IMAGE_BUILDS, PROGRAMS};
 use env::ProgramKind;
 use image::{image_inventory, startup_order};
@@ -152,9 +153,25 @@ fn daemon_is_one_rtc_only_supervised_process_in_product_scenes() {
 
 #[test]
 fn package_names_are_unique_and_exclude_scene_targets() {
+    assert_eq!(IMAGE_BUILDS.len(), 89);
     for (index, build) in IMAGE_BUILDS.iter().enumerate() {
         assert!(!build.image.is_empty());
-        assert!(build.bin.starts_with("prog-"));
+        if build.image == "pipe" {
+            assert_eq!(build.image, pipe::BUILD.image);
+            assert_eq!(build.manifest, "components/pipe/server/Cargo.toml");
+            assert_eq!(build.package, pipe::BUILD.package);
+            assert_eq!(build.bin, pipe::BUILD.bin);
+            assert_eq!(build.features, pipe::BUILD.features);
+            assert_eq!(build.target, pipe::BUILD.target);
+            assert_eq!(build.profile, pipe::BUILD.profile);
+            assert_eq!(build.default_features, pipe::BUILD.default_features);
+        } else {
+            assert_eq!(build.manifest, "programs/Cargo.toml");
+            assert_eq!(build.package, "programs");
+            assert!(build.bin.starts_with("prog-"));
+            assert_eq!(build.bin, "prog-".to_owned() + build.image);
+            assert_ne!(build.bin, "pipe");
+        }
         assert!(IMAGE_BUILDS[..index].iter().all(|earlier| {
             earlier.image != build.image && earlier.bin != build.bin
         }));
