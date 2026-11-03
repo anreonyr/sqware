@@ -13,6 +13,8 @@ exclude = [
     "components/system",
     # Public image-builder provider is a fixed gitlink, not a Source workspace member.
     "components/image-builder",
+    # Public Terminal provider is a fixed gitlink, not a Source workspace member.
+    "components/terminal",
 ]
 
 # 没有 `[profile.framework]` / `[profile.harden]`。`debug_assertions` 控制的
