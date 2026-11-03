@@ -31,8 +31,7 @@ use super::shared::Shared;
 use super::source::Source;
 use crate::boot::Accounts;
 use crate::boot::Catalog;
-use crate::system::loader::Image;
-use crate::system::loader::Loader;
+use system_server::test_support::{Image, LoaderFixture as Loader};
 
 /// 迁移来源挂在管理端空间里的起点（第 0 页在这一格，第 1 页是目标空槽）。
 ///

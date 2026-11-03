@@ -44,7 +44,8 @@ impl Console {
             .token(Name::Page(Page::Dtb))
             .expect("memory-transfer: boot device tree");
         let dock = Dock::open(dtb).expect("memory-transfer: device tree view");
-        let machine = Machine::of(dock.view()).expect("memory-transfer: device tree parse");
+        let machine = Machine::of(dock.view(), router_api::PLIC_CLASS)
+            .expect("memory-transfer: device tree parse");
         machine
             .devices()
             .expect("memory-transfer: device inventory")

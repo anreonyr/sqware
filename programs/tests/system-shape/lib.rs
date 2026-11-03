@@ -1,597 +1,12 @@
 #[cfg(test)]
-mod tests {
-    use std::{fs, path::Path};
-    use syn::{
-        ItemStruct, Signature,
-        visit::{self, Visit},
-    };
-    #[derive(Default)]
-    struct Signatures {
-        violations: Vec<String>,
-        count: usize,
-    }
-    impl Signatures {
-        fn check(&mut self, signature: &Signature) {
-            self.count += 1;
-            if signature.inputs.len() > 3 {
-                self.violations.push(format!(
-                    "{} has {} parameters",
-                    signature.ident,
-                    signature.inputs.len()
-                ));
-            }
-        }
-    }
-    impl<'ast> Visit<'ast> for Signatures {
-        fn visit_item_struct(&mut self, item: &'ast ItemStruct) {
-            const INTERMEDIATE: &[&str] = &[
-                "Address",
-                "Source",
-                "Installation",
-                "Record",
-                "Declaration",
-                "Location",
-                "Tile",
-                "Placement",
-                "Registration",
-                "Registrations",
-                "Runtimes",
-                "Image",
-                "Readiness",
-                "Launch",
-                "Wiring",
-                "Connections",
-                "Internal",
-                "Incoming",
-                "Inbox",
-                "Request",
-                "Outcome",
-                "Approved",
-                "Kind",
-                "Execution",
-                "Operation",
-                "Tracked",
-                "Active",
-                "Operations",
-                "Startup",
-                "Flow",
-                "Activity",
-                "Bound",
-                "Shutoff",
-                "Output",
-                "Mounts",
-                "Faces",
-                "Book",
-                "Buffer",
-                "Current",
-                "CurrentTip",
-                "Response",
-                "Ready",
-                "Epoch",
-                "Changed",
-                "Running",
-                "Tips",
-                "Tip",
-                "Ack",
-                "LateGuests",
-                "Outboxes",
-                "Hit",
-                "Selected",
-                "Settling",
-                "Judgment",
-                "Membership",
-                "BindingRequest",
-                "Selection",
-                "Subscription",
-            ];
-            if INTERMEDIATE.contains(&item.ident.to_string().as_str()) && item.fields.len() > 3 {
-                self.violations
-                    .push(format!("{} has {} fields", item.ident, item.fields.len()));
-            }
-            visit::visit_item_struct(self, item);
-        }
-        fn visit_signature(&mut self, signature: &'ast Signature) {
-            self.check(signature);
-            visit::visit_signature(self, signature);
-        }
-    }
-    fn inspect(path: &Path, violations: &mut Vec<String>) -> usize {
-        let mut count = 0;
-        for entry in fs::read_dir(path).unwrap() {
-            let path = entry.unwrap().path();
-            if path.is_dir() {
-                if !path.join("Cargo.toml").is_file() {
-                    count += inspect(&path, violations);
-                }
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                let source = fs::read_to_string(&path).unwrap();
-                let syntax = syn::parse_file(&source)
-                    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-                let mut signatures = Signatures::default();
-                signatures.visit_file(&syntax);
-                count += signatures.count;
-                violations.extend(
-                    signatures
-                        .violations
-                        .into_iter()
-                        .map(|violation| format!("{}: {violation}", path.display())),
-                );
-            }
-        }
-        count
-    }
-    #[test]
-    fn every_system_implementation_function_has_at_most_three_parameters() {
-        let mut violations = Vec::new();
-        let count = inspect(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system"),
-            &mut violations,
-        );
-        assert!(count > 100, "System source tree was not inspected");
-        assert!(violations.is_empty(), "{}", violations.join("\n"));
-        println!("checked {count} System signatures, including receivers");
-    }
-}
-
-#[cfg(test)]
 mod boundaries {
     use std::{fs, path::Path};
     use syn::visit::{self, Visit};
-    #[test]
-    fn driver_retention_uses_the_same_supply_acquisition_as_service_installation() {
-        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
-        let supplies = fs::read_to_string(src.join("system/app/supplies.rs")).unwrap();
-        assert!(supplies.contains("let (lease, delivery) = self.acquire(task, binding)?"));
-        assert_eq!(supplies.matches(".source.acquire(").count(), 1);
-        // 设备路径只走既有声明供给：System 里不再有第二套启动/收据/生命周期路径。
-        // （不拿“某个旧路径不存在”当证据：下面直接核**真实文件里的边界**。）
-        let iommu_dir = src.join("driver/iommu");
-        let mut driver_files: Vec<String> = fs::read_dir(&iommu_dir)
-            .unwrap()
-            .filter_map(|entry| {
-                let path = entry.unwrap().path();
-                (path.extension().is_some_and(|ext| ext == "rs"))
-                    .then(|| path.file_name().unwrap().to_string_lossy().into_owned())
-            })
-            .collect();
-        driver_files.sort();
-        let mut expected = vec![
-            "acquire.rs", "binding.rs", "cache_step.rs", "context.rs", "cookie.rs", "core.rs",
-            "domain.rs", "domain_id.rs", "domain_range.rs", "engine.rs", "fence.rs",
-            "handshake.rs", "invalidation.rs", "layout.rs", "main.rs", "mod.rs", "order.rs", "pages.rs",
-            "phase.rs", "queue.rs", "references.rs", "regs.rs", "serve.rs",
-            "settled.rs", "table.rs", "ticket.rs",
-        ];
-        expected.sort();
-        assert_eq!(
-            driver_files, expected,
-            "the production IOMMU keeps exactly one bin and no scene variants"
-        );
-        let core = fs::read_to_string(iommu_dir.join("core.rs")).unwrap();
-        for step in ["pub fn establish", "pub fn acquire", "pub fn publish", "pub fn invalidate", "pub fn quiesce", "pub fn release"] {
-            assert!(core.contains(step), "missing step {step}");
-        }
-        let domain = fs::read_to_string(iommu_dir.join("domain.rs")).unwrap();
-        assert!(domain.contains("Holds::new()"));
-        assert!(core.contains("Domain::new("));
-        let compact: String = core.chars().filter(|ch| !ch.is_whitespace()).collect();
-        assert!(compact.contains("holds.register("));
-        assert!(compact.contains("holds.retry("));
-        assert!(!core.contains("raw::pies("));
-        assert!(!core.contains("hub_api::iova_base"));
-        let work = fs::read_to_string(src.join("harness/device/work.rs")).unwrap();
-        // The Before fixture alone may verify the exact BAR gift that already reached it.
-        assert_eq!(
-            work.matches("raw::pies(").count(),
-            1,
-            "only the Before fixture may scan local gifts"
-        );
-        let before = work.find("if mode == Mode::Before").unwrap();
-        let window = work.find("let window = await_window").unwrap();
-        assert!(work[before..window].contains("await_bar_gift("));
-        assert_eq!(
-            work.matches("await_bar_gift(").count(),
-            2,
-            "gift verification is defined and called once"
-        );
-        let gift = work.find("fn await_bar_gift(").unwrap();
-        let gift_end = work[gift + 1..]
-            .find("\nfn ")
-            .map_or(work.len(), |end| gift + 1 + end);
-        assert!(
-            work[gift..gift_end].contains("raw::pies("),
-            "the local scan belongs to the Before fixture's gift verifier"
-        );
-        assert!(!work.contains("find_window("));
-        assert!(!work.contains("find_bar("));
-        let control = fs::read_to_string(src.join("harness/device/control.rs")).unwrap();
-        assert!(!control.contains("iova_base("));
-        // Hub 那一本账：主人死亡只转收场（不空格、不重绑）；观察兄弟不用 join 当已停。
-        let bindings = fs::read_to_string(src.join("service/hub/core/bindings.rs")).unwrap();
-        assert!(bindings.contains("pub fn owner_gone"));
-        assert!(bindings.contains("Fail::Taken"));
-        assert!(!bindings.contains("iova_base"));
-        assert!(!bindings.contains("Cell::Vacant"));
-        let dma = fs::read_to_string(src.join("service/hub/serve/dma.rs")).unwrap();
-        assert!(!dma.contains("join_task("));
-        assert!(!dma.contains("slay_team("));
-        assert!(!dma.contains("env::unit::oust("));
-        // Hub keeps only admission identity, watermarks and binding facts.
-        let hub_core = src.join("service/hub/core");
-        for old in [
-            "execution.rs",
-            "execution_effects.rs",
-            "execution_failure.rs",
-            "execution_step.rs",
-            "executions.rs",
-        ] {
-            assert!(!hub_core.join(old).exists(), "Hub lifecycle state remains: {old}");
-        }
-        assert!(hub_core.join("admission.rs").is_file());
-        let hub_execution =
-            fs::read_to_string(src.join("service/hub/serve/execution.rs")).unwrap();
-        assert!(!hub_execution.contains("env::unit::"));
-        let hub_launch = fs::read_to_string(src.join("service/hub/serve/launch.rs")).unwrap();
-        assert!(hub_launch.contains("begin_inspect"));
-        let hub_return = fs::read_to_string(src.join("service/hub/serve/returned.rs")).unwrap();
-        assert!(hub_return.contains("begin_release"));
-        // One structure/enum per file, and no empty StopCpu forwarding.
-        assert!(src.join("service/hub/serve/launch_phase.rs").is_file());
-        assert!(src.join("service/hub/serve/launch_reply.rs").is_file());
-        assert!(src.join("service/hub/serve/return_reply.rs").is_file());
-        assert!(!dma.contains("fn stop_cpu"));
-        assert!(!dma.contains("owned_instance"));
-        assert!(!hub_return.contains("Err(Fail::Unknown) | Err(Fail::Denied) => ReturnReply::Released"));
-        assert!(hub_execution.contains("try_reserve"));
-        // 认领走设备门牌与类联盟（不自报设备号、不开放设备清单）。
-        assert!(dma.contains("device_by_door("));
-        assert!(!dma.contains("claim.requester"));
-        assert!(dma.contains("peers.coord.host() != from"));
-        assert!(!dma.contains("crate::driver::pci::"));
-        let coordination = fs::read_to_string(src.join("service/hub/serve/coordination.rs")).unwrap();
-        assert!(coordination.contains("binding.device.source != peers.coord.host()"));
-    }
-    #[test]
-    fn instance_retirement_precedes_cleanup_and_dynamic_units_declare_hub() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let hooks = fs::read_to_string(repo.join("programs/src/system/assembly/hooks.rs")).unwrap();
-        let retire = hooks
-            .split("let mut retire = Schedule::sequence();")
-            .nth(1)
-            .unwrap()
-            .split("Ok(alloc::vec!")
-            .next()
-            .unwrap();
-        let order = [
-            "\"retirement\"",
-            "\"identity.exports\"",
-            "\"namespace\"",
-            "\"constructor\"",
-            "\"claim\"",
-            "\"supply\"",
-            "\"identity\"",
-            "\"bootstrap\"",
-            "\"reclaim\"",
-        ];
-        let mut at = 0;
-        for step in order {
-            let found = retire[at..].find(step).map(|offset| at + offset);
-            assert!(found.is_some(), "missing retirement step {step}");
-            at = found.unwrap() + step.len();
-        }
-        // Dynamic execution instances declare Hub's generic retirement dependency.
-        let device = fs::read_to_string(repo.join("crates/composition/src/units/device.rs")).unwrap();
-        assert!(device.contains("retirement: &WORK_RETIREMENT"));
-        assert!(device.contains("provider: \"hub\""));
-        // Common owner callers hand receipts back through Release, never kernel Oust.
-        for path in ["programs/src/user/login/main.rs", "programs/src/user/shell/adapt/controller.rs"] {
-            let source = fs::read_to_string(repo.join(path)).unwrap();
-            assert!(!source.contains("env::unit::oust"), "{path} still Ousts directly");
-            assert!(source.contains("release"), "{path} does not return through Release");
-        }
-        let shell = fs::read_to_string(repo.join("programs/src/user/shell/adapt/controller.rs")).unwrap();
-        assert!(shell.contains("begin_release"));
-        assert!(shell.contains("release_reply"));
-        assert!(!shell.contains("env::unit::oust"));
-    }
-
-    #[test]
-    fn static_pause_and_resume_target_the_same_whole_team() {
-        let control = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system/control");
-        let pause = fs::read_to_string(control.join("lifecycle/debark.rs")).unwrap();
-        assert!(pause.contains("team: Some(team)"));
-        assert!(pause.contains("env::unit::debark_team(team)"));
-        assert!(!pause.contains("debark_task("));
-        assert!(pause.contains("env::UnitFail::Busy"));
-        assert!(pause.contains("Ok(Progress::Pending)"));
-        let source = fs::read_to_string(control.join("unit/mod.rs")).unwrap();
-        let resume = source
-            .split("fn resume(")
-            .nth(1)
-            .unwrap()
-            .split("pub(crate) fn task(")
-            .next()
-            .unwrap();
-        assert!(resume.contains("team: Some(team)"));
-        assert!(resume.contains("env::unit::embark_team(team)"));
-        assert!(!resume.contains("embark_task("));
-    }
-    #[test]
-    fn control_state_is_private_and_assembly_owns_operation_queue() {
-        let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
-        for (path, name) in [
-            ("control/unit/mod.rs", "Control"),
-        ] {
-            let syntax = syn::parse_file(&fs::read_to_string(system.join(path)).unwrap()).unwrap();
-            let state = syntax.items.iter().find_map(|item| match item {
-                syn::Item::Struct(item) if item.ident == name => Some(item),
-                _ => None,
-            }).unwrap();
-            assert!(!state.fields.is_empty());
-            for field in &state.fields {
-                match &field.vis {
-                    syn::Visibility::Inherited => {},
-                    syn::Visibility::Restricted(vis) => assert_eq!(
-                        vis.path.segments.iter().map(|part| part.ident.to_string()).collect::<Vec<_>>(),
-                        ["crate", "system", "control"],
-                        "{name} exposes mutable state outside Control",
-                    ),
-                    _ => panic!("{name} exposes public mutable state"),
-                }
-            }
-        }
-        let assembly = fs::read_to_string(system.join("assembly.rs")).unwrap();
-        assert!(assembly.contains("work: WorkQueue<Work>"), "Assembly must own the shared job queue");
-        let work = fs::read_to_string(system.join("assembly/work.rs")).unwrap();
-        assert!(work.contains("struct WorkQueue"), "the live queue implementation must be shared with host tests");
-        assert!(!assembly.contains("struct HookProgress"), "long-lived installations must not retain transient phase cursors");
-        assert!(assembly.contains("Phase"), "dynamic phase jobs must use the shared queue");
-        let instance = fs::read_to_string(system.join("control/instance/state.rs")).unwrap();
-        assert!(!instance.contains("pub hook:"), "Control instance facts must not duplicate Assembly cursors");
-    }
-    #[test]
-    fn lifecycle_dispatch_does_not_own_task_state_or_compensation() {
-        let control = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system/control");
-        for old in ["serve/lifecycle", "serve/driver.rs", "serve/schedule.rs"] {
-            assert!(!control.join(old).exists(), "lifecycle remains under request handling: {old}");
-        }
-        let mut paths = References::default();
-        let source = fs::read_to_string(control.join("lifecycle/dispatch.rs")).unwrap();
-        paths.visit_file(&syn::parse_file(&source).unwrap());
-        assert!(!paths.0.iter().any(|path| {
-            path.ends_with("::Control") || path.ends_with("::State")
-                || path.ends_with("::Slot") || path.starts_with("env::")
-        }), "dispatch owns domain effects: {:?}", paths.0);
-        #[derive(Default)]
-        struct StateFields(Vec<String>);
-        impl<'a> Visit<'a> for StateFields {
-            fn visit_expr_field(&mut self, field: &'a syn::ExprField) {
-                if let syn::Member::Named(name) = &field.member {
-                    if ["table", "instances", "loader", "pending", "failure", "deadline"].contains(&name.to_string().as_str()) {
-                        self.0.push(name.to_string());
-                    }
-                }
-                visit::visit_expr_field(self, field);
-            }
-        }
-        let mut fields = StateFields::default();
-        fields.visit_file(&syn::parse_file(&source).unwrap());
-        assert!(fields.0.is_empty(), "dispatch mutates domain state: {:?}", fields.0);
-    }
-    #[test]
-    fn control_request_handlers_do_not_own_registration_or_instance_effects() {
-        let control = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system/control");
-        for old in ["unit.rs", "instances.rs", "create.rs", "fixture.rs", "observe.rs", "start.rs", "source.rs", "task.rs", "material.rs", "reap.rs", "hook.rs"] {
-            assert!(!control.join("endpoint").join(old).exists(), "request handling owns {old}");
-        }
-        for domain in ["unit", "instance"] {
-            let mut paths = References::default();
-            references(&control.join(domain), &mut paths);
-            assert!(!paths.0.iter().any(|path| path.contains("control::serve")), "{domain} depends on request handling");
-        }
-        let mut paths = References::default();
-        references(&control.join("endpoint"), &mut paths);
-        assert!(!paths.0.iter().any(|path| (path.starts_with("env::unit::") && path != "env::unit::self_id") || path.starts_with("env::room::")), "request handler executes instance effects");
-        #[derive(Default)]
-        struct StateFields(Vec<String>);
-        impl<'a> Visit<'a> for StateFields {
-            fn visit_expr_field(&mut self, field: &'a syn::ExprField) {
-                if let syn::Member::Named(name) = &field.member {
-                    if ["table", "instances", "loader"].contains(&name.to_string().as_str()) {
-                        self.0.push(name.to_string());
-                    }
-                }
-                visit::visit_expr_field(self, field);
-            }
-        }
-        for name in ["request.rs", "instance.rs"] {
-            let source = fs::read_to_string(control.join("endpoint").join(name)).unwrap();
-            let mut fields = StateFields::default();
-            fields.visit_file(&syn::parse_file(&source).unwrap());
-            assert!(fields.0.is_empty(), "{name} accesses Control state directly: {:?}", fields.0);
-        }
-    }
-    #[derive(Default)]
-    struct LoaderDependencies(Vec<String>);
-    impl<'a> Visit<'a> for LoaderDependencies {
-        fn visit_path(&mut self, path: &'a syn::Path) {
-            let names: Vec<_> = path
-                .segments
-                .iter()
-                .map(|segment| segment.ident.to_string())
-                .collect();
-            if names.windows(2).any(|pair| {
-                pair[0] == "system" && matches!(pair[1].as_str(), "control" | "identity" | "run")
-            }) {
-                self.0.push(names.join("::"));
-            }
-            visit::visit_path(self, path);
-        }
-    }
-    #[test]
-    fn loader_does_not_depend_on_lifecycle_identity_or_composition() {
-        let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
-        let mut dependencies = LoaderDependencies::default();
-        for name in ["cache.rs", "build.rs", "mapping.rs", "source.rs", "task.rs", "image.rs"] {
-            let path = system.join("loader").join(name);
-            dependencies.visit_file(&syn::parse_file(&fs::read_to_string(path).unwrap()).unwrap());
-        }
-        assert!(dependencies.0.is_empty(), "{}", dependencies.0.join("\n"));
-    }
-    #[test]
-    fn identity_authority_does_not_own_control_installation_state() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let identity = repo.join("programs/src/system/identity");
-        assert!(!identity.join("client").exists());
-        let mut paths = References::default();
-        for core in ["book", "service"] { references(&identity.join(core), &mut paths); }
-        paths.visit_file(&syn::parse_file(&fs::read_to_string(identity.join("mod.rs")).unwrap()).unwrap());
-        assert!(!paths.0.iter().any(|path| path.contains("control::identity") || path.ends_with("::Roster")));
-        let source = fs::read_to_string(repo.join("programs/src/system/control/identity.rs")).unwrap();
-        let syntax = syn::parse_file(&source).unwrap();
-        let roster = syntax.items.iter().find_map(|item| match item {
-            syn::Item::Struct(item) if item.ident == "Roster" => Some(item),
-            _ => None,
-        }).expect("Control installation state");
-        assert!(matches!(&roster.vis, syn::Visibility::Restricted(vis) if vis.path.is_ident("crate")));
-        assert!(roster.fields.iter().all(|field| matches!(field.vis, syn::Visibility::Inherited)));
-    }
-    #[test]
-    fn public_clients_do_not_export_wire_data_or_server_bindings() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        for domain in ["loader", "identity", "operator", "control"] {
-            let path = repo.join("programs/src/system/client/src").join(domain).join("mod.rs");
-            let syntax = syn::parse_file(&fs::read_to_string(path).unwrap()).unwrap();
-            for item in syntax.items {
-                match item {
-                    syn::Item::Mod(item) => if matches!(item.vis, syn::Visibility::Public(_)) {
-                        assert!(!["client", "rpc", "exchange", "frame", "marks", "grant"].contains(&item.ident.to_string().as_str()));
-                    },
-                    syn::Item::Use(item) => if matches!(item.vis, syn::Visibility::Public(_)) {
-                        let mut paths = References::default();
-                        paths.visit_item_use(&item);
-                        assert!(paths.0.iter().all(|path| !path.starts_with("system_api::") || path == "system_api::loader::Built"));
-                    },
-                    _ => {},
-                }
-            }
-        }
-        for path in ["identity/service/face.rs", "control/endpoint/request.rs", "control/endpoint/instance.rs", "loader/service/answer.rs"] {
-            let source = fs::read_to_string(repo.join("programs/src/system").join(path)).unwrap();
-            assert!(!source.contains("system_client::"), "own service binding depends on client: {path}");
-        }
-    }
-    #[test]
-    fn system_components_have_named_ownership_and_no_legacy_classification() {
-        let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
-        for name in ["app", "control", "identity", "operator", "loader", "launch", "assembly", "supply"] {
-            assert!(system.join(name).is_dir(), "missing component {name}");
-        }
-        assert!(!system.join("publication/mod.rs").exists(), "the obsolete Publication owner must be removed");
-        for old in ["run", "common", "boot.rs", "life.rs", "control/core", "control/serve", "identity/core", "identity/serve", "operator/core", "operator/serve", "operator/client.rs", "loader/core", "loader/serve"] {
-            assert!(!system.join(old).exists(), "legacy classification remains: {old}");
-        }
-        for name in ["account.rs", "resource.rs", "publication", "install.rs", "run.rs"] {
-            assert!(!system.join("control/endpoint").join(name).exists(), "Control owns composition {name}");
-        }
-        let mut paths = References::default();
-        for name in ["install.rs", "schedule.rs"] {
-            paths.visit_file(&syn::parse_file(&fs::read_to_string(system.join("app").join(name)).unwrap()).unwrap());
-        }
-        assert!(!paths.0.iter().any(|path| ["Request", "Decision", "Dispatch", "CurrentTip", "Inbox", "Outcome", "Runtimes", "Registrations"].iter().any(|private| path.ends_with(&format!("::{private}")))), "app names component internals: {:?}", paths.0);
-    }
-    #[test]
-    fn control_uses_injected_cross_capability_hooks() {
-        let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
-        let mut paths = References::default();
-        references(&system.join("control"), &mut paths);
-        assert!(!paths.0.iter().any(|path| path.starts_with("crate::system::launch") || path.starts_with("crate::system::publication") || path.starts_with("crate::system::account")), "Control depends on preparation or publication: {:?}", paths.0);
-        let source = fs::read_to_string(system.join("control/lifecycle/startup.rs")).unwrap();
-        let syntax = syn::parse_file(&source).unwrap();
-        let startup = syntax.items.iter().find_map(|item| match item {
-            syn::Item::Struct(item) if item.ident == "Startup" => Some(item),
-            _ => None,
-        }).unwrap();
-        assert!(startup.fields.iter().all(|field| matches!(field.vis, syn::Visibility::Inherited)), "startup state is externally mutable");
-        let app = syn::parse_file(&fs::read_to_string(system.join("app/mod.rs")).unwrap()).unwrap();
-        assert!(app.items.iter().any(|item| matches!(item, syn::Item::Enum(item) if item.ident == "Fault")), "app does not own program faults");
-    }
-    #[test]
-    fn system_uses_declarations_not_account_service_implementation() {
-        let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
-        assert!(!system.join("app/account.rs").exists());
-        let mut paths = References::default();
-        references(&system, &mut paths);
-        assert!(!paths.0.iter().any(|path| path.starts_with("crate::service::account")
-            || path.starts_with("programs::service::account") || path.starts_with("account_api::")
-            || path.starts_with("account_client::")), "System couples Account implementation or policy: {:?}", paths.0);
-        let startup = fs::read_to_string(system.join("app/schedule.rs")).unwrap();
-        assert!(!startup.contains("account."));
-        assert!(!startup.contains("account::"));
-    }
-    #[test]
-    fn ordinary_programs_do_not_depend_on_system_implementation() {
-        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
-        for area in ["driver", "service", "user"] {
-            let mut paths = References::default();
-            references(&source.join(area), &mut paths);
-            assert!(!paths.0.iter().any(|path| path.starts_with("crate::system::") || path.starts_with("programs::system::")), "{area} enters System implementation: {:?}", paths.0);
-        }
-    }
-    #[test]
-    fn provider_api_and_public_clients_keep_one_way_dependencies() {
-        fn dependencies(path: &Path) -> Vec<String> {
-            let source = fs::read_to_string(path).unwrap();
-            let mut result = Vec::new();
-            let mut dependency_section = false;
-            for line in source.lines().map(str::trim) {
-                if line.starts_with('[') {
-                    dependency_section = line.contains("dependencies");
-                } else if dependency_section {
-                    if let Some((name, _)) = line.split_once('=') {
-                        result.push(name.trim().to_owned());
-                    }
-                }
-            }
-            result
-        }
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let clients = dependencies(&repo.join("programs/src/system/client/Cargo.toml"));
-        assert!(clients.iter().any(|name| name == "system-api"));
-        assert!(!clients.iter().any(|name| name == "protocol" || name == "programs"));
-        let terminal_api = dependencies(&repo.join("programs/src/user/terminal/api/Cargo.toml"));
-        assert!(terminal_api.iter().all(|name| ["env", "wire", "mold"].contains(&name.as_str())));
-        let router_api = dependencies(&repo.join("programs/src/driver/router/api/Cargo.toml"));
-        assert!(router_api.iter().all(|name| ["env", "wire", "mold", "system-api"].contains(&name.as_str())));
-        let terminal_client = dependencies(&repo.join("programs/src/user/terminal/client/Cargo.toml"));
-        assert!(terminal_client.iter().all(|name| ["env", "wire", "resource", "ipc", "system-client", "system-api", "terminal-api"].contains(&name.as_str())));
-        assert!(terminal_client.contains(&"system-client".to_owned()));
-        let router_client = dependencies(&repo.join("programs/src/driver/router/client/Cargo.toml"));
-        assert!(router_client.iter().all(|name| ["env", "wire", "resource", "ipc", "router-api"].contains(&name.as_str())));
-        let hub_client = dependencies(&repo.join("programs/src/service/hub/client/Cargo.toml"));
-        assert!(hub_client.iter().all(|name| ["env", "wire", "resource", "ipc", "hub-api", "system-api", "system-client"].contains(&name.as_str())));
-        for dependencies in [&terminal_api, &router_api, &terminal_client, &router_client, &hub_client] {
-            assert!(!dependencies.iter().any(|name| name == "protocol"));
-        }
-        let mut paths = References::default();
-        references(&repo.join("programs/src/system/client/src"), &mut paths);
-        assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
-        for source in [
-            repo.join("programs/src/user/terminal/api/src"),
-            repo.join("programs/src/user/terminal/client/src"),
-            repo.join("programs/src/driver/router/api/src"),
-            repo.join("programs/src/driver/router/client/src"),
-        ] {
-            let mut paths = References::default();
-            references(&source, &mut paths);
-            assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
-        }
-    }
     #[derive(Default)]
     struct References(Vec<String>);
     impl<'a> Visit<'a> for References {
         fn visit_path(&mut self, path: &'a syn::Path) {
-            self.0.push(path.segments.iter().map(|part| part.ident.to_string()).collect::<Vec<_>>().join("::"));
+            self.0.push(path.segments.iter().map(|p| p.ident.to_string()).collect::<Vec<_>>().join("::"));
             visit::visit_path(self, path);
         }
         fn visit_item_use(&mut self, item: &'a syn::ItemUse) {
@@ -611,238 +26,188 @@ mod boundaries {
         for entry in fs::read_dir(root).unwrap() {
             let path = entry.unwrap().path();
             if path.is_dir() { references(&path, out); }
-            else if path.extension().is_some_and(|extension| extension == "rs") {
+            else if path.extension().is_some_and(|ext| ext == "rs") {
                 out.visit_file(&syn::parse_file(&fs::read_to_string(path).unwrap()).unwrap());
             }
         }
     }
     #[test]
-    fn functional_owners_are_private_and_runtime_adapts_them() {
-        let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
-        for old in ["operator/service", "client/src/operator/client", "control/service"] {
-            assert!(!system.join(old).exists(), "redundant adapter nesting remains: {old}");
-        }
-        for (file, owners) in [
-            ("operator/session.rs", &["Guest", "Desk"][..]),
-            ("operator/watch.rs", &["Subscription", "Subscriber", "Watchers"][..]),
-            ("control/unit/service.rs", &["Service"][..]),
-            ("control/endpoint/mod.rs", &["Entries"][..]),
-        ] {
-            let syntax = syn::parse_file(&fs::read_to_string(system.join(file)).unwrap()).unwrap();
-            for name in owners {
-                let owner = syntax.items.iter().find_map(|item| match item {
-                    syn::Item::Struct(item) if item.ident == *name => Some(item), _ => None,
-                }).unwrap_or_else(|| panic!("missing owner {file}::{name}"));
-                assert!(owner.fields.iter().all(|field| matches!(field.vis, syn::Visibility::Inherited)),
-                    "{file}::{name} leaks state instead of operations");
-            }
-            let mut paths = References::default(); paths.visit_file(&syntax);
-            assert!(!paths.0.iter().any(|path| path.starts_with("crate::system::operator::runtime::")),
-                "functional owner depends on runtime adapter: {file}");
-        }
-        let admission = fs::read_to_string(system.join("operator/connection.rs")).unwrap();
-        assert!(!admission.contains(".pull(&mut bytes, budget.remaining())"));
-        assert!(system.join("operator/runtime/mod.rs").is_file());
-        assert!(!system.join("operator/runtime/run.rs").exists());
+    fn driver_retention_uses_the_same_supply_acquisition_as_service_installation() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
+        let iommu_dir = src.join("driver/iommu");
+        let mut driver_files: Vec<String> = fs::read_dir(&iommu_dir).unwrap().filter_map(|entry| {
+            let path = entry.unwrap().path();
+            (path.extension().is_some_and(|ext| ext == "rs")).then(|| path.file_name().unwrap().to_string_lossy().into_owned())
+        }).collect();
+        driver_files.sort();
+        let mut expected = vec!["acquire.rs","binding.rs","cache_step.rs","context.rs","cookie.rs","core.rs","domain.rs","domain_id.rs","domain_range.rs","engine.rs","fence.rs","handshake.rs","invalidation.rs","layout.rs","main.rs","mod.rs","order.rs","pages.rs","phase.rs","queue.rs","references.rs","regs.rs","serve.rs","settled.rs","table.rs","ticket.rs"];
+        expected.sort();
+        assert_eq!(driver_files, expected, "the production IOMMU keeps exactly one bin and no scene variants");
+        let core = fs::read_to_string(iommu_dir.join("core.rs")).unwrap();
+        for step in ["pub fn establish","pub fn acquire","pub fn publish","pub fn invalidate","pub fn quiesce","pub fn release"] { assert!(core.contains(step), "missing step {step}"); }
+        let domain = fs::read_to_string(iommu_dir.join("domain.rs")).unwrap();
+        assert!(domain.contains("Holds::new()"));
+        assert!(core.contains("Domain::new("));
+        let compact: String = core.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(compact.contains("holds.register("));
+        assert!(compact.contains("holds.retry("));
+        assert!(!core.contains("raw::pies("));
+        assert!(!core.contains("hub_api::iova_base"));
+        let work = fs::read_to_string(src.join("harness/device/work.rs")).unwrap();
+        assert_eq!(work.matches("raw::pies(").count(), 1, "only the Before fixture may scan local gifts");
+        let before = work.find("if mode == Mode::Before").unwrap();
+        let window = work.find("let window = await_window").unwrap();
+        assert!(work[before..window].contains("await_bar_gift("));
+        assert_eq!(work.matches("await_bar_gift(").count(), 2, "gift verification is defined and called once");
+        let gift = work.find("fn await_bar_gift(").unwrap();
+        let gift_end = work[gift + 1..].find("\nfn ").map_or(work.len(), |end| gift + 1 + end);
+        assert!(work[gift..gift_end].contains("raw::pies("), "the local scan belongs to the Before fixture's gift verifier");
+        assert!(!work.contains("find_window("));
+        assert!(!work.contains("find_bar("));
+        let control = fs::read_to_string(src.join("harness/device/control.rs")).unwrap();
+        assert!(!control.contains("iova_base("));
+        let bindings = fs::read_to_string(src.join("service/hub/core/bindings.rs")).unwrap();
+        assert!(bindings.contains("pub fn owner_gone"));
+        assert!(bindings.contains("Fail::Taken"));
+        assert!(!bindings.contains("iova_base"));
+        assert!(!bindings.contains("Cell::Vacant"));
+        let dma = fs::read_to_string(src.join("service/hub/serve/dma.rs")).unwrap();
+        assert!(!dma.contains("join_task("));
+        assert!(!dma.contains("slay_team("));
+        assert!(!dma.contains("env::unit::oust("));
+        let hub_core = src.join("service/hub/core");
+        for old in ["execution.rs","execution_effects.rs","execution_failure.rs","execution_step.rs","executions.rs"] { assert!(!hub_core.join(old).exists(), "Hub lifecycle state remains: {old}"); }
+        assert!(hub_core.join("admission.rs").is_file());
+        let hub_execution = fs::read_to_string(src.join("service/hub/serve/execution.rs")).unwrap();
+        assert!(!hub_execution.contains("env::unit::"));
+        assert!(fs::read_to_string(src.join("service/hub/serve/launch.rs")).unwrap().contains("begin_inspect"));
+        let hub_return = fs::read_to_string(src.join("service/hub/serve/returned.rs")).unwrap();
+        assert!(hub_return.contains("begin_release"));
+        assert!(src.join("service/hub/serve/launch_phase.rs").is_file());
+        assert!(src.join("service/hub/serve/launch_reply.rs").is_file());
+        assert!(src.join("service/hub/serve/return_reply.rs").is_file());
+        assert!(!dma.contains("fn stop_cpu"));
+        assert!(!dma.contains("owned_instance"));
+        assert!(!hub_return.contains("Err(Fail::Unknown) | Err(Fail::Denied) => ReturnReply::Released"));
+        assert!(hub_execution.contains("try_reserve"));
+        assert!(dma.contains("device_by_door("));
+        assert!(!dma.contains("claim.requester"));
+        assert!(dma.contains("peers.coord.host() != from"));
+        assert!(!dma.contains("crate::driver::pci::"));
+        let coordination = fs::read_to_string(src.join("service/hub/serve/coordination.rs")).unwrap();
+        assert!(coordination.contains("binding.device.source != peers.coord.host()"));
     }
     #[test]
-    fn request_servers_do_not_depend_on_supervisor_or_client_implementations() {
-        let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
-        for domain in ["identity", "operator", "control"] {
+    fn instance_retirement_precedes_cleanup_and_dynamic_units_declare_hub() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let device = fs::read_to_string(repo.join("crates/composition/src/units/device.rs")).unwrap();
+        assert!(device.contains("retirement: &WORK_RETIREMENT"));
+        assert!(device.contains("provider: \"hub\""));
+        for path in ["programs/src/user/login/main.rs","programs/src/user/shell/adapt/controller.rs"] {
+            let source = fs::read_to_string(repo.join(path)).unwrap();
+            assert!(!source.contains("env::unit::oust"), "{path} still Ousts directly");
+            assert!(source.contains("release"), "{path} does not return through Release");
+        }
+        let shell = fs::read_to_string(repo.join("programs/src/user/shell/adapt/controller.rs")).unwrap();
+        assert!(shell.contains("begin_release"));
+        assert!(shell.contains("release_reply"));
+        assert!(!shell.contains("env::unit::oust"));
+    }
+    #[test]
+    fn ordinary_programs_do_not_depend_on_system_implementation() {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
+        for area in ["driver", "service", "user"] {
             let mut paths = References::default();
-            let adapter = match domain { "operator" => "runtime", "control" => "endpoint", _ => "service" };
-            references(&system.join(domain).join(adapter), &mut paths);
-            for path in paths.0 {
-                assert!(!path.starts_with("crate::system::app::execute") && !path.starts_with("crate::system::app::boot"),
-                    "{domain} server depends on supervisor: {path}");
-                if domain != "control" {
-                    assert!(!path.starts_with("crate::system::control"), "{domain} server depends on Control: {path}");
-                    assert!(!path.starts_with(&format!("crate::system::{domain}::client")),
-                        "{domain} server depends on its client: {path}");
-                }
-            }
+            references(&source.join(area), &mut paths);
+            assert!(!paths.0.iter().any(|path| path.starts_with("crate::system::") || path.starts_with("programs::system::") || path.starts_with("system_server::")), "{area} enters System implementation: {:?}", paths.0);
         }
     }
     #[test]
     fn mark_declarations_cannot_bypass_the_registry() {
         fn expression<'a>(syntax: &'a syn::File, name: &str) -> &'a syn::Expr {
-            syntax.items.iter().find_map(|item| match item {
-                syn::Item::Const(item) if item.ident == name => Some(&*item.expr),
-                _ => None,
-            }).unwrap_or_else(|| panic!("missing const {name}"))
+            syntax.items.iter().find_map(|item| match item { syn::Item::Const(item) if item.ident == name => Some(&*item.expr), _ => None }).unwrap_or_else(|| panic!("missing const {name}"))
         }
         #[derive(Default)]
         struct Paths(Vec<String>);
         impl<'ast> Visit<'ast> for Paths {
             fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
-                self.0.push(path.path.segments.iter().map(|part| part.ident.to_string())
-                    .collect::<Vec<_>>().join("::"));
+                self.0.push(path.path.segments.iter().map(|p| p.ident.to_string()).collect::<Vec<_>>().join("::"));
                 visit::visit_expr_path(self, path);
             }
         }
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let assembly = syn::parse_file(&fs::read_to_string(repo.join("programs/src/interfaces.rs")).unwrap()).unwrap();
-        let mut registered = Paths::default();
-        registered.visit_expr(expression(&assembly, "APIS"));
-        for provider in [
-            "LOADER",
-            "system_api::identity::REGISTRY",
-            "system_api::operator::REGISTRY",
-            "system_api::control::REGISTRY",
-            "hub_api::REGISTRY",
-            "terminal_api::REGISTRY",
-            "router_api::REGISTRY",
-        ] {
-            assert!(registered.0.iter().any(|path| path == provider),
-                "unit interface registry omits provider {provider}");
+        let mut registered = Paths::default(); registered.visit_expr(expression(&assembly, "APIS"));
+        for provider in ["LOADER","system_api::identity::REGISTRY","system_api::operator::REGISTRY","system_api::control::REGISTRY","hub_api::REGISTRY","terminal_api::REGISTRY","router_api::REGISTRY"] {
+            assert!(registered.0.iter().any(|path| path == provider), "unit interface registry omits provider {provider}");
         }
-        let mut loader = Paths::default();
-        loader.visit_expr(expression(&assembly, "LOADER"));
-        assert!(loader.0.iter().any(|path| path == "system_api::loader::REGISTRY"),
-            "Loader provider registry is not assembled");
-
-        for api in ["programs/src/user/terminal/api/src/lib.rs", "programs/src/driver/router/api/src/lib.rs"] {
-            let source = fs::read_to_string(repo.join(api)).unwrap();
-            assert!(source.contains("mold::interface"), "provider metadata is not generated: {api}");
+        let mut loader = Paths::default(); loader.visit_expr(expression(&assembly, "LOADER"));
+        assert!(loader.0.iter().any(|path| path == "system_api::loader::REGISTRY"));
+        for api in ["programs/src/user/terminal/api/src/lib.rs","programs/src/driver/router/api/src/lib.rs"] {
+            assert!(fs::read_to_string(repo.join(api)).unwrap().contains("mold::interface"));
         }
     }
     #[test]
-    fn loader_frame_and_shutdown_keep_their_distinct_steps() {
-        #[derive(Default)]
-        struct Steps(Vec<String>);
-        impl<'a> Visit<'a> for Steps {
-            fn visit_expr_method_call(&mut self, call: &'a syn::ExprMethodCall) {
-                if call.method == "system" {
-                    if let Some(syn::Expr::Lit(literal)) = call.args.first() {
-                        if let syn::Lit::Str(name) = &literal.lit { self.0.push(name.value()); }
-                    }
-                }
-                visit::visit_expr_method_call(self, call);
+    fn provider_api_and_public_clients_keep_one_way_dependencies() {
+        fn dependencies(path: &Path) -> Vec<String> {
+            let source = fs::read_to_string(path).unwrap();
+            let mut result = Vec::new(); let mut section = false;
+            for line in source.lines().map(str::trim) {
+                if line.starts_with('[') { section = line.contains("dependencies"); }
+                else if section { if let Some((name, _)) = line.split_once('=') { result.push(name.trim().to_owned()); } }
             }
+            result
         }
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system/loader/service/plan.rs");
-        let syntax = syn::parse_file(&fs::read_to_string(path).unwrap()).unwrap();
-        let mut checked = 0;
-        for item in syntax.items {
-            if let syn::Item::Fn(function) = item {
-                let expected: &[&str] = match function.sig.ident.to_string().as_str() {
-                    "frame" => &["receive"],
-                    "shutdown" => &["withdraw", "close"],
-                    _ => continue,
-                };
-                let mut steps = Steps::default(); steps.visit_block(&function.block);
-                assert_eq!(steps.0, expected);
-                checked += 1;
-            }
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let terminal_api = dependencies(&repo.join("programs/src/user/terminal/api/Cargo.toml"));
+        assert!(terminal_api.iter().all(|name| ["env","wire","mold"].contains(&name.as_str())));
+        let router_api = dependencies(&repo.join("programs/src/driver/router/api/Cargo.toml"));
+        assert!(router_api.iter().all(|name| ["env","wire","mold","system-api"].contains(&name.as_str())));
+        let terminal_client = dependencies(&repo.join("programs/src/user/terminal/client/Cargo.toml"));
+        assert!(terminal_client.iter().all(|name| ["env","wire","resource","ipc","system-client","system-api","terminal-api"].contains(&name.as_str())));
+        assert!(terminal_client.contains(&"system-client".to_owned()));
+        let router_client = dependencies(&repo.join("programs/src/driver/router/client/Cargo.toml"));
+        assert!(router_client.iter().all(|name| ["env","wire","resource","ipc","router-api"].contains(&name.as_str())));
+        let hub_client = dependencies(&repo.join("programs/src/service/hub/client/Cargo.toml"));
+        assert!(hub_client.iter().all(|name| ["env","wire","resource","ipc","hub-api","system-api","system-client"].contains(&name.as_str())));
+        for dependencies in [&terminal_api, &router_api, &terminal_client, &router_client, &hub_client] { assert!(!dependencies.iter().any(|name| name == "protocol")); }
+        for source in [repo.join("programs/src/user/terminal/api/src"),repo.join("programs/src/user/terminal/client/src"),repo.join("programs/src/driver/router/api/src"),repo.join("programs/src/driver/router/client/src")] {
+            let mut paths = References::default(); references(&source, &mut paths);
+            assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
         }
-        assert_eq!(checked, 2);
     }
-}
-
-#[cfg(test)]
-mod revised_ownership {
-    use std::{fs, path::Path};
     #[test]
     fn account_has_its_own_task_and_api_and_uses_authorized_control_contract() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        assert!(!repo.join("programs/src/system/account").exists());
         let service = fs::read_to_string(repo.join("programs/src/service/account/mod.rs")).unwrap();
         assert!(!service.contains("crate::system::"));
         assert!(service.contains("api::Call"));
         assert!(repo.join("programs/src/service/account/api/Cargo.toml").is_file());
         assert!(repo.join("programs/src/service/account/client/Cargo.toml").is_file());
-        let control = fs::read_to_string(repo.join("programs/src/system/control/unit/mod.rs")).unwrap();
-        assert!(!control.contains("loader:"));
-        let operator = fs::read_to_string(repo.join("programs/src/system/operator/runtime/authority.rs")).unwrap();
-        assert!(!operator.contains("hub_api") && !operator.contains("Machine"));
-        assert!(!repo.join("programs/src/system/client/src/control/publication.rs").exists());
-        assert!(!repo.join("programs/src/system/launch/activation.rs").exists());
-        assert!(!repo.join("programs/src/system/control/unit/material.rs").exists());
     }
-
     #[test]
     fn daemon_is_one_rtc_only_resident_supervision_process() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let declaration =
-            fs::read_to_string(repo.join("crates/composition/src/units/daemon.rs")).unwrap();
-        for required in [
-            "name: \"daemon\"",
-            "supervision: Some(\"supervised\")",
-            "Dependency::Target(\"supervised\")",
-            "Ending::Resident",
-            "Ready::Signal(crate::unit::READY_MARK)",
-        ] {
-            assert!(declaration.contains(required), "daemon declaration missing {required}");
-        }
+        let declaration = fs::read_to_string(repo.join("crates/composition/src/units/daemon.rs")).unwrap();
+        for required in ["name: \"daemon\"","supervision: Some(\"supervised\")","Dependency::Target(\"supervised\")","Ending::Resident","Ready::Signal(crate::unit::READY_MARK)"] { assert!(declaration.contains(required)); }
         let catalog = fs::read_to_string(repo.join("crates/composition/src/units/mod.rs")).unwrap();
         assert_eq!(catalog.matches("daemon::PROGRAM").count(), 1);
         let packages = fs::read_to_string(repo.join("crates/composition/src/image_builds.rs")).unwrap();
         assert_eq!(packages.matches("image!(\"daemon\")").count(), 1);
-        assert!(fs::read_to_string(repo.join("programs/Cargo.toml"))
-            .unwrap()
-            .contains("name = \"prog-daemon\""));
-
+        assert!(fs::read_to_string(repo.join("programs/Cargo.toml")).unwrap().contains("name = \"prog-daemon\""));
         let root = repo.join("programs/src/service/daemon");
         let mut runtime = String::new();
         for entry in fs::read_dir(&root).unwrap() {
             let path = entry.unwrap().path();
-            if path.extension().is_some_and(|extension| extension == "rs") {
-                runtime.push_str(&fs::read_to_string(&path).unwrap());
-            }
+            if path.extension().is_some_and(|e| e == "rs") { runtime.push_str(&fs::read_to_string(&path).unwrap()); }
             if path.is_dir() {
                 for entry in fs::read_dir(path).unwrap() {
                     let path = entry.unwrap().path();
-                    if path.extension().is_some_and(|extension| extension == "rs") {
-                        runtime.push_str(&fs::read_to_string(path).unwrap());
-                    }
+                    if path.extension().is_some_and(|e| e == "rs") { runtime.push_str(&fs::read_to_string(path).unwrap()); }
                 }
             }
         }
-        for forbidden in [
-            "Grant::State",
-            "Grant::Mint",
-            "Grant::Embark",
-            "Grant::Debark",
-            "Grant::Ruin",
-            "join_task",
-            "slay_team",
-            "oust",
-            "set_run_requested",
-            "Settle",
-            "closing",
-            "hub::",
-            "pci::",
-            "iommu::",
-            "uart::",
-            "rtc::",
-        ] {
-            assert!(!runtime.contains(forbidden), "daemon owns {forbidden}");
-        }
-        for required in [
-            "control::SUPERVISION",
-            "control::RECOVER",
-            "establish::opened_by",
-            "establish::marked_as",
-            "READY_MARK",
-        ] {
-            assert!(runtime.contains(required), "daemon missing {required}");
-        }
-
-        fn names_daemon(root: &Path) -> bool {
-            for entry in fs::read_dir(root).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    if names_daemon(&path) {
-                        return true;
-                    }
-                } else if path.extension().is_some_and(|extension| extension == "rs")
-                    && fs::read_to_string(path).unwrap().contains("\"daemon\"")
-                {
-                    return true;
-                }
-            }
-            false
-        }
-        assert!(!names_daemon(&repo.join("programs/src/system")), "System names the daemon");
+        for forbidden in ["Grant::State","Grant::Mint","Grant::Embark","Grant::Debark","Grant::Ruin","join_task","slay_team","oust","set_run_requested","Settle","closing","hub::","pci::","iommu::","uart::","rtc::"] { assert!(!runtime.contains(forbidden), "daemon owns {forbidden}"); }
+        for required in ["control::SUPERVISION","control::RECOVER","establish::opened_by","establish::marked_as","READY_MARK"] { assert!(runtime.contains(required), "daemon missing {required}"); }
     }
 }

@@ -11,6 +11,8 @@ exclude = [
     "tools/shuyra-image",
     # Public Kernel provider is a fixed gitlink, not a Source workspace member.
     "components/kernel",
+    # Public System provider is a fixed gitlink, not a Source workspace member.
+    "components/system",
 ]
 
 # 没有 `[profile.framework]` / `[profile.harden]`。`debug_assertions` 控制的
@@ -28,7 +30,6 @@ members = [
     "programs/src/user/shell/api",
     "programs/src/user/shell/client",
     "programs/src/user/shell/declaration",
-    "programs/src/system/client",
     "programs/src/service/account/api",
     "programs/src/service/account/client",
     "programs/src/service/hub/client",

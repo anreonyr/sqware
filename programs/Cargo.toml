@@ -40,7 +40,9 @@ schedule = { git = "https://github.com/shuyra-arche/schedule.git", rev = "a80663
 ipc = { git = "https://github.com/shuyra-arche/ipc.git", rev = "29ad97dc08d9dfc4ea6578b1b77874261229b3b5" }
 wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 system-api = { git = "https://github.com/shuyra-arche/system.git", rev = "9e5d63ca536a176583cf1b0054b4ecf7ddd88257" }
-system-client = { path = "src/system/client" }
+system-client = { git = "https://github.com/shuyra-arche/system.git", rev = "5a792ff2d39901a970925b1a6d63206adf6c16d8" }
+system-server = { git = "https://github.com/shuyra-arche/system.git", rev = "5a792ff2d39901a970925b1a6d63206adf6c16d8", features = ["test-support"] }
+system-support = { git = "https://github.com/shuyra-arche/system.git", rev = "5a792ff2d39901a970925b1a6d63206adf6c16d8" }
 hub-api = { git = "https://github.com/shuyra-arche/hub.git", rev = "cccef3f325198c8390007ae88b064bae0f21f93e" }
 hub-client = { path = "src/service/hub/client" }
 terminal-api = { path = "src/user/terminal/api" }
