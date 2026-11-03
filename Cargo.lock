@@ -661,6 +661,7 @@ dependencies = [
 [[package]]
 name = "terminal-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/terminal.git?rev=c447c0761835339a39efdf2ddd8101ebf80db15a#c447c0761835339a39efdf2ddd8101ebf80db15a"
 dependencies = [
  "env",
  "mold",
@@ -670,6 +671,7 @@ dependencies = [
 [[package]]
 name = "terminal-client"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/terminal.git?rev=c447c0761835339a39efdf2ddd8101ebf80db15a#c447c0761835339a39efdf2ddd8101ebf80db15a"
 dependencies = [
  "env",
  "ipc",

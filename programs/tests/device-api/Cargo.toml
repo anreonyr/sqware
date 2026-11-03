@@ -14,5 +14,5 @@ env = { git = "https://github.com/shuyra-arche/env.git", rev = "d3000253cd5d13d4
 wire = { git = "https://github.com/shuyra-arche/wire.git", rev = "0ff77dc4573fa2620d2fe995a18c01949d9c7e57" }
 system-api = { git = "https://github.com/shuyra-arche/system.git", rev = "9e5d63ca536a176583cf1b0054b4ecf7ddd88257" }
 hub-api = { git = "https://github.com/shuyra-arche/hub.git", rev = "cccef3f325198c8390007ae88b064bae0f21f93e" }
-terminal-api = { path = "../../src/user/terminal/api" }
+terminal-api = { git = "https://github.com/shuyra-arche/terminal.git", rev = "c447c0761835339a39efdf2ddd8101ebf80db15a" }
 router-api = { path = "../../src/driver/router/api" }
