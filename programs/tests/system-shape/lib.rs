@@ -182,11 +182,42 @@ mod boundaries {
     #[test]
     fn account_has_its_own_task_and_api_and_uses_authorized_control_contract() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let service = fs::read_to_string(repo.join("programs/src/service/account/mod.rs")).unwrap();
+        let modules = fs::read_to_string(repo.join(".gitmodules")).unwrap();
+        assert!(modules.contains("path = components/session"));
+        assert!(modules.contains("url = https://github.com/shuyra-arche/session.git"));
+        let session = repo.join("components/session");
+        assert!(session.join(".git").exists(), "Session is a selected public gitlink");
+        assert!(session.join("Cargo.toml").is_file());
+        let service = fs::read_to_string(session.join("units/account/server/src/lib.rs")).unwrap();
         assert!(!service.contains("crate::system::"));
         assert!(service.contains("api::Call"));
-        assert!(repo.join("programs/src/service/account/api/Cargo.toml").is_file());
-        assert!(repo.join("programs/src/service/account/client/Cargo.toml").is_file());
+        let declaration = fs::read_to_string(session.join("units/account/declaration/src/lib.rs")).unwrap();
+        for required in ["pub static UNIT","manifest: \"server/Cargo.toml\"","package: \"account-server\"","bin: \"account\""] {
+            assert!(declaration.contains(required), "selected Account build missing {required}");
+        }
+        let cluster = fs::read_to_string(session.join("cluster/src/lib.rs")).unwrap();
+        assert!(cluster.contains("pub use account_declaration as account"));
+        assert!(cluster.contains("pub use terminal_declaration as terminal"));
+        assert!(cluster.contains("&account::UNIT"));
+        assert!(cluster.contains("account::BUILD"));
+        assert!(cluster.contains("manifest: \"units/account/server/Cargo.toml\""));
+        assert!(cluster.contains("&terminal::UNIT"));
+        assert!(cluster.contains("terminal::BUILD"));
+        assert!(cluster.contains("manifest: \"units/terminal/server/Cargo.toml\""));
+        let selected_account = "7dc701facdbe6368fbc09f7429920ad49dacdfca";
+        for consumer in ["programs/Cargo.toml","programs/tests/control-api/Cargo.toml","programs/tests/control-rpc/Cargo.toml","programs/tests/interface-marks/Cargo.toml","programs/tests/login/Cargo.toml"] {
+            let pins = fs::read_to_string(repo.join(consumer)).unwrap();
+            assert!(pins.contains("https://github.com/shuyra-arche/account.git"), "{consumer} lacks the Account leaf pin");
+            assert!(pins.contains(selected_account), "{consumer} lacks the selected Account gitlink");
+        }
+        let aggregate = fs::read_to_string(repo.join("crates/composition/Cargo.toml")).unwrap();
+        assert!(aggregate.contains("https://github.com/shuyra-arche/session.git"));
+        assert!(aggregate.contains("f7c7542acf0bf010c1aac07d36d30a19e0591731"), "composition lacks the selected Session aggregate");
+        assert!(!aggregate.contains("terminal-declaration"));
+        assert!(!repo.join("programs/src/service/account/mod.rs").exists());
+        assert!(!repo.join("programs/src/service/account/api/Cargo.toml").exists());
+        assert!(!repo.join("programs/src/service/account/client/Cargo.toml").exists());
+        assert!(!fs::read_to_string(repo.join("programs/src/service/mod.rs")).unwrap().contains("pub mod account;"));
     }
     #[test]
     fn daemon_is_one_rtc_only_resident_supervision_process() {

@@ -2,7 +2,7 @@
 //! planning API. The provider core knows only explicit declarations, so these
 //! stay in Integration; the three catalog cases are in `catalog.rs`.
 
-use composition::units::{pipe, terminal};
+use composition::units::{account, pipe, terminal};
 use composition::{DEPLOYMENTS, IMAGE_BUILDS, PROGRAMS};
 use env::ProgramKind;
 use image::{image_inventory, startup_order};
@@ -167,13 +167,22 @@ fn package_names_are_unique_and_exclude_scene_targets() {
             assert_eq!(build.default_features, pipe::BUILD.default_features);
         } else if build.image == "terminal" {
             assert_eq!(build.image, terminal::BUILD.image);
-            assert_eq!(build.manifest, "components/terminal/server/Cargo.toml");
+            assert_eq!(build.manifest, "components/session/units/terminal/server/Cargo.toml");
             assert_eq!(build.package, terminal::BUILD.package);
             assert_eq!(build.bin, terminal::BUILD.bin);
             assert_eq!(build.features, terminal::BUILD.features);
             assert_eq!(build.target, terminal::BUILD.target);
             assert_eq!(build.profile, terminal::BUILD.profile);
             assert_eq!(build.default_features, terminal::BUILD.default_features);
+        } else if build.image == "account" {
+            assert_eq!(build.image, account::BUILD.image);
+            assert_eq!(build.manifest, "components/session/units/account/server/Cargo.toml");
+            assert_eq!(build.package, account::BUILD.package);
+            assert_eq!(build.bin, account::BUILD.bin);
+            assert_eq!(build.features, account::BUILD.features);
+            assert_eq!(build.target, account::BUILD.target);
+            assert_eq!(build.profile, account::BUILD.profile);
+            assert_eq!(build.default_features, account::BUILD.default_features);
         } else {
             assert_eq!(build.manifest, "programs/Cargo.toml");
             assert_eq!(build.package, "programs");

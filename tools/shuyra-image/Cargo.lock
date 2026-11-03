@@ -5,11 +5,23 @@ version = 4
 [[package]]
 name = "account-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/account.git?rev=7dc701facdbe6368fbc09f7429920ad49dacdfca#7dc701facdbe6368fbc09f7429920ad49dacdfca"
 dependencies = [
  "env",
  "mold",
  "system-api",
  "wire",
+]
+
+[[package]]
+name = "account-declaration"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/account.git?rev=7dc701facdbe6368fbc09f7429920ad49dacdfca#7dc701facdbe6368fbc09f7429920ad49dacdfca"
+dependencies = [
+ "account-api",
+ "env",
+ "system-api",
+ "unit",
 ]
 
 [[package]]
@@ -28,7 +40,6 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 name = "composition"
 version = "0.1.0"
 dependencies = [
- "account-api",
  "env",
  "fixturetarget-api",
  "hub-api",
@@ -37,9 +48,9 @@ dependencies = [
  "pipe-declaration",
  "router-api",
  "rtc-api",
+ "session-cluster",
  "shell-declaration",
  "system-api",
- "terminal-declaration",
  "unit",
 ]
 
@@ -276,6 +287,16 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "session-cluster"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/session.git?rev=f7c7542acf0bf010c1aac07d36d30a19e0591731#f7c7542acf0bf010c1aac07d36d30a19e0591731"
+dependencies = [
+ "account-declaration",
+ "terminal-declaration",
+ "unit",
 ]
 
 [[package]]

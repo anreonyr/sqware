@@ -3,12 +3,12 @@
 pub use iommu_declaration as iommu;
 pub use pci_declaration as pci;
 pub use pipe_declaration as pipe;
+pub use session_cluster::account;
+pub use session_cluster::terminal;
 pub use shell_declaration as shell;
-pub use terminal_declaration as terminal;
 use unit::UnitFile;
 
 pub mod accept;
-pub mod account;
 pub mod again;
 pub mod beat;
 pub mod busy;
@@ -82,7 +82,7 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &daemon_stop::PROGRAM,
     &daemon_stop_control::PROGRAM,
     &pipe::UNIT,
-    &account::PROGRAM,
+    &account::UNIT,
     &terminal::UNIT,
     &login::PROGRAM,
     &shell::PROGRAM,
