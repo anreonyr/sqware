@@ -1,6 +1,7 @@
 //! Actual in-repo image targets. `image` is the canonical image name; the bin
 //! is derived from it exactly once here.
 
+use crate::units::{account, terminal};
 use unit::ImageBuild;
 
 macro_rules! image {
@@ -30,14 +31,25 @@ const PIPE: ImageBuild = ImageBuild {
 };
 
 const TERMINAL: ImageBuild = ImageBuild {
-    image: terminal_declaration::BUILD.image,
-    manifest: "components/terminal/server/Cargo.toml",
-    package: terminal_declaration::BUILD.package,
-    bin: terminal_declaration::BUILD.bin,
-    features: terminal_declaration::BUILD.features,
-    target: terminal_declaration::BUILD.target,
-    profile: terminal_declaration::BUILD.profile,
-    default_features: terminal_declaration::BUILD.default_features,
+    image: terminal::BUILD.image,
+    manifest: "components/session/units/terminal/server/Cargo.toml",
+    package: terminal::BUILD.package,
+    bin: terminal::BUILD.bin,
+    features: terminal::BUILD.features,
+    target: terminal::BUILD.target,
+    profile: terminal::BUILD.profile,
+    default_features: terminal::BUILD.default_features,
+};
+
+const ACCOUNT: ImageBuild = ImageBuild {
+    image: account::BUILD.image,
+    manifest: "components/session/units/account/server/Cargo.toml",
+    package: account::BUILD.package,
+    bin: account::BUILD.bin,
+    features: account::BUILD.features,
+    target: account::BUILD.target,
+    profile: account::BUILD.profile,
+    default_features: account::BUILD.default_features,
 };
 
 pub const IMAGE_BUILDS: &[ImageBuild] = &[
@@ -51,7 +63,7 @@ pub const IMAGE_BUILDS: &[ImageBuild] = &[
     image!("daemon-stop"),
     image!("daemon-ctl-stop"),
     PIPE,
-    image!("account"),
+    ACCOUNT,
     TERMINAL,
     image!("login"),
     image!("shell"),

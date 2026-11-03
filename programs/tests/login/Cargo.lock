@@ -5,6 +5,7 @@ version = 4
 [[package]]
 name = "account-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/account.git?rev=7dc701facdbe6368fbc09f7429920ad49dacdfca#7dc701facdbe6368fbc09f7429920ad49dacdfca"
 dependencies = [
  "env",
  "mold",

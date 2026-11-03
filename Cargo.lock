@@ -5,6 +5,7 @@ version = 4
 [[package]]
 name = "account-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/account.git?rev=7dc701facdbe6368fbc09f7429920ad49dacdfca#7dc701facdbe6368fbc09f7429920ad49dacdfca"
 dependencies = [
  "env",
  "mold",
@@ -15,6 +16,7 @@ dependencies = [
 [[package]]
 name = "account-client"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/account.git?rev=7dc701facdbe6368fbc09f7429920ad49dacdfca#7dc701facdbe6368fbc09f7429920ad49dacdfca"
 dependencies = [
  "account-api",
  "env",
@@ -23,6 +25,17 @@ dependencies = [
  "system-api",
  "system-client",
  "wire",
+]
+
+[[package]]
+name = "account-declaration"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/account.git?rev=7dc701facdbe6368fbc09f7429920ad49dacdfca#7dc701facdbe6368fbc09f7429920ad49dacdfca"
+dependencies = [
+ "account-api",
+ "env",
+ "system-api",
+ "unit",
 ]
 
 [[package]]
@@ -87,7 +100,6 @@ dependencies = [
 name = "composition"
 version = "0.1.0"
 dependencies = [
- "account-api",
  "env",
  "fixturetarget-api",
  "hub-api",
@@ -96,9 +108,9 @@ dependencies = [
  "pipe-declaration",
  "router-api",
  "rtc-api",
+ "session-cluster",
  "shell-declaration",
  "system-api",
- "terminal-declaration",
  "unit",
 ]
 
@@ -533,6 +545,16 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "session-cluster"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/session.git?rev=f7c7542acf0bf010c1aac07d36d30a19e0591731#f7c7542acf0bf010c1aac07d36d30a19e0591731"
+dependencies = [
+ "account-declaration",
+ "terminal-declaration",
+ "unit",
+]
 
 [[package]]
 name = "shell-api"

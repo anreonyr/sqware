@@ -17,9 +17,8 @@ hub-api = { git = "https://github.com/shuyra-arche/hub.git", rev = "cccef3f32519
 router-api = { path = "../../programs/src/driver/router/api" }
 rtc-api = { path = "../../programs/src/driver/rtc/api" }
 fixturetarget-api = { path = "../../programs/src/harness/probe/daemon_target/api" }
-account-api = { path = "../../programs/src/service/account/api" }
+session-cluster = { git = "https://github.com/shuyra-arche/session.git", rev = "f7c7542acf0bf010c1aac07d36d30a19e0591731" }
 pipe-declaration = { git = "https://github.com/shuyra-arche/pipe.git", rev = "4fce76372beb6c5ab8567232516f156b3d1032eb" }
 shell-declaration = { path = "../../programs/src/user/shell/declaration" }
-terminal-declaration = { git = "https://github.com/shuyra-arche/terminal.git", rev = "f07a0954f65472e9a16e878e52c5f1d34146bc64" }
 iommu-declaration = { git = "https://github.com/shuyra-arche/iommu.git", rev = "5d2038033efcbd55de77534b35e611729d4bd9bd" }
 pci-declaration = { git = "https://github.com/shuyra-arche/pci.git", rev = "6e3ca09ffc61610017746f74a5f7df0be2ba2dae" }

@@ -13,8 +13,8 @@ exclude = [
     "components/system",
     # Public image-builder provider is a fixed gitlink, not a Source workspace member.
     "components/image-builder",
-    # Public Terminal provider is a fixed gitlink, not a Source workspace member.
-    "components/terminal",
+    # Public Session provider is a fixed gitlink, not a Source workspace member.
+    "components/session",
 ]
 
 # 没有 `[profile.framework]` / `[profile.harden]`。`debug_assertions` 控制的
@@ -30,8 +30,6 @@ members = [
     "programs/src/user/shell/api",
     "programs/src/user/shell/client",
     "programs/src/user/shell/declaration",
-    "programs/src/service/account/api",
-    "programs/src/service/account/client",
     "programs/src/service/hub/client",
     "programs/src/driver/router/api",
     "programs/src/driver/router/client",
