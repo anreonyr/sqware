@@ -143,7 +143,7 @@ mod boundaries {
         }
         let mut loader = Paths::default(); loader.visit_expr(expression(&assembly, "LOADER"));
         assert!(loader.0.iter().any(|path| path == "system_api::loader::REGISTRY"));
-        for api in ["programs/src/user/terminal/api/src/lib.rs","programs/src/driver/router/api/src/lib.rs"] {
+        for api in ["programs/src/driver/router/api/src/lib.rs"] {
             assert!(fs::read_to_string(repo.join(api)).unwrap().contains("mold::interface"));
         }
     }
@@ -159,19 +159,22 @@ mod boundaries {
             result
         }
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let terminal_api = dependencies(&repo.join("programs/src/user/terminal/api/Cargo.toml"));
-        assert!(terminal_api.iter().all(|name| ["env","wire","mold"].contains(&name.as_str())));
+        let programs = fs::read_to_string(repo.join("programs/Cargo.toml")).unwrap();
+        for name in ["terminal-api", "terminal-client"] {
+            let line = programs.lines().find(|line| line.trim_start().starts_with(name)).unwrap();
+            assert!(line.contains("https://github.com/shuyra-arche/terminal.git"));
+            assert!(line.contains("rev = \"c447c0761835339a39efdf2ddd8101ebf80db15a\""));
+        }
+        assert!(!programs.contains("src/user/terminal/api"));
+        assert!(!programs.contains("src/user/terminal/client"));
         let router_api = dependencies(&repo.join("programs/src/driver/router/api/Cargo.toml"));
         assert!(router_api.iter().all(|name| ["env","wire","mold","system-api"].contains(&name.as_str())));
-        let terminal_client = dependencies(&repo.join("programs/src/user/terminal/client/Cargo.toml"));
-        assert!(terminal_client.iter().all(|name| ["env","wire","resource","ipc","system-client","system-api","terminal-api"].contains(&name.as_str())));
-        assert!(terminal_client.contains(&"system-client".to_owned()));
         let router_client = dependencies(&repo.join("programs/src/driver/router/client/Cargo.toml"));
         assert!(router_client.iter().all(|name| ["env","wire","resource","ipc","router-api"].contains(&name.as_str())));
         let hub_client = dependencies(&repo.join("programs/src/service/hub/client/Cargo.toml"));
         assert!(hub_client.iter().all(|name| ["env","wire","resource","ipc","hub-api","system-api","system-client"].contains(&name.as_str())));
-        for dependencies in [&terminal_api, &router_api, &terminal_client, &router_client, &hub_client] { assert!(!dependencies.iter().any(|name| name == "protocol")); }
-        for source in [repo.join("programs/src/user/terminal/api/src"),repo.join("programs/src/user/terminal/client/src"),repo.join("programs/src/driver/router/api/src"),repo.join("programs/src/driver/router/client/src")] {
+        for dependencies in [&router_api, &router_client, &hub_client] { assert!(!dependencies.iter().any(|name| name == "protocol")); }
+        for source in [repo.join("programs/src/driver/router/api/src"),repo.join("programs/src/driver/router/client/src")] {
             let mut paths = References::default(); references(&source, &mut paths);
             assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
         }

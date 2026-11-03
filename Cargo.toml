@@ -31,8 +31,6 @@ members = [
     "programs/src/service/account/api",
     "programs/src/service/account/client",
     "programs/src/service/hub/client",
-    "programs/src/user/terminal/api",
-    "programs/src/user/terminal/client",
     "programs/src/driver/router/api",
     "programs/src/driver/router/client",
     "programs/src/driver/rtc/api",

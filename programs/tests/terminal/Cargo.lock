@@ -65,20 +65,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "terminal-api"
-version = "0.1.0"
-dependencies = [
- "env",
- "mold",
- "wire",
-]
-
-[[package]]
 name = "terminal-tests"
 version = "0.1.0"
 dependencies = [
  "env",
- "terminal-api",
  "wire",
 ]
 
