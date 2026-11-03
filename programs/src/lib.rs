@@ -1,22 +1,21 @@
 #![no_std]
 //! 镜像里装载的程序集合：**每个程序一份 `main.rs`**，住它自己的目录里。
 //!
-//! 分档按特权级（[`system`] 是 S 态，[`user`] 是 U 态）；**两档都不算"特权"——只是"哪个域跑"**。
+//! 分档按特权级：S 态 composition entry 仍由本仓 `system` bin 持有，
+//! 运行时 body 由外部 `system-server` 提供；[`user`] 是 U 态。
+//! **两档都不算"特权"——只是"哪个域跑"**。
 
 extern crate alloc;
 extern crate self as programs;
 
 #[doc(hidden)]
 pub use alloc::format as __format;
-pub mod debug;
+pub use system_support::{boot, debug, support};
 
-pub mod boot;
 pub mod driver;
 pub mod harness;
 mod interfaces;
 pub mod service;
-pub mod support;
-pub mod system;
 pub mod user;
 
 pub use composition;

@@ -40,18 +40,17 @@ pub mod memory_transfer_race;
 // 真能翻”，以及拆除时 DDTP Off 与三个队列 on/busy 各自确认、同一请求随后被拒。
 pub mod iommu;
 
-pub(crate) mod fixture;
-
 /// Run the full system acceptance image from the in-crate fixture.
 pub fn acceptance() -> crate::Report<'static> {
-    use crate::harness::probe::fixture::Fixture;
-    use crate::system::app::{bootstrap, scene};
+    use crate::harness::probe::identity::supply_to;
+    use system_server::test_support::Fixture;
 
-    let boot = bootstrap::take().expect("accept: bootstrap");
+    let boot =
+        system_server::boot::take(router_api::PLIC_CLASS).expect("accept: bootstrap");
     let deployment = crate::harness::deployment(&boot.catalog).expect("accept: deployment");
-    let declarations = crate::harness::declarations();
-    let list = scene::programs(&boot.catalog, declarations, deployment).expect("accept: scene");
-    let mut fixture = Fixture::new(boot, declarations, deployment)
+    let declarations = crate::harness::declaration_slice();
+    let list = Fixture::scene(&boot, declarations, deployment).expect("accept: scene");
+    let mut fixture = Fixture::new(boot, declarations, deployment, supply_to)
         .ok()
         .expect("accept: setup");
     for program in list {

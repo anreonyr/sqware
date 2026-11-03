@@ -25,7 +25,7 @@ mod phase;
 pub(in crate::harness::probe) mod source;
 
 use crate::boot::{Accounts, Catalog};
-use crate::system::loader::{Image, Loader};
+use system_server::test_support::{Image, LoaderFixture as Loader};
 use ::resource::raw::Hole as RawHole;
 use env::{EXIT_OK, ExitCause, JoinReply, Permission, PieToken, TaskId, Wait, unit};
 

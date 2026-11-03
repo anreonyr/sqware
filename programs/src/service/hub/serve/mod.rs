@@ -598,7 +598,8 @@ fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
     }
     let dtb = local_machine_token(system, dtb_item, 0)?;
     let dock = Dock::open(dtb).map_err(|_| Start::Load(E_HUB))?;
-    let machine = Machine::of(dock.view()).map_err(|_| Start::Load(E_HUB))?;
+    let machine = Machine::of(dock.view(), router_api::PLIC_CLASS)
+        .map_err(|_| Start::Load(E_HUB))?;
     let devices = machine.devices().ok_or(Start::Load(E_HUB))?;
     if inventory.len() != devices.len() + 2 {
         return Err(Start::Load(E_HUB));

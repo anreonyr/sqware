@@ -1,12 +1,6 @@
 use env::ProgramKind;
 use env::ledger::manifest::pack;
-
-#[path = "fixtures/accounts.rs"]
-mod accounts;
-use accounts::Accounts;
-#[path = "../../../programs/src/boot/catalog.rs"]
-mod catalog;
-use catalog::Catalog;
+use system_support::boot::Catalog;
 
 #[test]
 fn catalog_reads_explicit_deployment_and_selected_entry() {
@@ -16,7 +10,7 @@ fn catalog_reads_explicit_deployment_and_selected_entry() {
         (ProgramKind::User, "worker", b"worker elf"),
     ], 1, "iommu-product-fault").unwrap();
     let blob = Box::leak(blob.into_boxed_slice());
-    let catalog = Catalog::of_boot(&Accounts::new(blob)).unwrap();
+    let catalog = Catalog::new(&blob[..]).unwrap();
     assert_eq!(catalog.deployment(), "iommu-product-fault");
     assert_eq!(catalog.entry().name, "system");
     assert_eq!(catalog.entry().kind, ProgramKind::Supervisor);

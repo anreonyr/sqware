@@ -1,9 +1,5 @@
 //! Real IPC authorized construction and instance failures exercised against an isolated Control fixture.
-use super::fixture::Fixture;
-use crate::system::app::Fault as Fail;
-use crate::system::control::{instance::hook, unit::Control, unit::table::State as UnitState};
-
-use ::schedule::{Cursor, Progress, Schedule};
+use system_server::test_support::Fixture;
 use account_client::Client;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -11,112 +7,11 @@ use env::{Permission, TaskId, Wait, unit};
 use system_api::control;
 use system_api::control::State;
 use system_client::control::Face;
+use system_server::test_support::account::{AccountRig, Signals};
 
 const WAIT: Wait = Wait::AtMost(2000);
 static CREATOR: &[crate::unit::Construction] = &[crate::unit::Construction::unit("shell")];
-#[derive(Default)]
-struct HookFault {
-    prepare: bool,
-    failed_task: Option<TaskId>,
-    waited: bool,
-    retired_failed: bool,
-    waiting: Option<usize>,
-    signals: Option<Arc<Signals>>,
-}
-fn fail_prepare(
-    mut fault: ::schedule::ResMut<HookFault>,
-    active: ::schedule::Res<crate::system::assembly::Jobs>,
-    resources: ::schedule::Res<crate::system::assembly::namespace::NamespaceInstallations>,
-) -> Result<Progress, &'static str> {
-    if fault.prepare {
-        let task = active.active_hook_task().ok_or("probe hook target")?;
-        assert!(
-            resources.prepared(task),
-            "prepare hook failed before mounting runtime"
-        );
-        fault.prepare = false;
-        fault.failed_task = Some(task);
-        return Err("probe preparation hook failure");
-    }
-    Ok(Progress::Done)
-}
-fn delay_retire(
-    mut fault: ::schedule::ResMut<HookFault>,
-    active: ::schedule::Res<crate::system::assembly::Jobs>,
-    control: ::schedule::Res<Control>,
-) -> Result<Progress, &'static str> {
-    let item = control
-        .instances()
-        .find(|item| Some(item.task) == active.active_hook_task())
-        .unwrap();
-    assert_eq!(item.state, UnitState::Stopping);
-    assert!(
-        item.team().is_some(),
-        "retire hook reported reclaimed before completion"
-    );
-    if !fault.waited {
-        fault.waited = true;
-        fault.waiting = Some(
-            fault
-                .signals
-                .as_ref()
-                .unwrap()
-                .pings
-                .load(Ordering::Acquire),
-        );
-        return Ok(Progress::Pending);
-    }
-    if let Some(baseline) = fault.waiting {
-        if fault
-            .signals
-            .as_ref()
-            .unwrap()
-            .pings
-            .load(Ordering::Acquire)
-            <= baseline
-        {
-            return Ok(Progress::Pending);
-        }
-        fault.waiting = None;
-    }
-    if !fault.retired_failed {
-        fault.retired_failed = true;
-        return Err("probe retirement hook failure");
-    }
-    Ok(Progress::Done)
-}
-fn hooks() -> ::schedule::Plan<Fail> {
-    let children = crate::system::assembly::hooks::children().unwrap();
-    let mut wrapped = alloc::vec::Vec::new();
-    for (key, child) in children {
-        let mut wrap = Schedule::new();
-        if key == hook::Key::Retire {
-            wrap.add_system("delay", 0u8, delay_retire).unwrap();
-        }
-        wrap.add_plan("registered", 1u8, child).unwrap();
-        if key == hook::Key::Prepare {
-            wrap.add_system("fail", 2u8, fail_prepare).unwrap();
-        }
-        wrapped.push((key, wrap.build().unwrap()));
-    }
-    hook::plan(wrapped).unwrap()
-}
-struct Signals {
-    pings: AtomicUsize,
-    stage: AtomicUsize,
-    ack: AtomicUsize,
-    target: AtomicUsize,
-    peer_done: AtomicBool,
-    done: AtomicBool,
-    entry: AtomicUsize,
-    terminal_entry: AtomicUsize,
-    terminal_target: AtomicUsize,
-    terminal_ready: AtomicUsize,
-    inherited_ready: AtomicBool,
-    inherited_done: AtomicBool,
-    creator_request: AtomicBool,
-    creator_ready: AtomicBool,
-}
+
 fn until(mut condition: impl FnMut() -> bool) {
     let deadline = env::chrono::clock() + 12_000_000_000;
     while !condition() {
@@ -173,18 +68,9 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         )
         .expect("Scan heirs")
     };
-    let authority = assembly
-        .resources
-        .read::<crate::system::control::identity::Roster>()
-        .unwrap()
-        .authority()
-        .unwrap();
-    let account_task = assembly
-        .resources
-        .read::<Control>()
-        .unwrap()
-        .task("account")
-        .unwrap();
+    let mut rig = AccountRig::new(assembly);
+    let authority = rig.authority();
+    let account_task = rig.account_task();
     let signals = Arc::new(Signals {
         pings: AtomicUsize::new(0),
         stage: AtomicUsize::new(0),
@@ -369,7 +255,6 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         s.done.store(true, Ordering::Release);
         // Exiting with a unclaimed instance exercises automatic owner-death cleanup.
     });
-    let s = signals.clone();
     let service = operator
         .resolve(system_api::namespace::SERVICE, WAIT)
         .unwrap();
@@ -381,7 +266,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     assert!(
         matches!(resource::raw::reserve(entry), Ok((_, owner, mark)) if owner == account_task && mark == account_api::ENTRY)
     );
-    let instance_entry = crate::system::control::instance_entry(&assembly.resources).unwrap();
+    let instance_entry = rig.instance_entry();
     env::pie::accord(
         instance_entry,
         worker.id(),
@@ -573,13 +458,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         control::ASK_MARK,
     )
     .unwrap();
-    let construction = assembly
-        .resources
-        .read::<crate::system::control::Construction>()
-        .unwrap()
-        .entries()
-        .next()
-        .unwrap();
+    let construction = rig.construction_entry();
     resource::port::ship(
         construction,
         peer.id(),
@@ -588,41 +467,13 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     )
     .unwrap();
     peer_token.store(1, Ordering::Release);
-    {
-        let mut system = assembly.resources.write::<Control>().unwrap();
-        system
-            .fixture_attach_unit(&composition::units::login::PROGRAM, worker.id())
-            .unwrap();
-        system.register_internal(peer.id()).unwrap();
-        system.register_internal(inherited.id()).unwrap();
-    }
-    let login_subject = {
-        let mut roster = assembly
-            .resources
-            .write::<crate::system::control::identity::Roster>()
-            .unwrap();
-        roster.authorize(worker.id()).unwrap();
-        roster.authorize(peer.id()).unwrap();
-        roster.inherit(inherited.id(), worker.id()).unwrap();
-        let login = crate::system::control::identity::binding(&roster, worker.id())
-            .unwrap()
-            .unwrap()
-            .current;
-        let outsider = crate::system::control::identity::binding(&roster, peer.id())
-            .unwrap()
-            .unwrap()
-            .current;
-        assert_ne!(login.principal, outsider.principal);
-        let child = crate::system::control::identity::binding(&roster, inherited.id())
-            .unwrap()
-            .unwrap()
-            .current;
-        assert_eq!(child.principal, login.principal);
-        login
-    };
-    for task in [worker.id(), peer.id(), inherited.id()] {
-        crate::system::operator::connect_task(&assembly.resources, task).unwrap();
-    }
+    let login_subject = rig.prepare_login(
+        &composition::units::login::PROGRAM,
+        worker.id(),
+        peer.id(),
+        inherited.id(),
+    );
+    rig.connect_tasks([worker.id(), peer.id(), inherited.id()]);
     until(|| signals.terminal_entry.load(Ordering::Acquire) != 0);
     let terminal = env::PieToken::from_bytes(
         &(signals.terminal_entry.load(Ordering::Acquire) as u64).to_le_bytes(),
@@ -631,25 +482,8 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     assert!(
         matches!(resource::raw::reserve(terminal), Ok((vestor, owner, mark)) if vestor == peer.id() && owner == peer.id() && mark == terminal_api::marks::ENTRY)
     );
+    let (capability, start) = rig.operator_context();
     let terminal_mounts = {
-        let start = assembly
-            .resources
-            .read::<crate::system::app::operator::Layout>()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .reserve_operations(2)
-            .unwrap()
-            .0;
-        let info = assembly
-            .resources
-            .read::<crate::system::operator::management::Tree>()
-            .unwrap()
-            .root_entry()
-            .unwrap();
-        let capability =
-            system_client::operator::Capability::direct(info.entry.operator, info.entrance)
-                .unwrap();
         let services = capability
             .resolve(system_api::namespace::SERVICE, Wait::AtMost(3000))
             .unwrap();
@@ -678,172 +512,14 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             .binding;
         (capability, pane, binding)
     };
-    assembly
-        .resources
-        .insert(HookFault {
-            signals: Some(signals.clone()),
-            ..HookFault::default()
-        })
-        .unwrap();
-    let mut schedule = Schedule::new();
-    schedule
-        .add_plan("control.poll", 0u8, crate::system::control::poll().unwrap())
-        .unwrap();
-    schedule
-        .add_system(
-            "construction.receive",
-            0u8,
-            crate::system::control::receive_construction,
-        )
-        .unwrap();
-    schedule
-        .add_system(
-            "construction.admit",
-            1,
-            crate::system::control::admit_construction,
-        )
-        .unwrap();
-    schedule
-        .add_plan("launch", 2, crate::system::launch::frame().unwrap())
-        .unwrap();
-    schedule
-        .add_plan(
-            "assembly.jobs",
-            3,
-            crate::system::assembly::frame().unwrap(),
-        )
-        .unwrap();
-    schedule
-        .add_system(
-            "instances.receive",
-            5,
-            crate::system::control::receive_instances,
-        )
-        .unwrap();
-    schedule
-        .add_system(
-            "instances.answer",
-            6,
-            crate::system::control::answer_instances,
-        )
-        .unwrap();
-    schedule
-        .add_system(
-            "instances.reap",
-            7,
-            crate::system::control::instance::schedule::reap,
-        )
-        .unwrap();
-    schedule.add_plan("instance.hooks", 8, hooks()).unwrap();
-    schedule
-        .add_system("launch.completed", 10, crate::system::assembly::completed)
-        .unwrap();
-    let mut plan = schedule.build().unwrap();
-    plan.prepare(&assembly.resources);
-    let mut cursor = Cursor::default();
-    s.entry.store(1, Ordering::Release);
-    signals.inherited_ready.store(true, Ordering::Release);
-    let deadline = env::chrono::clock() + 15_000_000_000;
-    let mut observed = 0;
-    let mut user = None;
-    loop {
-        if signals.creator_request.load(Ordering::Acquire)
-            && !signals.creator_ready.load(Ordering::Acquire)
-        {
-            assembly
-                .resources
-                .write::<crate::system::control::Construction>()
-                .unwrap()
-                .grant(peer.id(), CREATOR)
-                .unwrap();
-            signals.creator_ready.store(true, Ordering::Release);
-        }
-        assembly.progress().unwrap();
-        if plan.advance(&mut cursor, &assembly.resources).unwrap() == Progress::Done {
-            cursor.reset();
-        }
-        let stage = signals.stage.load(Ordering::Acquire);
-        let mut target = TaskId::new(signals.target.load(Ordering::Acquire));
-        if stage == 5 && stage != observed {
-            assembly.resources.write::<HookFault>().unwrap().prepare = true;
-            observed = stage;
-            signals.ack.store(stage, Ordering::Release);
-            continue;
-        }
-        if stage == 15 {
-            target = assembly
-                .resources
-                .read::<HookFault>()
-                .unwrap()
-                .failed_task
-                .expect("preparation failure was not injected");
-            let control = assembly.resources.read::<Control>().unwrap();
-            if !control
-                .instance(target)
-                .is_some_and(|item| item.state == UnitState::Dead)
-            {
-                continue;
-            }
-        }
-        if stage != 0 && stage != observed {
-            let roster = assembly
-                .resources
-                .write::<crate::system::control::identity::Roster>()
-                .unwrap();
-            let binding = crate::system::control::identity::binding(&roster, target).unwrap();
-            let runtime = assembly
-                .resources
-                .read::<crate::system::assembly::namespace::NamespaceInstallations>()
-                .unwrap()
-                .prepared(target);
-            if stage < 10 {
-                let subject = binding
-                    .expect("account-instance: Held task has no identity")
-                    .current;
-                assert_ne!(subject.principal, login_subject.principal);
-                assert!(
-                    runtime,
-                    "account-instance: create returned before runtime registration"
-                );
-                if let Some(principal) = user {
-                    assert_eq!(principal, subject.principal);
-                }
-                user = Some(subject.principal);
-                if stage == 3 {
-                    env::room::doom(target).unwrap();
-                }
-            } else {
-                assert!(binding.is_none(), "account-instance: Dead task still bound");
-                assert!(!runtime, "account-instance: Dead task still registered");
-            }
-            observed = stage;
-            signals.ack.store(stage, Ordering::Release);
-        }
-        let reclaimed = assembly
-            .resources
-            .read::<Control>()
-            .unwrap()
-            .instances()
-            .all(|item| item.settled());
-        let registered = assembly
-            .resources
-            .read::<crate::system::assembly::namespace::NamespaceInstallations>()
-            .unwrap()
-            .prepared(target);
-        if signals.done.load(Ordering::Acquire)
-            && signals.inherited_done.load(Ordering::Acquire)
-            && unit::join_task(worker.id(), Wait::POLL).unwrap_or(true)
-            && reclaimed
-            && !registered
-        {
-            break;
-        }
-        assert!(
-            env::chrono::clock() < deadline,
-            "account-instance: fixture timed out"
-        );
-        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
-    }
+    rig.install_hooks(signals.clone());
+    rig.drive(
+        worker.id(),
+        peer.id(),
+        &signals,
+        login_subject,
+        CREATOR,
+    );
     let worker_id = worker.id();
     let peer_id = peer.id();
     let inherited_id = inherited.id();
@@ -859,35 +535,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         .unpart(terminal_mounts.1, Wait::AtMost(3000))
         .unwrap();
     let _ = env::pie::release(terminal, env::ReleaseMode::Revoke);
-    assembly
-        .resources
-        .write::<Control>()
-        .unwrap()
-        .detach_unit("login")
-        .expect("detach login unit");
-    {
-        let mut roster = assembly
-            .resources
-            .write::<crate::system::control::identity::Roster>()
-            .unwrap();
-        roster.unbind(worker_id).unwrap();
-        roster.unbind(peer_id).unwrap();
-        roster.unbind(inherited_id).unwrap();
-        let target = TaskId::new(signals.target.load(Ordering::Acquire));
-        assert!(
-            crate::system::control::identity::binding(&roster, target)
-                .unwrap()
-                .is_none()
-        );
-    }
-    assembly.progress().unwrap();
-    {
-        let fault = assembly.resources.read::<HookFault>().unwrap();
-        assert!(
-            fault.waited && fault.retired_failed && fault.failed_task.is_some(),
-            "hook failure coverage missing"
-        );
-    }
+    rig.finish(worker_id, peer_id, inherited_id, &signals);
     assert_eq!(
         {
             let mut page = [0u64; 64];

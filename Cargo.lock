@@ -429,6 +429,8 @@ dependencies = [
  "stream",
  "system-api",
  "system-client",
+ "system-server",
+ "system-support",
  "terminal-api",
  "terminal-client",
  "unit",
@@ -590,6 +592,7 @@ dependencies = [
 [[package]]
 name = "system-client"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/system.git?rev=5a792ff2d39901a970925b1a6d63206adf6c16d8#5a792ff2d39901a970925b1a6d63206adf6c16d8"
 dependencies = [
  "env",
  "execution",
@@ -597,6 +600,39 @@ dependencies = [
  "resource",
  "system-api",
  "wire",
+]
+
+[[package]]
+name = "system-server"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/system.git?rev=5a792ff2d39901a970925b1a6d63206adf6c16d8#5a792ff2d39901a970925b1a6d63206adf6c16d8"
+dependencies = [
+ "env",
+ "erra",
+ "execution",
+ "hub-api",
+ "iommu-api",
+ "ipc",
+ "kernel-test-api",
+ "resource",
+ "schedule",
+ "system-api",
+ "system-client",
+ "system-support",
+ "unit",
+ "wire",
+]
+
+[[package]]
+name = "system-support"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/system.git?rev=5a792ff2d39901a970925b1a6d63206adf6c16d8#5a792ff2d39901a970925b1a6d63206adf6c16d8"
+dependencies = [
+ "env",
+ "execution",
+ "fdt",
+ "hub-api",
+ "resource",
 ]
 
 [[package]]

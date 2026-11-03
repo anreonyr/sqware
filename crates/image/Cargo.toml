@@ -23,3 +23,5 @@ serde_json = "1"
 [dev-dependencies]
 # Composition is test data only (existing integration assertions); normal builds do not see it.
 composition = { path = "../composition" }
+# Published neutral manifest reader; test-only, no production dependency.
+system-support = { git = "https://github.com/shuyra-arche/system.git", rev = "5a792ff2d39901a970925b1a6d63206adf6c16d8" }

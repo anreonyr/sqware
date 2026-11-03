@@ -199,16 +199,16 @@ done
 if [ -n "$QEMU_TEE_LOG" ]; then
   exec qemu-system-riscv64 "${args[@]}" > >(
     if tee "$QEMU_TEE_LOG"; then
-      printf 0 1<> "$QEMU_TEE_STATUS"
+      printf 0 > "$QEMU_TEE_STATUS"
     else
-      printf 1 1<> "$QEMU_TEE_STATUS"
+      printf 1 > "$QEMU_TEE_STATUS"
     fi
   ) 2>&1
 else
   exec qemu-system-riscv64 "${args[@]}"
 fi'
 
-def main [--package: string, --scene: string = "", --profile: string, --feed: string, --feed-script: string, --feed-after: int = 5, ...rest: string] {
+def --wrapped main [--package: string, --scene: string = "", --profile: string, --feed: string, --feed-script: string, --feed-after: int = 5, ...rest: string] {
   if ($env.QEMU_ICOUNT? | is-empty) { $env.QEMU_ICOUNT = "" }
 
   # **runner 守卫**：crates.io 上**两个包**都提供 `cargo-qtest` 这一枚 bin——
@@ -454,6 +454,13 @@ sys.exit(0 if p.exists() else 1)' $hold | complete)
   let qtlog = ($trapdir | path join (if ($scene | is-empty) { "qtest.log" } else { $"scene-($scene)-qtest.log" }))
   # 命令与重定向**必须同一行**（分行 ⇒ `nu::parser::unexpected_redirection`）。故先把 argv
   # 拼好，再一行发出去——退出码仍由 `LAST_EXIT_CODE` 拿（`try` 那两条地雷见 `runner.nu` 头注）。
+  # `--wrapped` 已让未知 runner flags 进入 `rest`；只剥一个 CLI 分隔符 `--`，
+  # 其余 flag 的值、顺序与数量原样递下去。
+  let rest = if (($rest | length) > 0) {
+    if (($rest | first) == "--") { $rest | skip 1 } else { $rest }
+  } else {
+    $rest
+  }
   let qtest_argv = ["qtest" "--target" "riscv64gc-unknown-none-elf" ...$test_profile ...$qemu_bin ...$qemu_args ...$scene_args ...$pkg ...$rest]
   # **工作区那三条 rustflags 要由这一侧递一遍**：`cargo-qtest` 把 `RUSTFLAGS` 的值
   # 当作**种子**，再拼上它自己那两枚（对我们这一景是 `-Tembedded-test.x`），最后经

@@ -10,7 +10,7 @@
 /// 它也是本档唯一的共享件：各台都是独立 bin，共用物住本目录顶层、由各 bin 各自
 /// `use programs::harness::tick` 取一次。三档各一目录：`probe/`（探针：只读数）· `guest/`（试客
 /// 量服务）· `bench/`（压测台：整台替换引导镜像；每台与它的受害者同目录）
-pub mod tick;
+pub use system_support::support::tick;
 
 /// 探针那一档（`probe/`）各台共用的量具：**数一块窗格底下到齐没有**（各族"该有几枚"由
 /// 各自的 `Grant::ALL.len()` 说）。各台仍是独立 bin，身子在 `probe/<名>/main.rs`；
@@ -24,32 +24,8 @@ pub mod device;
 /// 独立压测镜像共用的执行主体。
 pub mod bench;
 
-// Test scenes construct an image then pass its result to the lifecycle owner.
-pub(crate) fn mint(
-    table: &mut crate::system::control::unit::table::Table,
-    loader: &mut crate::system::loader::Loader,
-    image: crate::system::control::unit::task::Image<'_>,
-) -> Result<env::TaskId, crate::system::control::unit::verdict::Fail> {
-    use crate::system::control::unit::verdict::Fail;
-    let built = loader
-        .construct(
-            crate::system::loader::Image {
-                bytes: image.bytes,
-                kind: image.kind,
-            },
-            crate::system::loader::Spawn {
-                sire: env::unit::self_id(),
-                args: &[],
-                stack: 0,
-            },
-        )
-        .map_err(|_| Fail::Full)?;
-    crate::system::control::unit::task::mint(table, image.name, built)
-}
-
-/// Harness entries own their composition choice; server code receives it by reference.
-pub(crate) fn declarations() -> crate::system::app::Declarations {
-    crate::system::app::Declarations(composition::PROGRAMS)
+pub(crate) fn declaration_slice() -> &'static [&'static unit::UnitFile] {
+    composition::PROGRAMS
 }
 
 /// Select the boot deployment against the harness-owned declaration set.
