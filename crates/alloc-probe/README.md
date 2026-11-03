@@ -4,8 +4,9 @@
 关机审计里一块内存还在册；那道审计已按用户裁决整体删除）。
 本 crate 是**测试侧**的同一刀：
 
-* 直接依赖 `kernel/allocator`（`kernel-allocator`）机制包：Bump/Frame/Block/Hybrid/Spare
-  的算法只有那一份，本 crate 不再 `include!` 内核私有源码；
+* 直接依赖固定公开 Kernel gitlink 的 `kernel-allocator` 机制包
+  （`https://github.com/shuyra-arche/kernel.git` rev `3aa0a155f825fbf377fc8d04009472ca67cbbf8c`）：
+  Bump/Frame/Block/Hybrid/Spare 的算法只有那一份，本 crate 不再 `include!` 内核私有源码；
 * 宿主侧只保留实际适配：`harness::Arena` 提供独占台面，`fixture` 提供"线程即 hart"
   夹具与机器事实，`host` 提供各实例的全局槽、原生 unit 锁与统计计数；
   **分配器自己的簿记分配落在宿主堆上**，于是泄漏检测器能直接看见"分配器有没有漏掉自己的元数据"；

@@ -3,8 +3,11 @@
 # cargo QEMU runner — riscv64gc-unknown-none-elf
 #
 # 用法：`.cargo/config.toml` 的 `target.<triple>.runner` 指向本脚本，cargo 把本次要跑的 ELF
-#   追加为位置参数；交互式跑 `QEMU_TIMEOUT=40 cargo run --release`（stdin 上的输入进 guest
-#   控制台）。
+#   追加为位置参数。Kernel 不是 Source workspace 成员，显式从 Source 根跑：
+#     SHUYRA_INITRD=<absolute-initrd> cargo run \
+#       --manifest-path components/kernel/Cargo.toml --release
+#   或 `SHUYRA_INITRD=<absolute-initrd> cargo shuyra --release`。镜像选择见
+#   `qemu-args.nu` 的 `chosen-initrd`；不传时回退到 ELF 同目录的 `initrd.img`。
 #
 # 只做两件事：
 #   1) **cargo 集成点**：接住 cargo 给的 ELF，转交 `scripts/boot.nu`（**qemu 起法的唯一出处**）。
@@ -35,15 +38,20 @@
 #     stderr，不并进来则捕获里没有它——曾据此写过一句永不成立的判定）。
 #   - **不要**用 `with-env` 包 qemu 调用：它连 `LAST_EXIT_CODE` 一起还原，退出码就丢了。
 
+use ./qemu-args.nu chosen-initrd
+
 def main [elf: path] {
   # **造镜像那一步在编内核之外**（`crates/image`，用户裁定"initrd 与 kernel 何干"）：
   # `cargo run` 只管编内核 ⇒ 这里查镜像在不在，不在就报一句清楚的话，
   # **而不是静默起一台没有程序的机器**（那正是最难查的一类假象）。
-  let initrd = ($elf | path dirname | path join "initrd.img")
-  if not ($initrd | path exists) {
-    error make {msg: $"没有镜像：($initrd)
-  先造它：cargo image <场景> <档>   （默认 product release；验收景 `accept` 要写明——它多带 15 台测具。场景见 crates/image/src/lib.rs）"}
+  # One selector: explicit `SHUYRA_INITRD`, else legacy ELF-adjacent fallback.
+  let initrd = (chosen-initrd $elf)
+  if ($initrd == null) {
+    error make {msg: $"没有镜像：SHUYRA_INITRD 未设置，且 ELF 旁没有 initrd.img
+  先造它：cargo image <场景> <档>，再设 SHUYRA_INITRD=<cargo image 打印的绝对路径>。默认 product release；验收景 `accept` 要写明。场景见 crates/image/src/lib.rs"}
   }
+  # Pass the same absolute choice through the trace-directory cd.
+  $env.SHUYRA_INITRD = ($initrd | into string)
   let cfg = config $elf
 
   print $"SEED: ($cfg.seed)"

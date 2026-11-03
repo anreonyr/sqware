@@ -14,7 +14,7 @@ publish = false
 
 [dependencies]
 erra = { version = "0.2.0", default-features = false }
-kernel-allocator = { path = "../../kernel/allocator" }
+kernel-allocator = { git = "https://github.com/shuyra-arche/kernel.git", rev = "3aa0a155f825fbf377fc8d04009472ca67cbbf8c" }
 # 三个**互斥**的宿主堆后端（见 README「六条路」与 lib.rs 的接管段）。三者都必须是
 # `[dependencies]`（可选）而不是 `[dev-dependencies]`：`#[global_allocator]` 挂在 lib 里，
 # 而 dev-dependencies 对 lib 不可见（实测：`unresolved module`）。
