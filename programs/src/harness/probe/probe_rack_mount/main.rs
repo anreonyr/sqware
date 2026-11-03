@@ -48,6 +48,7 @@ fn main() -> Report<'static> {
     let Ok(session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-rack-mount: 树那条路开不出来");
     };
+    let requests = session.clone();
     let tree = Face::of(session);
     let service = tree
         .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
@@ -124,14 +125,23 @@ fn main() -> Report<'static> {
         .unwrap();
     let mut reader = ipc::rack::Reader::<Bytes>::from_raw(retained).unwrap();
     capability.unbind(plated[1], Wait::AtMost(MS)).unwrap();
-    assert_eq!(
-        tree.tile_from(
-            service,
-            &rig::road().unwrap().try_join("tx").unwrap(),
-            Wait::AtMost(MS)
+    // A permanent negative is one typed wire question, not a publication retry.
+    let retired = rig::road().unwrap().try_join("tx").unwrap();
+    let reply = requests
+        .call::<system_api::operator::Call>(
+            system_api::operator::Req::Relative {
+                base: service,
+                road: retired,
+            },
+            Wait::AtMost(MS),
         )
-        .map(|_| ()),
-        Err(Fail::Unknown)
+        .unwrap_or_else(|fail| {
+            panic!("probe-rack-mount: retired tx transport failure {fail:?}")
+        });
+    assert_eq!(
+        reply.failure_status(),
+        Some(system_api::operator::UNKNOWN),
+        "probe-rack-mount: retired tx must answer UNKNOWN"
     );
     b.writer().send(&rig::payload(99)).unwrap();
     assert_eq!(

@@ -4,3 +4,6 @@
 [submodule "components/system"]
 	path = components/system
 	url = https://github.com/shuyra-arche/system.git
+[submodule "components/image-builder"]
+	path = components/image-builder
+	url = https://github.com/shuyra-arche/image-builder.git

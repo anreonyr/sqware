@@ -39,14 +39,27 @@ fn main() -> Report<'static> {
     let service = tree
         .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
         .unwrap();
+    // A permanent negative is one typed wire question, not a publication retry.
     for operation in [
         "part", "land", "find", "trim", "list", "seek", "name", "watch",
     ] {
         let road = system_api::operator::PathBuf::try_new(&alloc::format!("operator/{operation}"))
             .unwrap();
+        let reply = requests
+            .call::<system_api::operator::Call>(
+                system_api::operator::Req::Relative {
+                    base: service,
+                    road,
+                },
+                Wait::AtMost(MS),
+            )
+            .unwrap_or_else(|fail| {
+                panic!("probe-operator-gate: operator/{operation} transport failure {fail:?}")
+            });
         assert_eq!(
-            tree.seek_from(service, &road, Wait::AtMost(MS)),
-            Err(Fail::Unknown)
+            reply.failure_status(),
+            Some(system_api::operator::UNKNOWN),
+            "probe-operator-gate: operator/{operation} must answer UNKNOWN"
         );
     }
     let forged = env::hole::unseal(

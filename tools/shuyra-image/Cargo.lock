@@ -13,6 +13,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocator-api2"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c880a97d28a3681c0267bd29cff89621202715b065127cd445fa0f0fe0aa2880"
+
+[[package]]
 name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -60,6 +66,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 
 [[package]]
+name = "execution"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/execution.git?rev=1b333a28bc4c34beaea3f7986a9bb6e8ab2db414#1b333a28bc4c34beaea3f7986a9bb6e8ab2db414"
+dependencies = [
+ "env",
+ "spinning_top",
+ "talc",
+]
+
+[[package]]
+name = "fdt"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "784a4df722dc6267a04af36895398f59d21d07dce47232adf31ec0ff2fa45e67"
+
+[[package]]
 name = "fixturetarget-api"
 version = "0.1.0"
 dependencies = [
@@ -79,8 +101,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "image"
+name = "image-builder"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/image-builder.git?rev=17f294bae58ef5526a18fd6a88a88cc41850d4a6#17f294bae58ef5526a18fd6a88a88cc41850d4a6"
 dependencies = [
  "elf",
  "env",
@@ -104,6 +127,15 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "lock_api"
+version = "0.4.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
+dependencies = [
+ "scopeguard",
+]
 
 [[package]]
 name = "memchr"
@@ -160,6 +192,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "resource"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/resource.git?rev=dbc96834f50f094b5c386e54a0a2ae5560dcd7f8#dbc96834f50f094b5c386e54a0a2ae5560dcd7f8"
+dependencies = [
+ "env",
+ "erra",
+]
+
+[[package]]
 name = "router-api"
 version = "0.1.0"
 dependencies = [
@@ -175,6 +216,12 @@ version = "0.1.0"
 dependencies = [
  "system-api",
 ]
+
+[[package]]
+name = "scopeguard"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "serde"
@@ -233,8 +280,19 @@ name = "shuyra-image"
 version = "0.1.0"
 dependencies = [
  "composition",
- "image",
+ "env",
+ "image-builder",
+ "system-support",
  "unit",
+]
+
+[[package]]
+name = "spinning_top"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d96d2d1d716fb500937168cc09353ffdc7a012be8475ac7308e1bdf0e3923300"
+dependencies = [
+ "lock_api",
 ]
 
 [[package]]
@@ -272,6 +330,28 @@ dependencies = [
  "env",
  "mold",
  "wire",
+]
+
+[[package]]
+name = "system-support"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/system.git?rev=5a792ff2d39901a970925b1a6d63206adf6c16d8#5a792ff2d39901a970925b1a6d63206adf6c16d8"
+dependencies = [
+ "env",
+ "execution",
+ "fdt",
+ "hub-api",
+ "resource",
+]
+
+[[package]]
+name = "talc"
+version = "5.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53f8ad14fa1c1b8635114abf9721076fe1e869572a5f26a52690f407292c80dc"
+dependencies = [
+ "allocator-api2",
+ "lock_api",
 ]
 
 [[package]]
