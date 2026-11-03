@@ -24,7 +24,6 @@ fn main() {
     println!("cargo::rerun-if-changed=src/system/operator/serve/mod.rs");
     println!("cargo::rerun-if-changed=src/service/principal/main.rs");
     println!("cargo::rerun-if-changed=src/service/coalition/main.rs");
-    println!("cargo::rerun-if-changed=src/service/hub/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/daemon_rtc/root_main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/daemon_rtc/control_main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/daemon_target/root_main.rs");

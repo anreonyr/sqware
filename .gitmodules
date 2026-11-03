@@ -13,3 +13,6 @@
 [submodule "components/session"]
 	path = components/session
 	url = https://github.com/shuyra-arche/session.git
+[submodule "components/driver"]
+	path = components/driver
+	url = https://github.com/shuyra-arche/driver.git

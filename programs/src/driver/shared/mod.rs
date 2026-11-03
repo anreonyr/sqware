@@ -10,6 +10,6 @@ pub mod dma;
 pub mod fail;
 pub mod lookup;
 pub mod order;
-pub mod peer;
+pub use driver_support::peer;
 pub mod platform;
 pub mod retention;

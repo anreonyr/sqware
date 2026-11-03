@@ -1,7 +1,7 @@
 //! Actual in-repo image targets. `image` is the canonical image name; the bin
 //! is derived from it exactly once here.
 
-use crate::units::{account, terminal};
+use crate::units::{account, hub, terminal};
 use unit::ImageBuild;
 
 macro_rules! image {
@@ -52,8 +52,19 @@ const ACCOUNT: ImageBuild = ImageBuild {
     default_features: account::BUILD.default_features,
 };
 
+const HUB: ImageBuild = ImageBuild {
+    image: hub::BUILD.image,
+    manifest: "components/driver/units/hub/server/Cargo.toml",
+    package: hub::BUILD.package,
+    bin: hub::BUILD.bin,
+    features: hub::BUILD.features,
+    target: hub::BUILD.target,
+    profile: hub::BUILD.profile,
+    default_features: hub::BUILD.default_features,
+};
+
 pub const IMAGE_BUILDS: &[ImageBuild] = &[
-    image!("hub"),
+    HUB,
     image!("daemon"),
     image!("daemon-rtc"),
     image!("daemon-ctl-rtc"),

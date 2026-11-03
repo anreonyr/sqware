@@ -100,6 +100,7 @@ dependencies = [
 name = "composition"
 version = "0.1.0"
 dependencies = [
+ "driver-cluster",
  "env",
  "fixturetarget-api",
  "hub-api",
@@ -142,6 +143,27 @@ dependencies = [
  "block-buffer",
  "crypto-common",
  "subtle",
+]
+
+[[package]]
+name = "driver-cluster"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/driver.git?rev=f202872b28372799a56957d7e272abf6758cbc14#f202872b28372799a56957d7e272abf6758cbc14"
+dependencies = [
+ "hub-declaration",
+ "unit",
+]
+
+[[package]]
+name = "driver-support"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/driver.git?rev=8e6de5a77aa52184bb6f7fbbcbc961f779e94629#8e6de5a77aa52184bb6f7fbbcbc961f779e94629"
+dependencies = [
+ "env",
+ "ipc",
+ "system-api",
+ "system-client",
+ "wire",
 ]
 
 [[package]]
@@ -215,6 +237,7 @@ dependencies = [
 [[package]]
 name = "hub-client"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/hub.git?rev=daa23b2611fee0c503bc6bd31a16121d97698ad6#daa23b2611fee0c503bc6bd31a16121d97698ad6"
 dependencies = [
  "env",
  "hub-api",
@@ -223,6 +246,17 @@ dependencies = [
  "system-api",
  "system-client",
  "wire",
+]
+
+[[package]]
+name = "hub-declaration"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/hub.git?rev=daa23b2611fee0c503bc6bd31a16121d97698ad6#daa23b2611fee0c503bc6bd31a16121d97698ad6"
+dependencies = [
+ "env",
+ "hub-api",
+ "system-api",
+ "unit",
 ]
 
 [[package]]
@@ -426,6 +460,7 @@ dependencies = [
  "account-client",
  "argon2",
  "composition",
+ "driver-support",
  "env",
  "erra",
  "execution",
@@ -510,6 +545,7 @@ dependencies = [
 [[package]]
 name = "router-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/router.git?rev=94fec223f3c5df6c99a49527a65d016d88de3af4#94fec223f3c5df6c99a49527a65d016d88de3af4"
 dependencies = [
  "env",
  "mold",

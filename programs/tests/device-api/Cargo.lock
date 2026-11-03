@@ -9,6 +9,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 
 [[package]]
+name = "device-api-tests"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "hub-api",
+ "router-api",
+ "system-api",
+ "terminal-api",
+ "wire",
+]
+
+[[package]]
 name = "env"
 version = "0.1.0"
 source = "git+https://github.com/shuyra-arche/env.git?rev=d3000253cd5d13d466e91fafd4dbb27a5ec5aaae#d3000253cd5d13d466e91fafd4dbb27a5ec5aaae"
@@ -65,11 +77,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "retention-tests"
+name = "router-api"
 version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/router.git?rev=94fec223f3c5df6c99a49527a65d016d88de3af4#94fec223f3c5df6c99a49527a65d016d88de3af4"
 dependencies = [
  "env",
- "hub-api",
+ "mold",
  "system-api",
  "wire",
 ]
@@ -89,6 +102,16 @@ dependencies = [
 name = "system-api"
 version = "0.1.0"
 source = "git+https://github.com/shuyra-arche/system.git?rev=9e5d63ca536a176583cf1b0054b4ecf7ddd88257#9e5d63ca536a176583cf1b0054b4ecf7ddd88257"
+dependencies = [
+ "env",
+ "mold",
+ "wire",
+]
+
+[[package]]
+name = "terminal-api"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/terminal.git?rev=c447c0761835339a39efdf2ddd8101ebf80db15a#c447c0761835339a39efdf2ddd8101ebf80db15a"
 dependencies = [
  "env",
  "mold",

@@ -5,6 +5,7 @@ pub use pci_declaration as pci;
 pub use pipe_declaration as pipe;
 pub use session_cluster::account;
 pub use session_cluster::terminal;
+pub use driver_cluster::hub;
 pub use shell_declaration as shell;
 use unit::UnitFile;
 
@@ -28,7 +29,6 @@ pub mod fixturetarget;
 pub mod group;
 pub mod guest;
 pub mod hang;
-pub mod hub;
 pub mod iommu_dma;
 pub mod iommu_probe;
 pub mod load;
@@ -72,7 +72,7 @@ pub mod waiter;
 /// Unit declarations in source registration order.
 #[rustfmt::skip]
 pub const PROGRAMS: &[&UnitFile] = &[
-    &hub::PROGRAM,
+    &hub::UNIT,
     &daemon::PROGRAM,
     &daemon_rtc::PROGRAM,
     &daemon_rtc_control::PROGRAM,
