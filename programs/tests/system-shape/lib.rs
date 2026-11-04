@@ -126,6 +126,7 @@ mod boundaries {
             ("selected-hub-client", repo.join("components/driver/units/hub/client/src")),
             ("selected-hub-server", repo.join("components/driver/units/hub/server/src")),
             ("selected-router-api", repo.join("components/driver/units/router/api/src")),
+            ("selected-router-client", repo.join("components/driver/units/router/client/src")),
             ("selected-driver-support", repo.join("components/driver/support/src")),
         ] {
             let mut paths = References::default();
@@ -180,12 +181,17 @@ mod boundaries {
         assert!(!programs.contains("src/user/terminal/client"));
         let router_api = dependencies(&repo.join("components/driver/units/router/api/Cargo.toml"));
         assert!(router_api.iter().all(|name| ["env","wire","mold","system-api"].contains(&name.as_str())));
-        let router_client = dependencies(&repo.join("programs/src/driver/router/client/Cargo.toml"));
+        let router_client_manifest = fs::read_to_string(repo.join("components/driver/units/router/client/Cargo.toml")).unwrap();
+        let router_client = dependencies(&repo.join("components/driver/units/router/client/Cargo.toml"));
+        let router_client_api = router_client_manifest.lines().find(|line| line.trim_start().starts_with("router-api")).unwrap();
+        assert!(router_client_api.contains("https://github.com/shuyra-arche/router.git"));
+        assert!(router_client_api.contains("rev = \"94fec223f3c5df6c99a49527a65d016d88de3af4\""));
+        assert!(!router_client_api.contains("path ="), "router-client must use canonical git router-api, not a local path");
         assert!(router_client.iter().all(|name| ["env","wire","resource","ipc","router-api"].contains(&name.as_str())));
         let hub_client = dependencies(&repo.join("components/driver/units/hub/client/Cargo.toml"));
         assert!(hub_client.iter().all(|name| ["env","wire","resource","ipc","hub-api","system-api","system-client"].contains(&name.as_str())));
         for dependencies in [&router_api, &router_client, &hub_client] { assert!(!dependencies.iter().any(|name| name == "protocol")); }
-        for source in [repo.join("components/driver/units/router/api/src"),repo.join("programs/src/driver/router/client/src")] {
+        for source in [repo.join("components/driver/units/router/api/src"),repo.join("components/driver/units/router/client/src")] {
             let mut paths = References::default(); references(&source, &mut paths);
             assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
         }
