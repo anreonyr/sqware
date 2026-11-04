@@ -17,7 +17,6 @@ fn main() {
     println!("cargo::rerun-if-changed=src/user/terminal/main.rs");
     println!("cargo::rerun-if-changed=src/user/login/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/probe_terminal/main.rs");
-    println!("cargo::rerun-if-changed=src/driver/router/main.rs");
     println!("cargo::rerun-if-changed=src/driver/uart/main.rs");
     println!("cargo::rerun-if-changed=src/driver/rtc/main.rs");
     println!("cargo::rerun-if-changed=src/system/main.rs");

@@ -5,7 +5,7 @@ pub use pci_declaration as pci;
 pub use pipe_declaration as pipe;
 pub use session_cluster::account;
 pub use session_cluster::terminal;
-pub use driver_cluster::hub;
+pub use driver_cluster::{hub, router};
 pub use shell_declaration as shell;
 use unit::UnitFile;
 
@@ -59,7 +59,6 @@ pub mod probe_watch;
 pub mod probe_watch_after;
 pub mod probe_watch_gone;
 pub mod rig;
-pub mod router;
 pub mod rtc;
 pub mod sleeper;
 pub mod subject;
@@ -90,7 +89,7 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &guest::GUEST,
     &passer::PASSER,
     &lodger::LODGER,
-    &router::PROGRAM,
+    &router::UNIT,
     &uart::PROGRAM,
     &rtc::PROGRAM,
     &sleeper::SLEEPER,
