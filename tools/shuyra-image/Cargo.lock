@@ -58,9 +58,10 @@ dependencies = [
 [[package]]
 name = "driver-cluster"
 version = "0.1.0"
-source = "git+https://github.com/shuyra-arche/driver.git?rev=f202872b28372799a56957d7e272abf6758cbc14#f202872b28372799a56957d7e272abf6758cbc14"
+source = "git+https://github.com/shuyra-arche/driver.git?rev=b82a20f36684c13808d89b0f1a5b4ce2796c2dbf#b82a20f36684c13808d89b0f1a5b4ce2796c2dbf"
 dependencies = [
  "hub-declaration",
+ "router-declaration",
  "unit",
 ]
 
@@ -254,6 +255,17 @@ dependencies = [
  "mold",
  "system-api",
  "wire",
+]
+
+[[package]]
+name = "router-declaration"
+version = "0.1.0"
+source = "git+https://github.com/shuyra-arche/router.git?rev=8a9416277539aefbc759c4f6519e1e8d93d63be3#8a9416277539aefbc759c4f6519e1e8d93d63be3"
+dependencies = [
+ "env",
+ "router-api",
+ "system-api",
+ "unit",
 ]
 
 [[package]]

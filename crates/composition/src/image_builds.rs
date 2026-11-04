@@ -1,7 +1,7 @@
 //! Actual in-repo image targets. `image` is the canonical image name; the bin
 //! is derived from it exactly once here.
 
-use crate::units::{account, hub, terminal};
+use crate::units::{account, hub, router, terminal};
 use unit::ImageBuild;
 
 macro_rules! image {
@@ -63,6 +63,17 @@ const HUB: ImageBuild = ImageBuild {
     default_features: hub::BUILD.default_features,
 };
 
+const ROUTER: ImageBuild = ImageBuild {
+    image: router::BUILD.image,
+    manifest: "components/driver/units/router/server/Cargo.toml",
+    package: router::BUILD.package,
+    bin: router::BUILD.bin,
+    features: router::BUILD.features,
+    target: router::BUILD.target,
+    profile: router::BUILD.profile,
+    default_features: router::BUILD.default_features,
+};
+
 pub const IMAGE_BUILDS: &[ImageBuild] = &[
     HUB,
     image!("daemon"),
@@ -88,7 +99,7 @@ pub const IMAGE_BUILDS: &[ImageBuild] = &[
     image!("guest"),
     image!("passer"),
     image!("lodger"),
-    image!("router"),
+    ROUTER,
     image!("uart"),
     image!("rtc"),
     image!("sleeper"),

@@ -127,11 +127,16 @@ mod boundaries {
             ("selected-hub-server", repo.join("components/driver/units/hub/server/src")),
             ("selected-router-api", repo.join("components/driver/units/router/api/src")),
             ("selected-router-client", repo.join("components/driver/units/router/client/src")),
+            ("selected-router-server", repo.join("components/driver/units/router/server/src")),
+            ("selected-driver-shared", repo.join("components/driver/shared/src")),
             ("selected-driver-support", repo.join("components/driver/support/src")),
         ] {
             let mut paths = References::default();
             references(&root, &mut paths);
             assert!(!paths.0.iter().any(|path| path.starts_with("crate::system::") || path.starts_with("programs::system::") || path.starts_with("system_server::")), "{area} enters System implementation: {:?}", paths.0);
+            if area.starts_with("selected-") {
+                assert!(!paths.0.iter().any(|path| path.starts_with("programs::") || path.starts_with("composition::")), "{area} links back to Source: {:?}", paths.0);
+            }
         }
     }
     #[test]
@@ -188,6 +193,56 @@ mod boundaries {
         assert!(router_client_api.contains("rev = \"94fec223f3c5df6c99a49527a65d016d88de3af4\""));
         assert!(!router_client_api.contains("path ="), "router-client must use canonical git router-api, not a local path");
         assert!(router_client.iter().all(|name| ["env","wire","resource","ipc","router-api"].contains(&name.as_str())));
+        let router_server_manifest = fs::read_to_string(repo.join("components/driver/units/router/server/Cargo.toml")).unwrap();
+        let router_server = dependencies(&repo.join("components/driver/units/router/server/Cargo.toml"));
+        assert!(router_server.iter().all(|name| ["router-api","driver-shared","env","wire","resource","ipc","hub-api","system-client","system-support","unit","execution","mold","fdt"].contains(&name.as_str())));
+        assert!(!router_server.iter().any(|name| ["programs","composition","router-server","system-server"].contains(&name.as_str())), "router-server depends back on Source/System implementation: {:?}", router_server);
+        for name in &router_server {
+            let line = router_server_manifest.lines().find(|line| line.trim_start().starts_with(&format!("{name} "))).unwrap();
+            assert!(!line.contains("path ="), "router-server dependency {name} uses a local path");
+        }
+        for (name, url, rev) in [
+            ("router-api", "https://github.com/shuyra-arche/router.git", "94fec223f3c5df6c99a49527a65d016d88de3af4"),
+            ("driver-shared", "https://github.com/shuyra-arche/driver.git", "e75b1e232f828666956fb7e02c61a7d84f13eb66"),
+        ] {
+            let line = router_server_manifest.lines().find(|line| line.trim_start().starts_with(name)).unwrap();
+            assert!(line.contains(url), "router-server {name} lacks canonical URL");
+            assert!(line.contains(rev), "router-server {name} lacks selected revision");
+        }
+        assert!(router_server.iter().any(|name| name == "driver-shared"));
+        let driver_shared_manifest = fs::read_to_string(repo.join("components/driver/shared/Cargo.toml")).unwrap();
+        let driver_shared = dependencies(&repo.join("components/driver/shared/Cargo.toml"));
+        assert!(driver_shared.iter().all(|name| ["env","ipc","system-api","system-client","system-support","execution","resource","hub-api","hub-client","router-api","router-client"].contains(&name.as_str())));
+        assert!(!driver_shared.iter().any(|name| ["programs","composition","router-server","system-server"].contains(&name.as_str())), "driver-shared depends back on Source/System implementation: {:?}", driver_shared);
+        for name in &driver_shared {
+            let line = driver_shared_manifest.lines().find(|line| line.trim_start().starts_with(&format!("{name} "))).unwrap();
+            assert!(!line.contains("path ="), "driver-shared dependency {name} uses a local path");
+        }
+        for (name, url, rev) in [
+            ("router-api", "https://github.com/shuyra-arche/router.git", "94fec223f3c5df6c99a49527a65d016d88de3af4"),
+            ("router-client", "https://github.com/shuyra-arche/router.git", "aa3033a7bd25b5d4199a50a6c00538475b62ef4c"),
+            ("hub-client", "https://github.com/shuyra-arche/hub.git", "daa23b2611fee0c503bc6bd31a16121d97698ad6"),
+        ] {
+            let line = driver_shared_manifest.lines().find(|line| line.trim_start().starts_with(name)).unwrap();
+            assert!(line.contains(url), "driver-shared {name} lacks canonical URL");
+            assert!(line.contains(rev), "driver-shared {name} lacks selected revision");
+        }
+        assert!(!driver_shared.iter().any(|name| name == "router-server"));
+        let composition = fs::read_to_string(repo.join("crates/composition/Cargo.toml")).unwrap();
+        let driver_cluster = composition.lines().find(|line| line.trim_start().starts_with("driver-cluster")).unwrap();
+        assert!(driver_cluster.contains("https://github.com/shuyra-arche/driver.git"));
+        assert!(driver_cluster.contains("rev = \"b82a20f36684c13808d89b0f1a5b4ce2796c2dbf\""));
+        assert!(!driver_cluster.contains("path ="), "composition driver-cluster must use selected Git, not a local path");
+        let cluster = fs::read_to_string(repo.join("components/driver/cluster/Cargo.toml")).unwrap();
+        for (name, url, rev) in [
+            ("hub-declaration", "https://github.com/shuyra-arche/hub.git", "daa23b2611fee0c503bc6bd31a16121d97698ad6"),
+            ("router-declaration", "https://github.com/shuyra-arche/router.git", "8a9416277539aefbc759c4f6519e1e8d93d63be3"),
+        ] {
+            let line = cluster.lines().find(|line| line.trim_start().starts_with(name)).unwrap();
+            assert!(line.contains(url), "Driver cluster {name} lacks canonical URL");
+            assert!(line.contains(rev), "Driver cluster {name} lacks selected revision");
+            assert!(!line.contains("path ="), "Driver cluster {name} uses a local path");
+        }
         let hub_client = dependencies(&repo.join("components/driver/units/hub/client/Cargo.toml"));
         assert!(hub_client.iter().all(|name| ["env","wire","resource","ipc","hub-api","system-api","system-client"].contains(&name.as_str())));
         for dependencies in [&router_api, &router_client, &hub_client] { assert!(!dependencies.iter().any(|name| name == "protocol")); }
